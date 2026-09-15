@@ -153,6 +153,7 @@ class ContinuationOptions:
     growth_factor: float = 1.25
     maximum_retries: int = 8
     corrector_maximum_iterations: int = 10
+    corrector_phase_tolerance: float = 1e-12
     corrector_update_tolerance: float = 1e-12
     maximum_correction: float = 0.2
     maximum_advance: float = 0.2
@@ -183,6 +184,11 @@ class ContinuationOptions:
             raise ValueError("step and evaluation budgets must be positive")
         if self.maximum_arclength <= 0.0:
             raise ValueError("arclength budget must be positive")
+        if (
+            self.corrector_phase_tolerance <= 0.0
+            or self.corrector_update_tolerance <= 0.0
+        ):
+            raise ValueError("corrector convergence tolerances must be positive")
         if not -1.0 <= self.minimum_tangent_dot <= 1.0:
             raise ValueError("minimum_tangent_dot must lie in [-1, 1]")
         if not -1.0 <= self.closure_tangent_dot <= 1.0:
@@ -556,12 +562,31 @@ def _correct_trial(
     current: Array,
     predicted: Array,
     phase_tangent: Array,
+    maximum_evaluations: int | None = None,
 ) -> _CorrectorOutcome:
     """Apply a bounded bordered Newton correction around one predictor."""
     delta = jnp.zeros(3, dtype=predicted.dtype)
     last_residual = float("inf")
     last_update = float("inf")
     evaluations = 0
+
+    def budget_exhausted(iteration: int, candidate: Array) -> _CorrectorOutcome:
+        return _CorrectorOutcome(
+            False,
+            None,
+            np.asarray(predicted),
+            np.asarray(candidate),
+            iteration,
+            last_residual,
+            last_update,
+            float(jnp.linalg.norm(delta)),
+            float(rotation_distance(current, candidate)),
+            float("nan"),
+            TerminationReason.EVALUATION_BUDGET,
+            None,
+            evaluations,
+            "corrector evaluation budget exhausted",
+        )
 
     def system(correction: Array) -> Array:
         candidate = predicted @ exp(correction)
@@ -575,6 +600,8 @@ def _correct_trial(
 
     for iteration in range(options.corrector_maximum_iterations + 1):
         candidate = predicted @ exp(delta)
+        if maximum_evaluations is not None and evaluations >= maximum_evaluations:
+            return budget_exhausted(iteration, candidate)
         domain = _evaluate_domain(problem, candidate)
         evaluations += 1
         if not domain.valid:
@@ -625,8 +652,12 @@ def _correct_trial(
             )
         if (
             last_residual <= options.residual_tolerance
-            and phase_norm <= options.corrector_update_tolerance
+            and phase_norm <= options.corrector_phase_tolerance
+            and (last_update if np.isfinite(last_update) else 0.0)
+            <= options.corrector_update_tolerance
         ):
+            if maximum_evaluations is not None and evaluations >= maximum_evaluations:
+                return budget_exhausted(iteration, candidate)
             state = _evaluate_regular_state(
                 problem, options, candidate, previous_tangent=phase_tangent
             )
@@ -699,6 +730,8 @@ def _correct_trial(
             )
         if iteration == options.corrector_maximum_iterations:
             break
+        if maximum_evaluations is not None and evaluations >= maximum_evaluations:
+            return budget_exhausted(iteration, candidate)
         try:
             bordered = jax.jacfwd(system)(delta)
             bordered_array = np.asarray(bordered)
@@ -933,8 +966,10 @@ def _adapt_accepted_step(
         margin > options.event_slowdown_margin
         for margin in state.domain.margins.values()
     )
+    residual_ratio = outcome.residual_norm / options.residual_tolerance
     easy = (
         outcome.iterations <= 2
+        and residual_ratio <= 0.1
         and outcome.correction_norm <= 0.1 * step
         and outcome.tangent_dot >= 0.98
         and state.jacobian_diagnostic.condition <= 0.1 * options.condition_limit
@@ -942,6 +977,7 @@ def _adapt_accepted_step(
     )
     difficult = (
         outcome.iterations >= max(3, options.corrector_maximum_iterations // 2)
+        or residual_ratio >= 0.5
         or outcome.correction_norm >= 0.5 * step
         or outcome.tangent_dot < 0.95
         or not clear_of_event
@@ -995,11 +1031,30 @@ def _correct_closure(
     seed: Array,
     initial_tangent: Array,
     current_tangent: Array,
+    maximum_evaluations: int | None = None,
 ) -> _CorrectorOutcome:
     delta = jnp.zeros(3, dtype=current.dtype)
     last_residual = float("inf")
     last_update = float("inf")
     evaluations = 0
+
+    def budget_exhausted(iteration: int, candidate: Array) -> _CorrectorOutcome:
+        return _CorrectorOutcome(
+            False,
+            None,
+            np.asarray(current),
+            np.asarray(candidate),
+            iteration,
+            last_residual,
+            last_update,
+            float(jnp.linalg.norm(delta)),
+            float(rotation_distance(current, candidate)),
+            float("nan"),
+            TerminationReason.EVALUATION_BUDGET,
+            None,
+            evaluations,
+            "closure evaluation budget exhausted",
+        )
 
     def closing_system(correction: Array) -> Array:
         candidate = current @ exp(correction)
@@ -1012,6 +1067,8 @@ def _correct_closure(
 
     for iteration in range(options.closure_maximum_iterations + 1):
         candidate = current @ exp(delta)
+        if maximum_evaluations is not None and evaluations >= maximum_evaluations:
+            return budget_exhausted(iteration, candidate)
         domain = _evaluate_domain(problem, candidate)
         evaluations += 1
         if not domain.valid:
@@ -1076,6 +1133,8 @@ def _correct_closure(
             last_residual <= options.residual_tolerance
             and section_norm <= options.closure_section_tolerance
         ):
+            if maximum_evaluations is not None and evaluations >= maximum_evaluations:
+                return budget_exhausted(iteration, candidate)
             state = _evaluate_regular_state(
                 problem, options, candidate, previous_tangent=current_tangent
             )
@@ -1087,9 +1146,25 @@ def _correct_closure(
             )
             correction_norm = float(jnp.linalg.norm(delta))
             advance = float(rotation_distance(current, candidate))
+            if not state.accepted:
+                return _CorrectorOutcome(
+                    False,
+                    state,
+                    np.asarray(current),
+                    np.asarray(candidate),
+                    iteration,
+                    state.residual_norm,
+                    last_update if np.isfinite(last_update) else 0.0,
+                    correction_norm,
+                    advance,
+                    tangent_dot,
+                    state.reason,
+                    state.event,
+                    evaluations,
+                    state.message,
+                )
             accepted = (
-                state.accepted
-                and correction_norm <= options.maximum_correction
+                correction_norm <= options.maximum_correction
                 and advance <= options.maximum_advance
                 and tangent_dot >= options.closure_tangent_dot
                 and float(rotation_distance(seed, candidate))
@@ -1107,12 +1182,14 @@ def _correct_closure(
                 advance,
                 tangent_dot,
                 None if accepted else TerminationReason.TOPOLOGY_AMBIGUITY,
-                state.event,
+                None,
                 evaluations,
                 "closure corrector converged" if accepted else "closure gates failed",
             )
         if iteration == options.closure_maximum_iterations:
             break
+        if maximum_evaluations is not None and evaluations >= maximum_evaluations:
+            return budget_exhausted(iteration, candidate)
         try:
             jacobian = jax.jacfwd(closing_system)(delta)
             jacobian_array = np.asarray(jacobian)
@@ -1268,7 +1345,12 @@ def trace_fiber(
                 jnp.asarray(step, dtype=current.dtype) * current_state.tangent
             )
             outcome = _correct_trial(
-                problem, options, current, predicted, current_state.tangent
+                problem,
+                options,
+                current,
+                predicted,
+                current_state.tangent,
+                maximum_evaluations=options.maximum_evaluations - evaluations,
             )
             evaluations += outcome.evaluations
             diagnostic = _step_diagnostic(
@@ -1276,6 +1358,22 @@ def trace_fiber(
             )
             step_diagnostics.append(diagnostic)
 
+            if outcome.reason == TerminationReason.EVALUATION_BUDGET:
+                return _make_result(
+                    problem,
+                    options,
+                    TerminationReason.EVALUATION_BUDGET,
+                    states,
+                    arclength_increments,
+                    step_diagnostics,
+                    accepted_margins,
+                    closure_diagnostic,
+                    rejected_pose=outcome.rejected_pose,
+                    event=None,
+                    evaluations=evaluations,
+                    retries=total_retries,
+                    message=outcome.message,
+                )
             if not outcome.accepted:
                 assert outcome.reason is not None
                 if outcome.reason in _EVENT_REASONS:
@@ -1413,6 +1511,7 @@ def trace_fiber(
                     seed,
                     initial.tangent,
                     outcome.state.tangent,
+                    maximum_evaluations=options.maximum_evaluations - evaluations,
                 )
                 evaluations += closure.evaluations
                 closure_diagnostic = ClosureDiagnostic(
@@ -1426,6 +1525,22 @@ def trace_fiber(
                     final_correction_attempted=True,
                     final_correction_accepted=closure.accepted,
                 )
+                if closure.reason == TerminationReason.EVALUATION_BUDGET:
+                    return _make_result(
+                        problem,
+                        options,
+                        TerminationReason.EVALUATION_BUDGET,
+                        states,
+                        arclength_increments,
+                        step_diagnostics,
+                        accepted_margins,
+                        closure_diagnostic,
+                        rejected_pose=closure.rejected_pose,
+                        event=None,
+                        evaluations=evaluations,
+                        retries=total_retries,
+                        message=closure.message,
+                    )
                 if closure.accepted:
                     assert closure.state is not None
                     previous_pose = states[-2].rotation
@@ -1453,6 +1568,38 @@ def trace_fiber(
                         final_correction_attempted=True,
                         final_correction_accepted=True,
                     )
+                    if evaluations > options.maximum_evaluations:
+                        return _make_result(
+                            problem,
+                            options,
+                            TerminationReason.EVALUATION_BUDGET,
+                            states,
+                            arclength_increments,
+                            step_diagnostics,
+                            accepted_margins,
+                            closure_diagnostic,
+                            rejected_pose=np.asarray(closure.state.rotation),
+                            event=None,
+                            evaluations=evaluations,
+                            retries=total_retries,
+                            message="evaluation budget exhausted during closure",
+                        )
+                    if total_arclength > options.maximum_arclength:
+                        return _make_result(
+                            problem,
+                            options,
+                            TerminationReason.ARCLENGTH_BUDGET,
+                            states,
+                            arclength_increments,
+                            step_diagnostics,
+                            accepted_margins,
+                            closure_diagnostic,
+                            rejected_pose=np.asarray(closure.state.rotation),
+                            event=None,
+                            evaluations=evaluations,
+                            retries=total_retries,
+                            message="closure edge exceeds the arclength budget",
+                        )
                     return _make_result(
                         problem,
                         options,

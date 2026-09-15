@@ -3,6 +3,7 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from lumice_integral.analytic import tangent_basis
 from lumice_integral.continuation import FiberStatus, TerminationReason, trace_fiber
@@ -88,3 +89,25 @@ def test_3_5_tir_is_reported_before_the_unsafe_exit_square_root():
     assert result.status == FiberStatus.EVENT_TERMINATED
     assert result.reason == TerminationReason.TIR_BOUNDARY
     assert result.terminal_payload.event.margin < 0.0
+
+
+@pytest.mark.parametrize(
+    ("argument", "value"),
+    [
+        ("seed", jnp.eye(3, dtype=jnp.float32)),
+        ("incident_direction", jnp.array([1.0, 0.0, 0.0], dtype=jnp.float32)),
+        ("refractive_index", jnp.asarray(1.31, dtype=jnp.float32)),
+        ("target_direction", jnp.array([0.0, 0.0, 1.0], dtype=jnp.float32)),
+    ],
+)
+def test_3_5_problem_rejects_float32_inputs_before_coercion(argument, value):
+    arguments = {
+        "seed": jnp.eye(3, dtype=jnp.float64),
+        "incident_direction": minimum_deviation_incident(),
+        "target_direction": jnp.array([0.0, 0.0, 1.0], dtype=jnp.float64),
+        "refractive_index": jnp.asarray(1.31, dtype=jnp.float64),
+    }
+    arguments[argument] = value
+
+    with pytest.raises(ValueError, match=f"{argument}.*float64"):
+        path_3_5_problem(**arguments)

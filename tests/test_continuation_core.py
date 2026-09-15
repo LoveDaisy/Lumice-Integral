@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -16,6 +18,7 @@ from lumice_integral.continuation import (
     _correct_trial,
     _correct_closure,
     _evaluate_regular_state,
+    _adapt_accepted_step,
     trace_fiber,
 )
 from lumice_integral.so3 import exp
@@ -194,6 +197,50 @@ def test_bordered_corrector_iteration_budget_is_typed_failure():
     assert outcome.residual_norm > options.residual_tolerance
 
 
+def test_bordered_corrector_requires_a_small_final_newton_update():
+    problem = analytic_problem()
+    options = ContinuationOptions(
+        corrector_maximum_iterations=3,
+        corrector_update_tolerance=1e-16,
+    )
+    initial = _evaluate_regular_state(problem, options, problem.seed)
+    predicted = problem.seed @ exp(
+        jnp.array([0.03, -0.02, 0.04], dtype=jnp.float64)
+    )
+
+    outcome = _correct_trial(
+        problem, options, problem.seed, predicted, initial.tangent
+    )
+
+    assert not outcome.accepted
+    assert outcome.reason == TerminationReason.CORRECTOR_FAILURE
+    assert outcome.residual_norm <= options.residual_tolerance
+    assert outcome.update_norm > options.corrector_update_tolerance
+
+
+def test_residual_headroom_participates_in_step_adaptation():
+    problem = analytic_problem()
+    options = ContinuationOptions(residual_tolerance=1e-8)
+    initial = _evaluate_regular_state(problem, options, problem.seed)
+    accepted = _correct_trial(
+        problem,
+        options,
+        problem.seed,
+        problem.seed @ exp(0.01 * initial.tangent),
+        initial.tangent,
+    )
+    assert accepted.accepted
+
+    near_residual_limit = replace(
+        accepted,
+        iterations=1,
+        correction_norm=0.001,
+        tangent_dot=0.99,
+        residual_norm=0.75 * options.residual_tolerance,
+    )
+    assert _adapt_accepted_step(0.04, near_residual_limit, options) < 0.04
+
+
 def test_adaptive_analytic_trace_closes_with_quadrature_ready_geometry():
     result = trace_fiber(analytic_problem())
 
@@ -244,6 +291,41 @@ def test_trace_distinguishes_budget_exhaustion(options, reason):
     assert result.status == FiberStatus.BUDGET_EXHAUSTED
     assert result.reason == reason
     assert result.terminal_payload.last_accepted_pose is not None
+
+
+def test_closure_evaluation_budget_is_never_exceeded():
+    options = ContinuationOptions(maximum_evaluations=111)
+    result = trace_fiber(analytic_problem(), options)
+
+    assert result.reason == TerminationReason.EVALUATION_BUDGET
+    assert result.closure_diagnostics.final_correction_attempted
+    assert result.terminal_payload.evaluations == options.maximum_evaluations
+
+
+def test_closure_preserves_a_regular_state_event_reason_and_payload():
+    target = BODY_AXIS
+    problem = FiberProblem(
+        path="closure-rank-loss",
+        incident_direction=jnp.array([1.0, 0.0, 0.0], dtype=jnp.float64),
+        target_chart=TargetChart(target, tangent_basis(target)),
+        direction_evaluator=lambda _: target,
+        seed=jnp.eye(3, dtype=jnp.float64),
+    )
+    options = ContinuationOptions()
+
+    outcome = _correct_closure(
+        problem,
+        options,
+        problem.seed,
+        problem.seed,
+        jnp.array([0.0, 0.0, 1.0], dtype=jnp.float64),
+        jnp.array([0.0, 0.0, 1.0], dtype=jnp.float64),
+    )
+
+    assert not outcome.accepted
+    assert outcome.reason == TerminationReason.RANK_LOSS
+    assert outcome.event is not None
+    assert outcome.event.kind == TerminationReason.RANK_LOSS
 
 
 def test_trace_reports_step_underflow_separately_from_trigger():

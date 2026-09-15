@@ -20,6 +20,11 @@ FACE_5_NORMAL = jnp.array(
 ICE_REFRACTIVE_INDEX = jnp.asarray(1.31, dtype=jnp.float64)
 
 
+def _require_float64_reference_input(name: str, value: Array) -> None:
+    if np.asarray(value).dtype != np.float64:
+        raise ValueError(f"{name} must use float64 for the reference solver")
+
+
 class Refraction(NamedTuple):
     direction: Array
     discriminant: Array
@@ -169,9 +174,14 @@ def path_3_5_problem(
         TerminationReason,
     )
 
+    _require_float64_reference_input("seed", seed)
+    _require_float64_reference_input("incident_direction", incident_direction)
+    _require_float64_reference_input("refractive_index", refractive_index)
+    if target_direction is not None:
+        _require_float64_reference_input("target_direction", target_direction)
     seed = jnp.asarray(seed)
     incident_direction = jnp.asarray(incident_direction)
-    refractive_index = jnp.asarray(refractive_index, dtype=seed.dtype)
+    refractive_index = jnp.asarray(refractive_index)
 
     def direction_evaluator(rotation: Array) -> Array:
         return path_3_5(rotation, incident_direction, refractive_index).direction
@@ -198,7 +208,7 @@ def path_3_5_problem(
                 f"the smooth domain: {seed_domain.event_kind}"
             )
         target_direction = direction_evaluator(seed)
-    target_direction = jnp.asarray(target_direction, dtype=seed.dtype)
+    target_direction = jnp.asarray(target_direction)
     return FiberProblem(
         path=f"3-5:n={float(refractive_index):.8g}",
         incident_direction=incident_direction,
