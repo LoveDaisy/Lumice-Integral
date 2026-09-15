@@ -10,6 +10,11 @@ dependencies = [
     "scipy>=1.15,<2",
 ]
 
+[project.optional-dependencies]
+cuda13 = [
+    "jax[cuda13]>=0.7,<1",
+]
+
 [dependency-groups]
 dev = [
     "pytest>=8,<10",
@@ -22,4 +27,3 @@ build-backend = "hatchling.build"
 [tool.pytest.ini_options]
 addopts = "-ra"
 testpaths = ["tests"]
-
