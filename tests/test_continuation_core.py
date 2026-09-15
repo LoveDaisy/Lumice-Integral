@@ -14,6 +14,7 @@ from lumice_integral.continuation import (
     TargetChart,
     TerminationReason,
     _correct_trial,
+    _correct_closure,
     _evaluate_regular_state,
     trace_fiber,
 )
@@ -148,6 +149,11 @@ def test_rank_deficient_direction_map_has_typed_event_and_diagnostics():
     assert state.jacobian_diagnostic.rank == 0
     assert state.jacobian_diagnostic.normal_jacobian == 0.0
 
+    result = trace_fiber(problem)
+    assert result.status == FiberStatus.EVENT_TERMINATED
+    assert result.reason == TerminationReason.RANK_LOSS
+    assert result.terminal_payload.event.details["sigma_2"] == 0.0
+
 
 def test_bordered_corrector_converges_and_preserves_phase():
     problem = analytic_problem()
@@ -252,6 +258,54 @@ def test_trace_reports_step_underflow_separately_from_trigger():
     assert result.status == FiberStatus.NUMERICAL_FAILURE
     assert result.reason == TerminationReason.STEP_UNDERFLOW
     assert result.step_diagnostics[-1].reason == "corrector_failure"
+
+
+def test_trace_reports_corrector_failure_after_bounded_recovery():
+    options = ContinuationOptions(
+        maximum_advance=0.01,
+        maximum_retries=0,
+    )
+    result = trace_fiber(analytic_problem(), options)
+
+    assert result.status == FiberStatus.NUMERICAL_FAILURE
+    assert result.reason == TerminationReason.CORRECTOR_FAILURE
+    assert len(result.step_diagnostics) == 1
+
+
+def test_antipode_algebraic_root_is_rejected_by_chart_gate():
+    target = BODY_AXIS
+    problem = FiberProblem(
+        path="antipode-map",
+        incident_direction=jnp.array([1.0, 0.0, 0.0], dtype=jnp.float64),
+        target_chart=TargetChart(target, tangent_basis(target)),
+        direction_evaluator=lambda _: -target,
+        seed=jnp.eye(3, dtype=jnp.float64),
+    )
+
+    result = trace_fiber(problem)
+
+    assert result.status == FiberStatus.EVENT_TERMINATED
+    assert result.reason == TerminationReason.CHART_BOUNDARY
+    assert result.terminal_payload.event.margin < 0.0
+
+
+def test_incompatible_tangent_cannot_pass_final_closure_correction():
+    problem = analytic_problem()
+    options = ContinuationOptions()
+    initial = _evaluate_regular_state(problem, options, problem.seed)
+
+    outcome = _correct_closure(
+        problem,
+        options,
+        problem.seed,
+        problem.seed,
+        initial.tangent,
+        -initial.tangent,
+    )
+
+    assert not outcome.accepted
+    assert outcome.reason == TerminationReason.TOPOLOGY_AMBIGUITY
+    assert outcome.tangent_dot < options.closure_tangent_dot
 
 
 def test_known_event_precedes_unsafe_direction_evaluation():

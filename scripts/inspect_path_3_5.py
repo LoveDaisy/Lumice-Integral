@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 
-from lumice_integral.analytic import tangent_basis
-from lumice_integral.continuation import trace_implicit_fiber
-from lumice_integral.optics import minimum_deviation_incident, path_3_5
+from lumice_integral.continuation import local_residual_jacobian, trace_fiber
+from lumice_integral.optics import (
+    minimum_deviation_incident,
+    path_3_5,
+    path_3_5_problem,
+)
 from lumice_integral.so3 import exp
 
 
@@ -17,20 +19,10 @@ def main() -> None:
     incident = minimum_deviation_incident()
     evaluation = path_3_5(rotation, incident)
     target = evaluation.direction
-    basis = tangent_basis(target)
-
-    def local_residual(delta):
-        direction = path_3_5(rotation @ exp(delta), incident).direction
-        return basis.T @ (direction - target)
-
-    jacobian = jax.jacfwd(local_residual)(jnp.zeros(3, dtype=jnp.float64))
+    problem = path_3_5_problem(rotation, incident, target_direction=target)
+    jacobian = local_residual_jacobian(problem, rotation)
     singular_values = jnp.linalg.svd(jacobian, compute_uv=False)
-
-    def pose_residual(candidate):
-        direction = path_3_5(candidate, incident).direction
-        return basis.T @ (direction - target)
-
-    trace = trace_implicit_fiber(rotation, pose_residual)
+    trace = trace_fiber(problem)
     report = {
         "incident": np.asarray(incident).tolist(),
         "outgoing": np.asarray(target).tolist(),
@@ -41,10 +33,13 @@ def main() -> None:
         "exit_incidence_cosine": float(evaluation.exit.incidence_cosine),
         "jacobian": np.asarray(jacobian).tolist(),
         "singular_values": np.asarray(singular_values).tolist(),
-        "trace_steps": trace.steps,
+        "trace_status": trace.status.value,
+        "trace_reason": trace.reason.value,
+        "trace_steps": trace.terminal_payload.accepted_steps,
         "trace_max_residual": float(trace.residual_norms.max()),
-        "trace_detected_gap": trace.detected_gap,
-        "trace_closure_error": trace.closure_error,
+        "trace_length": float(trace.arclength_increments.sum()),
+        "trace_detected_gap": trace.closure_diagnostics.seed_distance,
+        "trace_closure_error": trace.closure_diagnostics.seed_distance,
     }
     for name, value in report.items():
         print(f"{name}={value}")
