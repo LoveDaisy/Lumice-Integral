@@ -6,6 +6,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+import lumice_integral.continuation as continuation
 from lumice_integral.analytic import BODY_AXIS, direction_map, tangent_basis
 from lumice_integral.continuation import (
     ContinuationOptions,
@@ -350,6 +351,43 @@ def test_closure_requires_a_small_final_newton_update():
     assert outcome.reason == TerminationReason.CORRECTOR_FAILURE
     assert outcome.residual_norm <= options.residual_tolerance
     assert outcome.update_norm > options.corrector_update_tolerance
+
+
+def test_closure_failure_history_survives_a_later_success(monkeypatch):
+    original_correct_closure = continuation._correct_closure
+    calls = 0
+
+    def reject_first_closure(*args, **kwargs):
+        nonlocal calls
+        outcome = original_correct_closure(*args, **kwargs)
+        if calls == 0:
+            calls += 1
+            assert outcome.accepted
+            assert outcome.state is not None
+            return replace(
+                outcome,
+                accepted=False,
+                rejected_pose=np.asarray(outcome.state.rotation),
+                reason=TerminationReason.CORRECTOR_FAILURE,
+                message="forced recoverable closure failure",
+            )
+        calls += 1
+        return outcome
+
+    monkeypatch.setattr(continuation, "_correct_closure", reject_first_closure)
+
+    result = trace_fiber(analytic_problem())
+
+    assert result.status == FiberStatus.CLOSED
+    assert len(result.closure_attempt_diagnostics) >= 2
+    first_attempt = result.closure_attempt_diagnostics[0]
+    assert first_attempt.reason == TerminationReason.CORRECTOR_FAILURE
+    assert first_attempt.rejected_pose is not None
+    assert np.isfinite(first_attempt.residual_norm)
+    assert np.isfinite(first_attempt.update_norm)
+    assert not first_attempt.gates_passed
+    assert result.closure_attempt_diagnostics[-1].accepted
+    assert result.closure_diagnostics.attempts == result.closure_attempt_diagnostics
 
 
 def test_trace_reports_step_underflow_separately_from_trigger():

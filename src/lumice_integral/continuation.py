@@ -240,6 +240,31 @@ class ClosureDiagnostic:
     tangent_dot: float
     final_correction_attempted: bool
     final_correction_accepted: bool
+    attempts: tuple[ClosureAttemptDiagnostic, ...] = ()
+
+
+@dataclass(frozen=True)
+class ClosureAttemptDiagnostic:
+    """Immutable evidence for one invocation of the closure corrector.
+
+    A failed near-return is not necessarily terminal: the main continuation
+    loop may continue to look for a later transverse return. Keeping every
+    attempt prevents that recoverable evidence from being overwritten by a
+    later attempt or by the final closure summary.
+    """
+
+    accepted: bool
+    reason: TerminationReason | None
+    residual_norm: float
+    update_norm: float
+    rejected_pose: np.ndarray | None
+    gates_passed: bool
+    iterations: int
+    correction_norm: float
+    advance: float
+    tangent_dot: float
+    event: EventCandidate | None
+    message: str
 
 
 @dataclass(frozen=True)
@@ -267,6 +292,7 @@ class FiberResult:
     step_diagnostics: tuple[StepDiagnostic, ...]
     branch_diagnostics: BranchDiagnostic
     closure_diagnostics: ClosureDiagnostic
+    closure_attempt_diagnostics: tuple[ClosureAttemptDiagnostic, ...]
     terminal_payload: TerminalPayload
     conventions: Mapping[str, str]
     weight_observables: Mapping[str, str]
@@ -836,6 +862,29 @@ def _empty_closure_diagnostic() -> ClosureDiagnostic:
     )
 
 
+def _closure_attempt_diagnostic(
+    outcome: _CorrectorOutcome,
+) -> ClosureAttemptDiagnostic:
+    return ClosureAttemptDiagnostic(
+        accepted=outcome.accepted,
+        reason=outcome.reason,
+        residual_norm=outcome.residual_norm,
+        update_norm=outcome.update_norm,
+        rejected_pose=(
+            None
+            if outcome.rejected_pose is None
+            else np.asarray(outcome.rejected_pose).copy()
+        ),
+        gates_passed=outcome.accepted,
+        iterations=outcome.iterations,
+        correction_norm=outcome.correction_norm,
+        advance=outcome.advance,
+        tangent_dot=outcome.tangent_dot,
+        event=outcome.event,
+        message=outcome.message,
+    )
+
+
 def _make_result(
     problem: FiberProblem,
     options: ContinuationOptions,
@@ -911,6 +960,7 @@ def _make_result(
             ),
         ),
         closure_diagnostics=closure_diagnostic,
+        closure_attempt_diagnostics=closure_diagnostic.attempts,
         terminal_payload=TerminalPayload(
             last_accepted_pose=np.asarray(states[-1].rotation) if states else None,
             rejected_pose=rejected_pose,
@@ -1508,6 +1558,7 @@ def trace_fiber(
                 tangent_dot=tangent_dot,
                 final_correction_attempted=False,
                 final_correction_accepted=False,
+                attempts=closure_diagnostic.attempts,
             )
             if (
                 extent_gate
@@ -1535,6 +1586,10 @@ def trace_fiber(
                     tangent_dot=tangent_dot,
                     final_correction_attempted=True,
                     final_correction_accepted=closure.accepted,
+                    attempts=(
+                        closure_diagnostic.attempts
+                        + (_closure_attempt_diagnostic(closure),)
+                    ),
                 )
                 if closure.reason == TerminationReason.EVALUATION_BUDGET:
                     return _make_result(
@@ -1613,6 +1668,7 @@ def trace_fiber(
                         tangent_dot=closure.tangent_dot,
                         final_correction_attempted=True,
                         final_correction_accepted=True,
+                        attempts=closure_diagnostic.attempts,
                     )
                     return _make_result(
                         problem,
