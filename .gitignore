@@ -1,4 +1,8 @@
 .DS_Store
 
+# AI frontend local configuration
+.claude/
+.codex/
+
 # Claude Code scratchpad (local task management)
 scratchpad/
