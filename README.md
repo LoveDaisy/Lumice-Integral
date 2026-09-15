@@ -8,7 +8,9 @@ integrals without Monte Carlo sampling.
 The project is a sibling of [Lumice](https://github.com/LoveDaisy/ice_halo_sim),
 not a replacement for it. Lumice performs forward Monte Carlo ray tracing;
 Lumice Integral studies and evaluates the inverse-image integral behind a
-specified image direction.
+specified image direction. Lumice Integral owns an independent differentiable
+optics implementation and does not use Lumice as a library or runtime engine;
+Lumice serves only as an external validation oracle and analysis-data source.
 
 The project is currently in the design and reconstruction stage. The first
 implementation will reproduce the original SO(3) continuation prototype before

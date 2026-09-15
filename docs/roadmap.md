@@ -196,8 +196,9 @@ diagnostics tool, or the primary renderer.
 The project will likely need the following conceptual layers, without implying
 that each must become a package immediately:
 
-1. **Deterministic optical evaluator**: pose, path, and wavelength to outgoing
-   direction, validity, and named physical weights.
+1. **Independent differentiable optical evaluator**: project-owned geometry and
+   optics mapping pose, path, and wavelength to outgoing direction, validity,
+   named physical weights, and the smooth computation graph required by AD.
 2. **Differential evaluator**: derivatives with respect to local SO(3)
    coordinates, preferably from the same equations as the value evaluator.
 3. **Fiber solver**: seed search, predictor-corrector continuation, component
@@ -217,16 +218,31 @@ Lumice is the forward Monte Carlo simulator and the primary independent
 validation oracle. Lumice Integral is a sibling product line with a different
 numerical method.
 
-Lumice currently exposes an application-level simulation API rather than a
-single-pose, single-path deterministic evaluation API. Lumice Integral creates
-a real consumer that can reveal the useful boundary between Lumice's generic
-geometry/optics kernel and its Monte Carlo halo application. No cross-repository
-API or engine extraction should be designed before the continuation prototype
-identifies its actual data and derivative requirements.
+Lumice Integral intentionally does **not** consume Lumice's source code, C API,
+libraries, or executable as part of its production computation. The solver must
+own the complete differentiable path from pose through geometry and optics to
+direction, physical weights, and derivatives. This is a permanent design
+boundary, not temporary duplication awaiting a future shared engine.
 
-Temporary duplication may be acceptable in a small reference implementation,
-but duplicated optical conventions must not silently become competing sources
-of truth.
+The reason is structural. Lumice is optimized for forward stochastic sampling
+and image accumulation. Lumice Integral needs a fixed-path, piecewise-smooth
+computation graph suitable for automatic differentiation and continuation. Face
+changes, obstruction, refraction-domain limits, and TIR boundaries must be
+represented as explicit events around smooth branches; an opaque Lumice call
+would sever that graph, while finite differences through it would not provide a
+trustworthy foundation near those boundaries or halo-map singularities.
+
+Lumice may be used only across an explicit validation boundary:
+
+- run independently to produce converged Monte Carlo images or profiles;
+- export ray-path analysis data for comparison;
+- check shared physical and coordinate conventions such as face numbering,
+  direction signs, refractive indices, Fresnel factors, and pose distributions.
+
+Validation tools may invoke Lumice and read its files when explicitly requested,
+but Lumice must not be required to build or run the Lumice Integral solver. The
+two independent implementations strengthen cross-validation: agreement is more
+meaningful when it cannot arise from a shared geometry or optics bug.
 
 ### Modern Ice Halo Research Notes
 
@@ -247,6 +263,8 @@ Validation must combine several independent kinds of evidence:
 - reproduction of the surviving historical direct-integration output;
 - agreement with Lumice after Monte Carlo uncertainty, source model, spectrum,
   pose density, projection, and radiometric normalization are aligned;
+- explicit convention fixtures at the validation boundary, without a shared
+  geometry or optics implementation;
 - Phase II cross-checks once the reduced formulation exists.
 
 A smooth-looking image is not sufficient evidence: missing fiber components can
@@ -260,7 +278,8 @@ produce plausible but systematically wrong radiance.
 - Exact lower-dimensional orientation measures.
 - A production GUI.
 - GPU optimization before the CPU reference result is trustworthy.
-- Premature extraction or stabilization of a public Lumice engine API.
+- Any production dependency on Lumice or extraction of a Lumice engine API for
+  this project.
 
 ## 9. Decisions to Date
 
@@ -270,5 +289,10 @@ produce plausible but systematically wrong radiance.
   its behavior can be judged against the author's prototype experience.
 - **2026-09-15**: the $S^2$ fiber-reduction formulation is deferred to Phase II
   and begins as an independent cross-check.
-- **2026-09-15**: the implementation language, AD system, and dependency model
-  remain undecided until the first task evaluates their requirements.
+- **2026-09-15**: the implementation language, AD system, and third-party
+  numerical dependency set remain undecided until the first task evaluates
+  their requirements.
+- **2026-09-15**: Lumice Integral owns an independent differentiable geometry
+  and optics implementation. Lumice remains an external Monte Carlo validation
+  oracle and analysis-data source, never a production dependency or shared
+  computational kernel.

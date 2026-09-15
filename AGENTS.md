@@ -6,7 +6,8 @@ Lumice Integral is a deterministic numerical renderer for ice halos. For a
 fixed light source, outgoing direction, and ray path, it traces the inverse-image
 pose fibers in SO(3) and evaluates their weighted coarea integrals. It is a
 sibling of Lumice's forward Monte Carlo simulator and is currently in the design
-and prototype-reconstruction stage.
+and prototype-reconstruction stage. Its differentiable optics implementation is
+independent of Lumice by design.
 
 ## Common Commands
 
@@ -37,6 +38,11 @@ finding, automatic differentiation, predictor-corrector continuation, and line
 quadrature. Phase II independently implements the newer reduction to level-set
 contours on S2 for cross-validation and possible acceleration.
 
+The production implementation owns its complete differentiable computation
+graph, from pose and fixed ray path through direction and named physical
+weights. Lumice is outside that graph and is used only by explicit validation
+workflows as a black-box Monte Carlo oracle or source of analysis artifacts.
+
 ## Important Constraints
 
 ### DO NOT
@@ -47,17 +53,25 @@ contours on S2 for cross-validation and possible acceleration.
 - Do not call numerical results exact; report convergence and residuals.
 - Do not treat one successfully closed loop as proof that every connected
   component of a fiber was found.
-- Do not prematurely extract or freeze a public Lumice engine API before a
-  working prototype identifies the real consumer boundary.
-- Do not let duplicated optical equations silently diverge from Lumice's
-  conventions.
+- Do not link, import, embed, or invoke Lumice from the production solver. A
+  user must be able to build and run Lumice Integral without Lumice source,
+  libraries, or binaries.
+- Do not design or extract a Lumice API for Lumice Integral. The projects have
+  independent implementations and meet only at validation boundaries.
+- Do not let the independent optical equations silently drift from shared
+  physical and coordinate conventions.
 
 ### DO
 
 - Keep physical weight factors independently observable before multiplying
   them into the final integrand.
+- Own the differentiable geometry, optics, and event-boundary handling required
+  by continuation; fixed-path smooth branches may use AD, while TIR, face
+  changes, and obstruction boundaries must remain explicit events.
 - Validate with analytic fixtures, historical direct-integration data, and
-  independently converged Lumice Monte Carlo results.
+  independently converged Lumice Monte Carlo results. Validation tooling may
+  run Lumice explicitly and ingest its files, but this must not become a product
+  dependency or a shared computational kernel.
 - Use local three-dimensional Lie algebra coordinates for SO(3) derivatives and
   updates, even if rotations are stored as unit quaternions.
 - Use `scratchpad/` to manage development tasks; see `scratchpad/common.md`.
