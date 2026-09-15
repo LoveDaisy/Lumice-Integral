@@ -142,7 +142,9 @@ def trace_implicit_fiber(
     section_crossings = 0
 
     for step_index in range(1, max_steps + 1):
-        predicted = rotation @ exp(jnp.asarray(step_size) * tangent)
+        predicted = rotation @ exp(
+            jnp.asarray(step_size, dtype=rotation.dtype) * tangent
+        )
         rotation = predicted
         for _ in range(8):
             value = evaluate(rotation)
@@ -153,7 +155,8 @@ def trace_implicit_fiber(
                 (jacobian, tangent[jnp.newaxis, :]), axis=0
             )
             update = jnp.linalg.solve(
-                bordered, jnp.concatenate((-value, jnp.zeros(1)))
+                bordered,
+                jnp.concatenate((-value, jnp.zeros(1, dtype=rotation.dtype))),
             )
             rotation = rotation @ exp(update)
 

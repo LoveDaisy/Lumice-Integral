@@ -45,8 +45,9 @@ def path_3_5(
     refractive_index: Array = ICE_REFRACTIVE_INDEX,
 ) -> PathEvaluation:
     """Trace refraction through hexagonal-prism side faces 3 then 5."""
-    entry_normal = rotation @ FACE_3_NORMAL
-    exit_normal = rotation @ FACE_5_NORMAL
+    entry_normal = rotation @ FACE_3_NORMAL.astype(rotation.dtype)
+    exit_normal = rotation @ FACE_5_NORMAL.astype(rotation.dtype)
+    refractive_index = jnp.asarray(refractive_index, dtype=rotation.dtype)
     entry = refract_smooth(
         incident_direction, entry_normal, 1.0 / refractive_index
     )
@@ -58,10 +59,10 @@ def minimum_deviation_incident(
     refractive_index: Array = ICE_REFRACTIVE_INDEX,
 ) -> Array:
     """Return the in-plane incident ray for a symmetric 60-degree prism path."""
+    refractive_index = jnp.asarray(refractive_index)
     internal_angle = jnp.pi / 6.0
     external_angle = jnp.arcsin(refractive_index * jnp.sin(internal_angle))
     return jnp.array(
         [-jnp.cos(external_angle), jnp.sin(external_angle), 0.0],
-        dtype=jnp.float64,
+        dtype=refractive_index.dtype,
     )
-
