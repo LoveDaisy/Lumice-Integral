@@ -1,0 +1,45 @@
+{
+  "env": {
+    "GITLAB_TOKEN": ""
+  },
+  "permissions": {
+    "allow": [
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git log:*)",
+      "Bash(git push:*)",
+      "Bash(git remote:*)",
+      "Bash(git branch:*)",
+      "Bash(git checkout:*)",
+      "Bash(git stash:*)",
+      "Bash(ls:*)",
+      "Bash(mkdir:*)",
+      "Bash(ssh:*)",
+      "Bash(scp:*)",
+      "Bash(rsync:*)",
+      "Bash(~/Virtual-Jiajie/Agent-Workflow/skills/gitlab/gitlab-pipeline-checker.sh:*)",
+      "Bash(~/.codex/skills/remote-dev/assets/remote-dev.sh:*)",
+      "Skill(scratchpad-init)",
+      "Skill(backlog-pick)",
+      "Skill(explore-init)",
+      "Skill(explore-run)",
+      "Skill(explore-pivot)",
+      "Skill(explore-review)",
+      "Skill(explore-conclude)",
+      "Skill(task-bootstrap)",
+      "Skill(task-drive)",
+      "Skill(task-plan)",
+      "Skill(task-implement)",
+      "Skill(task-closeout)",
+      "Skill(scrum-bootstrap)",
+      "Skill(scrum-drive)",
+      "Skill(task-plan-review)",
+      "Skill(task-code-review)",
+      "Skill(task-learn)",
+      "Skill(gitlab)",
+      "Skill(remote-dev)"
+    ]
+  }
+}
