@@ -15,6 +15,7 @@ from lumice_integral.continuation import (
     TerminationReason,
     _correct_trial,
     _evaluate_regular_state,
+    trace_fiber,
 )
 from lumice_integral.so3 import exp
 
@@ -185,3 +186,122 @@ def test_bordered_corrector_iteration_budget_is_typed_failure():
     assert outcome.reason == TerminationReason.CORRECTOR_FAILURE
     assert outcome.iterations == 1
     assert outcome.residual_norm > options.residual_tolerance
+
+
+def test_adaptive_analytic_trace_closes_with_quadrature_ready_geometry():
+    result = trace_fiber(analytic_problem())
+
+    assert result.status == FiberStatus.CLOSED
+    assert result.reason == TerminationReason.CLOSED_LOOP
+    assert result.component_completeness == "unknown"
+    assert result.poses.shape[1:] == (3, 3)
+    assert result.arclength_increments.shape == (result.poses.shape[0] - 1,)
+    assert result.residual_norms.shape == (result.poses.shape[0],)
+    assert result.tangents.shape == (result.poses.shape[0], 3)
+    assert np.all(result.arclength_increments >= 0.0)
+    assert result.residual_norms.max() <= 1e-10
+    assert result.closure_diagnostics.final_correction_accepted
+    np.testing.assert_allclose(
+        result.closure_diagnostics.accumulated_arclength,
+        2.0 * np.pi,
+        rtol=0.0,
+        atol=1e-8,
+    )
+
+
+def test_large_initial_step_is_rejected_then_recovers_by_shrinking():
+    options = ContinuationOptions(
+        initial_step=0.6,
+        maximum_step=0.6,
+        maximum_advance=0.2,
+    )
+    result = trace_fiber(analytic_problem(), options)
+
+    assert result.status == FiberStatus.CLOSED
+    rejected = [trial for trial in result.step_diagnostics if not trial.accepted]
+    assert rejected
+    assert rejected[0].proposed_step == pytest.approx(0.6)
+    assert any(trial.accepted for trial in result.step_diagnostics)
+
+
+@pytest.mark.parametrize(
+    ("options", "reason"),
+    [
+        (ContinuationOptions(maximum_accepted_steps=1), TerminationReason.STEP_BUDGET),
+        (ContinuationOptions(maximum_arclength=0.01), TerminationReason.ARCLENGTH_BUDGET),
+        (ContinuationOptions(maximum_evaluations=1), TerminationReason.EVALUATION_BUDGET),
+    ],
+)
+def test_trace_distinguishes_budget_exhaustion(options, reason):
+    result = trace_fiber(analytic_problem(), options)
+
+    assert result.status == FiberStatus.BUDGET_EXHAUSTED
+    assert result.reason == reason
+    assert result.terminal_payload.last_accepted_pose is not None
+
+
+def test_trace_reports_step_underflow_separately_from_trigger():
+    options = ContinuationOptions(
+        initial_step=0.04,
+        minimum_step=0.03,
+        maximum_step=0.04,
+        maximum_advance=0.01,
+    )
+    result = trace_fiber(analytic_problem(), options)
+
+    assert result.status == FiberStatus.NUMERICAL_FAILURE
+    assert result.reason == TerminationReason.STEP_UNDERFLOW
+    assert result.step_diagnostics[-1].reason == "corrector_failure"
+
+
+def test_known_event_precedes_unsafe_direction_evaluation():
+    calls = {"direction": 0}
+
+    def domain(rotation):
+        margin = -float(rotation[1, 0])
+        if margin < 0.0:
+            return DomainEvaluation(
+                valid=False,
+                margins={"tir": margin},
+                event=EventCandidate(TerminationReason.TIR_BOUNDARY, margin),
+            )
+        return DomainEvaluation(valid=True, margins={"tir": margin})
+
+    def direction(rotation):
+        calls["direction"] += 1
+        return direction_map(rotation)
+
+    base = analytic_problem(domain_evaluator=domain)
+    problem = FiberProblem(
+        path=base.path,
+        incident_direction=base.incident_direction,
+        target_chart=base.target_chart,
+        direction_evaluator=direction,
+        domain_and_event_evaluator=domain,
+        seed=base.seed,
+    )
+    result = trace_fiber(problem)
+
+    assert result.status == FiberStatus.EVENT_TERMINATED
+    assert result.reason == TerminationReason.TIR_BOUNDARY
+    assert calls["direction"] == 2
+
+
+def test_nonfinite_trial_remains_nonfinite_after_retry_exhaustion():
+    def direction(rotation):
+        unsafe = rotation[1, 0] > 0.0
+        return direction_map(rotation) + jnp.where(unsafe, jnp.nan, 0.0)
+
+    base = analytic_problem()
+    problem = FiberProblem(
+        path=base.path,
+        incident_direction=base.incident_direction,
+        target_chart=base.target_chart,
+        direction_evaluator=direction,
+        seed=base.seed,
+    )
+    result = trace_fiber(problem, ContinuationOptions(maximum_retries=2))
+
+    assert result.status == FiberStatus.NUMERICAL_FAILURE
+    assert result.reason == TerminationReason.NON_FINITE
+    assert len(result.step_diagnostics) == 3

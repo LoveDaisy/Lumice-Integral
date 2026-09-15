@@ -166,6 +166,8 @@ class ContinuationOptions:
     closure_minimum_arclength: float = np.pi
     closure_distance: float = 0.08
     closure_tangent_dot: float = 0.8
+    closure_section_tolerance: float = 1e-11
+    closure_maximum_iterations: int = 10
     diagnostic_level: str = "full"
     sample_retention: str = "all"
 
@@ -235,7 +237,7 @@ class ClosureDiagnostic:
 
 @dataclass(frozen=True)
 class TerminalPayload:
-    last_accepted_pose: np.ndarray
+    last_accepted_pose: np.ndarray | None
     rejected_pose: np.ndarray | None
     event: EventCandidate | None
     accepted_steps: int
@@ -773,6 +775,701 @@ def _correct_trial(
         evaluations,
         "corrector iteration budget exhausted",
     )
+
+
+def _status_for_reason(reason: TerminationReason) -> FiberStatus:
+    if reason == TerminationReason.CLOSED_LOOP:
+        return FiberStatus.CLOSED
+    if reason in _EVENT_REASONS:
+        return FiberStatus.EVENT_TERMINATED
+    if reason in {
+        TerminationReason.STEP_BUDGET,
+        TerminationReason.ARCLENGTH_BUDGET,
+        TerminationReason.EVALUATION_BUDGET,
+    }:
+        return FiberStatus.BUDGET_EXHAUSTED
+    return FiberStatus.NUMERICAL_FAILURE
+
+
+def _empty_closure_diagnostic() -> ClosureDiagnostic:
+    return ClosureDiagnostic(
+        accumulated_arclength=0.0,
+        seed_distance=float("inf"),
+        previous_section_value=0.0,
+        section_value=0.0,
+        section_crossed=False,
+        crossing_direction=0,
+        tangent_dot=float("nan"),
+        final_correction_attempted=False,
+        final_correction_accepted=False,
+    )
+
+
+def _make_result(
+    problem: FiberProblem,
+    options: ContinuationOptions,
+    reason: TerminationReason,
+    states: list[_StateEvaluation],
+    arclength_increments: list[float],
+    step_diagnostics: list[StepDiagnostic],
+    accepted_margins: list[Mapping[str, float]],
+    closure_diagnostic: ClosureDiagnostic,
+    *,
+    rejected_pose: np.ndarray | None,
+    event: EventCandidate | None,
+    evaluations: int,
+    retries: int,
+    message: str,
+) -> FiberResult:
+    poses = (
+        np.stack([np.asarray(state.rotation) for state in states])
+        if states
+        else np.empty((0, 3, 3), dtype=np.float64)
+    )
+    residual_norms = np.asarray(
+        [state.residual_norm for state in states], dtype=np.float64
+    )
+    tangents = (
+        np.stack([np.asarray(state.tangent) for state in states])
+        if states
+        else np.empty((0, 3), dtype=np.float64)
+    )
+    jacobian_diagnostics = tuple(
+        state.jacobian_diagnostic
+        for state in states
+        if state.jacobian_diagnostic is not None
+    )
+    standard_weights = (
+        "rho_pose",
+        "entry_measure",
+        "visibility",
+        "fresnel_transmission",
+        "path_validity",
+        "source_factor",
+        "pixel_factor",
+        "other_radiometric",
+    )
+    weight_observables = {
+        name: (
+            "not_evaluated_by_geometry_solver"
+            if name in problem.weight_evaluators
+            else "unavailable"
+        )
+        for name in standard_weights
+    }
+    return FiberResult(
+        status=_status_for_reason(reason),
+        reason=reason,
+        poses=poses,
+        arclength_increments=np.asarray(arclength_increments, dtype=np.float64),
+        residual_norms=residual_norms,
+        tangents=tangents,
+        jacobian_diagnostics=jacobian_diagnostics,
+        step_diagnostics=tuple(step_diagnostics),
+        branch_diagnostics=BranchDiagnostic(
+            path=problem.path,
+            accepted_margins=tuple(accepted_margins),
+            terminal_margins=(
+                dict(event.details)
+                if event is not None
+                else (
+                    dict(step_diagnostics[-1].event_margins)
+                    if step_diagnostics
+                    else {}
+                )
+            ),
+        ),
+        closure_diagnostics=closure_diagnostic,
+        terminal_payload=TerminalPayload(
+            last_accepted_pose=np.asarray(states[-1].rotation) if states else None,
+            rejected_pose=rejected_pose,
+            event=event,
+            accepted_steps=max(0, len(states) - 1),
+            evaluations=evaluations,
+            retries=retries,
+            message=message,
+        ),
+        conventions={
+            "coordinate_sign": problem.convention_version,
+            "pose_representation": "float64 rotation matrix (3, 3)",
+            "metric_measure": problem.pose_metric_and_measure,
+            "dtype": options.dtype,
+            "arclength_unit": "radian",
+            "solver_options_version": "reference-continuation-v1",
+        },
+        weight_observables=weight_observables,
+    )
+
+
+def _step_diagnostic(
+    accepted_index: int,
+    trial_index: int,
+    proposed_step: float,
+    outcome: _CorrectorOutcome,
+) -> StepDiagnostic:
+    margins = (
+        dict(outcome.state.domain.margins)
+        if outcome.state is not None
+        else {}
+    )
+    if outcome.event is not None:
+        margins = {**margins, outcome.event.kind.value: outcome.event.margin}
+    return StepDiagnostic(
+        accepted_index=accepted_index,
+        trial_index=trial_index,
+        proposed_step=proposed_step,
+        accepted=outcome.accepted,
+        corrector_iterations=outcome.iterations,
+        residual_norm=outcome.residual_norm,
+        update_norm=outcome.update_norm,
+        correction_norm=outcome.correction_norm,
+        advance=outcome.advance,
+        tangent_dot=outcome.tangent_dot,
+        reason="accepted" if outcome.accepted else outcome.reason.value,
+        event_margins=margins,
+    )
+
+
+def _adapt_accepted_step(
+    step: float,
+    outcome: _CorrectorOutcome,
+    options: ContinuationOptions,
+) -> float:
+    state = outcome.state
+    assert state is not None and state.jacobian_diagnostic is not None
+    clear_of_event = all(
+        margin > options.event_slowdown_margin
+        for margin in state.domain.margins.values()
+    )
+    easy = (
+        outcome.iterations <= 2
+        and outcome.correction_norm <= 0.1 * step
+        and outcome.tangent_dot >= 0.98
+        and state.jacobian_diagnostic.condition <= 0.1 * options.condition_limit
+        and clear_of_event
+    )
+    difficult = (
+        outcome.iterations >= max(3, options.corrector_maximum_iterations // 2)
+        or outcome.correction_norm >= 0.5 * step
+        or outcome.tangent_dot < 0.95
+        or not clear_of_event
+    )
+    if easy:
+        step *= options.growth_factor
+    elif difficult:
+        step *= options.shrink_factor
+    return min(options.maximum_step, max(options.minimum_step, step))
+
+
+def _crossing_direction(previous: float, current: float) -> int:
+    if previous < 0.0 <= current:
+        return 1
+    if previous > 0.0 >= current:
+        return -1
+    return 0
+
+
+def _correct_closure(
+    problem: FiberProblem,
+    options: ContinuationOptions,
+    current: Array,
+    seed: Array,
+    initial_tangent: Array,
+    current_tangent: Array,
+) -> _CorrectorOutcome:
+    delta = jnp.zeros(3, dtype=current.dtype)
+    last_residual = float("inf")
+    last_update = float("inf")
+    evaluations = 0
+
+    def closing_system(correction: Array) -> Array:
+        candidate = current @ exp(correction)
+        direction = problem.direction_evaluator(candidate)
+        residual_value = problem.target_chart.basis.T @ (
+            direction - problem.target_chart.direction
+        )
+        section = _section_coordinate(seed, candidate, initial_tangent)
+        return jnp.concatenate((residual_value, jnp.atleast_1d(section)))
+
+    for iteration in range(options.closure_maximum_iterations + 1):
+        candidate = current @ exp(delta)
+        domain = _evaluate_domain(problem, candidate)
+        evaluations += 1
+        if not domain.valid:
+            event = domain.event
+            reason = event.kind if event is not None else TerminationReason.PATH_INFEASIBLE
+            return _CorrectorOutcome(
+                False,
+                None,
+                np.asarray(current),
+                np.asarray(candidate),
+                iteration,
+                last_residual,
+                last_update,
+                float(jnp.linalg.norm(delta)),
+                float(rotation_distance(current, candidate)),
+                float("nan"),
+                reason,
+                event,
+                evaluations,
+                event.message if event is not None else "invalid closure domain",
+            )
+        try:
+            value = closing_system(delta)
+            value_array = np.asarray(value)
+        except Exception as error:
+            return _CorrectorOutcome(
+                False,
+                None,
+                np.asarray(current),
+                np.asarray(candidate),
+                iteration,
+                float("inf"),
+                last_update,
+                float(jnp.linalg.norm(delta)),
+                float(rotation_distance(current, candidate)),
+                float("nan"),
+                TerminationReason.NON_FINITE,
+                None,
+                evaluations,
+                f"closure evaluation failed: {type(error).__name__}: {error}",
+            )
+        last_residual = float(np.linalg.norm(value_array[:2]))
+        section_norm = abs(float(value_array[2]))
+        if not np.all(np.isfinite(value_array)):
+            return _CorrectorOutcome(
+                False,
+                None,
+                np.asarray(current),
+                np.asarray(candidate),
+                iteration,
+                last_residual,
+                last_update,
+                float(jnp.linalg.norm(delta)),
+                float(rotation_distance(current, candidate)),
+                float("nan"),
+                TerminationReason.NON_FINITE,
+                None,
+                evaluations,
+                "closure system returned a non-finite value",
+            )
+        if (
+            last_residual <= options.residual_tolerance
+            and section_norm <= options.closure_section_tolerance
+        ):
+            state = _evaluate_regular_state(
+                problem, options, candidate, previous_tangent=current_tangent
+            )
+            evaluations += 1
+            tangent_dot = (
+                float(jnp.dot(initial_tangent, state.tangent))
+                if state.tangent is not None
+                else float("nan")
+            )
+            correction_norm = float(jnp.linalg.norm(delta))
+            advance = float(rotation_distance(current, candidate))
+            accepted = (
+                state.accepted
+                and correction_norm <= options.maximum_correction
+                and advance <= options.maximum_advance
+                and tangent_dot >= options.closure_tangent_dot
+                and float(rotation_distance(seed, candidate))
+                <= options.closure_distance
+            )
+            return _CorrectorOutcome(
+                accepted,
+                state,
+                np.asarray(current),
+                None if accepted else np.asarray(candidate),
+                iteration,
+                state.residual_norm,
+                last_update if np.isfinite(last_update) else 0.0,
+                correction_norm,
+                advance,
+                tangent_dot,
+                None if accepted else TerminationReason.TOPOLOGY_AMBIGUITY,
+                state.event,
+                evaluations,
+                "closure corrector converged" if accepted else "closure gates failed",
+            )
+        if iteration == options.closure_maximum_iterations:
+            break
+        try:
+            jacobian = jax.jacfwd(closing_system)(delta)
+            jacobian_array = np.asarray(jacobian)
+            condition = float(np.linalg.cond(jacobian_array))
+            if not np.all(np.isfinite(jacobian_array)) or not np.isfinite(condition):
+                raise FloatingPointError("non-finite closure Jacobian")
+            if condition > options.condition_limit:
+                raise np.linalg.LinAlgError(
+                    f"closure system condition {condition} exceeds limit"
+                )
+            update = jnp.linalg.solve(jacobian, -value)
+            if not np.all(np.isfinite(np.asarray(update))):
+                raise FloatingPointError("non-finite closure update")
+        except (np.linalg.LinAlgError, FloatingPointError) as error:
+            return _CorrectorOutcome(
+                False,
+                None,
+                np.asarray(current),
+                np.asarray(candidate),
+                iteration,
+                last_residual,
+                last_update,
+                float(jnp.linalg.norm(delta)),
+                float(rotation_distance(current, candidate)),
+                float("nan"),
+                TerminationReason.LINEAR_SOLVE_FAILURE,
+                None,
+                evaluations,
+                str(error),
+            )
+        last_update = float(jnp.linalg.norm(update))
+        delta = delta + update
+
+    candidate = current @ exp(delta)
+    return _CorrectorOutcome(
+        False,
+        None,
+        np.asarray(current),
+        np.asarray(candidate),
+        options.closure_maximum_iterations,
+        last_residual,
+        last_update,
+        float(jnp.linalg.norm(delta)),
+        float(rotation_distance(current, candidate)),
+        float("nan"),
+        TerminationReason.CORRECTOR_FAILURE,
+        None,
+        evaluations,
+        "closure corrector iteration budget exhausted",
+    )
+
+
+def trace_fiber(
+    problem: FiberProblem,
+    options: ContinuationOptions | None = None,
+) -> FiberResult:
+    """Trace the regular component reachable from ``problem.seed``.
+
+    The host controls bounded continuation and diagnostics while JAX evaluates
+    each smooth local residual and Jacobian.  The result never claims global
+    component completeness.
+    """
+    options = options or ContinuationOptions()
+    seed = jnp.asarray(problem.seed)
+    initial = _evaluate_regular_state(problem, options, seed)
+    evaluations = 1
+    if not initial.accepted:
+        assert initial.reason is not None
+        return _make_result(
+            problem,
+            options,
+            initial.reason,
+            [],
+            [],
+            [],
+            [],
+            _empty_closure_diagnostic(),
+            rejected_pose=np.asarray(seed),
+            event=initial.event,
+            evaluations=evaluations,
+            retries=0,
+            message=initial.message,
+        )
+    seed_tolerance = options.residual_tolerance + options.relative_residual_tolerance
+    if initial.residual_norm > seed_tolerance:
+        return _make_result(
+            problem,
+            options,
+            TerminationReason.INVALID_NUMERICAL_INPUT,
+            [],
+            [],
+            [],
+            [],
+            _empty_closure_diagnostic(),
+            rejected_pose=np.asarray(seed),
+            event=None,
+            evaluations=evaluations,
+            retries=0,
+            message=f"seed residual {initial.residual_norm} exceeds tolerance",
+        )
+
+    states = [initial]
+    arclength_increments: list[float] = []
+    step_diagnostics: list[StepDiagnostic] = []
+    accepted_margins: list[Mapping[str, float]] = [dict(initial.domain.margins)]
+    closure_diagnostic = _empty_closure_diagnostic()
+    step = options.initial_step
+    total_arclength = 0.0
+    total_retries = 0
+    previous_section = 0.0
+
+    while True:
+        accepted_steps = len(states) - 1
+        if accepted_steps >= options.maximum_accepted_steps:
+            return _make_result(
+                problem,
+                options,
+                TerminationReason.STEP_BUDGET,
+                states,
+                arclength_increments,
+                step_diagnostics,
+                accepted_margins,
+                closure_diagnostic,
+                rejected_pose=None,
+                event=None,
+                evaluations=evaluations,
+                retries=total_retries,
+                message="accepted-step budget exhausted",
+            )
+        if evaluations >= options.maximum_evaluations:
+            return _make_result(
+                problem,
+                options,
+                TerminationReason.EVALUATION_BUDGET,
+                states,
+                arclength_increments,
+                step_diagnostics,
+                accepted_margins,
+                closure_diagnostic,
+                rejected_pose=None,
+                event=None,
+                evaluations=evaluations,
+                retries=total_retries,
+                message="evaluation budget exhausted",
+            )
+
+        current_state = states[-1]
+        assert current_state.tangent is not None
+        current = current_state.rotation
+        trial_index = 0
+        while True:
+            predicted = current @ exp(
+                jnp.asarray(step, dtype=current.dtype) * current_state.tangent
+            )
+            outcome = _correct_trial(
+                problem, options, current, predicted, current_state.tangent
+            )
+            evaluations += outcome.evaluations
+            diagnostic = _step_diagnostic(
+                accepted_steps + 1, trial_index, step, outcome
+            )
+            step_diagnostics.append(diagnostic)
+
+            if not outcome.accepted:
+                assert outcome.reason is not None
+                if outcome.reason in _EVENT_REASONS:
+                    return _make_result(
+                        problem,
+                        options,
+                        outcome.reason,
+                        states,
+                        arclength_increments,
+                        step_diagnostics,
+                        accepted_margins,
+                        closure_diagnostic,
+                        rejected_pose=outcome.rejected_pose,
+                        event=outcome.event,
+                        evaluations=evaluations,
+                        retries=total_retries,
+                        message=outcome.message,
+                    )
+                total_retries += 1
+                if trial_index >= options.maximum_retries:
+                    return _make_result(
+                        problem,
+                        options,
+                        outcome.reason,
+                        states,
+                        arclength_increments,
+                        step_diagnostics,
+                        accepted_margins,
+                        closure_diagnostic,
+                        rejected_pose=outcome.rejected_pose,
+                        event=outcome.event,
+                        evaluations=evaluations,
+                        retries=total_retries,
+                        message=outcome.message,
+                    )
+                reduced_step = step * options.shrink_factor
+                if reduced_step < options.minimum_step:
+                    terminal_reason = (
+                        TerminationReason.NON_FINITE
+                        if outcome.reason == TerminationReason.NON_FINITE
+                        else TerminationReason.STEP_UNDERFLOW
+                    )
+                    return _make_result(
+                        problem,
+                        options,
+                        terminal_reason,
+                        states,
+                        arclength_increments,
+                        step_diagnostics,
+                        accepted_margins,
+                        closure_diagnostic,
+                        rejected_pose=outcome.rejected_pose,
+                        event=outcome.event,
+                        evaluations=evaluations,
+                        retries=total_retries,
+                        message=(
+                            f"step reduction below minimum after {outcome.reason.value}: "
+                            f"{reduced_step} < {options.minimum_step}"
+                        ),
+                    )
+                step = reduced_step
+                trial_index += 1
+                continue
+
+            assert outcome.state is not None
+            if evaluations > options.maximum_evaluations:
+                return _make_result(
+                    problem,
+                    options,
+                    TerminationReason.EVALUATION_BUDGET,
+                    states,
+                    arclength_increments,
+                    step_diagnostics,
+                    accepted_margins,
+                    closure_diagnostic,
+                    rejected_pose=np.asarray(outcome.state.rotation),
+                    event=None,
+                    evaluations=evaluations,
+                    retries=total_retries,
+                    message="evaluation budget exhausted during a trial",
+                )
+            if total_arclength + outcome.advance > options.maximum_arclength:
+                return _make_result(
+                    problem,
+                    options,
+                    TerminationReason.ARCLENGTH_BUDGET,
+                    states,
+                    arclength_increments,
+                    step_diagnostics,
+                    accepted_margins,
+                    closure_diagnostic,
+                    rejected_pose=np.asarray(outcome.state.rotation),
+                    event=None,
+                    evaluations=evaluations,
+                    retries=total_retries,
+                    message="next accepted edge would exceed the arclength budget",
+                )
+
+            states.append(outcome.state)
+            arclength_increments.append(outcome.advance)
+            accepted_margins.append(dict(outcome.state.domain.margins))
+            total_arclength += outcome.advance
+            section = float(
+                _section_coordinate(seed, outcome.state.rotation, initial.tangent)
+            )
+            crossing_direction = _crossing_direction(previous_section, section)
+            crossed = previous_section != 0.0 and crossing_direction != 0
+            seed_distance = float(rotation_distance(seed, outcome.state.rotation))
+            tangent_dot = float(jnp.dot(initial.tangent, outcome.state.tangent))
+            extent_gate = (
+                len(states) - 1 >= options.closure_minimum_steps
+                and total_arclength >= options.closure_minimum_arclength
+            )
+            closure_diagnostic = ClosureDiagnostic(
+                accumulated_arclength=total_arclength,
+                seed_distance=seed_distance,
+                previous_section_value=previous_section,
+                section_value=section,
+                section_crossed=crossed,
+                crossing_direction=crossing_direction,
+                tangent_dot=tangent_dot,
+                final_correction_attempted=False,
+                final_correction_accepted=False,
+            )
+            if (
+                extent_gate
+                and crossed
+                and seed_distance <= options.closure_distance
+                and tangent_dot >= options.closure_tangent_dot
+            ):
+                closure = _correct_closure(
+                    problem,
+                    options,
+                    outcome.state.rotation,
+                    seed,
+                    initial.tangent,
+                    outcome.state.tangent,
+                )
+                evaluations += closure.evaluations
+                closure_diagnostic = ClosureDiagnostic(
+                    accumulated_arclength=total_arclength,
+                    seed_distance=seed_distance,
+                    previous_section_value=previous_section,
+                    section_value=section,
+                    section_crossed=crossed,
+                    crossing_direction=crossing_direction,
+                    tangent_dot=tangent_dot,
+                    final_correction_attempted=True,
+                    final_correction_accepted=closure.accepted,
+                )
+                if closure.accepted:
+                    assert closure.state is not None
+                    previous_pose = states[-2].rotation
+                    closing_advance = float(
+                        rotation_distance(previous_pose, closure.state.rotation)
+                    )
+                    states[-1] = closure.state
+                    arclength_increments[-1] = closing_advance
+                    accepted_margins[-1] = dict(closure.state.domain.margins)
+                    total_arclength += closing_advance - outcome.advance
+                    closure_diagnostic = ClosureDiagnostic(
+                        accumulated_arclength=total_arclength,
+                        seed_distance=float(
+                            rotation_distance(seed, closure.state.rotation)
+                        ),
+                        previous_section_value=previous_section,
+                        section_value=float(
+                            _section_coordinate(
+                                seed, closure.state.rotation, initial.tangent
+                            )
+                        ),
+                        section_crossed=True,
+                        crossing_direction=crossing_direction,
+                        tangent_dot=closure.tangent_dot,
+                        final_correction_attempted=True,
+                        final_correction_accepted=True,
+                    )
+                    return _make_result(
+                        problem,
+                        options,
+                        TerminationReason.CLOSED_LOOP,
+                        states,
+                        arclength_increments,
+                        step_diagnostics,
+                        accepted_margins,
+                        closure_diagnostic,
+                        rejected_pose=None,
+                        event=None,
+                        evaluations=evaluations,
+                        retries=total_retries,
+                        message="all closure gates passed",
+                    )
+                if closure.reason in _EVENT_REASONS:
+                    assert closure.reason is not None
+                    return _make_result(
+                        problem,
+                        options,
+                        closure.reason,
+                        states,
+                        arclength_increments,
+                        step_diagnostics,
+                        accepted_margins,
+                        closure_diagnostic,
+                        rejected_pose=closure.rejected_pose,
+                        event=closure.event,
+                        evaluations=evaluations,
+                        retries=total_retries,
+                        message=closure.message,
+                    )
+
+            previous_section = section
+            step = _adapt_accepted_step(step, outcome, options)
+            break
 
 
 @dataclass(frozen=True)
