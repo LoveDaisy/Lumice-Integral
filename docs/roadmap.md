@@ -289,9 +289,10 @@ produce plausible but systematically wrong radiance.
   its behavior can be judged against the author's prototype experience.
 - **2026-09-15**: the $S^2$ fiber-reduction formulation is deferred to Phase II
   and begins as an independent cross-check.
-- **2026-09-15**: the implementation language, AD system, and third-party
-  numerical dependency set remain undecided until the first task evaluates
-  their requirements.
+- **2026-09-16**: Phase I uses Python 3.12 and JAX as the durable float64
+  reference implementation. GPU acceleration targets large batches rather than
+  scalar continuation steps; C++/CUDA remains contingent on representative
+  profiling. See [ADR 0001](decisions/0001-phase-i-python-jax.md).
 - **2026-09-15**: Lumice Integral owns an independent differentiable geometry
   and optics implementation. Lumice remains an external Monte Carlo validation
   oracle and analysis-data source, never a production dependency or shared

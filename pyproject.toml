@@ -3,7 +3,7 @@ name = "lumice-integral"
 version = "0.1.0"
 description = "Deterministic coarea renderer for ice halos"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "jax>=0.7,<1",
     "numpy>=2,<3",

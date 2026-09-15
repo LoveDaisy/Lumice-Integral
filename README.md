@@ -17,4 +17,6 @@ implementation will reproduce the original SO(3) continuation prototype before
 considering the newer fiber-reduction formulation.
 
 See [docs/roadmap.md](docs/roadmap.md) for the mathematical model, scope, phased
-plan, and validation strategy.
+plan, and validation strategy. The accepted Phase I stack and its measured
+CPU/GPU boundaries are recorded in
+[ADR 0001](docs/decisions/0001-phase-i-python-jax.md).
