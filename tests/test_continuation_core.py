@@ -13,7 +13,10 @@ from lumice_integral.continuation import (
     FiberStatus,
     TargetChart,
     TerminationReason,
+    _correct_trial,
+    _evaluate_regular_state,
 )
+from lumice_integral.so3 import exp
 
 
 def analytic_problem(
@@ -98,3 +101,87 @@ def test_schema_inputs_are_numpy_float64_compatible():
     problem = analytic_problem(seed=jnp.asarray(np.eye(3), dtype=jnp.float64))
     assert np.asarray(problem.seed).dtype == np.float64
     assert np.asarray(problem.target_chart.direction).dtype == np.float64
+
+
+def test_regular_state_reports_analytic_singular_values_and_tangent():
+    problem = analytic_problem()
+    state = _evaluate_regular_state(problem, ContinuationOptions(), problem.seed)
+
+    assert state.accepted
+    assert state.jacobian.shape == (2, 3)
+    np.testing.assert_allclose(
+        state.jacobian_diagnostic.singular_values, (1.0, 1.0), atol=1e-14
+    )
+    assert state.jacobian_diagnostic.normal_jacobian == pytest.approx(1.0)
+    assert state.jacobian_diagnostic.rank == 2
+    np.testing.assert_allclose(np.linalg.norm(state.tangent), 1.0, atol=1e-14)
+
+
+def test_tangent_orientation_is_continuous():
+    problem = analytic_problem()
+    options = ContinuationOptions()
+    first = _evaluate_regular_state(problem, options, problem.seed)
+    second_pose = problem.seed @ exp(0.1 * first.tangent)
+    second = _evaluate_regular_state(
+        problem, options, second_pose, previous_tangent=first.tangent
+    )
+
+    assert second.accepted
+    assert float(jnp.dot(first.tangent, second.tangent)) >= 0.0
+
+
+def test_rank_deficient_direction_map_has_typed_event_and_diagnostics():
+    target = BODY_AXIS
+    problem = FiberProblem(
+        path="constant-map",
+        incident_direction=jnp.array([1.0, 0.0, 0.0], dtype=jnp.float64),
+        target_chart=TargetChart(target, tangent_basis(target)),
+        direction_evaluator=lambda _: target,
+        seed=jnp.eye(3, dtype=jnp.float64),
+    )
+    state = _evaluate_regular_state(problem, ContinuationOptions(), problem.seed)
+
+    assert not state.accepted
+    assert state.reason == TerminationReason.RANK_LOSS
+    assert state.event.kind == TerminationReason.RANK_LOSS
+    assert state.jacobian_diagnostic.rank == 0
+    assert state.jacobian_diagnostic.normal_jacobian == 0.0
+
+
+def test_bordered_corrector_converges_and_preserves_phase():
+    problem = analytic_problem()
+    options = ContinuationOptions()
+    initial = _evaluate_regular_state(problem, options, problem.seed)
+    predicted = problem.seed @ exp(
+        jnp.array([0.03, -0.02, 0.04], dtype=jnp.float64)
+    )
+
+    outcome = _correct_trial(
+        problem, options, problem.seed, predicted, initial.tangent
+    )
+
+    assert outcome.accepted
+    assert outcome.residual_norm <= options.residual_tolerance
+    assert outcome.correction_norm <= options.maximum_correction
+    assert outcome.tangent_dot >= options.minimum_tangent_dot
+
+
+def test_bordered_corrector_iteration_budget_is_typed_failure():
+    problem = analytic_problem()
+    options = ContinuationOptions(
+        residual_tolerance=1e-16,
+        corrector_maximum_iterations=1,
+    )
+    initial = _evaluate_regular_state(problem, options, problem.seed)
+    predicted = problem.seed @ exp(
+        jnp.array([0.1, -0.08, 0.03], dtype=jnp.float64)
+    )
+
+    outcome = _correct_trial(
+        problem, options, problem.seed, predicted, initial.tangent
+    )
+
+    assert not outcome.accepted
+    assert outcome.reason == TerminationReason.CORRECTOR_FAILURE
+    assert outcome.iterations == 1
+    assert outcome.residual_norm > options.residual_tolerance

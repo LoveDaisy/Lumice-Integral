@@ -266,6 +266,516 @@ class FiberResult:
 
 
 @dataclass(frozen=True)
+class _StateEvaluation:
+    accepted: bool
+    rotation: Array
+    direction: Array | None
+    residual: Array | None
+    residual_norm: float
+    jacobian: Array | None
+    tangent: Array | None
+    jacobian_diagnostic: JacobianDiagnostic | None
+    domain: DomainEvaluation
+    reason: TerminationReason | None
+    event: EventCandidate | None
+    message: str
+
+
+@dataclass(frozen=True)
+class _CorrectorOutcome:
+    accepted: bool
+    state: _StateEvaluation | None
+    predicted_pose: np.ndarray
+    rejected_pose: np.ndarray | None
+    iterations: int
+    residual_norm: float
+    update_norm: float
+    correction_norm: float
+    advance: float
+    tangent_dot: float
+    reason: TerminationReason | None
+    event: EventCandidate | None
+    evaluations: int
+    message: str
+
+
+_EVENT_REASONS = {
+    TerminationReason.TIR_BOUNDARY,
+    TerminationReason.BRANCH_BOUNDARY,
+    TerminationReason.PATH_INFEASIBLE,
+    TerminationReason.VISIBILITY_BOUNDARY,
+    TerminationReason.CHART_BOUNDARY,
+    TerminationReason.RANK_LOSS,
+    TerminationReason.TOPOLOGY_AMBIGUITY,
+}
+
+
+def _default_domain_evaluation(_: Array) -> DomainEvaluation:
+    return DomainEvaluation(valid=True)
+
+
+def _evaluate_domain(problem: FiberProblem, rotation: Array) -> DomainEvaluation:
+    evaluator = problem.domain_and_event_evaluator or _default_domain_evaluation
+    try:
+        evaluation = evaluator(rotation)
+    except Exception as error:  # A user adapter is an explicit failure boundary.
+        return DomainEvaluation(
+            valid=False,
+            event=EventCandidate(
+                TerminationReason.NON_FINITE,
+                float("nan"),
+                f"domain evaluator raised {type(error).__name__}: {error}",
+            ),
+        )
+    if not isinstance(evaluation, DomainEvaluation):
+        return DomainEvaluation(
+            valid=False,
+            event=EventCandidate(
+                TerminationReason.INVALID_NUMERICAL_INPUT,
+                float("nan"),
+                "domain evaluator must return DomainEvaluation",
+            ),
+        )
+    margins = {name: float(value) for name, value in evaluation.margins.items()}
+    if evaluation.event is not None:
+        event = EventCandidate(
+            evaluation.event.kind,
+            float(evaluation.event.margin),
+            evaluation.event.message,
+            evaluation.event.details,
+        )
+    else:
+        event = None
+    if not evaluation.valid and event is None:
+        event = EventCandidate(
+            TerminationReason.PATH_INFEASIBLE,
+            min(margins.values(), default=float("nan")),
+            "domain evaluator rejected the pose without a more specific event",
+        )
+    return DomainEvaluation(evaluation.valid, margins, event)
+
+
+def _rejected_state(
+    rotation: Array,
+    domain: DomainEvaluation,
+    reason: TerminationReason,
+    message: str,
+    *,
+    direction: Array | None = None,
+    residual_value: Array | None = None,
+    residual_norm: float = float("inf"),
+    event: EventCandidate | None = None,
+) -> _StateEvaluation:
+    return _StateEvaluation(
+        accepted=False,
+        rotation=rotation,
+        direction=direction,
+        residual=residual_value,
+        residual_norm=residual_norm,
+        jacobian=None,
+        tangent=None,
+        jacobian_diagnostic=None,
+        domain=domain,
+        reason=reason,
+        event=event,
+        message=message,
+    )
+
+
+def _evaluate_regular_state(
+    problem: FiberProblem,
+    options: ContinuationOptions,
+    rotation: Array,
+    previous_tangent: Array | None = None,
+) -> _StateEvaluation:
+    """Evaluate one pose with discrete gates outside the differentiable graph."""
+    domain = _evaluate_domain(problem, rotation)
+    if not domain.valid:
+        event = domain.event
+        reason = event.kind if event is not None else TerminationReason.PATH_INFEASIBLE
+        return _rejected_state(
+            rotation,
+            domain,
+            reason,
+            event.message if event is not None else "invalid path domain",
+            event=event,
+        )
+
+    try:
+        direction = problem.direction_evaluator(rotation)
+        direction_array = np.asarray(direction)
+    except Exception as error:
+        return _rejected_state(
+            rotation,
+            domain,
+            TerminationReason.NON_FINITE,
+            f"direction evaluator raised {type(error).__name__}: {error}",
+        )
+    if direction_array.shape != (3,) or direction_array.dtype != np.float64:
+        return _rejected_state(
+            rotation,
+            domain,
+            TerminationReason.INVALID_NUMERICAL_INPUT,
+            "direction evaluator must return a float64 array with shape (3,)",
+            direction=direction,
+        )
+    if not np.all(np.isfinite(direction_array)):
+        return _rejected_state(
+            rotation,
+            domain,
+            TerminationReason.NON_FINITE,
+            "direction evaluator returned a non-finite value",
+            direction=direction,
+        )
+    direction_norm = float(np.linalg.norm(direction_array))
+    if not np.isclose(
+        direction_norm, 1.0, rtol=0.0, atol=options.unit_tolerance
+    ):
+        return _rejected_state(
+            rotation,
+            domain,
+            TerminationReason.INVALID_NUMERICAL_INPUT,
+            f"direction evaluator returned non-unit output: norm={direction_norm}",
+            direction=direction,
+        )
+
+    chart = problem.target_chart
+    chart_dot = float(jnp.dot(direction, chart.direction))
+    if chart_dot <= chart.minimum_dot:
+        event = EventCandidate(
+            TerminationReason.CHART_BOUNDARY,
+            chart_dot - chart.minimum_dot,
+            "direction left the declared target chart neighborhood",
+        )
+        return _rejected_state(
+            rotation,
+            domain,
+            event.kind,
+            event.message,
+            direction=direction,
+            event=event,
+        )
+
+    residual_value = chart.basis.T @ (direction - chart.direction)
+    residual_norm = float(jnp.linalg.norm(residual_value))
+    if not np.isfinite(residual_norm):
+        return _rejected_state(
+            rotation,
+            domain,
+            TerminationReason.NON_FINITE,
+            "target residual is non-finite",
+            direction=direction,
+            residual_value=residual_value,
+            residual_norm=residual_norm,
+        )
+
+    zero = jnp.zeros(3, dtype=rotation.dtype)
+
+    def local_residual(delta: Array) -> Array:
+        candidate = rotation @ exp(delta)
+        candidate_direction = problem.direction_evaluator(candidate)
+        return chart.basis.T @ (candidate_direction - chart.direction)
+
+    try:
+        jacobian = jax.jacfwd(local_residual)(zero)
+        jacobian_array = np.asarray(jacobian)
+    except Exception as error:
+        return _rejected_state(
+            rotation,
+            domain,
+            TerminationReason.NON_FINITE,
+            f"direction differentiation failed: {type(error).__name__}: {error}",
+            direction=direction,
+            residual_value=residual_value,
+            residual_norm=residual_norm,
+        )
+    if jacobian_array.shape != (2, 3) or not np.all(np.isfinite(jacobian_array)):
+        return _rejected_state(
+            rotation,
+            domain,
+            TerminationReason.NON_FINITE,
+            "local residual Jacobian is non-finite or has the wrong shape",
+            direction=direction,
+            residual_value=residual_value,
+            residual_norm=residual_norm,
+        )
+
+    _, singular_values, vh = np.linalg.svd(jacobian_array, full_matrices=True)
+    sigma_1, sigma_2 = (float(singular_values[0]), float(singular_values[1]))
+    normal_jacobian = sigma_1 * sigma_2
+    rank = int(np.count_nonzero(singular_values >= options.singular_value_tolerance))
+    condition = sigma_1 / sigma_2 if sigma_2 > 0.0 else float("inf")
+    diagnostic = JacobianDiagnostic(
+        singular_values=(sigma_1, sigma_2),
+        normal_jacobian=normal_jacobian,
+        rank=rank,
+        condition=condition,
+    )
+    if rank < 2 or condition > options.condition_limit:
+        event = EventCandidate(
+            TerminationReason.RANK_LOSS,
+            sigma_2 - options.singular_value_tolerance,
+            "local residual Jacobian failed the regularity gate",
+            {"sigma_1": sigma_1, "sigma_2": sigma_2, "condition": condition},
+        )
+        return _StateEvaluation(
+            accepted=False,
+            rotation=rotation,
+            direction=direction,
+            residual=residual_value,
+            residual_norm=residual_norm,
+            jacobian=jacobian,
+            tangent=None,
+            jacobian_diagnostic=diagnostic,
+            domain=domain,
+            reason=event.kind,
+            event=event,
+            message=event.message,
+        )
+
+    tangent_array = vh[-1]
+    if previous_tangent is not None and float(
+        np.dot(tangent_array, np.asarray(previous_tangent))
+    ) < 0.0:
+        tangent_array = -tangent_array
+    tangent_array = tangent_array / np.linalg.norm(tangent_array)
+    tangent = jnp.asarray(tangent_array, dtype=rotation.dtype)
+    return _StateEvaluation(
+        accepted=True,
+        rotation=rotation,
+        direction=direction,
+        residual=residual_value,
+        residual_norm=residual_norm,
+        jacobian=jacobian,
+        tangent=tangent,
+        jacobian_diagnostic=diagnostic,
+        domain=domain,
+        reason=None,
+        event=None,
+        message="regular state",
+    )
+
+
+def _correct_trial(
+    problem: FiberProblem,
+    options: ContinuationOptions,
+    current: Array,
+    predicted: Array,
+    phase_tangent: Array,
+) -> _CorrectorOutcome:
+    """Apply a bounded bordered Newton correction around one predictor."""
+    delta = jnp.zeros(3, dtype=predicted.dtype)
+    last_residual = float("inf")
+    last_update = float("inf")
+    evaluations = 0
+
+    def system(correction: Array) -> Array:
+        candidate = predicted @ exp(correction)
+        direction = problem.direction_evaluator(candidate)
+        residual_value = problem.target_chart.basis.T @ (
+            direction - problem.target_chart.direction
+        )
+        return jnp.concatenate(
+            (residual_value, jnp.atleast_1d(jnp.dot(phase_tangent, correction)))
+        )
+
+    for iteration in range(options.corrector_maximum_iterations + 1):
+        candidate = predicted @ exp(delta)
+        domain = _evaluate_domain(problem, candidate)
+        evaluations += 1
+        if not domain.valid:
+            event = domain.event
+            reason = event.kind if event is not None else TerminationReason.PATH_INFEASIBLE
+            return _CorrectorOutcome(
+                False,
+                None,
+                np.asarray(predicted),
+                np.asarray(candidate),
+                iteration,
+                last_residual,
+                last_update,
+                float(jnp.linalg.norm(delta)),
+                float(rotation_distance(current, candidate)),
+                float("nan"),
+                reason,
+                event,
+                evaluations,
+                event.message if event is not None else "invalid path domain",
+            )
+        try:
+            value = system(delta)
+            value_array = np.asarray(value)
+        except Exception as error:
+            value_array = np.full(3, np.nan)
+            message = f"corrector evaluation failed: {type(error).__name__}: {error}"
+        else:
+            message = "corrector evaluation returned a non-finite value"
+        last_residual = float(np.linalg.norm(value_array[:2]))
+        phase_norm = abs(float(value_array[2]))
+        if not np.all(np.isfinite(value_array)):
+            return _CorrectorOutcome(
+                False,
+                None,
+                np.asarray(predicted),
+                np.asarray(candidate),
+                iteration,
+                last_residual,
+                last_update,
+                float(jnp.linalg.norm(delta)),
+                float(rotation_distance(current, candidate)),
+                float("nan"),
+                TerminationReason.NON_FINITE,
+                None,
+                evaluations,
+                message,
+            )
+        if (
+            last_residual <= options.residual_tolerance
+            and phase_norm <= options.corrector_update_tolerance
+        ):
+            state = _evaluate_regular_state(
+                problem, options, candidate, previous_tangent=phase_tangent
+            )
+            evaluations += 1
+            correction_norm = float(jnp.linalg.norm(delta))
+            advance = float(rotation_distance(current, candidate))
+            tangent_dot = (
+                float(jnp.dot(phase_tangent, state.tangent))
+                if state.tangent is not None
+                else float("nan")
+            )
+            if not state.accepted:
+                return _CorrectorOutcome(
+                    False,
+                    state,
+                    np.asarray(predicted),
+                    np.asarray(candidate),
+                    iteration,
+                    state.residual_norm,
+                    last_update,
+                    correction_norm,
+                    advance,
+                    tangent_dot,
+                    state.reason,
+                    state.event,
+                    evaluations,
+                    state.message,
+                )
+            if correction_norm > options.maximum_correction:
+                reason = TerminationReason.CORRECTOR_FAILURE
+                message = "corrector exceeded the correction trust limit"
+            elif advance > options.maximum_advance:
+                reason = TerminationReason.CORRECTOR_FAILURE
+                message = "corrected step exceeded the advance trust limit"
+            elif tangent_dot < options.minimum_tangent_dot:
+                reason = TerminationReason.CORRECTOR_FAILURE
+                message = "corrected state exceeded the tangent-change limit"
+            else:
+                return _CorrectorOutcome(
+                    True,
+                    state,
+                    np.asarray(predicted),
+                    None,
+                    iteration,
+                    state.residual_norm,
+                    last_update if np.isfinite(last_update) else 0.0,
+                    correction_norm,
+                    advance,
+                    tangent_dot,
+                    None,
+                    None,
+                    evaluations,
+                    "corrector converged",
+                )
+            return _CorrectorOutcome(
+                False,
+                state,
+                np.asarray(predicted),
+                np.asarray(candidate),
+                iteration,
+                state.residual_norm,
+                last_update,
+                correction_norm,
+                advance,
+                tangent_dot,
+                reason,
+                None,
+                evaluations,
+                message,
+            )
+        if iteration == options.corrector_maximum_iterations:
+            break
+        try:
+            bordered = jax.jacfwd(system)(delta)
+            bordered_array = np.asarray(bordered)
+            if not np.all(np.isfinite(bordered_array)):
+                raise FloatingPointError("non-finite bordered Jacobian")
+            condition = float(np.linalg.cond(bordered_array))
+            if not np.isfinite(condition) or condition > options.condition_limit:
+                raise np.linalg.LinAlgError(
+                    f"bordered system condition {condition} exceeds limit"
+                )
+            update = jnp.linalg.solve(bordered, -value)
+            update_array = np.asarray(update)
+            if not np.all(np.isfinite(update_array)):
+                raise FloatingPointError("non-finite Newton update")
+        except (np.linalg.LinAlgError, FloatingPointError) as error:
+            return _CorrectorOutcome(
+                False,
+                None,
+                np.asarray(predicted),
+                np.asarray(candidate),
+                iteration,
+                last_residual,
+                last_update,
+                float(jnp.linalg.norm(delta)),
+                float(rotation_distance(current, candidate)),
+                float("nan"),
+                TerminationReason.LINEAR_SOLVE_FAILURE,
+                None,
+                evaluations,
+                str(error),
+            )
+        except Exception as error:
+            return _CorrectorOutcome(
+                False,
+                None,
+                np.asarray(predicted),
+                np.asarray(candidate),
+                iteration,
+                last_residual,
+                last_update,
+                float(jnp.linalg.norm(delta)),
+                float(rotation_distance(current, candidate)),
+                float("nan"),
+                TerminationReason.NON_FINITE,
+                None,
+                evaluations,
+                f"corrector differentiation failed: {type(error).__name__}: {error}",
+            )
+        last_update = float(jnp.linalg.norm(update))
+        delta = delta + update
+
+    candidate = predicted @ exp(delta)
+    return _CorrectorOutcome(
+        False,
+        None,
+        np.asarray(predicted),
+        np.asarray(candidate),
+        options.corrector_maximum_iterations,
+        last_residual,
+        last_update,
+        float(jnp.linalg.norm(delta)),
+        float(rotation_distance(current, candidate)),
+        float("nan"),
+        TerminationReason.CORRECTOR_FAILURE,
+        None,
+        evaluations,
+        "corrector iteration budget exhausted",
+    )
+
+
+@dataclass(frozen=True)
 class TraceResult:
     rotations: np.ndarray
     residual_norms: np.ndarray
