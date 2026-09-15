@@ -452,7 +452,7 @@ Let `N` be the number of accepted pose samples. A result MUST contain:
 | Field semantics | Shape or requirement |
 |---|---|
 | `status` | Exactly one of `closed`, `event_terminated`, `numerical_failure`, or `budget_exhausted`. |
-| `reason` | Closed reason code compatible with `status`; unknown extension codes retain their original string/payload. |
+| `reason` | A reason code compatible with `status`; unknown extension codes retain their original string/payload. |
 | `component_scope` | States that this is one component reached from one seed; component completeness is `unknown` unless established externally. |
 | `poses` | `N` ordered `SO(3)` poses in the declared representation, with representation validity diagnostics. |
 | `arclength_increments` | `N - 1` nonnegative metric edge lengths, plus any separately represented closing edge if the storage convention omits a repeated seed. |
@@ -540,3 +540,27 @@ belongs to the named downstream task.
   data provenance require an explicit adapter after their reconstruction.
 - Phase II must derive its own measure conversion and demonstrate agreement;
   this document does not assume that reduction in the Phase I algorithm.
+
+## 13. Contract audit and acceptance crosswalk
+
+This crosswalk records the scope audit performed for the initial contract. A
+checked row means the semantic requirement is present and internally assigned;
+it does not claim that a pending solver or conformance test already exists.
+
+| Acceptance area | Contract location | Audit result |
+|---|---|---|
+| Pose action, frames, composition, propagation signs, units, and local `SO(3)` coordinates | Sections 2–3 | Defined; evaluator sign conversions must be explicit. |
+| `F_P`, smooth domain, local two-dimensional residual, antipode exclusion, and chart/basis invariance | Sections 5.2–5.4 | Defined; general charts carry their metric correction. |
+| `2 x 3` Jacobian, tangent orientation, predictor-corrector, adaptive signals, and closure | Sections 5.4 and 6 | Defined for one regular seeded component only. |
+| Coarea measure, normal Jacobian, Haar conversion, and named physical factors | Sections 5.1 and 7 | Defined; absolute radiometry and unimplemented factors remain explicit. |
+| Rank loss, critical points, TIR, branch/path/visibility boundaries, self-approach, and multiple components | Section 8 and section 12 | Observable termination/open semantics defined; unsupported crossings are not claimed. |
+| Backend-independent problem/options/result and four terminal statuses | Section 9 | Required fields, diagnostics, availability, and causal status precedence defined. |
+| Mathematical truth versus tolerances/default strategies | Section 10 | Separated; default numerical values await conformance evidence. |
+| Analytic circle, synthetic 3-5, basis changes, and failure counterexamples | Section 11 | C01–C14 assigned to current or downstream evidence owners. |
+| float64, zero-limit AD, and stable rotation distance | Section 3 | Incorporated as reference numerical requirements, not universal mathematical constants. |
+| Roadmap linkage, Phase II boundary, Lumice independence, and downstream backfill | Sections 1, 4, and 12; [`roadmap.md`](roadmap.md) | Single detailed authority retained here; open ownership is explicit. |
+
+Initial self-audit conclusion: every issue acceptance area maps to a normative
+section or a named open item. No solver implementation, historical fixture
+normalization, complete-component claim, exact numerical result, or Lumice
+runtime dependency is introduced by this contract.
