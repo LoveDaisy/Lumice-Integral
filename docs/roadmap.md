@@ -78,6 +78,9 @@ quantitatively.
 Phase I deliberately follows the original prototype. It treats $F_P$ as a
 black-box differentiable map on SO(3) and traces the implicit fiber directly.
 The newer reduction to an $S^2$ contour is not part of the Phase I algorithm.
+The [Phase I mathematical and numerical contract](phase1-math-contract.md) is
+the single source for its coordinate conventions, interface semantics,
+measures, event taxonomy, and conformance invariants.
 
 ### 3.1 Core algorithm
 

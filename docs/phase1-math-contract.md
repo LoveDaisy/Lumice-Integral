@@ -397,3 +397,146 @@ boundary rather than extrapolate the smooth branch. Discovering other connected
 components, proving seed coverage, and deduplicating components are also open
 and external to a single `FiberResult`.
 
+## 9. Backend-independent interface semantics
+
+Names in this section are descriptive schema names, not required Python class
+names. A backend MAY reorganize fields, but serialized diagnostics and public
+documentation MUST preserve their meanings, shapes, units, and availability.
+
+### 9.1 `FiberProblem`
+
+| Field semantics | Requirement |
+|---|---|
+| `path` | Immutable identifier and parameters for the ordered path branch `P`, including wavelength/material data needed by the evaluator. |
+| `incident_direction` | Finite world-space `(3)` unit vector `s`, with convention version. |
+| `target_direction` | Finite world-space `(3)` unit vector `d`, with convention version. |
+| `direction_evaluator` | Maps a pose to outgoing `(3)` direction plus named branch/physical margins; differentiable only inside its declared smooth domain. |
+| `domain_and_event_evaluator` | Reports validity and typed event candidates without relying on differentiating discrete predicates. It may be combined with the value evaluator if outputs remain distinct. |
+| `target_chart` | Target neighborhood plus orthonormal tangent basis, or a general chart with its metric density. |
+| `pose_metric_and_measure` | The section 5.1 metric and either `dVol_g` or `d mu_Haar`; alternative normalizations require an explicit conversion. |
+| `seed` | Initial pose with storage representation declared; it denotes a pose in `SO(3)`, not a unique quaternion representative. |
+| `weight_evaluators` | Optional independently named factor evaluators. Absence is reported and does not prevent geometry-only tracing. |
+
+Problem construction MUST validate finite values, unit directions, convention
+compatibility, and required evaluator capabilities before continuation. It MUST
+not import or invoke Lumice. A backend-specific callable or AD mechanism is an
+adapter behind these semantics, not part of the contract.
+
+### 9.2 `ContinuationOptions`
+
+Options MUST make the following numerical policy observable; no value is fixed
+by this document:
+
+- reference dtype and unit-direction validation tolerance;
+- seed/root residual absolute and relative tolerances;
+- target-neighborhood/antipode margin;
+- singular-value, normal-Jacobian, rank, and condition-number gates;
+- initial, minimum, and maximum step; shrink/growth limits and retry budget;
+- corrector iteration, residual, update, and trust limits;
+- tangent-change and accepted-advance limits;
+- event prediction/localization margins and iteration budget;
+- maximum accepted steps, evaluations, wall-independent work units, and
+  accumulated arclength;
+- closure minimum steps/arclength, pose distance, transverse-section crossing,
+  tangent agreement, and final correction tolerances;
+- requested diagnostic level and sample retention policy.
+
+Any default MUST be documented as a reference implementation strategy and
+linked to convergence evidence. Relaxing a default MUST NOT alter the exact
+meaning of a root, regularity, path validity, or closure.
+
+### 9.3 `FiberResult`
+
+Let `N` be the number of accepted pose samples. A result MUST contain:
+
+| Field semantics | Shape or requirement |
+|---|---|
+| `status` | Exactly one of `closed`, `event_terminated`, `numerical_failure`, or `budget_exhausted`. |
+| `reason` | Closed reason code compatible with `status`; unknown extension codes retain their original string/payload. |
+| `component_scope` | States that this is one component reached from one seed; component completeness is `unknown` unless established externally. |
+| `poses` | `N` ordered `SO(3)` poses in the declared representation, with representation validity diagnostics. |
+| `arclength_increments` | `N - 1` nonnegative metric edge lengths, plus any separately represented closing edge if the storage convention omits a repeated seed. |
+| `residual_norms` | `(N)` norms and the norm definition/tolerances used. |
+| `tangents` | `(N, 3)` oriented right-trivialized unit tangents where available. |
+| `jacobian_diagnostics` | Per-sample singular values, `J_perp`, rank/condition estimates, and availability flags. |
+| `step_diagnostics` | Accepted/rejected trial counts, step sizes, corrector iterations, residual/update outcomes, tangent changes, and reason codes. |
+| `branch_diagnostics` | Path identifier and named validity/event margins at accepted and terminal evaluations. |
+| `closure_diagnostics` | Accumulated length, stable seed distance, section values/crossing, tangent agreement, and final-correction outcome. |
+| `terminal_payload` | Last accepted state and relevant rejected/bracketed state, event/failure scalars, iteration/budget counters, and message. |
+| `conventions` | Coordinate/sign version, pose representation, metric/measure, dtype, units, and solver/options version. |
+| `weight_observables` | Each requested factor and availability status separately; never only an opaque product. |
+
+Unavailable data MUST be explicit rather than encoded as a plausible zero,
+one, empty success value, or NaN without a reason. Partial samples on any
+non-closed termination MAY support diagnostics, but MUST NOT be reported as a
+closed-component integral.
+
+### 9.4 Status and reason mapping
+
+| `status` | Required interpretation | Representative `reason` values |
+|---|---|---|
+| `closed` | Every closure and ordinary acceptance gate passed for the traced component. | `closed_loop` |
+| `event_terminated` | A known physical, chart, regularity, or topology boundary ended supported smooth continuation. | `tir_boundary`, `branch_boundary`, `path_infeasible`, `visibility_boundary`, `chart_boundary`, `rank_loss`, `topology_ambiguity` |
+| `numerical_failure` | Bounded numerical recovery failed without a more specific known domain event. | `corrector_failure`, `linear_solve_failure`, `non_finite`, `step_underflow`, `invalid_numerical_input` |
+| `budget_exhausted` | Inputs remained meaningful but a declared work/extent budget ended the trace before another terminal condition. | `step_budget`, `arclength_budget`, `evaluation_budget` |
+
+Status precedence is based on the best available causal evidence. For example,
+a non-finite refraction result preceded by a negative Snell discriminant is
+`event_terminated/tir_boundary`, not `numerical_failure/non_finite`. Exhausting
+retries while localizing a known branch boundary retains the boundary event and
+records localization failure in its payload.
+
+## 10. Truth, tolerance, and strategy separation
+
+| Mathematical truth | Numerical tolerance or evidence | Permitted implementation strategy |
+|---|---|---|
+| `SO(3)` has the metric/volume normalization in section 5.1. | Orthonormality and determinant residuals have configured finite tolerances. | Matrix, quaternion, or another faithful pose representation. |
+| A regular root has `F_P(R)=d`, rank two, a one-dimensional tangent kernel, and positive `J_perp`. | Residual, `sigma_2`, `J_perp`, and conditioning gates approximate these facts. | AD, analytic derivatives, or verified numerical derivatives. |
+| An orthogonal target-basis change does not alter the physical fiber or `J_perp`. | Conformance compares results within declared errors. | Deterministic, transported, or reconstructed orthonormal basis. |
+| Arclength and coarea use the declared Riemannian measures. | Quadrature and edge-length convergence are reported. | Adaptive or fixed quadrature once independently converged; corrected edge geometry may vary. |
+| Closure is a return through the seed's local section with compatible orientation. | Distance, section, tangent, minimum-length, and correction tolerances are options. | Bordered Newton, pseudo-arclength, or an equivalent corrector. |
+| A domain boundary is not a smooth-root solver failure. | Event margins and localization tolerances approximate its location. | Bracketing, step clipping, dense output, or honest termination before the boundary. |
+
+Current observations such as 145 fixed steps for the synthetic 3-5 trace,
+specific residual magnitudes, and float32 drift are evidence for selecting and
+testing defaults. They MUST NOT appear as universal pass criteria. Similarly,
+one successful closed loop establishes only that one seeded trace under one
+configuration converged.
+
+## 11. Initial conformance matrix
+
+“Pending” means the clause is normative now but its durable automated evidence
+belongs to the named downstream task.
+
+| ID | Fixture or counterexample | Required invariant | Evidence / owner |
+|---|---|---|---|
+| C01 | Analytic `F(R) = R e3`, target `e3` | Rank two; singular values `(1, 1)` and `J_perp = 1` at the identity under the declared bases/metric. | Existing Jacobian test is partial; complete in `reference-core-conformance`. |
+| C02 | Same analytic fiber | Closed component length converges to `2 pi`; uniform Haar pose density pushes forward to sphere density `1 / (4 pi)` because `(2 pi)/(8 pi^2) = 1/(4 pi)`. | Length evidence exists; normalization check pending `reference-core-conformance`. |
+| C03 | Analytic and synthetic 3-5 roots with several `Q in O(2)` basis changes | Root poses, tangent line, rank, singular values, `J_perp`, and converged geometry agree; tangent order may reverse only with seed orientation. | Pending `reference-core-conformance`. |
+| C04 | Target antipode for the projected residual | Algebraic zero at `-d` is rejected by the target-neighborhood gate. | Pending `reference-core-conformance`. |
+| C05 | Smooth synthetic 3-5 branch | Unit outgoing direction, positive branch margins, local rank two, and one seeded component closes under independently converged settings. Exact 145 steps is not asserted. | Existing tests are partial; adaptive evidence pending both downstream tasks. |
+| C06 | Initial step sizes and controller thresholds perturbed around reference defaults | Accepted traces converge to the same component geometry, length, orientation-independent integral, and terminal status within reported errors. | Pending `reference-core-conformance`. |
+| C07 | Constructed rank-deficient map | Terminates as `event_terminated/rank_loss` with singular-value and `J_perp` diagnostics; no regular coarea value is emitted. | Pending `reference-continuation-core` and conformance. |
+| C08 | TIR or explicit path-domain boundary | Terminates with the typed event and signed margin before unsafe evaluation; not merely NaN or corrector failure. | Pending `reference-continuation-core` and conformance. |
+| C09 | Corrector non-convergence and ill-conditioned linear solve without known physical event | Bounded retries end in the matching `numerical_failure` reason with trial history. | Pending `reference-continuation-core` and conformance. |
+| C10 | Non-finite input/evaluator output | Rejects or terminates deterministically with source and reason; never returns apparent closure. | Pending `reference-continuation-core` and conformance. |
+| C11 | Too-small step and short step/arclength/evaluation budgets | Distinguishes `step_underflow` from each `budget_exhausted` reason and retains partial diagnostics. | Pending `reference-continuation-core` and conformance. |
+| C12 | Near self-approach or incompatible-tangent return | Does not close unless distance, section crossing, tangent, minimum extent, and final correction all pass. | Pending `reference-core-conformance`. |
+| C13 | Quaternion `q` versus `-q` storage | Represents the same samples and produces zero pose distance, identical closure, length, and integral diagnostics. | Pending when a quaternion adapter exists. |
+| C14 | Named factor audit | Every requested factor has value/unit/normalization/availability; the coarea denominator and Haar conversion remain separate. | Pending later weight/integration task. |
+
+## 12. Explicit open items
+
+- Reference default tolerances, adaptive-controller constants, and event
+  localization settings await `reference-core-conformance` convergence data.
+- Seed search, component discovery, completeness certificates, and component
+  deduplication are outside the single-component interface.
+- Continuation through rank loss, bifurcation, singular intersections, TIR, or
+  path-branch changes is unsupported pending dedicated exploration.
+- Absolute source radiometry, wavelength/polarization integration, pixel solid
+  angle/filtering, finite-crystal entry measure, visibility, and all complete
+  weight implementations remain separate contracts/tasks.
+- Historical ch06 coordinates, projection, normalization, dynamic range, and
+  data provenance require an explicit adapter after their reconstruction.
+- Phase II must derive its own measure conversion and demonstrate agreement;
+  this document does not assume that reduction in the Phase I algorithm.
