@@ -328,6 +328,30 @@ def test_closure_preserves_a_regular_state_event_reason_and_payload():
     assert outcome.event.kind == TerminationReason.RANK_LOSS
 
 
+def test_closure_requires_a_small_final_newton_update():
+    problem = analytic_problem()
+    options = ContinuationOptions(
+        closure_maximum_iterations=1,
+        corrector_update_tolerance=1e-16,
+    )
+    initial = _evaluate_regular_state(problem, options, problem.seed)
+    current = problem.seed @ exp(0.01 * initial.tangent)
+
+    outcome = _correct_closure(
+        problem,
+        options,
+        current,
+        problem.seed,
+        initial.tangent,
+        initial.tangent,
+    )
+
+    assert not outcome.accepted
+    assert outcome.reason == TerminationReason.CORRECTOR_FAILURE
+    assert outcome.residual_norm <= options.residual_tolerance
+    assert outcome.update_norm > options.corrector_update_tolerance
+
+
 def test_trace_reports_step_underflow_separately_from_trigger():
     options = ContinuationOptions(
         initial_step=0.04,

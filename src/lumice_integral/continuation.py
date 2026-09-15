@@ -160,6 +160,8 @@ class ContinuationOptions:
     minimum_tangent_dot: float = 0.8
     event_slowdown_margin: float = 0.02
     maximum_accepted_steps: int = 4000
+    # One evaluation unit reserves all gated value and AD work for one pose or
+    # corrector iterate; sub-operations cannot consume a partial unit.
     maximum_evaluations: int = 100_000
     maximum_arclength: float = 20.0
     closure_minimum_steps: int = 40
@@ -395,7 +397,7 @@ def _evaluate_regular_state(
     rotation: Array,
     previous_tangent: Array | None = None,
 ) -> _StateEvaluation:
-    """Evaluate one pose with discrete gates outside the differentiable graph."""
+    """Evaluate one indivisible budgeted pose unit outside the AD graph."""
     domain = _evaluate_domain(problem, rotation)
     if not domain.valid:
         event = domain.event
@@ -564,7 +566,11 @@ def _correct_trial(
     phase_tangent: Array,
     maximum_evaluations: int | None = None,
 ) -> _CorrectorOutcome:
-    """Apply a bounded bordered Newton correction around one predictor."""
+    """Apply a bounded bordered Newton correction around one predictor.
+
+    Each iteration reserves one indivisible budget unit before its gated value
+    evaluation and any bordered-system AD work.
+    """
     delta = jnp.zeros(3, dtype=predicted.dtype)
     last_residual = float("inf")
     last_update = float("inf")
@@ -921,6 +927,9 @@ def _make_result(
             "dtype": options.dtype,
             "arclength_unit": "radian",
             "solver_options_version": "reference-continuation-v1",
+            "evaluation_unit": (
+                "one gated pose or corrector iterate including smooth value and AD work"
+            ),
         },
         weight_observables=weight_observables,
     )
@@ -1132,6 +1141,8 @@ def _correct_closure(
         if (
             last_residual <= options.residual_tolerance
             and section_norm <= options.closure_section_tolerance
+            and (last_update if np.isfinite(last_update) else 0.0)
+            <= options.corrector_update_tolerance
         ):
             if maximum_evaluations is not None and evaluations >= maximum_evaluations:
                 return budget_exhausted(iteration, candidate)
@@ -1547,26 +1558,8 @@ def trace_fiber(
                     closing_advance = float(
                         rotation_distance(previous_pose, closure.state.rotation)
                     )
-                    states[-1] = closure.state
-                    arclength_increments[-1] = closing_advance
-                    accepted_margins[-1] = dict(closure.state.domain.margins)
-                    total_arclength += closing_advance - outcome.advance
-                    closure_diagnostic = ClosureDiagnostic(
-                        accumulated_arclength=total_arclength,
-                        seed_distance=float(
-                            rotation_distance(seed, closure.state.rotation)
-                        ),
-                        previous_section_value=previous_section,
-                        section_value=float(
-                            _section_coordinate(
-                                seed, closure.state.rotation, initial.tangent
-                            )
-                        ),
-                        section_crossed=True,
-                        crossing_direction=crossing_direction,
-                        tangent_dot=closure.tangent_dot,
-                        final_correction_attempted=True,
-                        final_correction_accepted=True,
+                    closing_arclength = (
+                        total_arclength + closing_advance - outcome.advance
                     )
                     if evaluations > options.maximum_evaluations:
                         return _make_result(
@@ -1584,7 +1577,7 @@ def trace_fiber(
                             retries=total_retries,
                             message="evaluation budget exhausted during closure",
                         )
-                    if total_arclength > options.maximum_arclength:
+                    if closing_arclength > options.maximum_arclength:
                         return _make_result(
                             problem,
                             options,
@@ -1600,6 +1593,27 @@ def trace_fiber(
                             retries=total_retries,
                             message="closure edge exceeds the arclength budget",
                         )
+                    states[-1] = closure.state
+                    arclength_increments[-1] = closing_advance
+                    accepted_margins[-1] = dict(closure.state.domain.margins)
+                    total_arclength = closing_arclength
+                    closure_diagnostic = ClosureDiagnostic(
+                        accumulated_arclength=total_arclength,
+                        seed_distance=float(
+                            rotation_distance(seed, closure.state.rotation)
+                        ),
+                        previous_section_value=previous_section,
+                        section_value=float(
+                            _section_coordinate(
+                                seed, closure.state.rotation, initial.tangent
+                            )
+                        ),
+                        section_crossed=True,
+                        crossing_direction=crossing_direction,
+                        tangent_dot=closure.tangent_dot,
+                        final_correction_attempted=True,
+                        final_correction_accepted=True,
+                    )
                     return _make_result(
                         problem,
                         options,
