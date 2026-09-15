@@ -71,6 +71,7 @@ def main() -> None:
         )
 
     device = jax.devices()[0]
+    memory_stats = device.memory_stats() or {}
     print(
         json.dumps(
             {
@@ -83,6 +84,11 @@ def main() -> None:
                 "dtype": args.dtype,
                 "x64_enabled": bool(jax.config.x64_enabled),
                 "repeats": args.repeats,
+                "memory_stats": {
+                    key: value
+                    for key, value in memory_stats.items()
+                    if isinstance(value, (int, float))
+                },
                 "results": results,
             },
             indent=2,
