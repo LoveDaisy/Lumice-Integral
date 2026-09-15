@@ -11,15 +11,18 @@ independent of Lumice by design.
 
 ## Common Commands
 
-No implementation language or build system has been selected yet.
+Phase I uses Python 3.12, JAX, uv, and pytest. The CUDA extra is intended for
+the Linux/NVIDIA reference machine.
 
 ```bash
-git status --short
-git diff
+uv sync --dev
+uv run pytest -q
+uv run python scripts/inspect_path_3_5.py
+uv run python benchmarks/benchmark_batch.py --dtype float64
+# Linux/NVIDIA environment
+uv sync --extra cuda13 --dev
+XLA_PYTHON_CLIENT_PREALLOCATE=false uv run python benchmarks/benchmark_batch.py
 ```
-
-Add build, test, and formatting commands here when the first implementation
-task selects the technical stack.
 
 ## Architecture and Design
 
@@ -28,8 +31,13 @@ The authoritative staged design is `docs/roadmap.md`.
 ```text
 .
 ├── README.md              # Concise project identity and navigation
+├── pyproject.toml         # Python package, dependencies, and test config
+├── src/lumice_integral/   # Differentiable numerical building blocks
+├── tests/                 # Analytic and optical regression fixtures
+├── benchmarks/            # Reproducible CPU/GPU probes
 ├── docs/
-│   └── roadmap.md         # Mathematical model, phased scope, validation
+│   ├── roadmap.md         # Mathematical model, phased scope, validation
+│   └── decisions/         # Accepted architecture decisions
 └── scratchpad/            # Local task management, ignored by git
 ```
 
@@ -85,7 +93,8 @@ workflows as a black-box Monte Carlo oracle or source of analysis artifacts.
 
 ## Code Style
 
-The language-specific style is pending selection of the implementation stack.
-Use English for code identifiers and comments. Documentation may be written in
-English or Chinese; durable mathematical notation and terminology should stay
-consistent with `docs/roadmap.md`.
+Use Python 3.12 type syntax, four-space indentation, and small pure functions
+that remain compatible with JAX transformations where differentiation or
+batching is required. Use English for code identifiers and comments.
+Documentation may be written in English or Chinese; durable mathematical
+notation and terminology should stay consistent with `docs/roadmap.md`.

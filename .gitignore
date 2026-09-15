@@ -4,5 +4,10 @@
 .claude/
 .codex/
 
+# Python local environments and generated caches
+.venv/
+__pycache__/
+*.py[cod]
+
 # Claude Code scratchpad (local task management)
 scratchpad/
