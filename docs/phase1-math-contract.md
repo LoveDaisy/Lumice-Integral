@@ -540,19 +540,19 @@ encoded in the tests.
 
 ### 10.2 Reproducible validation record
 
-The 2026-09-16 conformance run used source commit
-`138f621a4f4430a9b0afb080db96280515a1582c`. The configured `home-wsl`
+The post-review 2026-09-16 conformance run used source commit
+`8cc921c1308d24561acca06301fcf2b5505208f5`. The configured `home-wsl`
 rsync target intentionally excludes `.git`, so it has no meaningful remote
 `HEAD`. Before the remote test, SHA-256 was compared after synchronization for
 the contract, continuation core, and conformance test; the local and remote
-hashes respectively matched as `0732a5df...`, `600051e5...`, and
-`7dfa1aa5...`. This content check is the remote source-version evidence rather
+hashes respectively matched as `4de16d71...`, `600051e5...`, and
+`f269be99...`. This content check is the remote source-version evidence rather
 than a fabricated Git revision.
 
 | Environment | Runtime | Command and result |
 |---|---|---|
-| Mac | macOS 14.7 arm64; uv Python 3.12.11; uv 0.8.14; JAX 0.11.1 on `CpuDevice(id=0)` | `uv run pytest -q` -> `60 passed in 79.22s` |
-| `home-wsl` | Python 3.12.3; uv 0.8.14; JAX 0.11.1 on `CudaDevice(id=0)` | `XLA_PYTHON_CLIENT_PREALLOCATE=false uv run pytest -q` -> `60 passed in 411.40s` |
+| Mac | macOS 14.7 arm64; uv Python 3.12.11; uv 0.8.14; JAX 0.11.1 on `CpuDevice(id=0)` | `uv run pytest -q` -> `61 passed in 93.25s` |
+| `home-wsl` | Python 3.12.3; uv 0.8.14; JAX 0.11.1 on `CudaDevice(id=0)` | `XLA_PYTHON_CLIENT_PREALLOCATE=false uv run pytest -q` -> `61 passed in 488.88s` |
 
 The required 3-5 diagnostic run reported `closed/closed_loop`, 192 accepted
 steps, maximum residual `4.070836767583417e-16`, metric length
