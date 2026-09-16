@@ -264,7 +264,7 @@ not in the product.
 | ch06 solver/Jacobian diagnostics | Lumice Integral data; Writing-Lab presentation | Supported as versioned figure data | A production plotting consumer still belongs in Writing-Lab; an independent prototype consumer has been verified. |
 | ch06 named physical-factor curves | Lumice Integral | Supported for `rho_pose`, `entry_measure`, `fresnel_transmission`, `path_validity` on the canonical pixel fiber (section 4.1, figure-data v2 `weight_<name>` arrays); the pointwise final `integrand` curve (product over `J_perp + epsilon`) is exported alongside | `visibility` (finite-face obstruction) and the radiometric factors remain unavailable. |
 | ch06 one-pixel integrand/integral | Lumice Integral | Supported as a `partial` value: converged adaptive line quadrature over the closed canonical fiber with error estimate and order evidence (sections 4.1 and 6, `result.quadrature`); single-pixel component discovery is available as a separate primitive (`lumice_integral.discovery`, procedural `completeness` only) | Integration of discovered components into the quadrature product; a completeness certificate; pixel averaging (point value only); the missing factors above. |
-| ch06 `251 x 801` direct strip | Lumice Integral | Supported as a `partial` physical rerender: `scripts/render_ch06_strip.py` (`lumice_integral.strip_pixel` / `strip_driver` / `strip_io`) renders any window of the canonical `251 x 801` grid with column-wise hot-start continuation, cold-prescan fallback and spot checks, and writes float64/float32 raw in the historical layout plus a per-pixel status layer and `provenance.json`; pixel model: pixel-centre point value with `epsilon` regularisation (section 7, stage 4) | A completeness certificate (the status layer is procedural); the missing factors of the one-pixel row; sub-pixel averaging is implemented but off by default (6-10x cost; `O(10-40 %)` effect in the centre-column caustic band, section 7 stage 4); finite-sun averaging; full-resolution runs are hours on a 30-core machine. |
+| ch06 `251 x 801` direct strip | Lumice Integral | Supported as a `partial` physical rerender: `scripts/render_ch06_strip.py` (`lumice_integral.strip_pixel` / `strip_driver` / `strip_io`) renders any window of the canonical `251 x 801` grid with column-wise hot-start continuation, cold-prescan fallback and spot checks, and writes float64/float32 raw in the historical layout plus a per-pixel status layer and `provenance.json`; pixel model: pixel-centre point value with `epsilon` regularisation (section 7, stage 4) | A completeness certificate (the status layer is procedural); the missing factors of the one-pixel row; sub-pixel averaging is implemented but off by default (6-10x cost; `O(10-40 %)` effect in the centre-column caustic band, section 7 stage 4); finite-sun averaging; rows `600-800` (the lower quarter) come back `unknown` with value `0` because every discovery candidate there stays `incomplete` (section 7 stage 4); a full-resolution run is `1-1.5 days` on a 30-core machine. |
 | ch10 halo-map/Jacobian/fold figures | Lumice Integral numerical data; Writing-Lab presentation | Partially supported | Target sweeps and singular/fold localization beyond one regular fiber. |
 | ch11 orientation-family comparison | Lumice Integral and/or independent Lumice validation | Not supported by the current ordinary-density slice | Pose-density models, physical weights, image driver; exactly constrained families require a separate measure/domain contract. |
 
@@ -387,10 +387,56 @@ color-to-factor mapping.
    `O(10-40 %)` pixel-model effect, not averaged at full cost; the driver's
    `--pixel-model subpixel --subpixel-rows a:b` row-band option exists for a
    later targeted rerender once more columns have been probed.
-   Comparison with the historical raw and the Lumice remake is morphology only (rank correlation, profiles,
-   chirality pin `3-5` = right parhelion); radiometric normalisation is not
-   aligned. Coverage and numbers of the rendered products are recorded in the
-   task SUMMARY (`scratchpad/scrum-ch06-direct-integration/task-strip-image-driver/`).
+   Rendered coverage (2026-09-17): a full-height preview of every ninth
+   column (28 columns, `22428` pixels, point model, `home-wsl`, 28 workers,
+   `4.1 h` wall clock, `3.6-4.1 h` per column) is the delivered product
+   (`scratchpad/.../artifacts/home-wsl-preview-step9/`); the full `251 x 801`
+   render resumes from those column checkpoints on the same machine (`30`
+   workers, projected `1-1.5 days`) and its numbers are appended to the task
+   SUMMARY when it finishes. Per lit pixel the mean cost is `5.4 s`, of which
+   line quadrature is `4.4 s`; hot start succeeds on `99.4 %` of lit pixels.
+   Findings on that coverage:
+   - Above the inner edge the strip is dark; rows `57-600` are lit and
+     complete in every rendered column. The edge is at row `57` in the centre
+     columns and rises to row `49` at the outer columns (the arc curvature),
+     while the historical raw first lights at row `47` at columns 126 and 153
+     and at row `44` at column 198: a consistent `10`-row offset, plausibly
+     from the `historical-inferred` sun elevation of section 3.3; the offset
+     is reported, not corrected.
+   - Rows `600-700` are `43 %` `unknown_completeness` and rows `700-800` are
+     `100 %` `unknown`: cold discovery there returns `9-14` candidates per
+     pixel that all stay `incomplete` after a full production-budget retrace
+     (`event_incomplete_retry` equals the candidate count, no
+     `production_not_closed`), so these pixels hold the partial sum `0` with
+     the status bit set while the historical raw is lit (`0.0085` mean). This
+     is the incomplete-candidate regime of `(700, 150)` / `(780, 150)` from
+     the discovery task, now known to span the whole lower quarter of the
+     strip; it costs `71-73 s` per pixel and is outside this task's scope
+     (discovery semantics). Only `15` of the `4045` unknown pixels are lit.
+   - Morphology against the historical raw (native orientation, Spearman
+     rank correlation): `0.990` on the `16876` pixels lit in both, `0.970` on
+     the `18383` complete pixels, `0.657` on all rendered pixels (the
+     difference is the unknown lower band plus the edge offset; lit-fraction
+     agreement `0.81`). Against the Lumice remake grey PNG: `0.682` on all
+     rendered pixels. Row profiles across the 28 columns give Spearman
+     `0.99-1.00` versus historical at rows 150/300/500; the brightest column
+     and the right-of-centre asymmetry (ours `1.75` versus `1.39` mean at row
+     150, historical `0.081` versus `0.068`) sit on the same side in both, so
+     the `3-5` = right-parhelion chirality is consistent with the historical
+     raw. Left-right flip changes the whole-mask correlation by only `2e-5`,
+     so correlation alone does not pin chirality; the side agreement above does.
+   - Mac versus `home-wsl` cross-check on the 20 pixels both rendered
+     (column 153, rows 140-159): maximum relative difference `3.1e-7` (below
+     the `1e-6` quadrature tolerance), component counts identical, status
+     bits identical except the window-relative `cold_discovery` spot-check phase.
+   Comparison with the historical raw and the Lumice remake is morphology only
+   (rank correlation, profiles, side agreement); radiometric normalisation is
+   not aligned (the strip is the partial integrand, the historical raw has
+   unknown units, the Lumice PNG is tone-mapped 8-bit). Scripts and JSON:
+   `scratchpad/scrum-ch06-direct-integration/task-strip-image-driver/`
+   (`scripts/compare_with_historical.py`, `scripts/cross_check.py`,
+   `artifacts/compare-home-wsl-preview-step9/comparison.json`,
+   `artifacts/cross_check_preview.json`).
 5. **Writing-Lab figures**: consume only the versioned data product; composition,
    typography, annotations, and chapter-specific styling remain there.
 

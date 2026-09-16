@@ -160,7 +160,12 @@ prescan fallback and periodic cold spot checks, a per-pixel procedural
 completeness status layer, and the point pixel model chosen by a caustic
 probe (the probe found `O(10-40 %)` point-vs-sub-pixel differences within
 about seven rows of the `22 deg` inner edge at the centre column, so the
-caustic band is a documented pixel-model limitation of the default render). The rendered strip and its comparison evidence are recorded in the
+caustic band is a documented pixel-model limitation of the default render).
+A full-height every-ninth-column preview is rendered and compared: Spearman
+`0.99` against the historical raw on pixels lit in both, a consistent
+`10`-row inner-edge offset, and the lower quarter of the strip (rows
+`600-800`) `unknown` because no discovery candidate closes there; the full
+`251 x 801` render is in progress. The evidence is recorded in the
 [chapter 6 reference fixture specification](ch06-reference-fixture.md)
 sections 5 and 7. Component completeness remains procedural, not certified;
 finite solar disk and finite pixel solid angle are still open (the sub-pixel
