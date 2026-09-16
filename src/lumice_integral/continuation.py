@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Callable, Mapping
+from functools import partial
+from typing import Callable, Mapping, NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -358,6 +359,147 @@ _EVENT_REASONS = {
 }
 
 
+class _MalformedDirectionOutput(Exception):
+    """Raised while tracing when a direction evaluator returns a non-(3,) shape."""
+
+
+class _NewtonStep(NamedTuple):
+    """One compiled bordered Newton iterate; the host applies every gate."""
+
+    direction: Array
+    residual: Array
+    value: Array
+    jacobian: Array
+    condition: Array
+    update: Array
+    update_norm: Array
+    next_delta: Array
+
+
+def _traced_direction(direction_evaluator: DirectionEvaluator, rotation: Array) -> Array:
+    direction = jnp.asarray(direction_evaluator(rotation))
+    if direction.shape != (3,):
+        # Shapes are static under tracing; report the malformed adapter output
+        # to the host gate instead of failing inside the compiled graph.
+        raise _MalformedDirectionOutput(direction.shape)
+    return direction
+
+
+@partial(jax.jit, static_argnums=(0,))
+def _smooth_output_kernel(
+    direction_evaluator: DirectionEvaluator,
+    rotation: Array,
+    chart_direction: Array,
+    chart_basis: Array,
+) -> tuple[Array, Array]:
+    """Compile the direction map and target-chart residual for one pose."""
+    direction = _traced_direction(direction_evaluator, rotation)
+    return direction, chart_basis.T @ (direction - chart_direction)
+
+
+@partial(jax.jit, static_argnums=(0,))
+def _local_residual_jacobian_kernel(
+    direction_evaluator: DirectionEvaluator,
+    rotation: Array,
+    chart_direction: Array,
+    chart_basis: Array,
+) -> Array:
+    """Compile the (2, 3) residual Jacobian in right-trivialized coordinates."""
+
+    def residual_after_update(delta: Array) -> Array:
+        direction = _traced_direction(direction_evaluator, rotation @ exp(delta))
+        return chart_basis.T @ (direction - chart_direction)
+
+    return jax.jacfwd(residual_after_update)(jnp.zeros(3, dtype=rotation.dtype))
+
+
+def _bordered_newton_step(
+    direction_evaluator: DirectionEvaluator,
+    base: Array,
+    chart_direction: Array,
+    chart_basis: Array,
+    delta: Array,
+    border: Callable[[Array, Array], Array],
+) -> _NewtonStep:
+    """Evaluate one bordered system with its Jacobian in a single forward pass.
+
+    ``has_aux`` returns the primal value alongside the Jacobian so one compiled
+    call serves both the convergence test and the Newton update; no gate or
+    accept/reject decision is made here.
+    """
+
+    def system_with_aux(
+        correction: Array,
+    ) -> tuple[Array, tuple[Array, Array, Array]]:
+        candidate = base @ exp(correction)
+        direction = _traced_direction(direction_evaluator, candidate)
+        residual = chart_basis.T @ (direction - chart_direction)
+        value = jnp.concatenate(
+            (residual, jnp.atleast_1d(border(candidate, correction)))
+        )
+        return value, (direction, residual, value)
+
+    jacobian, (direction, residual, value) = jax.jacfwd(
+        system_with_aux, has_aux=True
+    )(delta)
+    condition = jnp.linalg.cond(jacobian)
+    update = jnp.linalg.solve(jacobian, -value)
+    return _NewtonStep(
+        direction=direction,
+        residual=residual,
+        value=value,
+        jacobian=jacobian,
+        condition=condition,
+        update=update,
+        update_norm=jnp.linalg.norm(update),
+        next_delta=delta + update,
+    )
+
+
+@partial(jax.jit, static_argnums=(0,))
+def _trial_newton_step_kernel(
+    direction_evaluator: DirectionEvaluator,
+    predicted: Array,
+    phase_tangent: Array,
+    chart_direction: Array,
+    chart_basis: Array,
+    delta: Array,
+) -> _NewtonStep:
+    """Bordered Newton iterate with the predictor phase condition as border."""
+
+    def border(_: Array, correction: Array) -> Array:
+        return jnp.dot(phase_tangent, correction)
+
+    return _bordered_newton_step(
+        direction_evaluator, predicted, chart_direction, chart_basis, delta, border
+    )
+
+
+@partial(jax.jit, static_argnums=(0,))
+def _closure_newton_step_kernel(
+    direction_evaluator: DirectionEvaluator,
+    current: Array,
+    seed: Array,
+    initial_tangent: Array,
+    chart_direction: Array,
+    chart_basis: Array,
+    delta: Array,
+) -> _NewtonStep:
+    """Bordered Newton iterate with the seed section coordinate as border."""
+
+    def border(candidate: Array, _: Array) -> Array:
+        return _section_coordinate(seed, candidate, initial_tangent)
+
+    return _bordered_newton_step(
+        direction_evaluator, current, chart_direction, chart_basis, delta, border
+    )
+
+
+@jax.jit
+def _apply_correction_kernel(base: Array, delta: Array) -> Array:
+    return base @ exp(delta)
+
+
 def _default_domain_evaluation(_: Array) -> DomainEvaluation:
     return DomainEvaluation(valid=True)
 
@@ -559,20 +701,44 @@ def _evaluate_smooth_output(
     rotation: Array,
 ) -> _SmoothOutputEvaluation:
     """Run the common direction and target-chart gate outside local AD."""
+    chart = problem.target_chart
     try:
-        direction = problem.direction_evaluator(rotation)
-        direction_array = np.asarray(direction)
+        direction, residual_value = _smooth_output_kernel(
+            problem.direction_evaluator, rotation, chart.direction, chart.basis
+        )
+    except _MalformedDirectionOutput:
+        return _malformed_direction_output()
     except Exception as error:
         return _SmoothOutputEvaluation(
             False, None, None, float("inf"), TerminationReason.NON_FINITE, None,
             f"direction evaluator raised {type(error).__name__}: {error}",
         )
-    if direction_array.shape != (3,) or direction_array.dtype != np.float64:
-        return _SmoothOutputEvaluation(
-            False, direction, None, float("inf"),
-            TerminationReason.INVALID_NUMERICAL_INPUT, None,
-            "direction evaluator must return a float64 array with shape (3,)",
-        )
+    return _gate_smooth_output(options, chart, direction, residual_value)
+
+
+def _malformed_direction_output() -> _SmoothOutputEvaluation:
+    return _SmoothOutputEvaluation(
+        False, None, None, float("inf"),
+        TerminationReason.INVALID_NUMERICAL_INPUT, None,
+        "direction evaluator must return a float64 array with shape (3,)",
+    )
+
+
+def _gate_smooth_output(
+    options: ContinuationOptions,
+    chart: TargetChart,
+    direction: Array,
+    residual_value: Array,
+) -> _SmoothOutputEvaluation:
+    """Apply the reference smooth-output gates to compiled kernel outputs.
+
+    The gate order (dtype, finiteness, unit norm, chart neighborhood, residual
+    finiteness) is the single authoritative definition shared by the regular
+    state evaluator and both correctors.
+    """
+    direction_array = np.asarray(direction)
+    if direction_array.dtype != np.float64:
+        return _malformed_direction_output()
     if not np.all(np.isfinite(direction_array)):
         return _SmoothOutputEvaluation(
             False, direction, None, float("inf"), TerminationReason.NON_FINITE, None,
@@ -588,7 +754,6 @@ def _evaluate_smooth_output(
             f"direction evaluator returned non-unit output: norm={direction_norm}",
         )
 
-    chart = problem.target_chart
     chart_dot = float(np.dot(direction_array, np.asarray(chart.direction)))
     if chart_dot <= chart.minimum_dot:
         event = EventCandidate(
@@ -600,8 +765,7 @@ def _evaluate_smooth_output(
             False, direction, None, float("inf"), event.kind, event, event.message
         )
 
-    residual_value = chart.basis.T @ (direction - chart.direction)
-    residual_norm = float(jnp.linalg.norm(residual_value))
+    residual_norm = float(np.linalg.norm(np.asarray(residual_value)))
     if not np.isfinite(residual_norm):
         return _SmoothOutputEvaluation(
             False, direction, residual_value, residual_norm,
@@ -1120,10 +1284,10 @@ def target_residual(problem: FiberProblem, rotation: Array) -> Array:
 
 def local_residual_jacobian(problem: FiberProblem, rotation: Array) -> Array:
     """Differentiate the target residual in right-trivialized coordinates."""
-    zero = jnp.zeros(3, dtype=rotation.dtype)
-    return jax.jacfwd(
-        lambda delta: target_residual(problem, rotation @ exp(delta))
-    )(zero)
+    chart = problem.target_chart
+    return _local_residual_jacobian_kernel(
+        problem.direction_evaluator, rotation, chart.direction, chart.basis
+    )
 
 
 def _correct_closure(
