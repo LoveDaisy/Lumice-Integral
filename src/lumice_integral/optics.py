@@ -170,6 +170,55 @@ def path_3_5_domain(
     return PathDomainCheck(True, margins)
 
 
+def fresnel_unpolarized_transmittance(
+    n1: float, cos_i: float, n2: float, cos_t: float
+) -> float:
+    """Unpolarized (s/p averaged) power transmittance of one planar interface.
+
+    ``n1``/``cos_i`` describe the incident side, ``n2``/``cos_t`` the
+    transmitted side; the cosines are the ones ``refract_smooth`` reports
+    (``incidence_cosine`` and ``sqrt(discriminant)``).  For normal incidence
+    this reduces to ``1 - ((n1 - n2) / (n1 + n2))**2``.  The caller must be on
+    a non-TIR branch (``cos_t`` real); no clamping is performed here.
+    """
+    r_s = (n1 * cos_i - n2 * cos_t) / (n1 * cos_i + n2 * cos_t)
+    r_p = (n2 * cos_i - n1 * cos_t) / (n2 * cos_i + n1 * cos_t)
+    return 1.0 - 0.5 * (r_s * r_s + r_p * r_p)
+
+
+def fresnel_transmission_3_5(
+    rotation: Array,
+    incident_direction: Array,
+    refractive_index: Array = ICE_REFRACTIVE_INDEX,
+) -> float:
+    """Product of the face-3 entry and face-5 exit unpolarized transmittances.
+
+    Reuses the host-side cosines and Snell discriminants that
+    :func:`path_3_5_domain` already evaluates (``cos_t = sqrt(discriminant)``)
+    instead of re-deriving the refraction.  Outside the smooth 3-5 domain
+    (TIR, back-face entry or exit) the path transmits no power and ``0.0`` is
+    returned; :func:`path_3_5_domain` remains the place to read *why*.
+    """
+    check = path_3_5_domain(rotation, incident_direction, refractive_index)
+    if not check.valid:
+        return 0.0
+    index = float(np.asarray(refractive_index))
+    margins = check.margins
+    entry = fresnel_unpolarized_transmittance(
+        1.0,
+        margins["entry_incidence_cosine"],
+        index,
+        float(np.sqrt(margins["entry_snell_discriminant"])),
+    )
+    exit = fresnel_unpolarized_transmittance(
+        index,
+        margins["exit_incidence_cosine"],
+        1.0,
+        float(np.sqrt(margins["exit_snell_discriminant"])),
+    )
+    return float(entry * exit)
+
+
 def path_3_5_problem(
     seed: Array,
     incident_direction: Array,
