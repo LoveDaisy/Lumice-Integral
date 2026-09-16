@@ -28,7 +28,7 @@ Every recovered value uses one of these labels:
 
 | Label | Meaning |
 |-------|---------|
-| `historical-direct` | Present in the chapter text, old filename, old script, image metadata, or raw bytes. |
+| `historical-direct` | Present in the chapter text, an author clarification, old filename, old script, image metadata, or raw bytes. |
 | `historical-inferred` | Supported by two or more surviving observations but not explicitly serialized by the prototype. |
 | `canonical-new` | Chosen after the prototype was lost to make a reproducible replacement fixture. |
 | `unknown` | No surviving evidence is sufficient. The implementation MUST NOT invent a value silently. |
@@ -123,6 +123,40 @@ JPEG increases monotonically with Monte Carlo sample count:
 These numbers are display-space historical evidence. They are not radiometric
 error estimates because the original exposure calibration is incomplete.
 
+### 3.5 Historical diagnostic-figure semantics
+
+The author clarified the intended semantics of `state_space_integrate.jpg` on
+2026-09-16. These statements are `historical-direct` author testimony even
+though the original numeric arrays and plotting code are no longer available.
+
+The upper-left panel visualizes SO(3) through unit quaternions. Because the unit
+constraint leaves three degrees of freedom, the historical plot uses the first
+three quaternion components. Its blue points are feasible results from a
+fixed-resolution parameter-space prescan; a first feasible pose could seed the
+subsequent solve. The red curve is the one-dimensional solution fiber produced
+by that solve. The exact quaternion component ordering, sign-continuation rule,
+scan spacing, and feasibility tolerance remain `unknown`.
+
+The lower-left panel maps the same solution fiber to three Euler-like crystal
+coordinates: longitude and latitude of the crystal C axis, plus rotation about
+that axis. Its blue points are the adaptive PDE/continuation samples, which
+become denser at high curvature. The red curve is an interpolated densification
+of those samples for display. Exact angular signs, wrapping intervals, units,
+and interpolation method remain `unknown`.
+
+The right panel contains factors from four physical groups: optical throughput
+(principally Fresnel), finite-face geometric visibility or mutual occlusion,
+the Jacobian, and the SO(3) pose probability density. The thick black curve is
+their final product, whose line integral over the one-dimensional solution
+gives that pixel's brightness. The color-to-factor mapping and horizontal-axis
+parameterization are no longer known.
+
+The incident/outgoing pair used for this diagnostic is also unknown. It may
+have been a point on a plate-crystal parhelic-circle path or a column-crystal
+lower-tangent-arc path. Therefore this JPEG documents the prototype algorithm
+and data flow, but MUST NOT be treated as numeric evidence for the canonical
+3-5 single-fiber fixture.
+
 ## 4. Canonical Single-Fiber Fixture
 
 This is the current reproducible geometry fixture. It is not asserted to be a
@@ -159,7 +193,7 @@ freeze incidental accepted-step counts as a correctness requirement.
 | ch06 crystal-orientation schematic | Writing-Lab drawing code | Supported | None in Lumice Integral; not a numerical-solver responsibility. |
 | ch06 ray-splitting schematic | Writing-Lab drawing code | Supported | None in Lumice Integral. |
 | ch06 all-sky Monte Carlo example | Lumice through Writing-Lab validation glue | Supported | Not a Lumice Integral product output. |
-| ch06 pose-fiber geometry | Lumice Integral | Supported for one supplied regular seed/component | Historical pose-coordinate projection still needs author confirmation. |
+| ch06 pose-fiber geometry | Lumice Integral | Supported for one supplied regular seed/component | Add continuous-sign unit-quaternion and C-axis longitude/latitude/spin adapters; prescan points require seed-discovery output. |
 | ch06 solver/Jacobian diagnostics | Lumice Integral data; Writing-Lab presentation | Supported as versioned figure data | A production plotting consumer still belongs in Writing-Lab; an independent prototype consumer has been verified. |
 | ch06 named physical-factor curves | Lumice Integral | Not supported | Pose density, entry measure/visibility, Fresnel throughput, and evaluated factor samples. |
 | ch06 one-pixel integrand/integral | Lumice Integral | Not supported | Named factor evaluation plus converged line quadrature. |
@@ -209,8 +243,8 @@ An independent prototype consumer has loaded only these two files and produced
 an orientation-body-axis projection, local-map/domain-margin curves, and
 solver diagnostics without importing Lumice Integral. That experiment proves
 the boundary is sufficient for current geometry figures; it is not a checked-in
-chapter plotting implementation or evidence that the unknown historical curve
-labels have been recovered.
+chapter plotting implementation and does not recover the historical
+color-to-factor mapping.
 
 ## 7. Acceptance Stages
 
@@ -226,15 +260,24 @@ labels have been recovered.
 5. **Writing-Lab figures**: consume only the versioned data product; composition,
    typography, annotations, and chapter-specific styling remain there.
 
-## 8. Open Author Semantics
+## 8. Reproduction Guidance and Remaining Unknowns
 
-The historical `state_space_integrate.jpg` cannot be faithfully relabeled
-without two author clarifications:
+The historical panel structure is now understood, but exact reproduction is
+still limited by missing data and conventions:
 
-1. the pose coordinates/projections in its upper-left and lower-left panels,
-   and the meanings of blue versus red samples;
-2. the right-panel parameter axis and the identities of its five curves.
+1. The quaternion view needs an explicit component order and continuous sign
+   choice because `q` and `-q` represent the same rotation.
+2. The C-axis longitude/latitude/spin view needs explicit sign, wrapping, pole,
+   and unit conventions. It may be derived from current rotation matrices.
+3. The upper-left blue prescan cloud is not continuation output; reproducing it
+   requires a seed-discovery scan with recorded spacing and feasibility tests.
+4. The right panel should use explicit modern labels for the four named factor
+   groups and final product. Historical colors and horizontal parameterization
+   MUST NOT be guessed.
+5. The historical incident/outgoing pair is unknown, so a modern reconstruction
+   MUST identify itself as the canonical 3-5 fixture rather than the old pixel.
 
-Until confirmed, a new diagnostic figure SHOULD use explicit modern labels
-(`cumulative SO(3) arclength`, `normal_jacobian`, named domain margins, and
-solver residual) rather than visually imitating the unlabeled historical plot.
+A new diagnostic figure SHOULD label cumulative SO(3) arclength, every physical
+factor, the final integrand, and solver/interpolation samples explicitly. This
+preserves the historical explanatory structure without manufacturing lost
+metadata.
