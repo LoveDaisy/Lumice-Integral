@@ -108,7 +108,7 @@ Downstream ownership is explicit:
 | Structured adaptive single-component solver and event gate | `reference-continuation-core` | Semantics fixed here; implementation pending. |
 | Default tolerances and their convergence evidence | `reference-core-conformance` | Open numerical values. |
 | Basis-invariance, failure, event, and step-size perturbation tests | `reference-core-conformance` | Required matrix rows; evidence pending. |
-| Seed discovery and completeness over all components | Future task/exploration | Open and outside this scrum. |
+| Single-pixel seed/component discovery for the 3-5 path | `strip-component-discovery` (`lumice_integral.discovery`) | Implemented for one pixel's target direction (section 12); strip-level neighbour continuation and full-image completeness remain open (`strip-image-driver`). |
 | Singular topology changes and branch continuation | Future exploration | Open; no support claim. |
 | Historical ch06 projection, normalization, and provenance | `ch06-reference-fixture` | Outside this contract. |
 
@@ -359,11 +359,11 @@ NOT be silently substituted by one in a result claiming physical completeness.
 
 | Factor | Required meaning and normalization | Typical units | Phase I status |
 |---|---|---|---|
-| `rho_pose` | Density relative to explicitly named `d mu_Haar` or `dVol_g`; normalization state reported. | Dimensionless for Haar probability; inverse metric-volume for `dVol_g`. | Interface required; model supplied by caller. |
-| `entry_measure` | Projected/realizable entry measure for the selected path, with sign/clamping and reference area declared. | Dimensionless if area-normalized; otherwise area. | Interface required; not implemented by current probe. |
-| `visibility` | Obstruction/visibility result and, if soft, its declared transmittance model. | Dimensionless. | Interface/event required; not implemented. |
-| `fresnel_transmission` | Product of polarization-resolved or explicitly unpolarized interface power factors; convention declared. | Dimensionless. | Interface required; current Snell probe omits it. |
-| `path_validity` | Boolean feasibility of the exact ordered path, separate from numerical convergence. | Boolean gate, not a gain. | Event interface required. |
+| `rho_pose` | Density relative to explicitly named `d mu_Haar` or `dVol_g`; normalization state reported. | Dimensionless for Haar probability; inverse metric-volume for `dVol_g`. | Caller-supplied implementation available: `pose_density.ZenithGaussianPoseDensity` (Haar-relative, integrates to one; `task-single-fiber-physical-integrand`). |
+| `entry_measure` | Projected/realizable entry measure for the selected path, with sign/clamping and reference area declared. | Dimensionless if area-normalized; otherwise area. | Available: `geometry.entry_measure` via `weights.entry_measure_weight` (absolute area, `length^2`, no reference-area normalization). |
+| `visibility` | Obstruction/visibility result and, if soft, its declared transmittance model. | Dimensionless. | Interface/event required; not implemented (`visibility_boundary` stays a margin diagnostic). |
+| `fresnel_transmission` | Product of polarization-resolved or explicitly unpolarized interface power factors; convention declared. | Dimensionless. | Available: `optics.fresnel_transmission_3_5` (unpolarized s/p average, entry times exit). |
+| `path_validity` | Boolean feasibility of the exact ordered path, separate from numerical convergence. | Boolean gate, not a gain. | Available: `weights.path_validity_weight` (`path_3_5_domain` valid and `entry_measure > 0`). |
 | `source_factor` | Source angular/spectral/radiometric quantity and sampling density. | Declared by source model. | Open until renderer/source contract. |
 | `pixel_factor` | Pixel response/filter and solid-angle or projected-area conversion. | Declared by camera model. | Open until renderer/camera contract. |
 | `other_radiometric` | Any absorption, phase, spectral, or exposure factor not represented above, individually named. | Explicit per factor. | Open; no anonymous catch-all in final results. |
@@ -416,7 +416,7 @@ documentation MUST preserve their meanings, shapes, units, and availability.
 | `target_chart` | Target neighborhood plus orthonormal tangent basis, or a general chart with its metric density. |
 | `pose_metric_and_measure` | The section 5.1 metric and either `dVol_g` or `d mu_Haar`; alternative normalizations require an explicit conversion. |
 | `seed` | Initial pose with storage representation declared; it denotes a pose in `SO(3)`, not a unique quaternion representative. |
-| `weight_evaluators` | Optional independently named factor evaluators. Absence is reported and does not prevent geometry-only tracing. |
+| `weight_evaluators` | Optional independently named factor evaluators (`weights.WeightEvaluator`: callable plus declared unit and normalization). Absence is reported and does not prevent geometry-only tracing; evaluation happens on accepted poses after continuation and never alters termination. |
 
 Problem construction MUST validate finite values, unit directions, convention
 compatibility, and required evaluator capabilities before continuation. It MUST
@@ -465,7 +465,7 @@ Let `N` be the number of accepted pose samples. A result MUST contain:
 | `closure_diagnostics` | Accumulated length, stable seed distance, section values/crossing, tangent agreement, and final-correction outcome. |
 | `terminal_payload` | Last accepted state and relevant rejected/bracketed state, event/failure scalars, iteration/budget counters, and message. |
 | `conventions` | Coordinate/sign version, pose representation, metric/measure, dtype, units, and solver/options version. |
-| `weight_observables` | Each requested factor and availability status separately; never only an opaque product. |
+| `weight_observables` | Each requested factor and availability status separately (`weights.WeightObservable`: status, unit, normalization, `(N)` values when available); never only an opaque product. |
 
 Unavailable data MUST be explicit rather than encoded as a plausible zero,
 one, empty success value, or NaN without a reason. Partial samples on any
@@ -516,6 +516,7 @@ the root, regularity, path-validity, or closure definitions above.
 | Regularity | `singular_value_tolerance=1e-8`, `condition_limit=1e8` |
 | Step controller | `initial_step=0.04`, `minimum_step=1e-5`, `maximum_step=0.12`, `shrink_factor=0.5`, `growth_factor=1.25`, `maximum_retries=8` |
 | Corrector and trust gates | `corrector_maximum_iterations=10`, phase/update tolerances `1e-12`, `maximum_correction=0.2`, `maximum_advance=0.2`, `minimum_tangent_dot=0.8` |
+| Seed orientation | `initial_tangent_sign=+1` (section 5.4 explicit choice; `-1` reverses the deterministic SVD sign of the seed tangent and hence the sample order) |
 | Work bounds | `maximum_accepted_steps=4000`, `maximum_evaluations=100000`, `maximum_arclength=20` |
 | Closure | minimum 40 steps and `pi` arclength, distance `0.08`, tangent dot `0.8`, section tolerance `1e-11`, at most 10 final-corrector iterations |
 
@@ -575,7 +576,7 @@ failure: the named prerequisite is outside the current reference core.
 | C03 | Analytic and synthetic 3-5 roots with several `Q in O(2)` basis changes | Root poses, tangent line, rank, singular values, `J_perp`, and converged geometry agree; tangent order may reverse only with seed orientation. | Verified by `test_analytic_circle_is_invariant_under_orthogonal_target_basis` and `test_synthetic_3_5_is_invariant_under_orthogonal_target_basis`; basis changes are metamorphic evidence, not an independent optical oracle. |
 | C04 | Target antipode for the projected residual | Algebraic zero at `-d` is rejected by the target-neighborhood gate. | Verified by `test_antipode_algebraic_root_is_rejected_by_chart_gate` and the public termination conformance cases. |
 | C05 | Smooth synthetic 3-5 branch | Unit outgoing direction, positive branch margins, local rank two, and one seeded component closes under independently converged settings. Exact 145 steps is not asserted. | Verified by `test_synthetic_3_5_trace_matches_independent_direct_ray_oracle` and `test_synthetic_3_5_safe_step_sweep_converges_without_fixed_step_count`. The oracle independently derives incident direction, target, tangent basis, path gate, and per-pose ray constraints rather than reading them from `path_3_5_problem`; this is not historical ch06 validation. |
-| C06 | Initial step sizes and controller thresholds perturbed around reference defaults | Accepted traces converge to the same component geometry, length, quadrature-ready orientation, and terminal status within reported errors; integral comparison follows when C14 factors exist. | Partial: geometry is verified by the analytic/3-5 safe-step tests and `test_synthetic_3_5_controller_threshold_perturbation_converges_consistently` over the bounded configurations in section 10.1. An orientation-independent physical integral remains open with C14; no global controller-convergence claim is made. |
+| C06 | Initial step sizes and controller thresholds perturbed around reference defaults | Accepted traces converge to the same component geometry, length, quadrature-ready orientation, and terminal status within reported errors; integral comparison follows when C14 factors exist. | Partial: geometry is verified by the analytic/3-5 safe-step tests and `test_synthetic_3_5_controller_threshold_perturbation_converges_consistently` over the bounded configurations in section 10.1. An orientation-independent physical integral is now checked on the canonical pixel fiber: `test_canonical_pixel_integral_is_invariant_under_initial_step` (`0.03`, `0.08` against `0.04`), `..._under_refinement_tolerance` (`1e-6`, `1e-9` against `1e-8`) and `..._under_reversed_orientation` (`initial_tangent_sign = -1`) agree within the sum of the reported error estimates without comparing sample counts; `test_reversed_seed_orientation_keeps_arclength_and_integral` covers the analytic circle. A global controller-convergence claim is still not made. |
 | C07 | Constructed rank-deficient map | Terminates as `event_terminated/rank_loss` with singular-value and `J_perp` diagnostics; no regular coarea value is emitted. | Verified by `test_rank_deficient_direction_map_has_typed_event_and_diagnostics` and the public termination conformance cases. |
 | C08 | TIR or explicit path-domain boundary | Terminates with the typed event and signed margin before unsafe evaluation; not merely NaN or corrector failure. | Verified by `test_known_event_precedes_unsafe_direction_evaluation`, `test_3_5_tir_is_reported_before_the_unsafe_exit_square_root`, and the public termination conformance cases. Event crossing/localization remains open. |
 | C09 | Corrector non-convergence and ill-conditioned linear solve without known physical event | Bounded retries end in the matching `numerical_failure` reason with trial history. | Partial: public conformance verifies bounded corrector non-convergence and rejected-trial history. Rank/conditioning rejection is covered by C07; a deterministic public `linear_solve_failure` fixture remains open. |
@@ -583,7 +584,7 @@ failure: the named prerequisite is outside the current reference core.
 | C11 | Too-small step and short step/arclength/evaluation budgets | Distinguishes `step_underflow` from each `budget_exhausted` reason and retains partial diagnostics. | Verified by `test_public_corrector_nonconvergence_and_step_underflow_are_distinct` and `test_public_budget_termination_retains_partial_geometry`. |
 | C12 | Near self-approach or incompatible-tangent return | Does not close unless distance, section crossing, tangent, minimum extent, and final correction all pass. | Verified at the closure boundary by `test_incompatible_tangent_cannot_pass_final_closure_correction`; discovery of remote self-intersections remains open. |
 | C13 | Quaternion `q` versus `-q` storage | Represents the same samples and produces zero pose distance, identical closure, length, and integral diagnostics. | Open until a quaternion storage adapter exists; the reference result currently declares rotation-matrix storage. |
-| C14 | Named factor audit | Every requested factor has value/unit/normalization/availability; the coarea denominator and Haar conversion remain separate. | Partial: `test_public_result_schema_preserves_units_shapes_dtype_and_availability` verifies that every standard factor is named and unavailable rather than silently set to one. Values and units remain owned by later weight/integration work. |
+| C14 | Named factor audit | Every requested factor has value/unit/normalization/availability; the coarea denominator and Haar conversion remain separate. | Partial: values, units, and normalization are exposed for `rho_pose`, `entry_measure`, `fresnel_transmission`, and `path_validity` on the canonical pixel fiber (`test_canonical_pixel_fiber_exposes_four_available_factors_pointwise`, `test_figure_data_exports_available_weight_arrays_for_the_canonical_pixel`); `test_public_result_schema_preserves_units_shapes_dtype_and_availability` verifies unregistered factors stay unavailable rather than silently one, and `conventions` carries `1/(8 pi^2)` and `J_perp` separately. Quadrature (`lumice_integral.quadrature`): an adaptive composite Simpson line integral over corrector-retracted, chord-parametrised edges with the exact `dH^1_g` speed reports method, refinements, node count, `value`, `error_estimate`, `epsilon` (`J_perp -> J_perp + epsilon`, default `1e-6`, the raw `J_perp` array stays separate) and a convergence-order estimate; `test_constant_weight_recovers_the_haar_identity_within_epsilon_and_error` and `test_trigonometric_weight_matches_the_analytic_integral_within_error` verify analytic values, `test_canonical_pixel_quadrature_converges_without_silent_degradation` the converged `partial` canonical value (`docs/ch06-reference-fixture.md` section 4.1), and `test_figure_data_exports_the_quadrature_block_and_pointwise_integrand` the exported block. Component completeness stays `unknown`; `visibility` and the radiometric factors stay unavailable, so the value remains partial. |
 
 ## 12. Explicit open items
 
@@ -596,6 +597,47 @@ failure: the named prerequisite is outside the current reference core.
   rejection are covered without private monkeypatching.
 - Seed search, component discovery, completeness certificates, and component
   deduplication are outside the single-component interface.
+  `lumice_integral.discovery` provides them for one pixel of the 3-5 path as
+  a separate module with its own, weaker contract:
+  - `discover_components(target_direction, incident_direction,
+    refractive_index, crystal, *, rng_seed, prescan_samples=400000,
+    discovery_step_budget=250, angle_tolerance_deg=2.0,
+    cluster_radius_rad=0.3, arclength_rtol=1e-3)` returns
+    `ComponentDiscoveryResult(components, incomplete, completeness,
+    pool_count, raw_cluster_count, admissible_count)`.  It Haar-samples
+    `SO(3)`, keeps the pool within the angular tolerance that passes both
+    refraction discriminants, clusters the *whole* pool geodesically, Gauss-
+    Newton-corrects one representative per cluster, applies the
+    `path_3_5_domain` and `entry_measure > 0` gates, and traces each
+    admissible candidate with `trace_fiber` under
+    `maximum_accepted_steps = discovery_step_budget`.  `rng_seed` is
+    required; batch callers decide explicitly whether pixels share it.
+  - Two closed traces are the same component iff `(status, reason)` agree and
+    their arclengths agree within `arclength_rtol = 1e-3` (`atol = 1e-6`).
+    Accepted pose counts are not part of the fingerprint: the survey observed
+    one loop traced with `173 / 180 / 172` poses from different entry points.
+    Traces with `status != closed` never form or join a component; they are
+    returned as `incomplete` with their truncated `FiberResult`.
+  - `completeness` is procedural, not a certificate: `"complete"` means every
+    admissible candidate of this pool closed and no `status != closed`
+    evidence was seen (a dark pixel with no admissible candidate is
+    `"complete"` with zero components); `"unknown"` means at least one
+    candidate did not close.  It does not prove that every connected
+    component of `X_(P,d)` was found, so the single-component result's
+    `component_completeness = "unknown"` stays authoritative for quadrature.
+  - The discovery budget is independent of the production
+    `ContinuationOptions` default (`4000`); the caller retraces a discovered
+    seed with production options for quadrature.
+  - `hot_start_component(converged_seed, target_direction, ...)` runs the
+    same correction, gates, trace, and classification on one caller-supplied
+    seed (no prescan), and `detect_arclength_jump(arclengths,
+    relative_threshold=0.2)` flags neighbouring-pixel arclength jumps as
+    topology-boundary evidence; the `0.2` default is calibrated on the single
+    observed boundary (canonical strip rows `225 -> 226`, about `50 %`).
+  - Defaults and regression baselines come from
+    `scratchpad/scrum-ch06-direct-integration/explore-component-discovery`
+    (400k samples stable to 1.6M, 0.3 rad cluster radius, 34+ pixels) and are
+    locked by `tests/test_discovery.py`.
 - Continuation through rank loss, bifurcation, singular intersections, TIR, or
   path-branch changes is unsupported pending dedicated exploration.
 - Absolute source radiometry, wavelength/polarization integration, pixel solid

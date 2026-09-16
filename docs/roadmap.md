@@ -153,6 +153,23 @@ must address:
 The first image-level target is the historical local tangent-arc strip at
 `251 x 801` resolution. It should be compared with both the surviving direct
 integration data and an independently converged Lumice Monte Carlo render.
+Status: the strip driver exists (`lumice_integral.strip_pixel` /
+`strip_driver` / `strip_io`, `scripts/render_ch06_strip.py`): column-wise
+neighbouring-pixel hot start gated by arclength-jump detection with cold
+prescan fallback and periodic cold spot checks, a per-pixel procedural
+completeness status layer, and the point pixel model chosen by a caustic
+probe (the probe found `O(10-40 %)` point-vs-sub-pixel differences within
+about seven rows of the `22 deg` inner edge at the centre column, so the
+caustic band is a documented pixel-model limitation of the default render).
+A full-height every-ninth-column preview is rendered and compared: Spearman
+`0.99` against the historical raw on pixels lit in both, a consistent
+`10`-row inner-edge offset, and the lower quarter of the strip (rows
+`600-800`) `unknown` because no discovery candidate closes there; the full
+`251 x 801` render is in progress. The evidence is recorded in the
+[chapter 6 reference fixture specification](ch06-reference-fixture.md)
+sections 5 and 7. Component completeness remains procedural, not certified;
+finite solar disk and finite pixel solid angle are still open (the sub-pixel
+model is implemented but costs 6-10x and is off by default).
 
 ### 3.4 Orientation distributions
 
@@ -206,6 +223,13 @@ that each must become a package immediately:
 1. **Independent differentiable optical evaluator**: project-owned geometry and
    optics mapping pose, path, and wavelength to outgoing direction, validity,
    named physical weights, and the smooth computation graph required by AD.
+   Finite-crystal geometry (convex polyhedra, path unfolding, corridor
+   projection intersection, ray-path enumeration, and the single-pose effective
+   entry cross-section `entry_measure`) is owned by `lumice_integral.geometry`.
+   That subpackage is pure numpy and sits outside the differentiable graph; it
+   supplies the geometric factor $A_P(R)$ that the named physical weights
+   multiply, and is the authoritative implementation that the writing project
+   now calls instead of maintaining its own copy.
 2. **Differential evaluator**: derivatives with respect to local SO(3)
    coordinates, preferably from the same equations as the value evaluator.
 3. **Fiber solver**: seed search, predictor-corrector continuation, component
@@ -304,3 +328,10 @@ produce plausible but systematically wrong radiance.
   and optics implementation. Lumice remains an external Monte Carlo validation
   oracle and analysis-data source, never a production dependency or shared
   computational kernel.
+- **2026-09-16**: the crystal geometry authority moves from the writing
+  project's `halo_notes.geometry` into `lumice_integral.geometry` (migrated
+  near-verbatim with public names kept 1:1). The writing project will call this
+  package from now on, so the cross-repository relationship does not fork the
+  geometry implementation. The subpackage stays pure numpy; splitting it into a
+  separately installable unit (to avoid the parent package's JAX import) is
+  recorded as a follow-up, not done here.

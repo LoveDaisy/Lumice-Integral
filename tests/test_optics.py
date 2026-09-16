@@ -8,6 +8,9 @@ import pytest
 from lumice_integral.analytic import tangent_basis
 from lumice_integral.continuation import FiberStatus, TerminationReason, trace_fiber
 from lumice_integral.optics import (
+    ICE_REFRACTIVE_INDEX,
+    fresnel_transmission_3_5,
+    fresnel_unpolarized_transmittance,
     minimum_deviation_incident,
     path_3_5,
     path_3_5_domain,
@@ -130,3 +133,45 @@ def test_3_5_domain_and_problem_reject_invalid_refractive_indices(refractive_ind
         path_3_5_domain(seed, incident, refractive_index)
     with pytest.raises(ValueError, match="refractive_index.*finite positive scalar"):
         path_3_5_problem(seed, incident, refractive_index=refractive_index)
+
+
+@pytest.mark.parametrize("index", [float(ICE_REFRACTIVE_INDEX), 1.5, 2.4])
+def test_fresnel_normal_incidence_matches_the_closed_form(index):
+    expected = 1.0 - ((index - 1.0) / (index + 1.0)) ** 2
+    assert fresnel_unpolarized_transmittance(1.0, 1.0, index, 1.0) == pytest.approx(expected, rel=1e-15)
+    # Reciprocity: the same interface crossed from inside transmits the same power.
+    assert fresnel_unpolarized_transmittance(index, 1.0, 1.0, 1.0) == pytest.approx(expected, rel=1e-15)
+
+
+def test_fresnel_transmittance_is_energy_consistent_with_independent_amplitudes():
+    """Compare against the textbook s/p reflectances written in angles, not cosines."""
+    index = 1.31
+    for incidence_deg in (0.0, 10.0, 35.0, 60.0, 85.0):
+        incidence = np.radians(incidence_deg)
+        transmitted = np.arcsin(np.sin(incidence) / index)
+        r_s = np.sin(incidence - transmitted) / np.sin(incidence + transmitted) if incidence_deg else (1 - index) / (1 + index)
+        r_p = np.tan(incidence - transmitted) / np.tan(incidence + transmitted) if incidence_deg else (1 - index) / (1 + index)
+        expected = 1.0 - 0.5 * (r_s**2 + r_p**2)
+        actual = fresnel_unpolarized_transmittance(1.0, np.cos(incidence), index, np.cos(transmitted))
+        assert actual == pytest.approx(expected, rel=1e-12)
+        assert 0.0 < actual <= 1.0
+
+
+def test_fresnel_3_5_lies_in_the_unit_interval_and_drops_toward_the_critical_angle():
+    incident = minimum_deviation_incident()
+    symmetric = fresnel_transmission_3_5(jnp.eye(3, dtype=jnp.float64), incident)
+    grazing = fresnel_transmission_3_5(exp(jnp.array([0.0, 0.0, 0.55], dtype=jnp.float64)), incident)
+    assert 0.0 < grazing < symmetric < 1.0
+    # Product structure: the two interface factors multiply, no hidden extra factor.
+    check = path_3_5_domain(jnp.eye(3, dtype=jnp.float64), incident)
+    entry = fresnel_unpolarized_transmittance(
+        1.0, check.margins["entry_incidence_cosine"], 1.31, np.sqrt(check.margins["entry_snell_discriminant"])
+    )
+    exit = fresnel_unpolarized_transmittance(
+        1.31, check.margins["exit_incidence_cosine"], 1.0, np.sqrt(check.margins["exit_snell_discriminant"])
+    )
+    assert symmetric == pytest.approx(entry * exit, rel=1e-15)
+    # Outside the smooth domain (exit TIR) no power is transmitted.
+    tir_pose = exp(jnp.array([0.5447316801391622, -1.506228738763967, -1.190186580432801], dtype=jnp.float64))
+    assert path_3_5_domain(tir_pose, incident).event_kind == "tir_boundary"
+    assert fresnel_transmission_3_5(tir_pose, incident) == 0.0

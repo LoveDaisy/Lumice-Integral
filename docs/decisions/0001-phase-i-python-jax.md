@@ -61,6 +61,43 @@ The 3-5 float64 fiber closed after 145 fixed steps with maximum residual
 `9.99e-12` and rotation error `1.06e-10 rad`. Float32 preserved the step count
 but produced maximum residual `9.98e-7` and closure error `1.86e-5 rad`.
 
+### Compiled step kernels inside the Python control loop (2026-09-16)
+
+The adaptive reference solver keeps its control flow, event gates and failure
+classification on the host, but every per-iteration numerical unit is a
+module-level `jax.jit` kernel keyed on the identity of
+`problem.direction_evaluator`: direction plus target-chart residual, the
+(2, 3) local Jacobian, one bordered Newton iterate (primal value, Jacobian,
+condition number and update from a single `jacfwd(has_aux=True)` pass), the
+predictor, the geodesic distance and the section coordinate. Measured with
+`benchmarks/benchmark_fiber_trace.py` on the M2 Max CPU (Python `3.12.11`,
+JAX `0.11.1`, float64), same `FiberProblem` instance traced twice so the
+second call hits the compile cache:
+
+| Workload (adaptive 3-5 fiber) | Before | After | Steps / evaluations |
+|---|---:|---:|---|
+| canonical seed `[0.15, 0.08, -0.05]`, warm | 7.86 s | 0.141 s | 192 / 1161 |
+| seed `[0.16, 0.07, -0.04]`, warm | 14.30 s | 0.243 s | 364 / 1975 |
+| per evaluation unit, warm | ~7.5 ms | ~122 µs | — |
+| first call including kernel compilation | — | 0.6–0.7 s | — |
+
+Steps, evaluation counts and reason classification are unchanged; residual,
+arclength and closure gap moved at the `1e-14`–`1e-16` level from XLA
+reordering. This is a different fiber from the 145-step fixed-step row above
+and is not comparable to it step for step.
+
+The remaining ~120 µs per evaluation is dispatch granularity, not kernel
+arithmetic: about 25 µs kernel dispatch, 30 µs for the device-to-host copies
+the gates read, 12 µs host-side domain gate and 20 µs host gate and
+classification bookkeeping. Closing the gap to the compiled `lax.scan` figure
+would require moving the corrector loop and its gates into the graph, which is
+a separate decision. Two boundaries follow from the cache design: kernels are
+cached per `direction_evaluator` object, so a workflow that constructs one
+`FiberProblem` per pixel recompiles the four evaluator-bound kernels
+(~0.4 s) for every pixel unless it shares or hashes the evaluator; and the
+per-step host synchronization remains the reason a single fiber step is not
+an accelerator boundary.
+
 ## Operational Constraints
 
 On `home-wsl`, set:
