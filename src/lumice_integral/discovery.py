@@ -62,6 +62,7 @@ from .continuation import (
     FiberProblem,
     FiberResult,
     FiberStatus,
+    StepDiagnostic,
     TargetChart,
     TerminationReason,
     local_residual_jacobian,
@@ -428,3 +429,49 @@ def detect_arclength_jump(
         return []
     change = np.abs(np.diff(values)) / np.abs(values[:-1])
     return [int(i) for i in np.nonzero(change > relative_threshold)[0]]
+
+
+def is_floor_locked(
+    step_diagnostics: Sequence[StepDiagnostic],
+    *,
+    minimum_step: float,
+    window: int,
+) -> bool:
+    """``True`` iff the last ``window`` accepted steps all proposed ``minimum_step``.
+
+    Read-only criterion for the "step floor never left" stall diagnosed by
+    ``explore-continuation-degenerate-stall-diagnosis``: once some domain
+    margin sits below ``ContinuationOptions.event_slowdown_margin`` without
+    tending to zero, ``_adapt_accepted_step`` only ever shrinks the step, and
+    after it clamps to ``minimum_step`` the trace crawls there until its
+    budget runs out.  A caller that owns a budget-limited trace whose reason
+    is :attr:`TerminationReason.STEP_BUDGET` can therefore decide, from the
+    trace it already paid for, that a retrace with a larger budget of the
+    same seed and the same numerics would crawl the same way (the first steps
+    are deterministic), and skip it.
+
+    Only ``accepted`` entries count; a rejected trial that shrank the step is
+    not an accepted step at the floor.  The comparison is exact (``<=``):
+    ``_adapt_accepted_step`` writes ``max(minimum_step, step)``, so a step at
+    the floor *is* ``minimum_step``, not an approximation of it.  Fewer than
+    ``window`` accepted steps, or any step above the floor inside the window,
+    gives ``False``; the window must be positive.  ``window`` is a procedural
+    calibration (task-discovery-stall-early-exit Step 0), not a proof: it is
+    the smallest trailing run observed on stalled candidates with a margin
+    over the longest run observed on candidates that a production-budget
+    retrace did close.
+    """
+    if window < 1:
+        raise ValueError("window must be positive")
+    if minimum_step <= 0.0:
+        raise ValueError("minimum_step must be positive")
+    trailing = 0
+    for diagnostic in reversed(step_diagnostics):
+        if not diagnostic.accepted:
+            continue
+        if diagnostic.proposed_step > minimum_step:
+            return False
+        trailing += 1
+        if trailing >= window:
+            return True
+    return False

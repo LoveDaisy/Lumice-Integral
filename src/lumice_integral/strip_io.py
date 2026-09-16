@@ -301,6 +301,7 @@ def options_block(options: PixelOptions) -> dict[str, Any]:
             "prescan_samples": options.prescan_samples,
             "discovery_step_budget": options.discovery_step_budget,
             "retry_step_budget": options.effective_retry_step_budget,
+            "stall_floor_window": options.stall_floor_window,
             "angle_tolerance_deg": options.angle_tolerance_deg,
             "cluster_radius_rad": options.cluster_radius_rad,
             "arclength_rtol": options.arclength_rtol,
@@ -309,7 +310,10 @@ def options_block(options: PixelOptions) -> dict[str, Any]:
                 "column-wise top-down scan; hot start every integrated component of "
                 "the pixel above with the production step budget, reject on arclength "
                 "jump and fall back to the cold prescan; cold prescan with the small "
-                "discovery budget, incomplete candidates retraced once with retry_step_budget; "
+                "discovery budget, incomplete candidates retraced once with retry_step_budget "
+                "unless a step_budget candidate's last stall_floor_window accepted discovery "
+                "steps all sat at continuation.minimum_step (counted as incomplete_stall_skip, "
+                "kept incomplete without a retrace); "
                 "components deduplicated by (status, reason, arclength within arclength_rtol)"
             ),
         },

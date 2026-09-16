@@ -146,6 +146,8 @@ def test_write_and_read_strip_round_trip_with_verified_hashes(tmp_path: Path):
     assert provenance["options"]["quadrature"]["relative_tolerance"] == 1e-6
     assert provenance["options"]["quadrature"]["convergence_order_levels"] == 0
     assert provenance["options"]["discovery"]["retry_step_budget"] == 4000
+    assert provenance["options"]["discovery"]["stall_floor_window"] == PixelOptions().stall_floor_window
+    assert "incomplete_stall_skip" in provenance["options"]["discovery"]["strategy"]
     assert provenance["scene"]["refractive_index"] == {"value": 1.31, "provenance": "canonical-new"}
     assert provenance["scene"]["sun"]["provenance"] == "historical-inferred"
     assert provenance["summary"]["rendered_pixels"] == 6
@@ -166,6 +168,50 @@ def test_write_and_read_strip_round_trip_with_verified_hashes(tmp_path: Path):
     files["float64"].write_bytes(b"\x00" * files["float64"].stat().st_size)
     with pytest.raises(ValueError, match="sha256"):
         read_strip(tmp_path)
+
+
+def _checkpoint_without_pixel_fields(path: Path, *fields: str) -> None:
+    """Write a checkpoint whose pickled ``PixelOptions`` lacks ``fields``.
+
+    Simulates a checkpoint written before those fields existed: an unpickled
+    frozen dataclass gets its state through ``__dict__.update`` and never sees
+    a key that was not pickled.
+    """
+    options = DriverOptions()
+    pixel_state = {k: v for k, v in options.pixel.__dict__.items() if k not in fields}
+    old_pixel = object.__new__(PixelOptions)
+    old_pixel.__dict__.update(pixel_state)
+    old_options = object.__new__(DriverOptions)
+    old_options.__dict__.update({**options.__dict__, "pixel": old_pixel})
+    payload = {"rows": [0, 1], "results": [_pixel(0, 0, 1.0)], "options": old_options}
+    path.write_bytes(pickle.dumps(payload))
+
+
+def test_load_checkpoints_reuses_a_checkpoint_that_predates_a_literal_default_field(tmp_path: Path):
+    # task-discovery-stall-early-exit added ``stall_floor_window`` with a plain
+    # literal default: a checkpoint pickled before it must still match the
+    # current defaults (the multi-day full-image resume must not restart).
+    _checkpoint_without_pixel_fields(tmp_path / "column_0000.pkl", "stall_floor_window")
+    payload = pickle.loads((tmp_path / "column_0000.pkl").read_bytes())
+    assert "stall_floor_window" not in payload["options"].pixel.__dict__
+    window = Window((0, 1), (0, 1))
+    messages: list[str] = []
+    found = load_checkpoints(tmp_path, window, DriverOptions(), log=messages.append)
+    assert sorted(found) == [0] and messages == []
+    # ... and the field does take part in the fingerprint once it differs.
+    changed = DriverOptions(pixel=PixelOptions(stall_floor_window=999))
+    assert load_checkpoints(tmp_path, window, changed, log=messages.append) == {}
+    assert messages == ["column 0 checkpoint options differ from this run's options; recomputing"]
+
+
+def test_load_checkpoints_recomputes_instead_of_crashing_on_a_factory_default_field(tmp_path: Path):
+    # A field with ``default_factory`` has no class attribute to fall back on;
+    # comparing raises AttributeError, which must read as "predates".
+    _checkpoint_without_pixel_fields(tmp_path / "column_0000.pkl", "quadrature")
+    window = Window((0, 1), (0, 1))
+    messages: list[str] = []
+    assert load_checkpoints(tmp_path, window, DriverOptions(), log=messages.append) == {}
+    assert messages == ["column 0 checkpoint options predate a current option field; recomputing"]
 
 
 def test_merge_subpixels_averages_and_propagates_unknown():

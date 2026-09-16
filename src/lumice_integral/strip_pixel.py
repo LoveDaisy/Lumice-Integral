@@ -12,7 +12,10 @@ For one target direction ``d`` it
    full prescan :func:`.discovery.discover_components` with the small discovery
    budget, whose ``incomplete`` candidates are then retraced once with the
    production budget (rows just below the 22-degree inner-edge caustic close
-   only after 300-1300 accepted steps; task-strip-image-driver Step 1);
+   only after 300-1300 accepted steps; task-strip-image-driver Step 1) --
+   except a candidate whose discovery trace is already locked at the step
+   floor (:func:`.discovery.is_floor_locked`), which the retrace could only
+   repeat (task-discovery-stall-early-exit);
 2. retraces every closed component with the production
    :class:`.continuation.ContinuationOptions` and the four named weights
    (the discovery traces are weightless and budget-limited by design);
@@ -76,7 +79,7 @@ from .canonical_scene import (
     canonical_incident_direction,
     canonical_pose_density,
 )
-from .continuation import ContinuationOptions, FiberProblem, FiberStatus, trace_fiber
+from .continuation import ContinuationOptions, FiberProblem, FiberStatus, TerminationReason, trace_fiber
 from .discovery import (
     ComponentDiscoveryResult,
     DiscoveredComponent,
@@ -85,6 +88,7 @@ from .discovery import (
     detect_arclength_jump,
     discover_components,
     hot_start_component,
+    is_floor_locked,
     retarget_problem,
 )
 from .geometry import HexPrism
@@ -110,6 +114,7 @@ STATUS_COLD_CHECK_MISMATCH = 128
 EVENT_NAMES = (
     "incomplete_retry",
     "incomplete_recovered",
+    "incomplete_stall_skip",
     "incomplete_candidate",
     "hot_start_inadmissible",
     "hot_start_incomplete",
@@ -212,6 +217,15 @@ class PixelOptions:
     # Budget of the one retrace of every cold-discovery ``incomplete`` candidate
     # and of every hot start; ``None`` means the production budget.
     retry_step_budget: int | None = None
+    # An ``incomplete`` cold candidate whose last ``stall_floor_window``
+    # accepted discovery steps all sat at ``continuation.minimum_step`` is not
+    # retraced (:func:`.discovery.is_floor_locked`; the retrace would crawl the
+    # same floor).  Calibrated by task-discovery-stall-early-exit Step 0; a
+    # value above ``discovery_step_budget`` disables the skip.  Plain literal
+    # default on purpose: a checkpoint pickled before this field existed
+    # still compares equal to the default options (see
+    # :func:`.strip_driver.load_checkpoints`).
+    stall_floor_window: int = 100
     angle_tolerance_deg: float = 2.0
     cluster_radius_rad: float = 0.3
     arclength_rtol: float = 1e-3
@@ -376,7 +390,12 @@ def _cold_discovery(
 
     A recovered candidate is folded into the components by the same
     fingerprint dedup as the first pass; one that is still not closed stays
-    ``incomplete`` (so the pixel stays ``"unknown"``).
+    ``incomplete`` (so the pixel stays ``"unknown"``).  A ``step_budget``
+    candidate whose discovery trace is floor-locked
+    (:func:`.discovery.is_floor_locked` over ``options.stall_floor_window``)
+    is not retraced at all: it stays ``incomplete`` on the first-pass
+    evidence and is counted as ``incomplete_stall_skip``.  The classification
+    is the same either way; only the retrace cost is saved.
     """
     first = discover_components(
         target,
@@ -390,6 +409,17 @@ def _cold_discovery(
         return first
     records: list[DiscoveredComponent | IncompleteCandidate] = list(first.components)
     for candidate in first.incomplete:
+        if candidate.reason == TerminationReason.STEP_BUDGET and is_floor_locked(
+            candidate.result.step_diagnostics,
+            minimum_step=options.continuation.minimum_step,
+            window=options.stall_floor_window,
+        ):
+            # The retrace repeats these steps exactly (same seed, same
+            # numerics, larger budget) and would crawl the floor to its own
+            # budget; keep the first-pass evidence as the incomplete record.
+            events["incomplete_stall_skip"] += 1
+            records.append(candidate)
+            continue
         events["incomplete_retry"] += 1
         retraced = hot_start_component(
             candidate.seed,

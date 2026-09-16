@@ -219,6 +219,14 @@ def load_checkpoints(
     resumed run never silently mixes columns produced under different
     numerical policies into one ``provenance.json`` (code-review round 1
     Major 1: options drift across runs was previously unchecked).
+
+    An options field added after a checkpoint was written is absent from the
+    unpickled instance's ``__dict__``; the dataclass ``__eq__`` then reads the
+    class-level literal default, so such a checkpoint still compares equal to
+    the current defaults and is reused.  A field without a literal default
+    (``default_factory``) has no class attribute to fall back on and the
+    comparison raises ``AttributeError``; that is treated like a payload
+    that predates the fingerprint rather than left to crash the resume.
     """
     found: dict[int, list[PixelResult]] = {}
     for column in window.column_range:
@@ -232,7 +240,13 @@ def load_checkpoints(
             if log is not None:
                 log(f"column {column} checkpoint predates the options fingerprint; recomputing")
             continue
-        if payload["options"] != options:
+        try:
+            same_options = payload["options"] == options
+        except AttributeError:
+            if log is not None:
+                log(f"column {column} checkpoint options predate a current option field; recomputing")
+            continue
+        if not same_options:
             if log is not None:
                 log(f"column {column} checkpoint options differ from this run's options; recomputing")
             continue

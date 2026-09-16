@@ -61,6 +61,10 @@ def test_pixel_options_defaults_are_the_image_policy(options):
     assert options.continuation.maximum_accepted_steps == 4000
     assert options.discovery_step_budget == 250
     assert options.rng_seed == 20260916
+    # task-discovery-stall-early-exit Step 0: inside the [0, 141] separation
+    # band between legit slow-closers (never at the floor) and stalls.
+    assert options.stall_floor_window == 100
+    assert "stall_floor_window" not in options.discovery_kwargs()
 
 
 def test_pixel_target_matches_the_canonical_scene(scene):
@@ -141,17 +145,59 @@ def test_topology_boundary_row_226_falls_back_to_cold_discovery(scene, options):
     assert lower.value == pytest.approx(render_pixel(scene, 226, 150, options).value, rel=1e-6)
 
 
-def test_degenerate_pixel_is_unknown_with_a_finite_zero_partial_sum(scene, options):
-    result = render_pixel(scene, 700, 150, options)
+@pytest.mark.parametrize("row, candidates", [(700, 12), (780, 13)])
+def test_degenerate_pixel_is_unknown_with_a_finite_zero_partial_sum(scene, options, row, candidates):
+    result = render_pixel(scene, row, 150, options)
     assert result.component_count == 0
-    assert result.incomplete_count == 12
+    assert result.incomplete_count == candidates
     assert result.completeness == "unknown"
     assert result.discovery_completeness == "unknown"
-    assert result.events["incomplete_candidate"] == 12
+    assert result.events["incomplete_candidate"] == candidates
+    # Every candidate is floor-locked after its 250 discovery steps, so none
+    # is retraced with the production budget (task-discovery-stall-early-exit);
+    # the classification above is exactly what the retrace used to produce.
+    assert result.events["incomplete_stall_skip"] == candidates
+    assert result.events["incomplete_retry"] == 0
+    assert result.events["incomplete_recovered"] == 0
     assert result.value == 0.0 and np.isfinite(result.value)
     assert result.hot_seeds == ()
     assert result.status_bits & STATUS_UNKNOWN_COMPLETENESS
     assert not result.status_bits & STATUS_HAS_COMPONENT
+
+
+def test_degenerate_pixel_with_the_early_exit_disabled_retraces_to_the_same_classification(scene):
+    # A window above the discovery budget can never be met: this is the
+    # pre-task behaviour (one production-budget retrace per candidate) and
+    # must classify the pixel identically, only slower.
+    disabled = replace(PixelOptions(), stall_floor_window=PixelOptions().discovery_step_budget + 1)
+    result = render_pixel(scene, 700, 150, disabled)
+    assert result.events["incomplete_stall_skip"] == 0
+    assert result.events["incomplete_retry"] == 12
+    assert result.events["incomplete_recovered"] == 0
+    assert result.events["incomplete_candidate"] == 12
+    assert result.component_count == 0 and result.incomplete_count == 12
+    assert result.completeness == "unknown" and result.value == 0.0
+    assert result.status_bits == render_pixel(scene, 700, 150, PixelOptions()).status_bits
+
+
+def test_legit_slow_closers_are_still_retraced_and_recovered(scene, options):
+    # Row 49, column 0 (home-wsl-preview-step9 pixels.csv: retry 4, recovered
+    # 2, candidate 2, one component of arclength 3.228596 closing after 1290
+    # production steps).  Two step_budget candidates never touch the floor and
+    # must be retraced; the two event-terminated ones are outside the
+    # criterion's reason gate and go through the (free) retrace as before.
+    events = Counter()
+    discovered = strip_pixel_module._cold_discovery(scene, pixel_target(scene.render, 49, 0), options, events)
+    assert events["incomplete_stall_skip"] == 0
+    assert events["incomplete_retry"] == 4
+    assert events["incomplete_recovered"] == 2
+    assert discovered.component_count == 1 and discovered.incomplete_count == 2
+    assert discovered.components[0].arclength == pytest.approx(3.228596, rel=1e-5)
+    assert len(discovered.components[0].result.poses) == 1290
+    assert {c.reason for c in discovered.incomplete} == {
+        TerminationReason.PATH_INFEASIBLE,
+        TerminationReason.TIR_BOUNDARY,
+    }
 
 
 def test_dark_pixel_is_complete_with_zero_value(scene, options):

@@ -37,9 +37,11 @@ from lumice_integral.discovery import (
     detect_arclength_jump,
     discover_components,
     hot_start_component,
+    is_floor_locked,
     retarget_problem,
 )
 from lumice_integral.so3 import exp
+from lumice_integral.strip_pixel import PixelOptions
 
 RNG_SEED = 20260916
 DISCOVERY_KWARGS = dict(
@@ -56,6 +58,8 @@ CANONICAL_ARCLENGTH = 4.758247
 ROW_225_ARCLENGTH = 6.243734
 ROW_226_ARCLENGTH = 3.130201
 ROW_151_ARCLENGTH = 4.782113
+# The image's early-exit window (single authority: the PixelOptions default).
+STALL_FLOOR_WINDOW = PixelOptions().stall_floor_window
 
 
 def pixel_target(row: int, column: int) -> np.ndarray:
@@ -231,6 +235,14 @@ def test_degenerate_pixels_report_only_budget_exhausted_incomplete_candidates(
         assert candidate.status == FiberStatus.BUDGET_EXHAUSTED
         assert candidate.reason == TerminationReason.STEP_BUDGET
         assert len(candidate.result.poses) == 251
+        # task-discovery-stall-early-exit Step 0: every candidate here ends
+        # its 250 steps in a trailing run of 141-238 accepted steps at the
+        # floor, so the image's early-exit window catches all of them.
+        assert is_floor_locked(
+            candidate.result.step_diagnostics,
+            minimum_step=ContinuationOptions().minimum_step,
+            window=STALL_FLOOR_WINDOW,
+        )
     # Diagnostic only (not asserted): the survey needed 29-31 s per pixel with
     # the production budget; the discovery budget should cut that by ~10x.
     print(f"row={row} discovery elapsed {elapsed:.1f}s")
@@ -339,6 +351,107 @@ def test_detect_arclength_jump_edge_cases() -> None:
         detect_arclength_jump([1.0, 2.0], relative_threshold=0.0)
     with pytest.raises(ValueError):
         detect_arclength_jump([[1.0, 2.0]])
+
+
+# --- task-discovery-stall-early-exit: floor-lock criterion -----------------------
+
+FLOOR = 1e-5
+
+
+def _steps(*proposed: float, rejected_at: tuple[int, ...] = ()) -> list[SimpleNamespace]:
+    """Accepted step diagnostics with the given ``proposed_step`` sequence; indices
+    in ``rejected_at`` become rejected trials (at the floor) instead."""
+    return [
+        SimpleNamespace(proposed_step=step, accepted=index not in rejected_at)
+        for index, step in enumerate(proposed)
+    ]
+
+
+def test_floor_locked_needs_the_whole_trailing_window_at_the_floor() -> None:
+    assert not is_floor_locked(_steps(1e-2, 1e-3, 1e-4), minimum_step=FLOOR, window=2)
+    assert not is_floor_locked(_steps(1e-3, FLOOR), minimum_step=FLOOR, window=2)
+    assert is_floor_locked(_steps(1e-3, FLOOR, FLOOR), minimum_step=FLOOR, window=2)
+    assert is_floor_locked(_steps(1e-3, FLOOR, FLOOR, FLOOR), minimum_step=FLOOR, window=2)
+    assert is_floor_locked(_steps(FLOOR, FLOOR), minimum_step=FLOOR, window=2)
+
+
+def test_floor_locked_is_about_the_trailing_run_not_ever_having_touched_the_floor() -> None:
+    # Reached the floor, climbed back, reached it again: only the last run counts.
+    assert not is_floor_locked(
+        _steps(FLOOR, FLOOR, FLOOR, 2e-5, FLOOR, FLOOR), minimum_step=FLOOR, window=3
+    )
+    assert is_floor_locked(
+        _steps(FLOOR, FLOOR, FLOOR, 2e-5, FLOOR, FLOOR), minimum_step=FLOOR, window=2
+    )
+    assert not is_floor_locked(_steps(FLOOR, FLOOR, 2e-5), minimum_step=FLOOR, window=1)
+
+
+def test_floor_locked_ignores_rejected_trials_and_empty_traces() -> None:
+    # Two accepted steps at the floor around a rejected trial: the trial is
+    # neither a break in the run nor a member of it.
+    assert is_floor_locked(
+        _steps(FLOOR, FLOOR, FLOOR, rejected_at=(1,)), minimum_step=FLOOR, window=2
+    )
+    assert not is_floor_locked(
+        _steps(FLOOR, FLOOR, FLOOR, rejected_at=(1,)), minimum_step=FLOOR, window=3
+    )
+    assert not is_floor_locked(
+        _steps(FLOOR, FLOOR, rejected_at=(0, 1)), minimum_step=FLOOR, window=1
+    )
+    assert not is_floor_locked([], minimum_step=FLOOR, window=1)
+    with pytest.raises(ValueError):
+        is_floor_locked(_steps(FLOOR), minimum_step=FLOOR, window=0)
+    with pytest.raises(ValueError):
+        is_floor_locked(_steps(FLOOR), minimum_step=0.0, window=1)
+
+
+def test_floor_locked_reads_the_real_step_floor_exactly() -> None:
+    # ``_adapt_accepted_step`` clamps with ``max(minimum_step, step)``: a step
+    # at the floor is the option value itself, so the exact comparison holds on
+    # a real trace.  A tiny budget at the canonical seed does not reach the
+    # floor at all; the criterion must not fire on such a healthy trace.
+    options = ContinuationOptions(maximum_accepted_steps=30)
+    result = trace_fiber(canonical_pixel_problem(), options)
+    assert result.reason == TerminationReason.STEP_BUDGET
+    assert all(s.proposed_step >= options.minimum_step for s in result.step_diagnostics)
+    assert not is_floor_locked(
+        result.step_diagnostics, minimum_step=options.minimum_step, window=1
+    )
+
+
+@pytest.mark.parametrize(
+    "row, column, step_budget_candidates",
+    [(49, 0, 2), (50, 9, 4)],
+)
+def test_legit_slow_closers_never_touch_the_step_floor_in_discovery(
+    row: int, column: int, step_budget_candidates: int
+) -> None:
+    """Candidates that the production budget closes after ~1250-1300 steps
+    (home-wsl-preview-step9 ``production_pose_counts``; Step 0 calibration
+    ``artifacts/stall_calibration.json``) must never be early-exited: their
+    250-step discovery traces do not propose ``minimum_step`` even once, so
+    the criterion is false for *any* window, not just the image default."""
+    result = discover_pixel(row, column)
+    minimum_step = ContinuationOptions().minimum_step
+    budget_limited = [c for c in result.incomplete if c.reason == TerminationReason.STEP_BUDGET]
+    assert len(budget_limited) == step_budget_candidates
+    for candidate in budget_limited:
+        assert not any(
+            s.accepted and s.proposed_step <= minimum_step
+            for s in candidate.result.step_diagnostics
+        )
+        assert not is_floor_locked(
+            candidate.result.step_diagnostics, minimum_step=minimum_step, window=1
+        )
+    # The remaining candidates stop on an event with no accepted step at all;
+    # they are outside the criterion's reason gate by construction.
+    for candidate in result.incomplete:
+        if candidate.reason != TerminationReason.STEP_BUDGET:
+            assert candidate.reason in (
+                TerminationReason.PATH_INFEASIBLE,
+                TerminationReason.TIR_BOUNDARY,
+            )
+            assert len(candidate.result.poses) == 1
 
 
 # --- template reuse (task-strip-image-driver) ------------------------------------
