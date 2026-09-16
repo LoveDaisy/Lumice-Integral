@@ -27,3 +27,6 @@ build-backend = "hatchling.build"
 [tool.pytest.ini_options]
 addopts = "-ra"
 testpaths = ["tests"]
+markers = [
+    "slow: long-running regression (minutes); deselect with -m 'not slow'",
+]
