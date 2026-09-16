@@ -160,7 +160,7 @@ freeze incidental accepted-step counts as a correctness requirement.
 | ch06 ray-splitting schematic | Writing-Lab drawing code | Supported | None in Lumice Integral. |
 | ch06 all-sky Monte Carlo example | Lumice through Writing-Lab validation glue | Supported | Not a Lumice Integral product output. |
 | ch06 pose-fiber geometry | Lumice Integral | Supported for one supplied regular seed/component | Historical pose-coordinate projection still needs author confirmation. |
-| ch06 solver/Jacobian diagnostics | Lumice Integral | Supported | A stable figure-data export and plotting consumer. |
+| ch06 solver/Jacobian diagnostics | Lumice Integral data; Writing-Lab presentation | Supported as versioned figure data | A production plotting consumer still belongs in Writing-Lab; an independent prototype consumer has been verified. |
 | ch06 named physical-factor curves | Lumice Integral | Not supported | Pose density, entry measure/visibility, Fresnel throughput, and evaluated factor samples. |
 | ch06 one-pixel integrand/integral | Lumice Integral | Not supported | Named factor evaluation plus converged line quadrature. |
 | ch06 `251 x 801` direct strip | Lumice Integral | Historical bytes can be loaded; physical rerender is not supported | Seed/component discovery, neighboring-pixel continuation, camera/pixel model, image driver, and the one-pixel stages above. |
@@ -204,6 +204,13 @@ invented samples; non-finite unavailable closure values become JSON `null`.
 The format does not serialize arbitrary Python objects or require Lumice at
 read time. The canonical fixture produces byte-identical JSON and NPZ files on
 repeated exports in the recorded reference environment.
+
+An independent prototype consumer has loaded only these two files and produced
+an orientation-body-axis projection, local-map/domain-margin curves, and
+solver diagnostics without importing Lumice Integral. That experiment proves
+the boundary is sufficient for current geometry figures; it is not a checked-in
+chapter plotting implementation or evidence that the unknown historical curve
+labels have been recovered.
 
 ## 7. Acceptance Stages
 
