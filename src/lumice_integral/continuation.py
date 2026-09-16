@@ -507,7 +507,13 @@ def _evaluate_regular_state(
             TerminationReason.RANK_LOSS,
             sigma_2 - options.singular_value_tolerance,
             "local residual Jacobian failed the regularity gate",
-            {"sigma_1": sigma_1, "sigma_2": sigma_2, "condition": condition},
+            {
+                "sigma_1": sigma_1,
+                "sigma_2": sigma_2,
+                "normal_jacobian": normal_jacobian,
+                "rank": float(rank),
+                "condition": condition,
+            },
         )
         return _StateEvaluation(
             accepted=False,
