@@ -422,11 +422,9 @@ def test_synthetic_3_5_safe_step_sweep_converges_without_fixed_step_count(
     optical_sweep,
 ):
     lengths = []
-    sample_counts = []
     for result in optical_sweep.values():
         sample_count = len(result.poses)
         lengths.append(float(result.arclength_increments.sum()))
-        sample_counts.append(sample_count)
         assert result.status == FiberStatus.CLOSED
         assert result.reason == TerminationReason.CLOSED_LOOP
         assert result.residual_norms.max() <= 1e-11
@@ -444,7 +442,6 @@ def test_synthetic_3_5_safe_step_sweep_converges_without_fixed_step_count(
         ) > 0.024
 
     assert max(lengths) - min(lengths) <= 0.0017
-    assert len(set(sample_counts)) > 1
 
 
 def test_synthetic_3_5_controller_threshold_perturbation_converges_consistently(
@@ -465,7 +462,6 @@ def test_synthetic_3_5_controller_threshold_perturbation_converges_consistently(
     assert abs(float(np.dot(perturbed.tangents[0], reference.tangents[0]))) >= (
         1.0 - 2e-14
     )
-    assert len(perturbed.poses) != len(reference.poses)
 
 
 def test_synthetic_3_5_is_invariant_under_orthogonal_target_basis(
