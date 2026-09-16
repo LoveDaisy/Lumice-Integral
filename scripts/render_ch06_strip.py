@@ -11,7 +11,7 @@ Examples::
 
     uv run python scripts/render_ch06_strip.py --rows 140:160 --columns 140:160 \\
         --workers 4 --output-dir /tmp/strip-smoke
-    XLA_FLAGS="--xla_cpu_multi_thread_eigen=false intra_op_parallelism_threads=1" OMP_NUM_THREADS=1 \\
+    XLA_FLAGS="--xla_cpu_multi_thread_eigen=false --xla_cpu_intra_op_parallelism_threads=1" OMP_NUM_THREADS=1 \\
         uv run python scripts/render_ch06_strip.py --workers 30 --output-dir artifacts/strip-full --resume
 
 Spawned workers get glibc malloc trimming (``strip_driver.WORKER_MALLOC_ENV``)

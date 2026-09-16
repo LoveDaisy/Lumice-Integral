@@ -37,6 +37,24 @@ Completeness vocabulary (two different signals, deliberately named apart):
   components that were integrated, never ``NaN`` and never silently
   substituted.  Consumers must read the status layer, not the raw value.
 
+  Known bounded blind spot (code-review round 1 Major 2): :func:`_hot_start_all`
+  only revisits the neighbour's own seeds, one hot start per entry of
+  ``previous``, so a component that first becomes admissible between two rows
+  (a caustic/topology branch) has no matching seed and produces no event; the
+  hot-started pixel is reported ``"complete"`` even though a real component
+  was missed.  A full supplementary discovery on every hot-started pixel
+  would pay the same ~0.4 s JIT/prescan tax the ``template`` reuse in
+  :mod:`.discovery` exists to avoid (task-strip-image-driver Step 0 DECISION,
+  progress.md 20:40), so it is deliberately not attempted here.  The only
+  mitigation is :data:`.strip_driver.DriverOptions.cold_check_interval`'s
+  periodic cold prescan, which bounds the miss to at most
+  ``cold_check_interval - 1`` rows before self-healing (see
+  ``test_hot_start_chain_cannot_discover_a_component_absent_from_the_previous_seeds``
+  in ``tests/test_strip_pixel.py``, which pins this exact bound rather than
+  leaving it unexercised); it does not retroactively fix rows already
+  emitted inside that window.  A caustic-heavy region that needs a tighter
+  bound should lower ``cold_check_interval``.
+
 Nothing here imports or calls Lumice.
 """
 
@@ -63,7 +81,7 @@ from .discovery import (
     ComponentDiscoveryResult,
     DiscoveredComponent,
     IncompleteCandidate,
-    _dedup,
+    dedup_components,
     detect_arclength_jump,
     discover_components,
     hot_start_component,
@@ -315,7 +333,12 @@ def _hot_start_all(
     options: PixelOptions,
     events: Counter,
 ) -> ComponentDiscoveryResult | None:
-    """Hot-start every neighbour component; ``None`` means fall back to cold discovery."""
+    """Hot-start every neighbour component; ``None`` means fall back to cold discovery.
+
+    Result component count is always ``len(previous)``: a genuinely new
+    component with no matching seed is never found here (module docstring
+    "known bounded blind spot").
+    """
     records: list[DiscoveredComponent] = []
     for seed in previous:
         record = hot_start_component(
@@ -340,7 +363,7 @@ def _hot_start_all(
             events["arclength_jump"] += 1
             return None
         records.append(record)
-    result = _dedup(records, options.arclength_rtol, pool_count=0, raw_cluster_count=0)
+    result = dedup_components(records, options.arclength_rtol, pool_count=0, raw_cluster_count=0)
     if result.component_count < len(records):
         events["hot_start_merged"] += len(records) - result.component_count
     return result
@@ -384,7 +407,7 @@ def _cold_discovery(
             # ``None`` cannot happen for a seed that already passed the gates
             # with the same tolerances; keep the first-pass evidence if it does.
             records.append(retraced if retraced is not None else candidate)
-    return _dedup(
+    return dedup_components(
         records,
         options.arclength_rtol,
         pool_count=first.pool_count,

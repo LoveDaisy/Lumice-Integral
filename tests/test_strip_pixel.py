@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import replace
 
 import numpy as np
 import pytest
 
+import lumice_integral.strip_pixel as strip_pixel_module
 from lumice_integral.canonical_scene import (
     CANONICAL_PIXEL_COLUMN,
     CANONICAL_PIXEL_ROW,
     canonical_target_direction,
 )
+from lumice_integral.continuation import FiberStatus, TerminationReason
+from lumice_integral.discovery import ComponentDiscoveryResult, DiscoveredComponent
 from lumice_integral.strip_pixel import (
     EVENT_NAMES,
     STATUS_ARCLENGTH_JUMP,
@@ -174,6 +178,57 @@ def test_bad_hot_seed_falls_back_to_cold_discovery(scene, options):
     ) == 1
     assert result.component_count == 1
     assert result.completeness == "complete"
+
+
+def test_hot_start_chain_cannot_discover_a_component_absent_from_the_previous_seeds(
+    monkeypatch, scene, options
+):
+    """Known limitation (code-review round 1 Major 2, see the module docstring):
+    ``_hot_start_all`` only revisits the neighbour's own seeds one by one, so
+    its result always has exactly ``len(previous)`` components. A component
+    that first becomes admissible between two rows (a caustic/topology branch)
+    has no matching seed, so the hot chain has no opportunity to find it and
+    fires no event; ``render_pixel`` then reports ``completeness="complete"``
+    even though a real component was missed. Only the periodic ``cold_check``
+    (``DriverOptions.cold_check_interval``, default 8 rows) recovers it, and
+    only for the rows from there on -- this test pins that bounded, not
+    eliminated, blind spot rather than leaving it un-exercised.
+    """
+    existing = DiscoveredComponent(
+        seed=np.eye(3), result=None, arclength=1.0,
+        status=FiberStatus.CLOSED, reason=TerminationReason.CLOSED_LOOP,
+    )
+    new_component = DiscoveredComponent(
+        seed=np.eye(3) * 2.0, result=None, arclength=2.0,
+        status=FiberStatus.CLOSED, reason=TerminationReason.CLOSED_LOOP,
+    )
+
+    def fake_hot_start_component(seed, target, incident_direction, refractive_index, crystal, *, discovery_step_budget, template):
+        return existing
+
+    def fake_discover_components(target, incident_direction, refractive_index, crystal, *, template, **kwargs):
+        return ComponentDiscoveryResult(
+            components=(existing, new_component),
+            incomplete=(),
+            completeness="complete",
+            pool_count=2,
+            raw_cluster_count=2,
+            admissible_count=2,
+        )
+
+    monkeypatch.setattr(strip_pixel_module, "hot_start_component", fake_hot_start_component)
+    monkeypatch.setattr(strip_pixel_module, "discover_components", fake_discover_components)
+
+    target = np.array([0.0, 0.0, 1.0])
+    events: Counter = Counter()
+    hot = strip_pixel_module._hot_start_all(scene, target, (HotSeed(existing.seed, 1.0),), options, events)
+    assert hot is not None and hot.component_count == 1
+    assert not events["hot_start_inadmissible"]
+    assert not events["hot_start_incomplete"]
+    assert not events["arclength_jump"]
+
+    cold = strip_pixel_module._cold_discovery(scene, target, options, events)
+    assert cold.component_count == 2  # the periodic cold_check is what actually recovers it
 
 
 def test_tiny_production_budget_is_reported_not_hidden(scene, canonical):

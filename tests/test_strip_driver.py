@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import multiprocessing
+import pickle
 from dataclasses import replace
 from pathlib import Path
 
@@ -227,11 +228,41 @@ def test_render_window_serial_writes_checkpoints_and_resumes(scene, tmp_path: Pa
     results, execution = render_window(window, options, workers=1, checkpoint_dir=tmp_path, scene=scene)
     assert len(results) == 4
     assert execution["columns_rendered_now"] == 2 and execution["columns_resumed"] == 0
-    assert sorted(load_checkpoints(tmp_path, window)) == [150, 151]
-    assert load_checkpoints(tmp_path, Window((150, 153), (150, 152))) == {}
+    assert sorted(load_checkpoints(tmp_path, window, options)) == [150, 151]
+    assert load_checkpoints(tmp_path, Window((150, 153), (150, 152)), options) == {}
 
     resumed, execution = render_window(window, options, workers=1, checkpoint_dir=tmp_path, resume=True, scene=scene)
     assert execution["columns_rendered_now"] == 0 and execution["columns_resumed"] == 2
+    assert [(r.row, r.column, r.value) for r in resumed] == [(r.row, r.column, r.value) for r in results]
+
+
+def test_render_window_resume_recomputes_columns_whose_options_changed(scene, tmp_path: Path):
+    window = Window((150, 152), (150, 152))
+    options = DriverOptions(cold_check_interval=0)
+    render_window(window, options, workers=1, checkpoint_dir=tmp_path, scene=scene)
+    assert sorted(load_checkpoints(tmp_path, window, options)) == [150, 151]
+
+    changed = DriverOptions(cold_check_interval=1)
+    assert load_checkpoints(tmp_path, window, changed) == {}
+    resumed, execution = render_window(window, changed, workers=1, checkpoint_dir=tmp_path, resume=True, scene=scene)
+    assert execution["columns_rendered_now"] == 2 and execution["columns_resumed"] == 0
+    assert sorted(load_checkpoints(tmp_path, window, changed)) == [150, 151]
+
+
+def test_render_window_resume_recomputes_legacy_checkpoints_without_an_options_fingerprint(
+    scene, tmp_path: Path
+):
+    window = Window((150, 152), (150, 152))
+    options = DriverOptions(cold_check_interval=0)
+    results, _ = render_window(window, options, workers=1, checkpoint_dir=tmp_path, scene=scene)
+    legacy_path = tmp_path / "column_0150.pkl"
+    payload = pickle.loads(legacy_path.read_bytes())
+    del payload["options"]
+    legacy_path.write_bytes(pickle.dumps(payload))
+
+    assert sorted(load_checkpoints(tmp_path, window, options)) == [151]
+    resumed, execution = render_window(window, options, workers=1, checkpoint_dir=tmp_path, resume=True, scene=scene)
+    assert execution["columns_rendered_now"] == 1 and execution["columns_resumed"] == 1
     assert [(r.row, r.column, r.value) for r in resumed] == [(r.row, r.column, r.value) for r in results]
 
 

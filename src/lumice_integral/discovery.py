@@ -219,14 +219,21 @@ def _correct_and_trace(
     )
 
 
-def _dedup(
+def dedup_components(
     records: Sequence[DiscoveredComponent | IncompleteCandidate],
     arclength_rtol: float,
     *,
     pool_count: int,
     raw_cluster_count: int,
 ) -> ComponentDiscoveryResult:
-    """Fold closed records with the same ``(status, reason, arclength)`` fingerprint."""
+    """Fold closed records with the same ``(status, reason, arclength)`` fingerprint.
+
+    Public (like ``template``/:func:`retarget_problem`) so a batch caller such
+    as :mod:`.strip_pixel` can fold its own hot-start and incomplete-retry
+    records with the same fingerprint rule :func:`discover_components` uses
+    internally, instead of reimplementing deduplication against a private
+    symbol.
+    """
     components: list[DiscoveredComponent] = []
     incomplete: list[IncompleteCandidate] = []
     for record in records:
@@ -358,7 +365,7 @@ def discover_components(
         )
         if record is not None:
             records.append(record)
-    return _dedup(
+    return dedup_components(
         records,
         arclength_rtol,
         pool_count=int(len(pool_indices)),

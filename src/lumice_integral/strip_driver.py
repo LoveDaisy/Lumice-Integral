@@ -111,6 +111,14 @@ def _merge_subpixels(row: int, column: int, parts: Sequence[PixelResult]) -> Pix
     ``components`` are the centre-most sub-pixel's (so downstream hot-start
     seeds are well defined); counts, events and timings are summed;
     completeness is ``"complete"`` iff every sub-pixel is.
+
+    ``error_estimate`` is the arithmetic mean of the sub-pixels' own
+    quadrature error estimates only (code-review round 1 Suggestion).  Near a
+    caustic, sub-pixel values within one pixel can themselves differ by
+    O(10-40%) (the pixel-model probe, ``docs/ch06-reference-fixture.md``
+    section 7 stage 4); that model-internal spread is not folded in here, so
+    this is not an upper bound on the pixel's total uncertainty when
+    sub-pixel averaging is enabled in a caustic neighbourhood.
     """
     centre = parts[len(parts) // 2]
     events: Counter = Counter()
@@ -196,16 +204,39 @@ def _checkpoint_path(checkpoint_dir: Path, column: int) -> Path:
     return checkpoint_dir / f"column_{column:04d}.pkl"
 
 
-def load_checkpoints(checkpoint_dir: Path, window: Window) -> dict[int, list[PixelResult]]:
-    """Columns of ``window`` already rendered for exactly ``window.rows``."""
+def load_checkpoints(
+    checkpoint_dir: Path,
+    window: Window,
+    options: DriverOptions,
+    log: LogCallback | None = None,
+) -> dict[int, list[PixelResult]]:
+    """Columns of ``window`` already rendered for exactly ``window.rows`` and ``options``.
+
+    A checkpoint is only reused when its recorded :class:`DriverOptions`
+    (pixel model, ``quadrature``/``continuation``/discovery numerics, ...)
+    equals ``options`` exactly; a mismatch or a legacy payload written before
+    this fingerprint existed is discarded and the column is recomputed, so a
+    resumed run never silently mixes columns produced under different
+    numerical policies into one ``provenance.json`` (code-review round 1
+    Major 1: options drift across runs was previously unchecked).
+    """
     found: dict[int, list[PixelResult]] = {}
     for column in window.column_range:
         path = _checkpoint_path(checkpoint_dir, column)
         if not path.exists():
             continue
         payload = pickle.loads(path.read_bytes())
-        if payload.get("rows") == list(window.rows):
-            found[column] = payload["results"]
+        if payload.get("rows") != list(window.rows):
+            continue
+        if "options" not in payload:
+            if log is not None:
+                log(f"column {column} checkpoint predates the options fingerprint; recomputing")
+            continue
+        if payload["options"] != options:
+            if log is not None:
+                log(f"column {column} checkpoint options differ from this run's options; recomputing")
+            continue
+        found[column] = payload["results"]
     return found
 
 
@@ -232,7 +263,7 @@ def render_window(
         checkpoint_dir = Path(checkpoint_dir)
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
         if resume:
-            done = load_checkpoints(checkpoint_dir, window)
+            done = load_checkpoints(checkpoint_dir, window, options, log=log)
             if log is not None and done:
                 log(f"resumed {len(done)} column(s) from {checkpoint_dir}")
     pending = [column for column in window.column_range if column not in done]
@@ -243,7 +274,7 @@ def render_window(
         column_seconds[column] = seconds
         if checkpoint_dir is not None:
             _checkpoint_path(checkpoint_dir, column).write_bytes(
-                pickle.dumps({"rows": list(window.rows), "results": results})
+                pickle.dumps({"rows": list(window.rows), "results": results, "options": options})
             )
         if log is not None:
             unknown = sum(r.completeness != "complete" for r in results)

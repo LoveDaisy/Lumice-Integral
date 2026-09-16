@@ -32,7 +32,7 @@ from lumice_integral.discovery import (
     ComponentDiscoveryResult,
     DiscoveredComponent,
     IncompleteCandidate,
-    _dedup,
+    dedup_components,
     _geodesic_cluster,
     detect_arclength_jump,
     discover_components,
@@ -119,7 +119,7 @@ def test_dedup_fingerprint_ignores_pose_counts_within_arclength_rtol() -> None:
         _closed_record(3.671537 * (1 + 5e-4), 180),
         _closed_record(3.671537 * (1 - 5e-4), 172),
     ]
-    result = _dedup(records, ARCLENGTH_RTOL, pool_count=333, raw_cluster_count=6)
+    result = dedup_components(records, ARCLENGTH_RTOL, pool_count=333, raw_cluster_count=6)
     assert result.component_count == 1
     assert result.incomplete == ()
     assert result.completeness == "complete"
@@ -128,20 +128,20 @@ def test_dedup_fingerprint_ignores_pose_counts_within_arclength_rtol() -> None:
 
 def test_dedup_separates_arclengths_outside_rtol() -> None:
     records = [_closed_record(6.2437, 157), _closed_record(3.1302, 80)]
-    result = _dedup(records, ARCLENGTH_RTOL, pool_count=0, raw_cluster_count=2)
+    result = dedup_components(records, ARCLENGTH_RTOL, pool_count=0, raw_cluster_count=2)
     assert sorted(c.arclength for c in result.components) == [3.1302, 6.2437]
 
 
 def test_dedup_routes_non_closed_records_to_incomplete_and_marks_unknown() -> None:
     records = [_incomplete_record(), _incomplete_record(), _incomplete_record()]
-    result = _dedup(records, ARCLENGTH_RTOL, pool_count=113, raw_cluster_count=3)
+    result = dedup_components(records, ARCLENGTH_RTOL, pool_count=113, raw_cluster_count=3)
     assert result.components == ()
     assert result.incomplete_count == 3
     assert result.completeness == "unknown"
 
 
 def test_dedup_of_empty_records_is_complete_with_zero_components() -> None:
-    result = _dedup([], ARCLENGTH_RTOL, pool_count=210, raw_cluster_count=4)
+    result = dedup_components([], ARCLENGTH_RTOL, pool_count=210, raw_cluster_count=4)
     assert result.component_count == 0
     assert result.incomplete_count == 0
     assert result.completeness == "complete"
