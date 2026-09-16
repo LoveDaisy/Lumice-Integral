@@ -10,6 +10,7 @@ from lumice_integral.analytic import BODY_AXIS, direction_map, tangent_basis
 from lumice_integral.canonical_scene import canonical_fixture_metadata, canonical_pixel_problem
 from lumice_integral.continuation import FiberProblem, TargetChart, trace_fiber
 from lumice_integral.figure_data import SCHEMA_VERSION, export_fiber_figure_data
+from lumice_integral.quadrature import integrate_fiber, pointwise_integrand
 
 
 def test_figure_data_round_trip_preserves_geometry_and_unavailable_weights(tmp_path):
@@ -39,6 +40,8 @@ def test_figure_data_round_trip_preserves_geometry_and_unavailable_weights(tmp_p
 
     assert metadata["schema"] == SCHEMA_VERSION == "lumice-integral.figure-data/v2"
     assert metadata["result"]["status"] == "closed"
+    assert metadata["result"]["quadrature"] is None
+    assert "integrand" not in metadata["payload"]["arrays"]
     assert metadata["result"]["sample_count"] == len(result.poses)
     weights = metadata["result"]["weight_observables"]
     assert len(weights) == 8
@@ -128,3 +131,50 @@ def test_figure_data_represents_empty_failure_without_nonstandard_json(tmp_path)
     assert metadata["result"]["status"] == "event_terminated"
     assert metadata["result"]["closure"]["seed_distance"] is None
     assert metadata["result"]["closure"]["tangent_dot"] is None
+
+
+def test_figure_data_exports_the_quadrature_block_and_pointwise_integrand(tmp_path):
+    problem = canonical_pixel_problem()
+    result = trace_fiber(problem)
+    quadrature = integrate_fiber(problem, result)
+    files = export_fiber_figure_data(
+        result,
+        tmp_path,
+        fixture=canonical_fixture_metadata(),
+        provenance={"classification": "canonical-new"},
+        quadrature=quadrature,
+    )
+
+    metadata = json.loads(files.metadata.read_text(encoding="utf-8"))
+    block = metadata["result"]["quadrature"]
+    assert block["status"] == "available"
+    assert block["method"] == quadrature.method
+    assert block["value"] == quadrature.value
+    assert block["error_estimate"] == quadrature.error_estimate
+    assert block["raw_value"] == quadrature.raw_value
+    assert block["epsilon"] == 1e-6
+    assert block["haar_to_dvol_g_factor"] == 1.0 / (8.0 * np.pi**2)
+    assert block["refinements"] == quadrature.refinements
+    assert block["node_count"] == quadrature.node_count
+    assert block["convergence_order_estimate"] == quadrature.convergence_order_estimate
+    assert block["median_edge_convergence_order"] == quadrature.median_edge_convergence_order
+    assert block["refinement_failures"] == []
+    assert block["depth_exhausted_edges"] == []
+    assert block["coverage"].startswith("partial")
+    assert block["component_completeness"] == "unknown"
+    assert block["factor_names"] == ["entry_measure", "fresnel_transmission", "path_validity"]
+    assert block["integrand_array"] == "integrand"
+    entry = metadata["payload"]["arrays"]["integrand"]
+    assert entry["shape"] == [len(result.poses)]
+    assert "normal_jacobian stays unregularised" in entry["semantic"]
+    with np.load(files.arrays) as arrays:
+        np.testing.assert_array_equal(
+            arrays["integrand"], pointwise_integrand(result, epsilon=quadrature.epsilon)
+        )
+        # The raw J_perp array is exported untouched next to the regularised integrand.
+        np.testing.assert_array_equal(
+            arrays["normal_jacobian"],
+            [d.normal_jacobian for d in result.jacobian_diagnostics],
+        )
+        assert set(arrays.files) == set(metadata["payload"]["arrays"])
+    assert metadata["payload"]["sha256"] == sha256(files.arrays.read_bytes()).hexdigest()

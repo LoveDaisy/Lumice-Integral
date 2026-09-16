@@ -166,17 +166,14 @@ def _integrand_expression(
     return density * factor_product / (normal_jacobian + epsilon)
 
 
-def pointwise_integrand(
-    problem: FiberProblem, result: FiberResult, *, epsilon: float
-) -> np.ndarray:
+def pointwise_integrand(result: FiberResult, *, epsilon: float) -> np.ndarray:
     """``rho_H W_P / (J_perp + eps)`` at every accepted pose, aligned with ``result.poses``.
 
-    Uses the already evaluated ``result.weight_observables`` and
-    ``result.jacobian_diagnostics``; no refinement nodes are inserted.
+    Uses only the already evaluated ``result.weight_observables`` and
+    ``result.jacobian_diagnostics``; no refinement nodes are inserted.  Raises
+    ``ValueError("... unavailable_missing_<factor>")`` instead of substituting
+    one for a missing factor.
     """
-    status = integrand_availability(problem)
-    if status != "available":
-        raise ValueError(f"pointwise integrand is {status}")
     if epsilon <= 0.0:
         raise ValueError("epsilon must be positive")
     observables = result.weight_observables
@@ -515,7 +512,7 @@ def estimate_convergence_order(
     epsilon: float,
 ) -> ConvergenceOrderEstimate:
     """Standalone order estimate; :func:`integrate_fiber` reuses its first level."""
-    nodes = _fiber_nodes(problem, result, epsilon=epsilon)
+    nodes = _fiber_nodes(result, epsilon=epsilon)
     accounting = _PassAccounting()
     wholes = [
         accounting.record(
@@ -531,8 +528,8 @@ def estimate_convergence_order(
     return _order_from_levels(levels, per_edge)
 
 
-def _fiber_nodes(problem: FiberProblem, result: FiberResult, *, epsilon: float) -> list[_Node]:
-    integrand = pointwise_integrand(problem, result, epsilon=epsilon)
+def _fiber_nodes(result: FiberResult, *, epsilon: float) -> list[_Node]:
+    integrand = pointwise_integrand(result, epsilon=epsilon)
     poses = np.asarray(result.poses, dtype=np.float64)
     tangents = np.asarray(result.tangents, dtype=np.float64)
     return [
@@ -595,7 +592,7 @@ def integrate_fiber(
     if len(result.poses) < 2:
         return _unavailable("unavailable_no_edges", result, quadrature_options)
     epsilon = quadrature_options.epsilon
-    nodes = _fiber_nodes(problem, result, epsilon=epsilon)
+    nodes = _fiber_nodes(result, epsilon=epsilon)
 
     accounting = _PassAccounting()
     wholes = [

@@ -14,14 +14,19 @@ from typing import Any
 import numpy as np
 
 from .continuation import FiberResult
+from .quadrature import QuadratureResult, pointwise_integrand
 from .weights import WeightObservable
 
 
 # v2 (task-single-fiber-physical-integrand): ``result.weight_observables`` values
 # are objects ``{status, unit, normalization, array}`` instead of bare status
 # strings, and every available factor adds a ``weight_<name>`` sample array.
+# Still v2 (task-single-fiber-line-quadrature): the optional ``result.quadrature``
+# object and ``integrand`` sample array are pure additions; no existing field
+# changed type.
 SCHEMA_VERSION = "lumice-integral.figure-data/v2"
 WEIGHT_ARRAY_PREFIX = "weight_"
+INTEGRAND_ARRAY_NAME = "integrand"
 
 
 @dataclass(frozen=True)
@@ -98,7 +103,52 @@ def _branch_margin_arrays(result: FiberResult) -> tuple[list[str], np.ndarray]:
     return names, values
 
 
-def _arrays(result: FiberResult) -> tuple[dict[str, np.ndarray], list[str]]:
+def _quadrature_metadata(quadrature: QuadratureResult) -> dict[str, Any]:
+    return {
+        "status": quadrature.status,
+        "method": quadrature.method,
+        "fiber_status": quadrature.fiber_status,
+        "coverage": quadrature.coverage,
+        "component_completeness": quadrature.component_completeness,
+        "density_factor_name": quadrature.density_factor_name,
+        "factor_names": list(quadrature.factor_names),
+        "epsilon": quadrature.epsilon,
+        "relative_tolerance": quadrature.relative_tolerance,
+        "maximum_refinement_depth": quadrature.maximum_refinement_depth,
+        "refinements": quadrature.refinements,
+        "maximum_depth_reached": quadrature.maximum_depth_reached,
+        "node_count": quadrature.node_count,
+        "value": quadrature.value,
+        "error_estimate": quadrature.error_estimate,
+        "raw_value": quadrature.raw_value,
+        "raw_error_estimate": quadrature.raw_error_estimate,
+        "haar_to_dvol_g_factor": quadrature.haar_to_dvol_g_factor,
+        "convergence_order_estimate": quadrature.convergence_order_estimate,
+        "convergence_order_note": quadrature.convergence_order_note,
+        "raw_convergence_order_levels": list(quadrature.raw_convergence_order_levels),
+        "convergence_order_node_count": quadrature.convergence_order_node_count,
+        "median_edge_convergence_order": quadrature.median_edge_convergence_order,
+        "low_order_edges": list(quadrature.low_order_edges),
+        "refinement_failures": list(quadrature.refinement_failures),
+        "depth_exhausted_edges": list(quadrature.depth_exhausted_edges),
+        "integrand_array": (
+            INTEGRAND_ARRAY_NAME if quadrature.status == "available" else None
+        ),
+    }
+
+
+def _integrand_arrays(
+    result: FiberResult, quadrature: QuadratureResult | None
+) -> dict[str, np.ndarray]:
+    if quadrature is None or quadrature.status != "available":
+        return {}
+    values = pointwise_integrand(result, epsilon=quadrature.epsilon)
+    return {INTEGRAND_ARRAY_NAME: np.asarray(values, dtype=np.float64)}
+
+
+def _arrays(
+    result: FiberResult, quadrature: QuadratureResult | None
+) -> tuple[dict[str, np.ndarray], list[str]]:
     margin_names, margins = _branch_margin_arrays(result)
     singular_values = np.asarray(
         [diagnostic.singular_values for diagnostic in result.jacobian_diagnostics],
@@ -137,6 +187,7 @@ def _arrays(result: FiberResult) -> tuple[dict[str, np.ndarray], list[str]]:
         "jacobian_condition": condition,
         "branch_margins": margins,
         **_weight_arrays(result),
+        **_integrand_arrays(result, quadrature),
     }
     sample_arrays = (
         "poses",
@@ -149,6 +200,7 @@ def _arrays(result: FiberResult) -> tuple[dict[str, np.ndarray], list[str]]:
         "jacobian_condition",
         "branch_margins",
         *(name for name in arrays if name.startswith(WEIGHT_ARRAY_PREFIX)),
+        INTEGRAND_ARRAY_NAME,
     )
     mismatched = {
         name: array.shape
@@ -161,7 +213,9 @@ def _arrays(result: FiberResult) -> tuple[dict[str, np.ndarray], list[str]]:
 
 
 def _array_metadata(
-    arrays: Mapping[str, np.ndarray], result: FiberResult
+    arrays: Mapping[str, np.ndarray],
+    result: FiberResult,
+    quadrature: QuadratureResult | None,
 ) -> dict[str, dict[str, Any]]:
     units = {
         "arclength_increments": "radian",
@@ -187,6 +241,18 @@ def _array_metadata(
                 f"named physical factor {name!r} evaluated at every accepted pose; "
                 "see result.weight_observables for its normalization"
             )
+    if quadrature is not None and INTEGRAND_ARRAY_NAME in arrays:
+        units[INTEGRAND_ARRAY_NAME] = (
+            "length^2 (the entry_measure unit; rho_pose, fresnel_transmission, "
+            "path_validity and normal_jacobian are dimensionless)"
+        )
+        semantics[INTEGRAND_ARRAY_NAME] = (
+            "partial physical integrand rho_pose * "
+            f"{' * '.join(quadrature.factor_names)} / (normal_jacobian + epsilon) "
+            "at every accepted pose; epsilon, the Haar convention and the "
+            "integrated value are declared in result.quadrature and "
+            "result.conventions; normal_jacobian stays unregularised"
+        )
     return {
         name: {
             "shape": list(array.shape),
@@ -204,15 +270,21 @@ def export_fiber_figure_data(
     *,
     fixture: Mapping[str, Any],
     provenance: Mapping[str, Any] | None = None,
+    quadrature: QuadratureResult | None = None,
 ) -> FigureDataFiles:
-    """Write one ``FiberResult`` as JSON metadata plus an NPZ array payload."""
+    """Write one ``FiberResult`` as JSON metadata plus an NPZ array payload.
+
+    With ``quadrature`` the metadata gains ``result.quadrature`` and, when the
+    integral is available, the arrays gain the pointwise ``integrand``;
+    without it the output is exactly the v2 layout of the previous stage.
+    """
     output_directory = Path(output_directory)
     output_directory.mkdir(parents=True, exist_ok=True)
     arrays_path = output_directory / "arrays.npz"
     metadata_path = output_directory / "metadata.json"
     fixture_metadata = _json_value(fixture)
     provenance_metadata = _json_value(provenance or {})
-    arrays, margin_names = _arrays(result)
+    arrays, margin_names = _arrays(result, quadrature)
 
     temporary_arrays = output_directory / ".arrays.npz.tmp"
     with temporary_arrays.open("wb") as stream:
@@ -232,6 +304,9 @@ def export_fiber_figure_data(
             "sample_count": len(result.poses),
             "conventions": _json_value(result.conventions),
             "weight_observables": _weight_metadata(result),
+            "quadrature": (
+                _quadrature_metadata(quadrature) if quadrature is not None else None
+            ),
             "closure": {
                 "accumulated_arclength": result.closure_diagnostics.accumulated_arclength,
                 "seed_distance": result.closure_diagnostics.seed_distance,
@@ -245,7 +320,7 @@ def export_fiber_figure_data(
         "payload": {
             "file": arrays_path.name,
             "sha256": array_sha256,
-            "arrays": _array_metadata(arrays, result),
+            "arrays": _array_metadata(arrays, result, quadrature),
             "branch_margin_columns": margin_names,
         },
     }

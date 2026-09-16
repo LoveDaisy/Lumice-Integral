@@ -88,7 +88,7 @@ def test_quadrature_options_reject_nonpositive_policy(kwargs):
 
 def test_pointwise_integrand_combines_named_factors_over_regularised_j_perp(canonical):
     problem, result, _ = canonical
-    values = pointwise_integrand(problem, result, epsilon=EPSILON)
+    values = pointwise_integrand(result, epsilon=EPSILON)
 
     assert values.shape == (len(result.poses),)
     assert values.dtype == np.float64
@@ -118,7 +118,10 @@ def test_missing_density_factor_is_unavailable_not_silently_one(canonical):
     )
     assert integrand_availability(without_density) == "unavailable_missing_rho_pose"
     with pytest.raises(ValueError, match="unavailable_missing_rho_pose"):
-        pointwise_integrand(without_density, result, epsilon=EPSILON)
+        pointwise_integrand(
+            trace_fiber(without_density, ContinuationOptions(maximum_accepted_steps=2)),
+            epsilon=EPSILON,
+        )
 
     quadrature = integrate_fiber(without_density, result)
     assert quadrature.status == "unavailable_missing_rho_pose"
@@ -166,7 +169,7 @@ def test_simpson_panel_is_exact_for_a_quadratic_integrand_on_the_circle():
     problem = _circle_problem(quadratic)
     options = ContinuationOptions()
     result = trace_fiber(problem, options)
-    nodes = _fiber_nodes(problem, result, epsilon=EPSILON)
+    nodes = _fiber_nodes(result, epsilon=EPSILON)
     # A panel away from the theta = +-pi wrap of the test weight.
     left, right = nodes[2], nodes[3]
     theta_left, theta_right = _circle_angle(left.rotation), _circle_angle(right.rotation)
