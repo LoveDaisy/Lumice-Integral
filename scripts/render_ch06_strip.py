@@ -64,6 +64,13 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--order-estimate", action="store_true", help="also run the 2-level order-estimate pass per fiber")
     parser.add_argument("--discovery-step-budget", type=int, default=250)
     parser.add_argument("--retry-step-budget", type=int, default=None, help="default: production maximum_accepted_steps")
+    parser.add_argument(
+        "--stall-floor-window",
+        type=int,
+        default=PixelOptions.stall_floor_window,
+        help="skip the retrace of a step_budget candidate whose last N accepted discovery steps sat at "
+        "minimum_step; a value above --discovery-step-budget disables the skip",
+    )
     parser.add_argument("--prescan-samples", type=int, default=400_000)
     parser.add_argument("--rng-seed", type=int, default=20260916)
     parser.add_argument("--label", default="", help="free-text note stored in provenance.execution")
@@ -76,6 +83,7 @@ def main(argv: list[str] | None = None) -> None:
         prescan_samples=args.prescan_samples,
         discovery_step_budget=args.discovery_step_budget,
         retry_step_budget=args.retry_step_budget,
+        stall_floor_window=args.stall_floor_window,
         continuation=ContinuationOptions(),
         quadrature=QuadratureOptions(
             epsilon=args.epsilon,

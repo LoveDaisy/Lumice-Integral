@@ -411,8 +411,39 @@ color-to-factor mapping.
      the status bit set while the historical raw is lit (`0.0085` mean). This
      is the incomplete-candidate regime of `(700, 150)` / `(780, 150)` from
      the discovery task, now known to span the whole lower quarter of the
-     strip; it costs `71-73 s` per pixel and is outside this task's scope
-     (discovery semantics). Only `15` of the `4045` unknown pixels are lit.
+     strip; on that preview it cost `71-73 s` per pixel (discovery
+     semantics, out of the driver task's scope). Only `15` of the `4045`
+     unknown pixels are lit.
+     Early exit (task-discovery-stall-early-exit, 2026-09-17):
+     `explore-continuation-degenerate-stall-diagnosis` traced the cost to
+     `_adapt_accepted_step`, whose `not clear_of_event` term shrinks the
+     step whenever a domain margin (here `exit_snell_discriminant`) sits
+     below `event_slowdown_margin` without tending to zero, so the step
+     clamps to `minimum_step` and never grows again until the budget is
+     spent. The production retrace of such a candidate repeats its
+     discovery steps exactly (same seed, same numerics, larger budget) and
+     crawls the same floor, so `strip_pixel` now reads the discovery trace
+     it already paid for: a `step_budget` candidate whose last
+     `stall_floor_window = 100` accepted steps all proposed `minimum_step`
+     (`discovery.is_floor_locked`) is kept `incomplete` without a retrace
+     and counted as `incomplete_stall_skip`; the pixel classification is
+     unchanged (`unknown`, value `0`). The window is a procedural
+     calibration, not a proof: on `82` candidates of `10` pixels
+     (`700/150`, `780/150`, `720/27`, `790/216`, `658/72` in the band;
+     `49/0`, `50/9`, `54/45`, `57/99`, `54/54` at the inner edge) every
+     candidate that the production budget does close (`15`, after
+     `1241-1298` steps) never proposed `minimum_step` even once, while
+     `59` of the `60` band candidates end in a trailing floor run of
+     `141-238` steps; the window sits inside that gap and gives `0`
+     false positives on this sample. Not covered: a band candidate that
+     leaves the floor before the budget ends (`1` of `60`), candidates that
+     stall without touching the floor (`54/54`), and the hot-start path
+     (`_hot_start_all` has no cheap discovery trace to read). Same-machine
+     cost of `render_pixel(700, 150)` (M2 Max): `29.6 s` with the skip
+     disabled (`stall_floor_window = 251`) against `3.0 s` with it, i.e.
+     the cold prescan plus twelve 250-step traces. Evidence:
+     `scratchpad/scrum-ch06-direct-integration/task-discovery-stall-early-exit/`
+     (`scripts/calibrate_stall_window.py`, `artifacts/stall_calibration.json`).
    - Morphology against the historical raw (native orientation, Spearman
      rank correlation): `0.990` on the `16876` pixels lit in both, `0.970` on
      the `18383` complete pixels, `0.657` on all rendered pixels (the
