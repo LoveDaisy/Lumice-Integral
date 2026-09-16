@@ -37,6 +37,7 @@ from lumice_integral.discovery import (
     detect_arclength_jump,
     discover_components,
     hot_start_component,
+    retarget_problem,
 )
 from lumice_integral.so3 import exp
 
@@ -338,3 +339,75 @@ def test_detect_arclength_jump_edge_cases() -> None:
         detect_arclength_jump([1.0, 2.0], relative_threshold=0.0)
     with pytest.raises(ValueError):
         detect_arclength_jump([[1.0, 2.0]])
+
+
+# --- template reuse (task-strip-image-driver) ------------------------------------
+
+
+def test_retarget_problem_keeps_evaluator_identity_and_rebuilds_the_chart() -> None:
+    template = canonical_pixel_problem(with_weights=True)
+    target = pixel_target(151, 150)
+    problem = retarget_problem(template, target, np.eye(3))
+    assert problem.direction_evaluator is template.direction_evaluator
+    assert problem.domain_and_event_evaluator is template.domain_and_event_evaluator
+    assert problem.weight_evaluators is template.weight_evaluators
+    assert np.allclose(np.asarray(problem.target_chart.direction), target)
+    assert np.allclose(np.asarray(problem.seed), np.eye(3))
+    assert problem.target_chart.minimum_dot == template.target_chart.minimum_dot
+
+
+def test_hot_start_with_a_shared_template_matches_a_fresh_problem(
+    canonical_discovery: ComponentDiscoveryResult,
+) -> None:
+    template = canonical_pixel_problem(with_weights=False)
+    seed = canonical_discovery.components[0].seed
+    args = (seed, pixel_target(151, 150), canonical_incident_direction(), CANONICAL_REFRACTIVE_INDEX, canonical_crystal())
+    fresh = hot_start_component(*args)
+    shared = hot_start_component(*args, template=template)
+    assert isinstance(fresh, DiscoveredComponent) and isinstance(shared, DiscoveredComponent)
+    assert np.allclose(shared.seed, fresh.seed, atol=1e-12)
+    assert shared.arclength == pytest.approx(fresh.arclength, rel=1e-12)
+    assert len(shared.result.poses) == len(fresh.result.poses)
+
+
+def test_discover_components_with_a_shared_template_matches_a_fresh_problem(
+    canonical_discovery: ComponentDiscoveryResult,
+) -> None:
+    template = canonical_pixel_problem(with_weights=False)
+    shared = discover_components(
+        pixel_target(150, 150),
+        canonical_incident_direction(),
+        CANONICAL_REFRACTIVE_INDEX,
+        canonical_crystal(),
+        template=template,
+        **DISCOVERY_KWARGS,
+    )
+    assert shared.component_count == canonical_discovery.component_count == 1
+    assert shared.pool_count == canonical_discovery.pool_count
+    assert shared.admissible_count == canonical_discovery.admissible_count
+    assert shared.components[0].arclength == pytest.approx(
+        canonical_discovery.components[0].arclength, rel=1e-12
+    )
+    assert np.allclose(shared.components[0].seed, canonical_discovery.components[0].seed, atol=1e-12)
+
+
+def test_template_with_a_different_scene_is_rejected() -> None:
+    template = canonical_pixel_problem(with_weights=False)
+    with pytest.raises(ValueError, match="incident direction"):
+        hot_start_component(
+            canonical_seed(),
+            pixel_target(150, 150),
+            -canonical_incident_direction(),
+            CANONICAL_REFRACTIVE_INDEX,
+            canonical_crystal(),
+            template=template,
+        )
+    with pytest.raises(ValueError, match="path"):
+        hot_start_component(
+            canonical_seed(),
+            pixel_target(150, 150),
+            canonical_incident_direction(),
+            1.33,
+            canonical_crystal(),
+            template=template,
+        )

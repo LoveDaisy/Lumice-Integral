@@ -79,11 +79,38 @@ def canonical():
         {"epsilon": float("inf")},
         {"relative_tolerance": -1e-8},
         {"maximum_refinement_depth": 0},
+        {"convergence_order_levels": 1},
+        {"convergence_order_levels": -1},
     ],
 )
 def test_quadrature_options_reject_nonpositive_policy(kwargs):
     with pytest.raises(ValueError):
         QuadratureOptions(**kwargs)
+
+
+def test_skipping_the_order_estimate_pass_changes_only_the_order_fields(canonical):
+    problem, result, full = canonical
+    assert QuadratureOptions().convergence_order_levels == 2
+
+    skipped = integrate_fiber(
+        problem, result, quadrature_options=QuadratureOptions(convergence_order_levels=0)
+    )
+
+    assert skipped.value == full.value
+    assert skipped.error_estimate == full.error_estimate
+    assert skipped.refinements == full.refinements
+    assert skipped.node_count == full.node_count
+    assert skipped.maximum_depth_reached == full.maximum_depth_reached
+    assert skipped.convergence_order_estimate is None
+    assert skipped.median_edge_convergence_order is None
+    assert skipped.low_order_edges == ()
+    assert skipped.convergence_order_node_count == 0
+    assert len(skipped.raw_convergence_order_levels) == 1
+    assert skipped.raw_convergence_order_levels[0] == pytest.approx(
+        full.raw_convergence_order_levels[0], rel=1e-12
+    )
+    assert "skipped" in skipped.convergence_order_note
+    assert full.convergence_order_node_count > 0
 
 
 def test_pointwise_integrand_combines_named_factors_over_regularised_j_perp(canonical):

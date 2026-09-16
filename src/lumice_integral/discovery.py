@@ -35,6 +35,15 @@ Discovery uses a deliberately small step budget (default 250) that is
 independent of the production :class:`.continuation.ContinuationOptions`
 default; a candidate that exhausts it is reported as ``incomplete`` and the
 caller decides whether to retrace it with the production budget.
+
+Batch callers may pass ``template`` (a 3-5 :class:`FiberProblem` for the same
+incident direction and refractive index) to :func:`discover_components` and
+:func:`hot_start_component`; the per-pixel problem is then
+:func:`retarget_problem` of that template, so the continuation kernels keyed on
+the template's ``direction_evaluator`` identity are compiled once per process
+instead of once per pixel (about 0.4 s per fresh problem on the M2 Max CPU,
+measured by ``task-strip-image-driver`` Step 0).  Without ``template`` every
+call builds a fresh problem, as before.
 """
 
 from __future__ import annotations
@@ -47,11 +56,13 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
+from .analytic import tangent_basis
 from .continuation import (
     ContinuationOptions,
     FiberProblem,
     FiberResult,
     FiberStatus,
+    TargetChart,
     TerminationReason,
     local_residual_jacobian,
     target_residual,
@@ -244,12 +255,40 @@ def _discovery_options(discovery_step_budget: int) -> ContinuationOptions:
     return ContinuationOptions(maximum_accepted_steps=discovery_step_budget)
 
 
+def retarget_problem(
+    template: FiberProblem, target_direction: np.ndarray, seed: np.ndarray
+) -> FiberProblem:
+    """``template`` with a new target chart and seed, keeping its evaluator closures.
+
+    The chart is rebuilt the way :func:`.optics.path_3_5_problem` builds it
+    (``tangent_basis`` of the target, the template's ``minimum_dot``); the
+    ``direction_evaluator`` / ``domain_and_event_evaluator`` objects and the
+    weight evaluators are shared, so ``jax.jit`` caches keyed on them stay warm.
+    """
+    target = jnp.asarray(target_direction, dtype=jnp.float64)
+    return replace(
+        template,
+        seed=jnp.asarray(seed, dtype=jnp.float64),
+        target_chart=TargetChart(
+            target, tangent_basis(target), minimum_dot=template.target_chart.minimum_dot
+        ),
+    )
+
+
 def _problem_template(
     target_direction: np.ndarray,
     incident_direction: np.ndarray,
     refractive_index: float,
     seed: np.ndarray,
+    template: FiberProblem | None,
 ) -> FiberProblem:
+    if template is not None:
+        incident = np.asarray(template.incident_direction)
+        if not np.allclose(incident, np.asarray(incident_direction, dtype=np.float64)):
+            raise ValueError("template incident direction does not match incident_direction")
+        if template.path != f"3-5:n={float(refractive_index):.8g}":
+            raise ValueError(f"template path {template.path!r} does not match the 3-5 problem")
+        return retarget_problem(template, target_direction, seed)
     return path_3_5_problem(
         jnp.asarray(seed, dtype=jnp.float64),
         jnp.asarray(incident_direction, dtype=jnp.float64),
@@ -270,6 +309,7 @@ def discover_components(
     angle_tolerance_deg: float = 2.0,
     cluster_radius_rad: float = 0.3,
     arclength_rtol: float = 1e-3,
+    template: FiberProblem | None = None,
 ) -> ComponentDiscoveryResult:
     """Discover the 3-5 fiber components reaching ``target_direction``.
 
@@ -278,7 +318,9 @@ def discover_components(
     ``explore-component-discovery`` survey: 400k samples (count stable up to
     1.6M), 2 deg tolerance, 0.3 rad cluster radius, and a 250-step discovery
     budget independent of the production continuation default.  The result's
-    ``completeness`` is procedural; see the module docstring.
+    ``completeness`` is procedural; see the module docstring.  ``template``
+    (optional) is a 3-5 problem for the same incident direction and index whose
+    evaluator closures are reused via :func:`retarget_problem`.
     """
     incident = np.asarray(incident_direction, dtype=np.float64)
     target = np.asarray(target_direction, dtype=np.float64)
@@ -305,6 +347,7 @@ def discover_components(
         incident,
         refractive_index,
         pool_rotations[0] if len(pool_rotations) else np.eye(3),
+        template,
     )
     options = _discovery_options(discovery_step_budget)
     records: list[DiscoveredComponent | IncompleteCandidate] = []
@@ -331,20 +374,22 @@ def hot_start_component(
     crystal: Polyhedron,
     *,
     discovery_step_budget: int = 250,
+    template: FiberProblem | None = None,
 ) -> DiscoveredComponent | IncompleteCandidate | None:
     """Re-seed a neighbouring pixel from a seed that converged on another.
 
     Skips the prescan and clustering and runs the same correction, gates,
     trace, and classification as :func:`discover_components` on the single
     candidate ``converged_seed``.  Returns ``None`` if the candidate is not
-    admissible for the new target.  A new 3-5 problem (new target chart) is
-    built per call; batch callers own the reuse of that template.
+    admissible for the new target.  Without ``template`` a new 3-5 problem
+    (new target chart, fresh closures) is built per call; with it the problem
+    is :func:`retarget_problem` of the template.
     """
-    template = _problem_template(
-        target_direction, incident_direction, refractive_index, converged_seed
+    problem = _problem_template(
+        target_direction, incident_direction, refractive_index, converged_seed, template
     )
     return _correct_and_trace(
-        template,
+        problem,
         _discovery_options(discovery_step_budget),
         crystal,
         refractive_index,

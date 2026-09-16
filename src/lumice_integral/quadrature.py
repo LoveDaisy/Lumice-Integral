@@ -79,6 +79,12 @@ class QuadratureOptions:
     epsilon: float = 1e-6
     relative_tolerance: float = 1e-8
     maximum_refinement_depth: int = 24
+    # Uniform bisection levels of the separate order-estimate pass (diagnostic
+    # only; it never changes ``value``).  ``0`` skips the pass and reports the
+    # order as not estimated: an image driver that integrates ~10^5 fibers
+    # cannot afford the ~50 % of quadrature wall clock it costs per fiber
+    # (task-strip-image-driver Step 0: 714 of 1377 nodes on the canonical pixel).
+    convergence_order_levels: int = _ORDER_ESTIMATE_LEVELS
 
     def __post_init__(self) -> None:
         if not (self.epsilon > 0.0 and math.isfinite(self.epsilon)):
@@ -87,6 +93,10 @@ class QuadratureOptions:
             raise ValueError("relative_tolerance must be a positive finite number")
         if self.maximum_refinement_depth < 1:
             raise ValueError("maximum_refinement_depth must be positive")
+        if self.convergence_order_levels not in (0, _ORDER_ESTIMATE_LEVELS):
+            raise ValueError(
+                f"convergence_order_levels must be 0 or {_ORDER_ESTIMATE_LEVELS}"
+            )
 
 
 @dataclass(frozen=True)
@@ -625,11 +635,17 @@ def integrate_fiber(
         raw_error += error
 
     order_accounting = _PassAccounting()
-    levels, per_edge = _uniform_bisection_estimate(
-        problem, options, nodes, wholes,
-        levels=_ORDER_ESTIMATE_LEVELS, epsilon=epsilon, accounting=order_accounting,
-    )
-    order = _order_from_levels(levels, per_edge)
+    if quadrature_options.convergence_order_levels == 0:
+        order = ConvergenceOrderEstimate(
+            None, (first_pass,), "order estimate skipped (convergence_order_levels=0)"
+        )
+    else:
+        levels, per_edge = _uniform_bisection_estimate(
+            problem, options, nodes, wholes,
+            levels=quadrature_options.convergence_order_levels,
+            epsilon=epsilon, accounting=order_accounting,
+        )
+        order = _order_from_levels(levels, per_edge)
 
     return QuadratureResult(
         status="available",
