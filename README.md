@@ -16,6 +16,13 @@ The project is currently in the design and reconstruction stage. The first
 implementation will reproduce the original SO(3) continuation prototype before
 considering the newer fiber-reduction formulation.
 
+The Phase I reference API is `trace_fiber(FiberProblem, ContinuationOptions)`.
+It traces only the connected component reachable from the supplied regular
+seed and returns structured closure, event, numerical-failure, or budget
+diagnostics. Its geometry-only result deliberately leaves physical weight
+factors unavailable; component discovery and coarea integration remain
+separate stages.
+
 See [docs/roadmap.md](docs/roadmap.md) for the mathematical model, scope, phased
 plan, and validation strategy. The accepted Phase I stack and its measured
 CPU/GPU boundaries are recorded in
