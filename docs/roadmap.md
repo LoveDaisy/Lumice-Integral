@@ -127,6 +127,10 @@ The milestone is complete when the program can:
 - output the Jacobian, pose-density, geometric, and Fresnel factors separately;
 - integrate their product with a numerical convergence report.
 
+The surviving chapter-6 artifacts, recovered parameters, canonical replacement
+fixture, and figure-level capability gaps are tracked in the
+[chapter 6 reference fixture specification](ch06-reference-fixture.md).
+
 This milestone reconstructs the original prototype and produces the information
 needed to remake the historical `state_space_integrate` diagnostic figure.
 
