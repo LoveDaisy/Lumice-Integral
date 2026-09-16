@@ -227,6 +227,27 @@ Current expected evidence (Mac reference environment):
 | `path_validity` | `1` at every accepted pose |
 | Normal Jacobian range | about `0.0822 .. 0.1497` |
 | `visibility`, `source_factor`, `pixel_factor`, `other_radiometric` | `unavailable` |
+| Line integral `value` (Haar-converted, `partial`) | `4.728847630` with `error_estimate` about `1.2e-8` (`raw_value` about `373.374843`, `raw_error_estimate` about `9.3e-7` before the `1/(8 pi^2)` factor) |
+| Quadrature method | adaptive composite Simpson over chord-parametrised edges, corrector-retracted midpoints, Richardson error estimate; `epsilon = 1e-6`, `relative_tolerance = 1e-8`, `maximum_refinement_depth = 24` |
+| Quadrature work | about `235` refinements, `1417` adaptive nodes (`120` accepted plus retracted midpoints), maximum depth reached `16`, no depth exhaustion, no retraction failure |
+| Convergence order | median per-edge Richardson order about `3.99`; global uniform-bisection order about `1.99` because `entry_measure` has slope jumps inside edges `3, 17, 32, 47, 77, 92, 106` (footprint-clipping vertex events), see below |
+
+Quadrature evidence (`tests/test_quadrature.py`): on the analytic circle a
+constant weight reproduces `2 pi / (1 + epsilon)` to `1e-13` and the Haar
+identity `1/(4 pi)` within `epsilon`; the weight `1 + cos(theta)/2` matches
+`2 pi / (1 + epsilon)` inside the reported error with an empirical order of
+`4.00`; reversing the seed orientation (`initial_tangent_sign = -1`) keeps
+the arclength and the integral. On the canonical pixel fiber the integrals
+for `initial_step` `0.03 / 0.04 / 0.08`, `relative_tolerance` `1e-6 / 1e-8 /
+1e-9`, and both seed orientations agree within the sum of their error
+estimates (observed differences `3e-11 .. 5e-7`), without comparing sample
+counts. The integrand is only piecewise smooth: `entry_measure` (a clipped
+polygon area) changes slope inside seven edges, so uniform bisection shows
+order about `2` there while the smooth edges show Simpson's `4`; the adaptive
+pass localises those kinks (depth `16` at `1e-8`, `20` at `1e-9`), which is
+why the default depth is `24`. The value is `partial`: one component from one
+seed, completeness `unknown`; `visibility` and the radiometric factors are
+not in the product.
 
 ## 5. Figure Capability Matrix
 
@@ -237,8 +258,8 @@ Current expected evidence (Mac reference environment):
 | ch06 all-sky Monte Carlo example | Lumice through Writing-Lab validation glue | Supported | Not a Lumice Integral product output. |
 | ch06 pose-fiber geometry | Lumice Integral | Supported for one supplied regular seed/component | Add continuous-sign unit-quaternion and C-axis longitude/latitude/spin adapters; prescan points require seed-discovery output. |
 | ch06 solver/Jacobian diagnostics | Lumice Integral data; Writing-Lab presentation | Supported as versioned figure data | A production plotting consumer still belongs in Writing-Lab; an independent prototype consumer has been verified. |
-| ch06 named physical-factor curves | Lumice Integral | Supported for `rho_pose`, `entry_measure`, `fresnel_transmission`, `path_validity` on the canonical pixel fiber (section 4.1, figure-data v2 `weight_<name>` arrays) | `visibility` (finite-face obstruction) and the radiometric factors remain unavailable. |
-| ch06 one-pixel integrand/integral | Lumice Integral | Named factor values exposed pointwise; quadrature not supported | Converged line quadrature over the closed fiber (`task-single-fiber-line-quadrature`). |
+| ch06 named physical-factor curves | Lumice Integral | Supported for `rho_pose`, `entry_measure`, `fresnel_transmission`, `path_validity` on the canonical pixel fiber (section 4.1, figure-data v2 `weight_<name>` arrays); the pointwise final `integrand` curve (product over `J_perp + epsilon`) is exported alongside | `visibility` (finite-face obstruction) and the radiometric factors remain unavailable. |
+| ch06 one-pixel integrand/integral | Lumice Integral | Supported as a `partial` value: converged adaptive line quadrature over the closed canonical fiber with error estimate and order evidence (sections 4.1 and 6, `result.quadrature`) | Component discovery for completeness; pixel averaging (point value only); the missing factors above. |
 | ch06 `251 x 801` direct strip | Lumice Integral | Historical bytes can be loaded; physical rerender is not supported | Seed/component discovery, neighboring-pixel continuation, camera/pixel model, image driver, and the one-pixel stages above. |
 | ch10 halo-map/Jacobian/fold figures | Lumice Integral numerical data; Writing-Lab presentation | Partially supported | Target sweeps and singular/fold localization beyond one regular fiber. |
 | ch11 orientation-family comparison | Lumice Integral and/or independent Lumice validation | Not supported by the current ordinary-density slice | Pose-density models, physical weights, image driver; exactly constrained families require a separate measure/domain contract. |
@@ -268,10 +289,21 @@ arrays:
   singular_values, normal_jacobian, condition
   named branch margins
   weight_<name> for every available factor (one float64 sample per pose)
+  integrand: rho_pose * entry_measure * fresnel_transmission * path_validity
+             / (normal_jacobian + epsilon) per pose (only with quadrature)
 weights (result.weight_observables):
   each requested factor: status, unit, normalization, array name or null
-quadrature:
-  status, method, refinements, value, error estimate   (still open)
+quadrature (result.quadrature, null when the export ran without it):
+  status, method, fiber_status, coverage, component_completeness
+  density_factor_name, factor_names, epsilon, relative_tolerance,
+  maximum_refinement_depth
+  refinements, maximum_depth_reached, node_count
+  value, error_estimate (Haar-converted), raw_value, raw_error_estimate,
+  haar_to_dvol_g_factor
+  convergence_order_estimate, convergence_order_note,
+  raw_convergence_order_levels, convergence_order_node_count,
+  median_edge_convergence_order, low_order_edges
+  refinement_failures, depth_exhausted_edges, integrand_array
 ```
 
 Schema history:
@@ -286,9 +318,16 @@ Schema history:
   strings must read `status` instead. The only known `v1` consumer was the
   out-of-repository prototype below, which read geometry/diagnostic arrays
   only (checked: no checked-in code reads `weight_observables` values).
+- `v2`, line-quadrature stage (`task-single-fiber-line-quadrature`): the
+  optional `result.quadrature` object and the `integrand` sample array are
+  populated when the exporter is given a `QuadratureResult`; both are pure
+  additions (`quadrature` was a documented placeholder before, no existing
+  field changed type), so the version string stays `v2`. `normal_jacobian`
+  remains the unregularised `J_perp`; `epsilon` lives only in the integrand
+  and in `result.quadrature.epsilon`.
 
 JSON metadata carries the semantic names, units, conventions, shapes,
-and SHA-256 of the NPZ payload. Quadrature data is still not emitted. Empty failed fibers are represented without
+and SHA-256 of the NPZ payload. Empty failed fibers are represented without
 invented samples; non-finite unavailable closure values become JSON `null`.
 The format does not serialize arbitrary Python objects or require Lumice at
 read time. The canonical fixture produces byte-identical JSON and NPZ files on
@@ -310,8 +349,11 @@ color-to-factor mapping.
 3. **Physical one-pixel result**: expose every named factor, the coarea
    denominator, quadrature refinements, and a convergence estimate. Status:
    the four factors of section 4.1 and `J_perp` are exposed pointwise with
-   units and normalization; quadrature refinements and convergence remain
-   open (`task-single-fiber-line-quadrature`).
+   units and normalization; the adaptive line quadrature of section 4.1
+   reports method, refinements, node count, value, error estimate, `epsilon`
+   and order evidence for the canonical pixel fiber (`tests/test_quadrature.py`,
+   `result.quadrature` in the figure data). The value stays `partial` (single
+   component, missing factors); strip-level coverage is stage 4.
 4. **Historical image scene**: render the canonical `251 x 801` strip and
    compare raw profiles with the historical binary plus an independently
    converged Lumice result after coordinate/radiometric alignment.
