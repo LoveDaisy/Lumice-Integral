@@ -33,6 +33,8 @@ The authoritative staged design is `docs/roadmap.md`.
 ├── README.md              # Concise project identity and navigation
 ├── pyproject.toml         # Python package, dependencies, and test config
 ├── src/lumice_integral/   # Differentiable numerical building blocks
+│   └── geometry/          # Finite-crystal geometry: polyhedra, unfolding, corridor
+│                          # intersection, path enumeration, entry_measure (pure numpy)
 ├── tests/                 # Analytic and optical regression fixtures
 ├── benchmarks/            # Reproducible CPU/GPU probes
 ├── docs/
