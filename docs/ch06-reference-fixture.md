@@ -167,11 +167,17 @@ freeze incidental accepted-step counts as a correctness requirement.
 | ch10 halo-map/Jacobian/fold figures | Lumice Integral numerical data; Writing-Lab presentation | Partially supported | Target sweeps and singular/fold localization beyond one regular fiber. |
 | ch11 orientation-family comparison | Lumice Integral and/or independent Lumice validation | Not supported by the current ordinary-density slice | Pose-density models, physical weights, image driver; exactly constrained families require a separate measure/domain contract. |
 
-## 6. Proposed Figure-Data Product
+## 6. Figure-Data Product
 
 Solver objects are useful in Python but are not a stable boundary for the
-writing project. A future exporter should write a versioned metadata document
-plus array payload, for example:
+writing project. `export_fiber_figure_data` writes versioned JSON metadata plus
+an NPZ array payload. The canonical 3-5 fixture can be exported with:
+
+```bash
+uv run python scripts/export_path_3_5_figure_data.py <output-directory>
+```
+
+The current `lumice-integral.figure-data/v1` payload contains:
 
 ```text
 schema: lumice-integral.figure-data/v1
@@ -189,10 +195,15 @@ quadrature:
   status, method, refinements, value, error estimate
 ```
 
-NPZ is sufficient for a Python-first diagnostic artifact; JSON metadata MUST
-carry the semantic names, units, conventions, shapes, and SHA-256 of the array
-payload. The format must not serialize arbitrary Python objects or require
-Lumice at read time.
+The geometry exporter already writes the pose, tangent, residual, arclength,
+Jacobian, and branch-margin arrays. It preserves the current unavailable state
+of physical weights and does not yet emit evaluated weight or quadrature
+arrays. JSON metadata carries the semantic names, units, conventions, shapes,
+and SHA-256 of the NPZ payload. Empty failed fibers are represented without
+invented samples; non-finite unavailable closure values become JSON `null`.
+The format does not serialize arbitrary Python objects or require Lumice at
+read time. The canonical fixture produces byte-identical JSON and NPZ files on
+repeated exports in the recorded reference environment.
 
 ## 7. Acceptance Stages
 
