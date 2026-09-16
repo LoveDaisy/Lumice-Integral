@@ -317,6 +317,19 @@ class _StateEvaluation:
 
 
 @dataclass(frozen=True)
+class _SmoothOutputEvaluation:
+    """Validated smooth direction data that is safe to pass to local AD."""
+
+    accepted: bool
+    direction: Array | None
+    residual: Array | None
+    residual_norm: float
+    reason: TerminationReason | None
+    event: EventCandidate | None
+    message: str
+
+
+@dataclass(frozen=True)
 class _CorrectorOutcome:
     accepted: bool
     state: _StateEvaluation | None
@@ -436,73 +449,23 @@ def _evaluate_regular_state(
             event=event,
         )
 
-    try:
-        direction = problem.direction_evaluator(rotation)
-        direction_array = np.asarray(direction)
-    except Exception as error:
+    smooth = _evaluate_smooth_output(problem, options, rotation)
+    if not smooth.accepted:
         return _rejected_state(
             rotation,
             domain,
-            TerminationReason.NON_FINITE,
-            f"direction evaluator raised {type(error).__name__}: {error}",
+            smooth.reason or TerminationReason.NON_FINITE,
+            smooth.message,
+            direction=smooth.direction,
+            residual_value=smooth.residual,
+            residual_norm=smooth.residual_norm,
+            event=smooth.event,
         )
-    if direction_array.shape != (3,) or direction_array.dtype != np.float64:
-        return _rejected_state(
-            rotation,
-            domain,
-            TerminationReason.INVALID_NUMERICAL_INPUT,
-            "direction evaluator must return a float64 array with shape (3,)",
-            direction=direction,
-        )
-    if not np.all(np.isfinite(direction_array)):
-        return _rejected_state(
-            rotation,
-            domain,
-            TerminationReason.NON_FINITE,
-            "direction evaluator returned a non-finite value",
-            direction=direction,
-        )
-    direction_norm = float(np.linalg.norm(direction_array))
-    if not np.isclose(
-        direction_norm, 1.0, rtol=0.0, atol=options.unit_tolerance
-    ):
-        return _rejected_state(
-            rotation,
-            domain,
-            TerminationReason.INVALID_NUMERICAL_INPUT,
-            f"direction evaluator returned non-unit output: norm={direction_norm}",
-            direction=direction,
-        )
-
-    chart = problem.target_chart
-    chart_dot = float(jnp.dot(direction, chart.direction))
-    if chart_dot <= chart.minimum_dot:
-        event = EventCandidate(
-            TerminationReason.CHART_BOUNDARY,
-            chart_dot - chart.minimum_dot,
-            "direction left the declared target chart neighborhood",
-        )
-        return _rejected_state(
-            rotation,
-            domain,
-            event.kind,
-            event.message,
-            direction=direction,
-            event=event,
-        )
-
-    residual_value = chart.basis.T @ (direction - chart.direction)
-    residual_norm = float(jnp.linalg.norm(residual_value))
-    if not np.isfinite(residual_norm):
-        return _rejected_state(
-            rotation,
-            domain,
-            TerminationReason.NON_FINITE,
-            "target residual is non-finite",
-            direction=direction,
-            residual_value=residual_value,
-            residual_norm=residual_norm,
-        )
+    assert smooth.direction is not None
+    assert smooth.residual is not None
+    direction = smooth.direction
+    residual_value = smooth.residual
+    residual_norm = smooth.residual_norm
 
     try:
         jacobian = local_residual_jacobian(problem, rotation)
@@ -584,6 +547,66 @@ def _evaluate_regular_state(
     )
 
 
+def _evaluate_smooth_output(
+    problem: FiberProblem,
+    options: ContinuationOptions,
+    rotation: Array,
+) -> _SmoothOutputEvaluation:
+    """Run the common direction and target-chart gate outside local AD."""
+    try:
+        direction = problem.direction_evaluator(rotation)
+        direction_array = np.asarray(direction)
+    except Exception as error:
+        return _SmoothOutputEvaluation(
+            False, None, None, float("inf"), TerminationReason.NON_FINITE, None,
+            f"direction evaluator raised {type(error).__name__}: {error}",
+        )
+    if direction_array.shape != (3,) or direction_array.dtype != np.float64:
+        return _SmoothOutputEvaluation(
+            False, direction, None, float("inf"),
+            TerminationReason.INVALID_NUMERICAL_INPUT, None,
+            "direction evaluator must return a float64 array with shape (3,)",
+        )
+    if not np.all(np.isfinite(direction_array)):
+        return _SmoothOutputEvaluation(
+            False, direction, None, float("inf"), TerminationReason.NON_FINITE, None,
+            "direction evaluator returned a non-finite value",
+        )
+    direction_norm = float(np.linalg.norm(direction_array))
+    if not np.isclose(
+        direction_norm, 1.0, rtol=0.0, atol=options.unit_tolerance
+    ):
+        return _SmoothOutputEvaluation(
+            False, direction, None, float("inf"),
+            TerminationReason.INVALID_NUMERICAL_INPUT, None,
+            f"direction evaluator returned non-unit output: norm={direction_norm}",
+        )
+
+    chart = problem.target_chart
+    chart_dot = float(np.dot(direction_array, np.asarray(chart.direction)))
+    if chart_dot <= chart.minimum_dot:
+        event = EventCandidate(
+            TerminationReason.CHART_BOUNDARY,
+            chart_dot - chart.minimum_dot,
+            "direction left the declared target chart neighborhood",
+        )
+        return _SmoothOutputEvaluation(
+            False, direction, None, float("inf"), event.kind, event, event.message
+        )
+
+    residual_value = chart.basis.T @ (direction - chart.direction)
+    residual_norm = float(jnp.linalg.norm(residual_value))
+    if not np.isfinite(residual_norm):
+        return _SmoothOutputEvaluation(
+            False, direction, residual_value, residual_norm,
+            TerminationReason.NON_FINITE, None, "target residual is non-finite",
+        )
+    return _SmoothOutputEvaluation(
+        True, direction, residual_value, residual_norm, None, None,
+        "smooth output passed reference gates",
+    )
+
+
 def _correct_trial(
     problem: FiberProblem,
     options: ContinuationOptions,
@@ -655,9 +678,23 @@ def _correct_trial(
                 evaluations,
                 event.message if event is not None else "invalid path domain",
             )
+        smooth = _evaluate_smooth_output(problem, options, candidate)
+        if not smooth.accepted:
+            return _CorrectorOutcome(
+                False, None, np.asarray(predicted), np.asarray(candidate), iteration,
+                smooth.residual_norm, last_update, float(jnp.linalg.norm(delta)),
+                float(rotation_distance(current, candidate)), float("nan"), smooth.reason,
+                smooth.event, evaluations, smooth.message,
+            )
+        assert smooth.residual is not None
         try:
-            value = system(delta)
-            value_array = np.asarray(value)
+            value_array = np.concatenate(
+                (
+                    np.asarray(smooth.residual),
+                    np.atleast_1d(float(jnp.dot(phase_tangent, delta))),
+                )
+            )
+            value = jnp.asarray(value_array, dtype=predicted.dtype)
         except Exception as error:
             value_array = np.full(3, np.nan)
             message = f"corrector evaluation failed: {type(error).__name__}: {error}"
@@ -1149,9 +1186,25 @@ def _correct_closure(
                 evaluations,
                 event.message if event is not None else "invalid closure domain",
             )
+        smooth = _evaluate_smooth_output(problem, options, candidate)
+        if not smooth.accepted:
+            return _CorrectorOutcome(
+                False, None, np.asarray(current), np.asarray(candidate), iteration,
+                smooth.residual_norm, last_update, float(jnp.linalg.norm(delta)),
+                float(rotation_distance(current, candidate)), float("nan"), smooth.reason,
+                smooth.event, evaluations, smooth.message,
+            )
+        assert smooth.residual is not None
         try:
-            value = closing_system(delta)
-            value_array = np.asarray(value)
+            value_array = np.concatenate(
+                (
+                    np.asarray(smooth.residual),
+                    np.atleast_1d(
+                        float(_section_coordinate(seed, candidate, initial_tangent))
+                    ),
+                )
+            )
+            value = jnp.asarray(value_array, dtype=current.dtype)
         except Exception as error:
             return _CorrectorOutcome(
                 False,

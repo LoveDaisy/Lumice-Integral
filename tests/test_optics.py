@@ -111,3 +111,22 @@ def test_3_5_problem_rejects_float32_inputs_before_coercion(argument, value):
 
     with pytest.raises(ValueError, match=f"{argument}.*float64"):
         path_3_5_problem(**arguments)
+
+
+@pytest.mark.parametrize(
+    "refractive_index",
+    [
+        jnp.asarray(0.0, dtype=jnp.float64),
+        jnp.asarray(-1.31, dtype=jnp.float64),
+        jnp.asarray(jnp.nan, dtype=jnp.float64),
+        jnp.asarray([1.31], dtype=jnp.float64),
+    ],
+)
+def test_3_5_domain_and_problem_reject_invalid_refractive_indices(refractive_index):
+    seed = jnp.eye(3, dtype=jnp.float64)
+    incident = minimum_deviation_incident()
+
+    with pytest.raises(ValueError, match="refractive_index.*finite positive scalar"):
+        path_3_5_domain(seed, incident, refractive_index)
+    with pytest.raises(ValueError, match="refractive_index.*finite positive scalar"):
+        path_3_5_problem(seed, incident, refractive_index=refractive_index)

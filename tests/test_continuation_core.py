@@ -219,6 +219,55 @@ def test_bordered_corrector_requires_a_small_final_newton_update():
     assert outcome.update_norm > options.corrector_update_tolerance
 
 
+@pytest.mark.parametrize(
+    ("name", "direction", "reason"),
+    [
+        (
+            "nonunit",
+            lambda rotation: 2.0 * direction_map(rotation),
+            TerminationReason.INVALID_NUMERICAL_INPUT,
+        ),
+        (
+            "outside_chart",
+            lambda rotation: -direction_map(rotation),
+            TerminationReason.CHART_BOUNDARY,
+        ),
+    ],
+)
+def test_trial_corrector_preflights_smooth_output_before_ad(name, direction, reason):
+    calls = 0
+
+    def counted_direction(rotation):
+        nonlocal calls
+        calls += 1
+        return direction(rotation)
+
+    base = analytic_problem()
+    problem = FiberProblem(
+        path=f"trial-{name}",
+        incident_direction=base.incident_direction,
+        target_chart=base.target_chart,
+        direction_evaluator=counted_direction,
+        seed=base.seed,
+    )
+    initial = _evaluate_regular_state(base, ContinuationOptions(), base.seed)
+
+    outcome = _correct_trial(
+        problem,
+        ContinuationOptions(),
+        base.seed,
+        base.seed,
+        initial.tangent,
+    )
+
+    assert not outcome.accepted
+    assert outcome.reason == reason
+    assert calls == 1
+    if reason == TerminationReason.CHART_BOUNDARY:
+        assert outcome.event is not None
+        assert outcome.event.kind == reason
+
+
 def test_residual_headroom_participates_in_step_adaptation():
     problem = analytic_problem()
     options = ContinuationOptions(residual_tolerance=1e-8)
@@ -351,6 +400,58 @@ def test_closure_requires_a_small_final_newton_update():
     assert outcome.reason == TerminationReason.CORRECTOR_FAILURE
     assert outcome.residual_norm <= options.residual_tolerance
     assert outcome.update_norm > options.corrector_update_tolerance
+
+
+@pytest.mark.parametrize(
+    ("name", "direction", "reason"),
+    [
+        (
+            "nonunit",
+            lambda rotation: 2.0 * direction_map(rotation),
+            TerminationReason.INVALID_NUMERICAL_INPUT,
+        ),
+        (
+            "outside_chart",
+            lambda rotation: -direction_map(rotation),
+            TerminationReason.CHART_BOUNDARY,
+        ),
+    ],
+)
+def test_closure_corrector_preflights_smooth_output_before_ad(
+    name, direction, reason
+):
+    calls = 0
+
+    def counted_direction(rotation):
+        nonlocal calls
+        calls += 1
+        return direction(rotation)
+
+    base = analytic_problem()
+    problem = FiberProblem(
+        path=f"closure-{name}",
+        incident_direction=base.incident_direction,
+        target_chart=base.target_chart,
+        direction_evaluator=counted_direction,
+        seed=base.seed,
+    )
+    initial = _evaluate_regular_state(base, ContinuationOptions(), base.seed)
+
+    outcome = _correct_closure(
+        problem,
+        ContinuationOptions(),
+        base.seed,
+        base.seed,
+        initial.tangent,
+        initial.tangent,
+    )
+
+    assert not outcome.accepted
+    assert outcome.reason == reason
+    assert calls == 1
+    if reason == TerminationReason.CHART_BOUNDARY:
+        assert outcome.event is not None
+        assert outcome.event.kind == reason
 
 
 def test_closure_failure_history_survives_a_later_success(monkeypatch):

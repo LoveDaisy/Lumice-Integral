@@ -25,6 +25,20 @@ def _require_float64_reference_input(name: str, value: Array) -> None:
         raise ValueError(f"{name} must use float64 for the reference solver")
 
 
+def _require_positive_finite_scalar(name: str, value: Array) -> float:
+    """Validate host-side scalar inputs before 3-5 feasibility arithmetic."""
+    value_array = np.asarray(value)
+    if value_array.shape != ():
+        raise ValueError(f"{name} must be a finite positive scalar")
+    try:
+        scalar = float(value_array)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{name} must be a finite positive scalar") from error
+    if not np.isfinite(scalar) or scalar <= 0.0:
+        raise ValueError(f"{name} must be a finite positive scalar")
+    return scalar
+
+
 class Refraction(NamedTuple):
     direction: Array
     discriminant: Array
@@ -84,7 +98,7 @@ def path_3_5_domain(
     """Check the 3-5 branch on the host before either square root is taken."""
     rotation_array = np.asarray(rotation, dtype=np.float64)
     incident = np.asarray(incident_direction, dtype=np.float64)
-    index = float(np.asarray(refractive_index))
+    index = _require_positive_finite_scalar("refractive_index", refractive_index)
     entry_normal = rotation_array @ np.asarray(FACE_3_NORMAL)
     exit_normal = rotation_array @ np.asarray(FACE_5_NORMAL)
     entry_index = 1.0 / index
@@ -177,6 +191,7 @@ def path_3_5_problem(
     _require_float64_reference_input("seed", seed)
     _require_float64_reference_input("incident_direction", incident_direction)
     _require_float64_reference_input("refractive_index", refractive_index)
+    _require_positive_finite_scalar("refractive_index", refractive_index)
     if target_direction is not None:
         _require_float64_reference_input("target_direction", target_direction)
     seed = jnp.asarray(seed)
