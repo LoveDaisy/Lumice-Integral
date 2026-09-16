@@ -500,6 +500,16 @@ def _apply_correction_kernel(base: Array, delta: Array) -> Array:
     return base @ exp(delta)
 
 
+@jax.jit
+def _predictor_kernel(current: Array, tangent: Array, step: Array) -> Array:
+    return current @ exp(step * tangent)
+
+
+# Compiled alias of the SO(3) geodesic distance for the host control loop; the
+# semantics stay owned by ``so3.rotation_distance``.
+_rotation_distance_kernel = jax.jit(rotation_distance)
+
+
 def _default_domain_evaluation(_: Array) -> DomainEvaluation:
     return DomainEvaluation(valid=True)
 
@@ -745,9 +755,9 @@ def _gate_smooth_output(
             "direction evaluator returned a non-finite value",
         )
     direction_norm = float(np.linalg.norm(direction_array))
-    if not np.isclose(
-        direction_norm, 1.0, rtol=0.0, atol=options.unit_tolerance
-    ):
+    # Same predicate as ``np.isclose(norm, 1.0, rtol=0.0, atol=...)`` for the
+    # finite norm guaranteed above, without the array-ufunc overhead.
+    if not abs(direction_norm - 1.0) <= options.unit_tolerance:
         return _SmoothOutputEvaluation(
             False, direction, None, float("inf"),
             TerminationReason.INVALID_NUMERICAL_INPUT, None,
@@ -777,6 +787,36 @@ def _gate_smooth_output(
     )
 
 
+class _SolveDefect(StrEnum):
+    """Host classification of one compiled Newton iterate, in check order."""
+
+    NON_FINITE_JACOBIAN = "non_finite_jacobian"
+    NON_FINITE_CONDITION = "non_finite_condition"
+    CONDITION_LIMIT = "condition_limit"
+    NON_FINITE_UPDATE = "non_finite_update"
+
+
+def _classify_newton_solve(
+    options: ContinuationOptions, newton: _NewtonStep
+) -> tuple[_SolveDefect | None, float]:
+    """Replicate the host-side solve checks on compiled kernel outputs.
+
+    The order is fixed: non-finite Jacobian, non-finite condition number,
+    condition limit, then non-finite update.  Returns the first defect (or
+    ``None``) together with the condition number for messages.
+    """
+    condition = float(newton.condition)
+    if not np.all(np.isfinite(np.asarray(newton.jacobian))):
+        return _SolveDefect.NON_FINITE_JACOBIAN, condition
+    if not np.isfinite(condition):
+        return _SolveDefect.NON_FINITE_CONDITION, condition
+    if condition > options.condition_limit:
+        return _SolveDefect.CONDITION_LIMIT, condition
+    if not np.all(np.isfinite(np.asarray(newton.update))):
+        return _SolveDefect.NON_FINITE_UPDATE, condition
+    return None, condition
+
+
 def _correct_trial(
     problem: FiberProblem,
     options: ContinuationOptions,
@@ -804,8 +844,8 @@ def _correct_trial(
             iteration,
             last_residual,
             last_update,
-            float(jnp.linalg.norm(delta)),
-            float(rotation_distance(current, candidate)),
+            float(np.linalg.norm(np.asarray(delta))),
+            float(_rotation_distance_kernel(current, candidate)),
             float("nan"),
             TerminationReason.EVALUATION_BUDGET,
             None,
@@ -813,18 +853,10 @@ def _correct_trial(
             "corrector evaluation budget exhausted",
         )
 
-    def system(correction: Array) -> Array:
-        candidate = predicted @ exp(correction)
-        direction = problem.direction_evaluator(candidate)
-        residual_value = problem.target_chart.basis.T @ (
-            direction - problem.target_chart.direction
-        )
-        return jnp.concatenate(
-            (residual_value, jnp.atleast_1d(jnp.dot(phase_tangent, correction)))
-        )
+    chart = problem.target_chart
 
     for iteration in range(options.corrector_maximum_iterations + 1):
-        candidate = predicted @ exp(delta)
+        candidate = _apply_correction_kernel(predicted, delta)
         if maximum_evaluations is not None and evaluations >= maximum_evaluations:
             return budget_exhausted(iteration, candidate)
         domain = _evaluate_domain(problem, candidate)
@@ -840,36 +872,42 @@ def _correct_trial(
                 iteration,
                 last_residual,
                 last_update,
-                float(jnp.linalg.norm(delta)),
-                float(rotation_distance(current, candidate)),
+                float(np.linalg.norm(np.asarray(delta))),
+                float(_rotation_distance_kernel(current, candidate)),
                 float("nan"),
                 reason,
                 event,
                 evaluations,
                 event.message if event is not None else "invalid path domain",
             )
-        smooth = _evaluate_smooth_output(problem, options, candidate)
+        try:
+            newton = _trial_newton_step_kernel(
+                problem.direction_evaluator,
+                predicted,
+                phase_tangent,
+                chart.direction,
+                chart.basis,
+                delta,
+            )
+        except _MalformedDirectionOutput:
+            smooth = _malformed_direction_output()
+        except Exception as error:
+            smooth = _SmoothOutputEvaluation(
+                False, None, None, float("inf"), TerminationReason.NON_FINITE, None,
+                f"corrector evaluation failed: {type(error).__name__}: {error}",
+            )
+        else:
+            smooth = _gate_smooth_output(
+                options, chart, newton.direction, newton.residual
+            )
         if not smooth.accepted:
             return _CorrectorOutcome(
                 False, None, np.asarray(predicted), np.asarray(candidate), iteration,
-                smooth.residual_norm, last_update, float(jnp.linalg.norm(delta)),
-                float(rotation_distance(current, candidate)), float("nan"), smooth.reason,
+                smooth.residual_norm, last_update, float(np.linalg.norm(np.asarray(delta))),
+                float(_rotation_distance_kernel(current, candidate)), float("nan"), smooth.reason,
                 smooth.event, evaluations, smooth.message,
             )
-        assert smooth.residual is not None
-        try:
-            value_array = np.concatenate(
-                (
-                    np.asarray(smooth.residual),
-                    np.atleast_1d(float(jnp.dot(phase_tangent, delta))),
-                )
-            )
-            value = jnp.asarray(value_array, dtype=predicted.dtype)
-        except Exception as error:
-            value_array = np.full(3, np.nan)
-            message = f"corrector evaluation failed: {type(error).__name__}: {error}"
-        else:
-            message = "corrector evaluation returned a non-finite value"
+        value_array = np.asarray(newton.value)
         last_residual = float(np.linalg.norm(value_array[:2]))
         phase_norm = abs(float(value_array[2]))
         if not np.all(np.isfinite(value_array)):
@@ -881,13 +919,13 @@ def _correct_trial(
                 iteration,
                 last_residual,
                 last_update,
-                float(jnp.linalg.norm(delta)),
-                float(rotation_distance(current, candidate)),
+                float(np.linalg.norm(np.asarray(delta))),
+                float(_rotation_distance_kernel(current, candidate)),
                 float("nan"),
                 TerminationReason.NON_FINITE,
                 None,
                 evaluations,
-                message,
+                "corrector evaluation returned a non-finite value",
             )
         if (
             last_residual <= options.residual_tolerance
@@ -901,10 +939,10 @@ def _correct_trial(
                 problem, options, candidate, previous_tangent=phase_tangent
             )
             evaluations += 1
-            correction_norm = float(jnp.linalg.norm(delta))
-            advance = float(rotation_distance(current, candidate))
+            correction_norm = float(np.linalg.norm(np.asarray(delta)))
+            advance = float(_rotation_distance_kernel(current, candidate))
             tangent_dot = (
-                float(jnp.dot(phase_tangent, state.tangent))
+                float(np.dot(np.asarray(phase_tangent), np.asarray(state.tangent)))
                 if state.tangent is not None
                 else float("nan")
             )
@@ -971,21 +1009,20 @@ def _correct_trial(
             break
         if maximum_evaluations is not None and evaluations >= maximum_evaluations:
             return budget_exhausted(iteration, candidate)
-        try:
-            bordered = jax.jacfwd(system)(delta)
-            bordered_array = np.asarray(bordered)
-            if not np.all(np.isfinite(bordered_array)):
-                raise FloatingPointError("non-finite bordered Jacobian")
-            condition = float(np.linalg.cond(bordered_array))
-            if not np.isfinite(condition) or condition > options.condition_limit:
-                raise np.linalg.LinAlgError(
+        defect, condition = _classify_newton_solve(options, newton)
+        if defect is not None:
+            # Mirrors the former raise sites: non-finite Jacobian and update were
+            # FloatingPointError, the condition checks were LinAlgError.
+            solve_failure = {
+                _SolveDefect.NON_FINITE_JACOBIAN: "non-finite bordered Jacobian",
+                _SolveDefect.NON_FINITE_CONDITION: (
                     f"bordered system condition {condition} exceeds limit"
-                )
-            update = jnp.linalg.solve(bordered, -value)
-            update_array = np.asarray(update)
-            if not np.all(np.isfinite(update_array)):
-                raise FloatingPointError("non-finite Newton update")
-        except (np.linalg.LinAlgError, FloatingPointError) as error:
+                ),
+                _SolveDefect.CONDITION_LIMIT: (
+                    f"bordered system condition {condition} exceeds limit"
+                ),
+                _SolveDefect.NON_FINITE_UPDATE: "non-finite Newton update",
+            }[defect]
             return _CorrectorOutcome(
                 False,
                 None,
@@ -994,35 +1031,18 @@ def _correct_trial(
                 iteration,
                 last_residual,
                 last_update,
-                float(jnp.linalg.norm(delta)),
-                float(rotation_distance(current, candidate)),
+                float(np.linalg.norm(np.asarray(delta))),
+                float(_rotation_distance_kernel(current, candidate)),
                 float("nan"),
                 TerminationReason.LINEAR_SOLVE_FAILURE,
                 None,
                 evaluations,
-                str(error),
+                solve_failure,
             )
-        except Exception as error:
-            return _CorrectorOutcome(
-                False,
-                None,
-                np.asarray(predicted),
-                np.asarray(candidate),
-                iteration,
-                last_residual,
-                last_update,
-                float(jnp.linalg.norm(delta)),
-                float(rotation_distance(current, candidate)),
-                float("nan"),
-                TerminationReason.NON_FINITE,
-                None,
-                evaluations,
-                f"corrector differentiation failed: {type(error).__name__}: {error}",
-            )
-        last_update = float(jnp.linalg.norm(update))
-        delta = delta + update
+        last_update = float(newton.update_norm)
+        delta = newton.next_delta
 
-    candidate = predicted @ exp(delta)
+    candidate = _apply_correction_kernel(predicted, delta)
     return _CorrectorOutcome(
         False,
         None,
@@ -1031,8 +1051,8 @@ def _correct_trial(
         options.corrector_maximum_iterations,
         last_residual,
         last_update,
-        float(jnp.linalg.norm(delta)),
-        float(rotation_distance(current, candidate)),
+        float(np.linalg.norm(np.asarray(delta))),
+        float(_rotation_distance_kernel(current, candidate)),
         float("nan"),
         TerminationReason.CORRECTOR_FAILURE,
         None,
@@ -1263,6 +1283,7 @@ def _crossing_direction(previous: float, current: float) -> int:
     return 0
 
 
+@jax.jit
 def _section_coordinate(initial: Array, rotation: Array, tangent: Array) -> Array:
     relative = initial.T @ rotation
     skew_vector = jnp.array(
@@ -1313,8 +1334,8 @@ def _correct_closure(
             iteration,
             last_residual,
             last_update,
-            float(jnp.linalg.norm(delta)),
-            float(rotation_distance(current, candidate)),
+            float(np.linalg.norm(np.asarray(delta))),
+            float(_rotation_distance_kernel(current, candidate)),
             float("nan"),
             TerminationReason.EVALUATION_BUDGET,
             None,
@@ -1322,17 +1343,10 @@ def _correct_closure(
             "closure evaluation budget exhausted",
         )
 
-    def closing_system(correction: Array) -> Array:
-        candidate = current @ exp(correction)
-        direction = problem.direction_evaluator(candidate)
-        residual_value = problem.target_chart.basis.T @ (
-            direction - problem.target_chart.direction
-        )
-        section = _section_coordinate(seed, candidate, initial_tangent)
-        return jnp.concatenate((residual_value, jnp.atleast_1d(section)))
+    chart = problem.target_chart
 
     for iteration in range(options.closure_maximum_iterations + 1):
-        candidate = current @ exp(delta)
+        candidate = _apply_correction_kernel(current, delta)
         if maximum_evaluations is not None and evaluations >= maximum_evaluations:
             return budget_exhausted(iteration, candidate)
         domain = _evaluate_domain(problem, candidate)
@@ -1348,50 +1362,43 @@ def _correct_closure(
                 iteration,
                 last_residual,
                 last_update,
-                float(jnp.linalg.norm(delta)),
-                float(rotation_distance(current, candidate)),
+                float(np.linalg.norm(np.asarray(delta))),
+                float(_rotation_distance_kernel(current, candidate)),
                 float("nan"),
                 reason,
                 event,
                 evaluations,
                 event.message if event is not None else "invalid closure domain",
             )
-        smooth = _evaluate_smooth_output(problem, options, candidate)
+        try:
+            newton = _closure_newton_step_kernel(
+                problem.direction_evaluator,
+                current,
+                seed,
+                initial_tangent,
+                chart.direction,
+                chart.basis,
+                delta,
+            )
+        except _MalformedDirectionOutput:
+            smooth = _malformed_direction_output()
+        except Exception as error:
+            smooth = _SmoothOutputEvaluation(
+                False, None, None, float("inf"), TerminationReason.NON_FINITE, None,
+                f"closure evaluation failed: {type(error).__name__}: {error}",
+            )
+        else:
+            smooth = _gate_smooth_output(
+                options, chart, newton.direction, newton.residual
+            )
         if not smooth.accepted:
             return _CorrectorOutcome(
                 False, None, np.asarray(current), np.asarray(candidate), iteration,
-                smooth.residual_norm, last_update, float(jnp.linalg.norm(delta)),
-                float(rotation_distance(current, candidate)), float("nan"), smooth.reason,
+                smooth.residual_norm, last_update, float(np.linalg.norm(np.asarray(delta))),
+                float(_rotation_distance_kernel(current, candidate)), float("nan"), smooth.reason,
                 smooth.event, evaluations, smooth.message,
             )
-        assert smooth.residual is not None
-        try:
-            value_array = np.concatenate(
-                (
-                    np.asarray(smooth.residual),
-                    np.atleast_1d(
-                        float(_section_coordinate(seed, candidate, initial_tangent))
-                    ),
-                )
-            )
-            value = jnp.asarray(value_array, dtype=current.dtype)
-        except Exception as error:
-            return _CorrectorOutcome(
-                False,
-                None,
-                np.asarray(current),
-                np.asarray(candidate),
-                iteration,
-                float("inf"),
-                last_update,
-                float(jnp.linalg.norm(delta)),
-                float(rotation_distance(current, candidate)),
-                float("nan"),
-                TerminationReason.NON_FINITE,
-                None,
-                evaluations,
-                f"closure evaluation failed: {type(error).__name__}: {error}",
-            )
+        value_array = np.asarray(newton.value)
         last_residual = float(np.linalg.norm(value_array[:2]))
         section_norm = abs(float(value_array[2]))
         if not np.all(np.isfinite(value_array)):
@@ -1403,8 +1410,8 @@ def _correct_closure(
                 iteration,
                 last_residual,
                 last_update,
-                float(jnp.linalg.norm(delta)),
-                float(rotation_distance(current, candidate)),
+                float(np.linalg.norm(np.asarray(delta))),
+                float(_rotation_distance_kernel(current, candidate)),
                 float("nan"),
                 TerminationReason.NON_FINITE,
                 None,
@@ -1424,12 +1431,12 @@ def _correct_closure(
             )
             evaluations += 1
             tangent_dot = (
-                float(jnp.dot(initial_tangent, state.tangent))
+                float(np.dot(np.asarray(initial_tangent), np.asarray(state.tangent)))
                 if state.tangent is not None
                 else float("nan")
             )
-            correction_norm = float(jnp.linalg.norm(delta))
-            advance = float(rotation_distance(current, candidate))
+            correction_norm = float(np.linalg.norm(np.asarray(delta)))
+            advance = float(_rotation_distance_kernel(current, candidate))
             if not state.accepted:
                 return _CorrectorOutcome(
                     False,
@@ -1451,7 +1458,7 @@ def _correct_closure(
                 correction_norm <= options.maximum_correction
                 and advance <= options.maximum_advance
                 and tangent_dot >= options.closure_tangent_dot
-                and float(rotation_distance(seed, candidate))
+                and float(_rotation_distance_kernel(seed, candidate))
                 <= options.closure_distance
             )
             return _CorrectorOutcome(
@@ -1474,20 +1481,19 @@ def _correct_closure(
             break
         if maximum_evaluations is not None and evaluations >= maximum_evaluations:
             return budget_exhausted(iteration, candidate)
-        try:
-            jacobian = jax.jacfwd(closing_system)(delta)
-            jacobian_array = np.asarray(jacobian)
-            condition = float(np.linalg.cond(jacobian_array))
-            if not np.all(np.isfinite(jacobian_array)) or not np.isfinite(condition):
-                raise FloatingPointError("non-finite closure Jacobian")
-            if condition > options.condition_limit:
-                raise np.linalg.LinAlgError(
+        defect, condition = _classify_newton_solve(options, newton)
+        if defect is not None:
+            # Mirrors the former raise sites: a non-finite Jacobian or
+            # condition number was one FloatingPointError, the limit a
+            # LinAlgError, and a non-finite update a FloatingPointError.
+            solve_failure = {
+                _SolveDefect.NON_FINITE_JACOBIAN: "non-finite closure Jacobian",
+                _SolveDefect.NON_FINITE_CONDITION: "non-finite closure Jacobian",
+                _SolveDefect.CONDITION_LIMIT: (
                     f"closure system condition {condition} exceeds limit"
-                )
-            update = jnp.linalg.solve(jacobian, -value)
-            if not np.all(np.isfinite(np.asarray(update))):
-                raise FloatingPointError("non-finite closure update")
-        except (np.linalg.LinAlgError, FloatingPointError) as error:
+                ),
+                _SolveDefect.NON_FINITE_UPDATE: "non-finite closure update",
+            }[defect]
             return _CorrectorOutcome(
                 False,
                 None,
@@ -1496,18 +1502,18 @@ def _correct_closure(
                 iteration,
                 last_residual,
                 last_update,
-                float(jnp.linalg.norm(delta)),
-                float(rotation_distance(current, candidate)),
+                float(np.linalg.norm(np.asarray(delta))),
+                float(_rotation_distance_kernel(current, candidate)),
                 float("nan"),
                 TerminationReason.LINEAR_SOLVE_FAILURE,
                 None,
                 evaluations,
-                str(error),
+                solve_failure,
             )
-        last_update = float(jnp.linalg.norm(update))
-        delta = delta + update
+        last_update = float(newton.update_norm)
+        delta = newton.next_delta
 
-    candidate = current @ exp(delta)
+    candidate = _apply_correction_kernel(current, delta)
     return _CorrectorOutcome(
         False,
         None,
@@ -1516,8 +1522,8 @@ def _correct_closure(
         options.closure_maximum_iterations,
         last_residual,
         last_update,
-        float(jnp.linalg.norm(delta)),
-        float(rotation_distance(current, candidate)),
+        float(np.linalg.norm(np.asarray(delta))),
+        float(_rotation_distance_kernel(current, candidate)),
         float("nan"),
         TerminationReason.CORRECTOR_FAILURE,
         None,
@@ -1625,8 +1631,10 @@ def trace_fiber(
         current = current_state.rotation
         trial_index = 0
         while True:
-            predicted = current @ exp(
-                jnp.asarray(step, dtype=current.dtype) * current_state.tangent
+            predicted = _predictor_kernel(
+                current,
+                current_state.tangent,
+                jnp.asarray(step, dtype=current.dtype),
             )
             outcome = _correct_trial(
                 problem,
@@ -1765,8 +1773,10 @@ def trace_fiber(
             )
             crossing_direction = _crossing_direction(previous_section, section)
             crossed = previous_section != 0.0 and crossing_direction != 0
-            seed_distance = float(rotation_distance(seed, outcome.state.rotation))
-            tangent_dot = float(jnp.dot(initial.tangent, outcome.state.tangent))
+            seed_distance = float(_rotation_distance_kernel(seed, outcome.state.rotation))
+            tangent_dot = float(
+                np.dot(np.asarray(initial.tangent), np.asarray(outcome.state.tangent))
+            )
             extent_gate = (
                 len(states) - 1 >= options.closure_minimum_steps
                 and total_arclength >= options.closure_minimum_arclength
@@ -1834,7 +1844,7 @@ def trace_fiber(
                     assert closure.state is not None
                     previous_pose = states[-2].rotation
                     closing_advance = float(
-                        rotation_distance(previous_pose, closure.state.rotation)
+                        _rotation_distance_kernel(previous_pose, closure.state.rotation)
                     )
                     closing_arclength = (
                         total_arclength + closing_advance - outcome.advance
@@ -1878,7 +1888,7 @@ def trace_fiber(
                     closure_diagnostic = ClosureDiagnostic(
                         accumulated_arclength=total_arclength,
                         seed_distance=float(
-                            rotation_distance(seed, closure.state.rotation)
+                            _rotation_distance_kernel(seed, closure.state.rotation)
                         ),
                         previous_section_value=previous_section,
                         section_value=float(
