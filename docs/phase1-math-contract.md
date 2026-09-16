@@ -108,7 +108,7 @@ Downstream ownership is explicit:
 | Structured adaptive single-component solver and event gate | `reference-continuation-core` | Semantics fixed here; implementation pending. |
 | Default tolerances and their convergence evidence | `reference-core-conformance` | Open numerical values. |
 | Basis-invariance, failure, event, and step-size perturbation tests | `reference-core-conformance` | Required matrix rows; evidence pending. |
-| Seed discovery and completeness over all components | Future task/exploration | Open and outside this scrum. |
+| Single-pixel seed/component discovery for the 3-5 path | `strip-component-discovery` (`lumice_integral.discovery`) | Implemented for one pixel's target direction (section 12); strip-level neighbour continuation and full-image completeness remain open (`strip-image-driver`). |
 | Singular topology changes and branch continuation | Future exploration | Open; no support claim. |
 | Historical ch06 projection, normalization, and provenance | `ch06-reference-fixture` | Outside this contract. |
 
@@ -597,6 +597,47 @@ failure: the named prerequisite is outside the current reference core.
   rejection are covered without private monkeypatching.
 - Seed search, component discovery, completeness certificates, and component
   deduplication are outside the single-component interface.
+  `lumice_integral.discovery` provides them for one pixel of the 3-5 path as
+  a separate module with its own, weaker contract:
+  - `discover_components(target_direction, incident_direction,
+    refractive_index, crystal, *, rng_seed, prescan_samples=400000,
+    discovery_step_budget=250, angle_tolerance_deg=2.0,
+    cluster_radius_rad=0.3, arclength_rtol=1e-3)` returns
+    `ComponentDiscoveryResult(components, incomplete, completeness,
+    pool_count, raw_cluster_count, admissible_count)`.  It Haar-samples
+    `SO(3)`, keeps the pool within the angular tolerance that passes both
+    refraction discriminants, clusters the *whole* pool geodesically, Gauss-
+    Newton-corrects one representative per cluster, applies the
+    `path_3_5_domain` and `entry_measure > 0` gates, and traces each
+    admissible candidate with `trace_fiber` under
+    `maximum_accepted_steps = discovery_step_budget`.  `rng_seed` is
+    required; batch callers decide explicitly whether pixels share it.
+  - Two closed traces are the same component iff `(status, reason)` agree and
+    their arclengths agree within `arclength_rtol = 1e-3` (`atol = 1e-6`).
+    Accepted pose counts are not part of the fingerprint: the survey observed
+    one loop traced with `173 / 180 / 172` poses from different entry points.
+    Traces with `status != closed` never form or join a component; they are
+    returned as `incomplete` with their truncated `FiberResult`.
+  - `completeness` is procedural, not a certificate: `"complete"` means every
+    admissible candidate of this pool closed and no `status != closed`
+    evidence was seen (a dark pixel with no admissible candidate is
+    `"complete"` with zero components); `"unknown"` means at least one
+    candidate did not close.  It does not prove that every connected
+    component of `X_(P,d)` was found, so the single-component result's
+    `component_completeness = "unknown"` stays authoritative for quadrature.
+  - The discovery budget is independent of the production
+    `ContinuationOptions` default (`4000`); the caller retraces a discovered
+    seed with production options for quadrature.
+  - `hot_start_component(converged_seed, target_direction, ...)` runs the
+    same correction, gates, trace, and classification on one caller-supplied
+    seed (no prescan), and `detect_arclength_jump(arclengths,
+    relative_threshold=0.2)` flags neighbouring-pixel arclength jumps as
+    topology-boundary evidence; the `0.2` default is calibrated on the single
+    observed boundary (canonical strip rows `225 -> 226`, about `50 %`).
+  - Defaults and regression baselines come from
+    `scratchpad/scrum-ch06-direct-integration/explore-component-discovery`
+    (400k samples stable to 1.6M, 0.3 rad cluster radius, 34+ pixels) and are
+    locked by `tests/test_discovery.py`.
 - Continuation through rank loss, bifurcation, singular intersections, TIR, or
   path-branch changes is unsupported pending dedicated exploration.
 - Absolute source radiometry, wavelength/polarization integration, pixel solid

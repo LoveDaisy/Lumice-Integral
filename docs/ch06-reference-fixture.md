@@ -212,6 +212,10 @@ Newton-corrected candidates, RNG seed `20260916`; among the admissible
 survivors (`path_3_5_domain` valid, `entry_measure > 0`) the one whose c-axis
 zenith is closest to `90 deg` was frozen. This is a fixture-selection scan,
 not component discovery; completeness of the component set remains `unknown`.
+`lumice_integral.discovery.discover_components` on the same pixel and RNG
+seed (`tests/test_discovery.py`) finds one closed component of arclength
+`4.758247` from `7` admissible clusters, which is procedural evidence for a
+single component, not a completeness certificate.
 
 Current expected evidence (Mac reference environment):
 
@@ -256,11 +260,11 @@ not in the product.
 | ch06 crystal-orientation schematic | Writing-Lab drawing code | Supported | None in Lumice Integral; not a numerical-solver responsibility. |
 | ch06 ray-splitting schematic | Writing-Lab drawing code | Supported | None in Lumice Integral. |
 | ch06 all-sky Monte Carlo example | Lumice through Writing-Lab validation glue | Supported | Not a Lumice Integral product output. |
-| ch06 pose-fiber geometry | Lumice Integral | Supported for one supplied regular seed/component | Add continuous-sign unit-quaternion and C-axis longitude/latitude/spin adapters; prescan points require seed-discovery output. |
+| ch06 pose-fiber geometry | Lumice Integral | Supported for one supplied regular seed/component; seeds for one pixel can come from `lumice_integral.discovery` | Add continuous-sign unit-quaternion and C-axis longitude/latitude/spin adapters; the prescan-cloud figure still needs recorded spacing/feasibility output from the discovery scan. |
 | ch06 solver/Jacobian diagnostics | Lumice Integral data; Writing-Lab presentation | Supported as versioned figure data | A production plotting consumer still belongs in Writing-Lab; an independent prototype consumer has been verified. |
 | ch06 named physical-factor curves | Lumice Integral | Supported for `rho_pose`, `entry_measure`, `fresnel_transmission`, `path_validity` on the canonical pixel fiber (section 4.1, figure-data v2 `weight_<name>` arrays); the pointwise final `integrand` curve (product over `J_perp + epsilon`) is exported alongside | `visibility` (finite-face obstruction) and the radiometric factors remain unavailable. |
-| ch06 one-pixel integrand/integral | Lumice Integral | Supported as a `partial` value: converged adaptive line quadrature over the closed canonical fiber with error estimate and order evidence (sections 4.1 and 6, `result.quadrature`) | Component discovery for completeness; pixel averaging (point value only); the missing factors above. |
-| ch06 `251 x 801` direct strip | Lumice Integral | Historical bytes can be loaded; physical rerender is not supported | Seed/component discovery, neighboring-pixel continuation, camera/pixel model, image driver, and the one-pixel stages above. |
+| ch06 one-pixel integrand/integral | Lumice Integral | Supported as a `partial` value: converged adaptive line quadrature over the closed canonical fiber with error estimate and order evidence (sections 4.1 and 6, `result.quadrature`); single-pixel component discovery is available as a separate primitive (`lumice_integral.discovery`, procedural `completeness` only) | Integration of discovered components into the quadrature product; a completeness certificate; pixel averaging (point value only); the missing factors above. |
+| ch06 `251 x 801` direct strip | Lumice Integral | Historical bytes can be loaded; physical rerender is not supported. Single-pixel seed/component discovery, a hot-start entry, and arclength-jump detection exist (`lumice_integral.discovery`) | Strip-level neighboring-pixel continuation and image driver (`strip-image-driver`), camera/pixel model, and the one-pixel stages above. |
 | ch10 halo-map/Jacobian/fold figures | Lumice Integral numerical data; Writing-Lab presentation | Partially supported | Target sweeps and singular/fold localization beyond one regular fiber. |
 | ch11 orientation-family comparison | Lumice Integral and/or independent Lumice validation | Not supported by the current ordinary-density slice | Pose-density models, physical weights, image driver; exactly constrained families require a separate measure/domain contract. |
 
