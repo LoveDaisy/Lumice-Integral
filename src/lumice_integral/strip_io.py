@@ -27,6 +27,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import os
 import platform
 import subprocess
 import sys
@@ -249,6 +250,19 @@ def environment_block() -> dict[str, Any]:
         "jax_backend": jax.default_backend(),
         "jax_devices": [str(device) for device in jax.devices()],
         "numpy": np.__version__,
+        # Process-level knobs that change memory/threading but not values.
+        "env": {
+            name: os.environ.get(name)
+            for name in (
+                "XLA_FLAGS",
+                "XLA_PYTHON_CLIENT_PREALLOCATE",
+                "OMP_NUM_THREADS",
+                "JAX_PLATFORMS",
+                "MALLOC_ARENA_MAX",
+                "MALLOC_TRIM_THRESHOLD_",
+                "MALLOC_MMAP_THRESHOLD_",
+            )
+        },
     }
 
 

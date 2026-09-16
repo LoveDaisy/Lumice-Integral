@@ -22,11 +22,19 @@ Workers are ``multiprocessing`` *spawn* processes (never fork: JAX runtime
 state must not be inherited); each builds its own :class:`.strip_pixel.StripScene`
 once, so per-process JIT compilation happens once.  Finished columns are
 checkpointed as pickles so a long run can be resumed.
+
+Worker memory: every cold discovery evaluates the 400k-sample prescan eagerly,
+and on glibc the freed intermediates stay in the malloc arenas, so a worker's
+RSS climbs by ~60-100 MB per cold check (measured 2026-09-16 on ``home-wsl``:
+2.4 GB after 400 rows of one column, flat at 0.37 GB with trimming enabled).
+:data:`WORKER_MALLOC_ENV` is applied with ``setdefault`` before the pool is
+spawned; it is a no-op on macOS and is recorded in ``provenance.environment``.
 """
 
 from __future__ import annotations
 
 import multiprocessing
+import os
 import pickle
 import time
 from collections import Counter
@@ -47,6 +55,14 @@ from .strip_pixel import (
 
 PIXEL_MODELS = ("point", "subpixel")
 LogCallback = Callable[[str], None]
+
+# glibc malloc tuning for spawned workers (see the module docstring); values
+# are strings because they go straight into ``os.environ``.
+WORKER_MALLOC_ENV: dict[str, str] = {
+    "MALLOC_ARENA_MAX": "2",
+    "MALLOC_TRIM_THRESHOLD_": "131072",
+    "MALLOC_MMAP_THRESHOLD_": "131072",
+}
 
 
 @dataclass(frozen=True)
@@ -243,6 +259,8 @@ def render_window(
             results = render_column(scene, column, window.row_range, options, log)
             finish(column, results, time.perf_counter() - column_start)
     elif pending:
+        for name, value in WORKER_MALLOC_ENV.items():
+            os.environ.setdefault(name, value)
         context = multiprocessing.get_context("spawn")
         tasks = [(column, window.rows) for column in pending]
         with context.Pool(workers, initializer=_init_worker, initargs=(options,)) as pool:
@@ -264,6 +282,7 @@ def render_window(
 __all__ = [
     "DriverOptions",
     "PIXEL_MODELS",
+    "WORKER_MALLOC_ENV",
     "load_checkpoints",
     "render_column",
     "render_window",

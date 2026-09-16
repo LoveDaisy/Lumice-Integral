@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from lumice_integral.strip_driver import (
+    WORKER_MALLOC_ENV,
     DriverOptions,
     _merge_subpixels,
     load_checkpoints,
@@ -151,6 +152,7 @@ def test_write_and_read_strip_round_trip_with_verified_hashes(tmp_path: Path):
     assert provenance["pixel_model"]["model"] == "point"
     assert "Lumice" in provenance["generator"]["lumice_dependency"]
     assert provenance["environment"]["jax"]
+    assert set(WORKER_MALLOC_ENV) <= set(provenance["environment"]["env"])
     json.dumps(provenance)  # serialisable without solver objects
 
     with files["pixels"].open() as handle:
