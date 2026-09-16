@@ -14,9 +14,14 @@ from typing import Any
 import numpy as np
 
 from .continuation import FiberResult
+from .weights import WeightObservable
 
 
-SCHEMA_VERSION = "lumice-integral.figure-data/v1"
+# v2 (task-single-fiber-physical-integrand): ``result.weight_observables`` values
+# are objects ``{status, unit, normalization, array}`` instead of bare status
+# strings, and every available factor adds a ``weight_<name>`` sample array.
+SCHEMA_VERSION = "lumice-integral.figure-data/v2"
+WEIGHT_ARRAY_PREFIX = "weight_"
 
 
 @dataclass(frozen=True)
@@ -41,6 +46,38 @@ def _json_value(value: Any) -> Any:
     if value is None or isinstance(value, (str, int, bool)):
         return value
     raise TypeError(f"figure-data metadata cannot encode {type(value).__name__}")
+
+
+def _weight_array_name(name: str) -> str:
+    return f"{WEIGHT_ARRAY_PREFIX}{name}"
+
+
+def _weight_metadata(result: FiberResult) -> dict[str, dict[str, Any]]:
+    metadata: dict[str, dict[str, Any]] = {}
+    for name, observable in result.weight_observables.items():
+        if not isinstance(observable, WeightObservable):
+            raise TypeError(f"figure-data expects WeightObservable for {name!r}")
+        metadata[name] = {
+            "status": observable.status,
+            "unit": observable.unit,
+            "normalization": observable.normalization,
+            "array": (
+                _weight_array_name(name) if observable.status == "available" else None
+            ),
+        }
+    return metadata
+
+
+def _weight_arrays(result: FiberResult) -> dict[str, np.ndarray]:
+    arrays: dict[str, np.ndarray] = {}
+    for name, observable in result.weight_observables.items():
+        if observable.status != "available":
+            continue
+        values = np.asarray(observable.values, dtype=np.float64)
+        if values.shape != (len(result.poses),):
+            raise ValueError(f"figure-data weight {name!r} does not align with poses")
+        arrays[_weight_array_name(name)] = values
+    return arrays
 
 
 def _branch_margin_arrays(result: FiberResult) -> tuple[list[str], np.ndarray]:
@@ -99,6 +136,7 @@ def _arrays(result: FiberResult) -> tuple[dict[str, np.ndarray], list[str]]:
         "jacobian_rank": rank,
         "jacobian_condition": condition,
         "branch_margins": margins,
+        **_weight_arrays(result),
     }
     sample_arrays = (
         "poses",
@@ -110,6 +148,7 @@ def _arrays(result: FiberResult) -> tuple[dict[str, np.ndarray], list[str]]:
         "jacobian_rank",
         "jacobian_condition",
         "branch_margins",
+        *(name for name in arrays if name.startswith(WEIGHT_ARRAY_PREFIX)),
     )
     mismatched = {
         name: array.shape
@@ -121,7 +160,9 @@ def _arrays(result: FiberResult) -> tuple[dict[str, np.ndarray], list[str]]:
     return arrays, margin_names
 
 
-def _array_metadata(arrays: Mapping[str, np.ndarray]) -> dict[str, dict[str, Any]]:
+def _array_metadata(
+    arrays: Mapping[str, np.ndarray], result: FiberResult
+) -> dict[str, dict[str, Any]]:
     units = {
         "arclength_increments": "radian",
         "cumulative_arclength": "radian",
@@ -138,6 +179,14 @@ def _array_metadata(arrays: Mapping[str, np.ndarray]) -> dict[str, dict[str, Any
         "jacobian_condition": "estimated local residual-Jacobian condition number",
         "branch_margins": "named path-domain margins; columns are declared in metadata",
     }
+    for name, observable in result.weight_observables.items():
+        if observable.status == "available":
+            array_name = _weight_array_name(name)
+            units[array_name] = observable.unit
+            semantics[array_name] = (
+                f"named physical factor {name!r} evaluated at every accepted pose; "
+                "see result.weight_observables for its normalization"
+            )
     return {
         name: {
             "shape": list(array.shape),
@@ -182,7 +231,7 @@ def export_fiber_figure_data(
             "component_completeness": result.component_completeness,
             "sample_count": len(result.poses),
             "conventions": _json_value(result.conventions),
-            "weight_observables": _json_value(result.weight_observables),
+            "weight_observables": _weight_metadata(result),
             "closure": {
                 "accumulated_arclength": result.closure_diagnostics.accumulated_arclength,
                 "seed_distance": result.closure_diagnostics.seed_distance,
@@ -196,7 +245,7 @@ def export_fiber_figure_data(
         "payload": {
             "file": arrays_path.name,
             "sha256": array_sha256,
-            "arrays": _array_metadata(arrays),
+            "arrays": _array_metadata(arrays, result),
             "branch_margin_columns": margin_names,
         },
     }

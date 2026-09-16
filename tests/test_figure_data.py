@@ -7,6 +7,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from lumice_integral.analytic import BODY_AXIS, direction_map, tangent_basis
+from lumice_integral.canonical_scene import canonical_fixture_metadata, canonical_pixel_problem
 from lumice_integral.continuation import FiberProblem, TargetChart, trace_fiber
 from lumice_integral.figure_data import SCHEMA_VERSION, export_fiber_figure_data
 
@@ -36,13 +37,55 @@ def test_figure_data_round_trip_preserves_geometry_and_unavailable_weights(tmp_p
         assert arrays["branch_margins"].shape == (len(result.poses), 0)
         assert set(arrays.files) == set(metadata["payload"]["arrays"])
 
-    assert metadata["schema"] == SCHEMA_VERSION
+    assert metadata["schema"] == SCHEMA_VERSION == "lumice-integral.figure-data/v2"
     assert metadata["result"]["status"] == "closed"
     assert metadata["result"]["sample_count"] == len(result.poses)
-    assert set(metadata["result"]["weight_observables"].values()) == {
-        "unavailable"
-    }
+    weights = metadata["result"]["weight_observables"]
+    assert len(weights) == 8
+    assert all(
+        entry == {"status": "unavailable", "unit": None, "normalization": None, "array": None}
+        for entry in weights.values()
+    )
+    assert not any(name.startswith("weight_") for name in metadata["payload"]["arrays"])
     assert metadata["payload"]["branch_margin_columns"] == []
+    assert metadata["payload"]["sha256"] == sha256(files.arrays.read_bytes()).hexdigest()
+
+
+def test_figure_data_exports_available_weight_arrays_for_the_canonical_pixel(tmp_path):
+    result = trace_fiber(canonical_pixel_problem())
+    files = export_fiber_figure_data(
+        result,
+        tmp_path,
+        fixture=canonical_fixture_metadata(),
+        provenance={"classification": "canonical-new"},
+    )
+
+    metadata = json.loads(files.metadata.read_text(encoding="utf-8"))
+    weights = metadata["result"]["weight_observables"]
+    available = {name for name, entry in weights.items() if entry["status"] == "available"}
+    assert available == {"rho_pose", "entry_measure", "fresnel_transmission", "path_validity"}
+    assert {name for name, entry in weights.items() if entry["status"] == "unavailable"} == {
+        "visibility",
+        "source_factor",
+        "pixel_factor",
+        "other_radiometric",
+    }
+    with np.load(files.arrays) as arrays:
+        for name in available:
+            entry = weights[name]
+            assert entry["array"] == f"weight_{name}"
+            assert entry["unit"] and entry["normalization"]
+            np.testing.assert_array_equal(
+                arrays[entry["array"]], result.weight_observables[name].values
+            )
+            assert arrays[entry["array"]].shape == (len(result.poses),)
+            assert metadata["payload"]["arrays"][entry["array"]]["unit"] == entry["unit"]
+        assert "weight_visibility" not in arrays.files
+        assert set(arrays.files) == set(metadata["payload"]["arrays"])
+    pixel = metadata["fixture"]["pixel"]
+    assert (pixel["row"], pixel["column"]) == (150, 150)
+    np.testing.assert_allclose(pixel["projected_center"], [150.5, 150.5], atol=1e-9)
+    assert metadata["result"]["conventions"]["haar_to_dvol_g_factor"] == "1/(8*pi**2)"
     assert metadata["payload"]["sha256"] == sha256(files.arrays.read_bytes()).hexdigest()
 
 
