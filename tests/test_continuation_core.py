@@ -20,6 +20,7 @@ from lumice_integral.continuation import (
     _correct_closure,
     _evaluate_regular_state,
     _adapt_accepted_step,
+    retract_to_fiber,
     trace_fiber,
 )
 from lumice_integral.so3 import exp
@@ -175,6 +176,80 @@ def test_bordered_corrector_converges_and_preserves_phase():
     assert outcome.residual_norm <= options.residual_tolerance
     assert outcome.correction_norm <= options.maximum_correction
     assert outcome.tangent_dot >= options.minimum_tangent_dot
+
+
+def test_initial_tangent_sign_reverses_sample_order_without_changing_geometry():
+    problem = analytic_problem()
+    with pytest.raises(ValueError, match="initial_tangent_sign"):
+        ContinuationOptions(initial_tangent_sign=0)
+
+    forward = trace_fiber(problem)
+    reverse = trace_fiber(problem, ContinuationOptions(initial_tangent_sign=-1))
+
+    assert reverse.status == forward.status == FiberStatus.CLOSED
+    np.testing.assert_allclose(reverse.tangents[0], -forward.tangents[0], atol=1e-15)
+    np.testing.assert_allclose(
+        reverse.arclength_increments.sum(), forward.arclength_increments.sum(), atol=1e-12
+    )
+    # Reversal only flips the traversal: the second reverse sample sits at
+    # -theta where the forward one sits at +theta on R0 exp(theta e3).
+    np.testing.assert_allclose(
+        reverse.poses[1], forward.poses[1].T, atol=1e-12
+    )
+
+
+def test_retract_to_fiber_reuses_the_corrector_gates_and_regular_state():
+    problem = analytic_problem()
+    options = ContinuationOptions()
+    initial = _evaluate_regular_state(problem, options, problem.seed)
+    predicted = np.asarray(
+        problem.seed @ exp(jnp.array([0.03, -0.02, 0.04], dtype=jnp.float64))
+    )
+    phase = np.asarray(initial.tangent)
+
+    retracted = retract_to_fiber(problem, options, np.asarray(problem.seed), predicted, phase)
+    outcome = _correct_trial(
+        problem, options, problem.seed, jnp.asarray(predicted), initial.tangent
+    )
+
+    assert retracted.accepted
+    assert retracted.reason is None
+    assert retracted.residual_norm <= options.residual_tolerance
+    assert retracted.iterations == outcome.iterations
+    np.testing.assert_array_equal(retracted.rotation, np.asarray(outcome.state.rotation))
+    np.testing.assert_array_equal(retracted.tangent, np.asarray(outcome.state.tangent))
+    assert float(np.dot(retracted.tangent, phase)) > 0.0
+    regular = _evaluate_regular_state(problem, options, jnp.asarray(retracted.rotation))
+    assert retracted.jacobian_diagnostic.normal_jacobian == pytest.approx(
+        regular.jacobian_diagnostic.normal_jacobian, abs=0.0
+    )
+    # The analytic circle is R0 exp(theta e3): the corrected pose keeps
+    # residual zero and the correction stays orthogonal to the phase tangent.
+    assert float(np.linalg.norm(retracted.rotation @ BODY_AXIS - BODY_AXIS)) <= 1e-11
+
+
+def test_retract_to_fiber_reports_infeasible_predictions_as_rejected():
+    problem = analytic_problem(
+        domain_evaluator=lambda _: DomainEvaluation(
+            valid=False,
+            margins={"tir": -0.1},
+            event=EventCandidate(TerminationReason.TIR_BOUNDARY, -0.1, "tir"),
+        )
+    )
+    options = ContinuationOptions()
+    base = np.asarray(problem.seed)
+    predicted = np.asarray(
+        problem.seed @ exp(jnp.array([0.0, 0.0, 0.02], dtype=jnp.float64))
+    )
+
+    retracted = retract_to_fiber(problem, options, base, predicted, np.array([0.0, 0.0, 1.0]))
+
+    assert not retracted.accepted
+    assert retracted.reason == TerminationReason.TIR_BOUNDARY
+    assert retracted.rotation is None
+    assert retracted.tangent is None
+    assert retracted.jacobian_diagnostic is None
+    assert retracted.message == "tir"
 
 
 def test_bordered_corrector_iteration_budget_is_typed_failure():

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from functools import partial
 from typing import Callable, Mapping, NamedTuple
@@ -175,12 +175,17 @@ class ContinuationOptions:
     closure_tangent_dot: float = 0.8
     closure_section_tolerance: float = 1e-11
     closure_maximum_iterations: int = 10
+    # Explicit seed orientation (contract section 5.4): ``-1`` reverses the
+    # deterministic SVD sign of the seed tangent, hence the sample order.
+    initial_tangent_sign: int = 1
     diagnostic_level: str = "full"
     sample_retention: str = "all"
 
     def __post_init__(self) -> None:
         if self.dtype != "float64":
             raise ValueError("the reference solver only accepts dtype='float64'")
+        if self.initial_tangent_sign not in (1, -1):
+            raise ValueError("initial_tangent_sign must be +1 or -1")
         if not 0.0 < self.minimum_step <= self.initial_step <= self.maximum_step:
             raise ValueError("step sizes must satisfy 0 < minimum <= initial <= maximum")
         if not 0.0 < self.shrink_factor < 1.0 < self.growth_factor:
@@ -1065,6 +1070,75 @@ def _correct_trial(
     )
 
 
+@dataclass(frozen=True)
+class RetractedPose:
+    """Public outcome of projecting one off-fiber pose back onto the fiber.
+
+    Produced by :func:`retract_to_fiber` for quadrature refinement nodes.  On
+    acceptance ``rotation``/``tangent`` are float64 numpy arrays and
+    ``jacobian_diagnostic`` carries the same ``J_perp`` evidence as an accepted
+    continuation sample; on rejection they are ``None`` and ``reason``/
+    ``message`` explain which corrector gate failed.
+    """
+
+    accepted: bool
+    rotation: np.ndarray | None
+    tangent: np.ndarray | None
+    residual_norm: float
+    jacobian_diagnostic: JacobianDiagnostic | None
+    iterations: int
+    reason: TerminationReason | None
+    message: str
+
+
+def retract_to_fiber(
+    problem: FiberProblem,
+    options: ContinuationOptions,
+    base: Array | np.ndarray,
+    predicted: Array | np.ndarray,
+    phase_tangent: Array | np.ndarray,
+) -> RetractedPose:
+    """Project ``predicted`` onto the fiber with the continuation corrector.
+
+    This is the same bordered Newton corrector that accepts continuation
+    steps: the correction stays orthogonal to ``phase_tangent`` in
+    right-trivialized coordinates, the residual/phase/update tolerances are
+    ``options``', and the correction/advance/tangent trust gates are measured
+    from ``base``.  The returned tangent is oriented along ``phase_tangent``.
+    No continuation state or budget is touched.
+    """
+    outcome = _correct_trial(
+        problem,
+        options,
+        jnp.asarray(base, dtype=jnp.float64),
+        jnp.asarray(predicted, dtype=jnp.float64),
+        jnp.asarray(phase_tangent, dtype=jnp.float64),
+    )
+    state = outcome.state
+    if not outcome.accepted or state is None:
+        return RetractedPose(
+            accepted=False,
+            rotation=None,
+            tangent=None,
+            residual_norm=outcome.residual_norm,
+            jacobian_diagnostic=None,
+            iterations=outcome.iterations,
+            reason=outcome.reason,
+            message=outcome.message,
+        )
+    assert state.tangent is not None
+    return RetractedPose(
+        accepted=True,
+        rotation=np.asarray(state.rotation, dtype=np.float64),
+        tangent=np.asarray(state.tangent, dtype=np.float64),
+        residual_norm=state.residual_norm,
+        jacobian_diagnostic=state.jacobian_diagnostic,
+        iterations=outcome.iterations,
+        reason=None,
+        message=outcome.message,
+    )
+
+
 def _status_for_reason(reason: TerminationReason) -> FiberStatus:
     if reason == TerminationReason.CLOSED_LOOP:
         return FiberStatus.CLOSED
@@ -1556,6 +1630,9 @@ def trace_fiber(
             retries=0,
             message=initial.message,
         )
+    if options.initial_tangent_sign == -1:
+        assert initial.tangent is not None
+        initial = replace(initial, tangent=-initial.tangent)
     seed_tolerance = options.residual_tolerance + options.relative_residual_tolerance
     if initial.residual_norm > seed_tolerance:
         return _make_result(
