@@ -27,6 +27,7 @@ from lumice_integral.continuation import (
 )
 from lumice_integral.optics import path_3_5
 from lumice_integral.so3 import exp
+from lumice_integral.weights import WeightObservable
 
 
 def _analytic_problem(*, direction_evaluator=direction_map) -> FiberProblem:
@@ -265,6 +266,10 @@ def test_public_result_schema_preserves_units_shapes_dtype_and_availability():
         "evaluation_unit": (
             "one gated pose or corrector iterate including smooth value and AD work"
         ),
+        "haar_to_dvol_g_factor": "1/(8*pi**2)",
+        "coarea_denominator": (
+            "normal_jacobian J_perp in jacobian_diagnostics; never folded into weights"
+        ),
     }
     assert set(result.weight_observables) == {
         "rho_pose",
@@ -276,7 +281,11 @@ def test_public_result_schema_preserves_units_shapes_dtype_and_availability():
         "pixel_factor",
         "other_radiometric",
     }
-    assert set(result.weight_observables.values()) == {"unavailable"}
+    # C14: with no evaluator registered every factor is explicitly unavailable
+    # (no unit, no normalization, no stand-in values), never silently one.
+    for observable in result.weight_observables.values():
+        assert isinstance(observable, WeightObservable)
+        assert observable == WeightObservable("unavailable")
 
 
 def test_public_schema_contains_every_contract_result_field():

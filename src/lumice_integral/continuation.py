@@ -13,6 +13,7 @@ import numpy as np
 from jax import Array
 
 from .so3 import exp, rotation_distance
+from .weights import WeightEvaluator, WeightObservable, evaluate_weights
 
 
 class FiberStatus(StrEnum):
@@ -107,9 +108,7 @@ class FiberProblem:
     domain_and_event_evaluator: DomainAndEventEvaluator | None = None
     pose_metric_and_measure: str = "right-invariant-so3/dvol_g"
     convention_version: str = "phase1-v1"
-    weight_evaluators: Mapping[str, Callable[[Array], Array]] = field(
-        default_factory=dict
-    )
+    weight_evaluators: Mapping[str, WeightEvaluator] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         incident = np.asarray(self.incident_direction)
@@ -134,6 +133,11 @@ class FiberProblem:
             self.domain_and_event_evaluator
         ):
             raise ValueError("domain_and_event_evaluator must be callable")
+        for name, evaluator in self.weight_evaluators.items():
+            if not name or not isinstance(evaluator, WeightEvaluator):
+                raise ValueError(
+                    "weight_evaluators must map non-empty names to WeightEvaluator"
+                )
 
 
 @dataclass(frozen=True)
@@ -296,7 +300,7 @@ class FiberResult:
     closure_attempt_diagnostics: tuple[ClosureAttemptDiagnostic, ...]
     terminal_payload: TerminalPayload
     conventions: Mapping[str, str]
-    weight_observables: Mapping[str, str]
+    weight_observables: Mapping[str, WeightObservable]
     component_scope: str = "one component reached from one seed"
     component_completeness: str = "unknown"
 
@@ -1146,24 +1150,9 @@ def _make_result(
         for state in states
         if state.jacobian_diagnostic is not None
     )
-    standard_weights = (
-        "rho_pose",
-        "entry_measure",
-        "visibility",
-        "fresnel_transmission",
-        "path_validity",
-        "source_factor",
-        "pixel_factor",
-        "other_radiometric",
-    )
-    weight_observables = {
-        name: (
-            "not_evaluated_by_geometry_solver"
-            if name in problem.weight_evaluators
-            else "unavailable"
-        )
-        for name in standard_weights
-    }
+    # Weights are host-side post-processing of accepted poses only; they never
+    # enter the compiled continuation kernels or change any termination decision.
+    weight_observables = evaluate_weights(problem.weight_evaluators, poses)
     return FiberResult(
         status=_status_for_reason(reason),
         reason=reason,
@@ -1206,6 +1195,10 @@ def _make_result(
             "solver_options_version": "reference-continuation-v1",
             "evaluation_unit": (
                 "one gated pose or corrector iterate including smooth value and AD work"
+            ),
+            "haar_to_dvol_g_factor": "1/(8*pi**2)",
+            "coarea_denominator": (
+                "normal_jacobian J_perp in jacobian_diagnostics; never folded into weights"
             ),
         },
         weight_observables=weight_observables,
