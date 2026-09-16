@@ -25,7 +25,7 @@ from lumice_integral.continuation import (
     TerminationReason,
     trace_fiber,
 )
-from lumice_integral.optics import path_3_5, path_3_5_problem
+from lumice_integral.optics import path_3_5
 from lumice_integral.so3 import exp
 
 
@@ -72,6 +72,17 @@ def _oracle_incident_3_5(refractive_index: float = 1.31) -> np.ndarray:
     return np.array([-np.cos(external_angle), np.sin(external_angle), 0.0])
 
 
+def _oracle_tangent_basis(direction: np.ndarray) -> np.ndarray:
+    """Construct a target basis without the production analytic helper."""
+    reference = np.array([0.0, 0.0, 1.0])
+    if abs(float(np.dot(direction, reference))) > 0.9:
+        reference = np.array([0.0, 1.0, 0.0])
+    first = np.cross(reference, direction)
+    first /= np.linalg.norm(first)
+    second = np.cross(direction, first)
+    return np.column_stack((first, second))
+
+
 def _oracle_path_3_5(
     rotation: np.ndarray,
     incident: np.ndarray,
@@ -103,6 +114,68 @@ def _oracle_path_3_5(
     }
 
 
+def _oracle_domain_3_5(
+    rotation: np.ndarray,
+    incident: np.ndarray,
+    refractive_index: float = 1.31,
+) -> DomainEvaluation:
+    """Test-side event gate derived independently from the optics adapter."""
+    rotation = np.asarray(rotation)
+    entry_normal = rotation @ np.array([1.0, 0.0, 0.0])
+    exit_normal = rotation @ np.array([-0.5, np.sqrt(3.0) / 2.0, 0.0])
+    entry_index = 1.0 / refractive_index
+    entry_cosine = -float(np.dot(entry_normal, incident))
+    entry_discriminant = 1.0 - entry_index**2 * (1.0 - entry_cosine**2)
+    margins = {
+        "entry_incidence_cosine": entry_cosine,
+        "entry_snell_discriminant": entry_discriminant,
+    }
+    if entry_cosine <= 0.0:
+        event = EventCandidate(
+            TerminationReason.PATH_INFEASIBLE,
+            entry_cosine,
+            "oracle: ray does not enter face 3",
+            margins,
+        )
+        return DomainEvaluation(False, margins, event)
+    if entry_discriminant <= 0.0:
+        event = EventCandidate(
+            TerminationReason.TIR_BOUNDARY,
+            entry_discriminant,
+            "oracle: entry Snell boundary",
+            margins,
+        )
+        return DomainEvaluation(False, margins, event)
+
+    internal = entry_index * incident + (
+        entry_index * entry_cosine - np.sqrt(entry_discriminant)
+    ) * entry_normal
+    exit_cosine = float(np.dot(exit_normal, internal))
+    exit_discriminant = 1.0 - refractive_index**2 * (1.0 - exit_cosine**2)
+    margins = {
+        **margins,
+        "exit_incidence_cosine": exit_cosine,
+        "exit_snell_discriminant": exit_discriminant,
+    }
+    if exit_cosine <= 0.0:
+        event = EventCandidate(
+            TerminationReason.PATH_INFEASIBLE,
+            exit_cosine,
+            "oracle: ray does not leave face 5",
+            margins,
+        )
+        return DomainEvaluation(False, margins, event)
+    if exit_discriminant <= 0.0:
+        event = EventCandidate(
+            TerminationReason.TIR_BOUNDARY,
+            exit_discriminant,
+            "oracle: exit Snell boundary",
+            margins,
+        )
+        return DomainEvaluation(False, margins, event)
+    return DomainEvaluation(True, margins)
+
+
 @pytest.fixture(scope="module")
 def analytic_sweep():
     problem = _analytic_problem()
@@ -115,8 +188,27 @@ def analytic_sweep():
 @pytest.fixture(scope="module")
 def optical_fixture():
     seed = exp(jnp.array([0.15, 0.08, -0.05], dtype=jnp.float64))
-    incident = jnp.asarray(_oracle_incident_3_5(), dtype=jnp.float64)
-    return path_3_5_problem(seed, incident)
+    incident_numpy = _oracle_incident_3_5()
+    _, target_numpy, _ = _oracle_path_3_5(np.asarray(seed), incident_numpy)
+    basis_numpy = _oracle_tangent_basis(target_numpy)
+    incident = jnp.asarray(incident_numpy, dtype=jnp.float64)
+    refractive_index = jnp.asarray(1.31, dtype=jnp.float64)
+
+    return FiberProblem(
+        path="oracle-constructed-3-5:n=1.31",
+        incident_direction=incident,
+        target_chart=TargetChart(
+            jnp.asarray(target_numpy, dtype=jnp.float64),
+            jnp.asarray(basis_numpy, dtype=jnp.float64),
+        ),
+        direction_evaluator=lambda rotation: path_3_5(
+            rotation, incident, refractive_index
+        ).direction,
+        domain_and_event_evaluator=lambda rotation: _oracle_domain_3_5(
+            np.asarray(rotation), incident_numpy
+        ),
+        seed=seed,
+    )
 
 
 @pytest.fixture(scope="module")
@@ -124,6 +216,24 @@ def optical_sweep(optical_fixture):
     return {
         step: trace_fiber(optical_fixture, ContinuationOptions(initial_step=step))
         for step in (0.03, 0.04, 0.08)
+    }
+
+
+@pytest.fixture(scope="module")
+def optical_controller_sweep(optical_fixture, optical_sweep):
+    return {
+        "reference": optical_sweep[0.04],
+        "perturbed": trace_fiber(
+            optical_fixture,
+            ContinuationOptions(
+                initial_step=0.04,
+                minimum_step=2e-5,
+                maximum_step=0.10,
+                shrink_factor=0.4,
+                growth_factor=1.15,
+                maximum_retries=10,
+            ),
+        ),
     }
 
 
@@ -278,19 +388,24 @@ def test_synthetic_3_5_trace_matches_independent_direct_ray_oracle(
     optical_fixture, optical_sweep
 ):
     result = optical_sweep[0.04]
-    target = np.asarray(optical_fixture.target_chart.direction)
-    target_basis = np.asarray(optical_fixture.target_chart.basis)
-    incident = np.asarray(optical_fixture.incident_direction)
+    seed = np.asarray(exp(jnp.array([0.15, 0.08, -0.05], dtype=jnp.float64)))
+    incident = _oracle_incident_3_5()
+    _, target, _ = _oracle_path_3_5(seed, incident)
+    target_basis = _oracle_tangent_basis(target)
+
+    np.testing.assert_allclose(optical_fixture.incident_direction, incident)
+    np.testing.assert_allclose(optical_fixture.target_chart.direction, target)
+    np.testing.assert_allclose(optical_fixture.target_chart.basis, target_basis)
 
     assert result.status == FiberStatus.CLOSED
     assert result.reason == TerminationReason.CLOSED_LOOP
     assert result.component_completeness == "unknown"
     for index, rotation in enumerate(result.poses):
         internal, outgoing, margins = _oracle_path_3_5(rotation, incident)
-        production = path_3_5(jnp.asarray(rotation), optical_fixture.incident_direction)
-        np.testing.assert_allclose(production.entry.direction, internal, atol=3e-15)
-        np.testing.assert_allclose(production.direction, outgoing, atol=4e-15)
+        np.testing.assert_allclose(np.linalg.norm(internal), 1.0, atol=3e-15)
         np.testing.assert_allclose(np.linalg.norm(outgoing), 1.0, atol=3e-15)
+        assert float(np.dot(outgoing, target)) > 0.999999999999
+        np.testing.assert_allclose(outgoing, target, rtol=0.0, atol=4e-15)
         np.testing.assert_allclose(
             np.linalg.norm(target_basis.T @ (outgoing - target)),
             result.residual_norms[index],
@@ -330,6 +445,27 @@ def test_synthetic_3_5_safe_step_sweep_converges_without_fixed_step_count(
 
     assert max(lengths) - min(lengths) <= 0.0017
     assert len(set(sample_counts)) > 1
+
+
+def test_synthetic_3_5_controller_threshold_perturbation_converges_consistently(
+    optical_controller_sweep,
+):
+    reference = optical_controller_sweep["reference"]
+    perturbed = optical_controller_sweep["perturbed"]
+
+    assert perturbed.status == reference.status == FiberStatus.CLOSED
+    assert perturbed.reason == reference.reason == TerminationReason.CLOSED_LOOP
+    assert perturbed.residual_norms.max() <= 1e-11
+    assert perturbed.closure_diagnostics.seed_distance <= 2e-13
+    assert abs(
+        float(perturbed.arclength_increments.sum())
+        - float(reference.arclength_increments.sum())
+    ) <= 0.0015
+    assert _rotation_set_distance(perturbed.poses, reference.poses) <= 0.008
+    assert abs(float(np.dot(perturbed.tangents[0], reference.tangents[0]))) >= (
+        1.0 - 2e-14
+    )
+    assert len(perturbed.poses) != len(reference.poses)
 
 
 def test_synthetic_3_5_is_invariant_under_orthogonal_target_basis(
@@ -384,6 +520,7 @@ def test_public_rank_loss_and_antipode_events_retain_causal_payload():
     assert rank_loss.terminal_payload.event is not None
     assert rank_loss.terminal_payload.event.details["sigma_2"] == 0.0
     assert rank_loss.terminal_payload.event.details["normal_jacobian"] == 0.0
+    assert rank_loss.terminal_payload.event.details["rank"] == 0.0
     assert not rank_loss.poses.size
     assert antipode.status == FiberStatus.EVENT_TERMINATED
     assert antipode.reason == TerminationReason.CHART_BOUNDARY
