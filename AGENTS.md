@@ -20,6 +20,11 @@ uv run pytest -q
 uv run python scripts/inspect_path_3_5.py
 uv run python benchmarks/benchmark_batch.py --dtype float64
 uv run python benchmarks/benchmark_fiber_trace.py
+# ch06 251 x 801 direct strip: a sub-window smoke on a laptop ...
+uv run python scripts/render_ch06_strip.py --rows 140:160 --columns 145:155 --workers 4 --output-dir /tmp/strip-smoke
+# ... and the full image on the many-core reference machine (resumable per column)
+XLA_FLAGS="--xla_cpu_multi_thread_eigen=false intra_op_parallelism_threads=1" OMP_NUM_THREADS=1 \
+  uv run python scripts/render_ch06_strip.py --workers 30 --output-dir artifacts/strip-full --resume
 # Linux/NVIDIA environment
 uv sync --extra cuda13 --dev
 XLA_PYTHON_CLIENT_PREALLOCATE=false uv run python benchmarks/benchmark_batch.py

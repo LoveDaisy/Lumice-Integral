@@ -153,6 +153,18 @@ must address:
 The first image-level target is the historical local tangent-arc strip at
 `251 x 801` resolution. It should be compared with both the surviving direct
 integration data and an independently converged Lumice Monte Carlo render.
+Status: the strip driver exists (`lumice_integral.strip_pixel` /
+`strip_driver` / `strip_io`, `scripts/render_ch06_strip.py`): column-wise
+neighbouring-pixel hot start gated by arclength-jump detection with cold
+prescan fallback and periodic cold spot checks, a per-pixel procedural
+completeness status layer, and the point pixel model chosen by a caustic
+probe (the probe found `O(10-40 %)` point-vs-sub-pixel differences within
+about seven rows of the `22 deg` inner edge at the centre column, so the
+caustic band is a documented pixel-model limitation of the default render). The rendered strip and its comparison evidence are recorded in the
+[chapter 6 reference fixture specification](ch06-reference-fixture.md)
+sections 5 and 7. Component completeness remains procedural, not certified;
+finite solar disk and finite pixel solid angle are still open (the sub-pixel
+model is implemented but costs 6-10x and is off by default).
 
 ### 3.4 Orientation distributions
 

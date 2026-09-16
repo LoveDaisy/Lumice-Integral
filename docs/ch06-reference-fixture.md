@@ -264,7 +264,7 @@ not in the product.
 | ch06 solver/Jacobian diagnostics | Lumice Integral data; Writing-Lab presentation | Supported as versioned figure data | A production plotting consumer still belongs in Writing-Lab; an independent prototype consumer has been verified. |
 | ch06 named physical-factor curves | Lumice Integral | Supported for `rho_pose`, `entry_measure`, `fresnel_transmission`, `path_validity` on the canonical pixel fiber (section 4.1, figure-data v2 `weight_<name>` arrays); the pointwise final `integrand` curve (product over `J_perp + epsilon`) is exported alongside | `visibility` (finite-face obstruction) and the radiometric factors remain unavailable. |
 | ch06 one-pixel integrand/integral | Lumice Integral | Supported as a `partial` value: converged adaptive line quadrature over the closed canonical fiber with error estimate and order evidence (sections 4.1 and 6, `result.quadrature`); single-pixel component discovery is available as a separate primitive (`lumice_integral.discovery`, procedural `completeness` only) | Integration of discovered components into the quadrature product; a completeness certificate; pixel averaging (point value only); the missing factors above. |
-| ch06 `251 x 801` direct strip | Lumice Integral | Historical bytes can be loaded; physical rerender is not supported. Single-pixel seed/component discovery, a hot-start entry, and arclength-jump detection exist (`lumice_integral.discovery`) | Strip-level neighboring-pixel continuation and image driver (`strip-image-driver`), camera/pixel model, and the one-pixel stages above. |
+| ch06 `251 x 801` direct strip | Lumice Integral | Supported as a `partial` physical rerender: `scripts/render_ch06_strip.py` (`lumice_integral.strip_pixel` / `strip_driver` / `strip_io`) renders any window of the canonical `251 x 801` grid with column-wise hot-start continuation, cold-prescan fallback and spot checks, and writes float64/float32 raw in the historical layout plus a per-pixel status layer and `provenance.json`; pixel model: pixel-centre point value with `epsilon` regularisation (section 7, stage 4) | A completeness certificate (the status layer is procedural); the missing factors of the one-pixel row; sub-pixel averaging is implemented but off by default (6-10x cost; `O(10-40 %)` effect in the centre-column caustic band, section 7 stage 4); finite-sun averaging; full-resolution runs are hours on a 30-core machine. |
 | ch10 halo-map/Jacobian/fold figures | Lumice Integral numerical data; Writing-Lab presentation | Partially supported | Target sweeps and singular/fold localization beyond one regular fiber. |
 | ch11 orientation-family comparison | Lumice Integral and/or independent Lumice validation | Not supported by the current ordinary-density slice | Pose-density models, physical weights, image driver; exactly constrained families require a separate measure/domain contract. |
 
@@ -360,7 +360,37 @@ color-to-factor mapping.
    component, missing factors); strip-level coverage is stage 4.
 4. **Historical image scene**: render the canonical `251 x 801` strip and
    compare raw profiles with the historical binary plus an independently
-   converged Lumice result after coordinate/radiometric alignment.
+   converged Lumice result after coordinate/radiometric alignment. Status
+   (`task-strip-image-driver`, 2026-09-16): the strip driver exists and its
+   output format is self-describing (`lumice_integral.strip_io`,
+   `strip_float64.bin` / `strip_float32.bin` in the `(801, 251)` historical
+   layout, `status_uint8.bin` with a documented bit mask, `provenance.json`
+   with per-parameter provenance tags, all numerical options and payload
+   SHA-256). Every pixel value is the linear sum over the integrated closed
+   `3-5` components of the section 4.1 partial integrand; pixels whose
+   discovery left an unclassified candidate or whose production trace did not
+   close carry the `unknown_completeness` status bit and hold the partial sum
+   (never `NaN`), so they are distinguishable from complete zeros.
+   Pixel-model probe at the `22 deg` inner-edge caustic (columns 150 and 125,
+   the model's edge row is 57 in both; `3 x 3` sub-pixel grid;
+   `scratchpad/.../artifacts/pixel_model_probe_results.csv`): at column 150
+   (25 columns off centre) the point value differs from the sub-pixel mean by
+   `+5 %` on the edge row, `+4 %` two rows below, and `< 0.5 %` from the
+   fourth row on; at column 125 (the image centre, where the edge is two
+   orders of magnitude brighter) the difference is `+40 %` on the edge row
+   (whose point pixel is itself `unknown`), `-33 %` two rows below, and still
+   `5-7 %` with changing sign at rows 60, 61 and 63, i.e. the probe did not
+   reach a row where the pixel model stops mattering. One row above the edge
+   the point value is `0` while sub-pixels already straddle the caustic. The
+   sub-pixel model costs `6-10x` per pixel. The image default is therefore
+   the point model, and the caustic band near the centre column is a known
+   `O(10-40 %)` pixel-model effect, not averaged at full cost; the driver's
+   `--pixel-model subpixel --subpixel-rows a:b` row-band option exists for a
+   later targeted rerender once more columns have been probed.
+   Comparison with the historical raw and the Lumice remake is morphology only (rank correlation, profiles,
+   chirality pin `3-5` = right parhelion); radiometric normalisation is not
+   aligned. Coverage and numbers of the rendered products are recorded in the
+   task SUMMARY (`scratchpad/scrum-ch06-direct-integration/task-strip-image-driver/`).
 5. **Writing-Lab figures**: consume only the versioned data product; composition,
    typography, annotations, and chapter-specific styling remain there.
 
