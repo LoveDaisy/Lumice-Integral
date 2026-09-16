@@ -359,11 +359,11 @@ NOT be silently substituted by one in a result claiming physical completeness.
 
 | Factor | Required meaning and normalization | Typical units | Phase I status |
 |---|---|---|---|
-| `rho_pose` | Density relative to explicitly named `d mu_Haar` or `dVol_g`; normalization state reported. | Dimensionless for Haar probability; inverse metric-volume for `dVol_g`. | Interface required; model supplied by caller. |
-| `entry_measure` | Projected/realizable entry measure for the selected path, with sign/clamping and reference area declared. | Dimensionless if area-normalized; otherwise area. | Interface required; not implemented by current probe. |
-| `visibility` | Obstruction/visibility result and, if soft, its declared transmittance model. | Dimensionless. | Interface/event required; not implemented. |
-| `fresnel_transmission` | Product of polarization-resolved or explicitly unpolarized interface power factors; convention declared. | Dimensionless. | Interface required; current Snell probe omits it. |
-| `path_validity` | Boolean feasibility of the exact ordered path, separate from numerical convergence. | Boolean gate, not a gain. | Event interface required. |
+| `rho_pose` | Density relative to explicitly named `d mu_Haar` or `dVol_g`; normalization state reported. | Dimensionless for Haar probability; inverse metric-volume for `dVol_g`. | Caller-supplied implementation available: `pose_density.ZenithGaussianPoseDensity` (Haar-relative, integrates to one; `task-single-fiber-physical-integrand`). |
+| `entry_measure` | Projected/realizable entry measure for the selected path, with sign/clamping and reference area declared. | Dimensionless if area-normalized; otherwise area. | Available: `geometry.entry_measure` via `weights.entry_measure_weight` (absolute area, `length^2`, no reference-area normalization). |
+| `visibility` | Obstruction/visibility result and, if soft, its declared transmittance model. | Dimensionless. | Interface/event required; not implemented (`visibility_boundary` stays a margin diagnostic). |
+| `fresnel_transmission` | Product of polarization-resolved or explicitly unpolarized interface power factors; convention declared. | Dimensionless. | Available: `optics.fresnel_transmission_3_5` (unpolarized s/p average, entry times exit). |
+| `path_validity` | Boolean feasibility of the exact ordered path, separate from numerical convergence. | Boolean gate, not a gain. | Available: `weights.path_validity_weight` (`path_3_5_domain` valid and `entry_measure > 0`). |
 | `source_factor` | Source angular/spectral/radiometric quantity and sampling density. | Declared by source model. | Open until renderer/source contract. |
 | `pixel_factor` | Pixel response/filter and solid-angle or projected-area conversion. | Declared by camera model. | Open until renderer/camera contract. |
 | `other_radiometric` | Any absorption, phase, spectral, or exposure factor not represented above, individually named. | Explicit per factor. | Open; no anonymous catch-all in final results. |
@@ -416,7 +416,7 @@ documentation MUST preserve their meanings, shapes, units, and availability.
 | `target_chart` | Target neighborhood plus orthonormal tangent basis, or a general chart with its metric density. |
 | `pose_metric_and_measure` | The section 5.1 metric and either `dVol_g` or `d mu_Haar`; alternative normalizations require an explicit conversion. |
 | `seed` | Initial pose with storage representation declared; it denotes a pose in `SO(3)`, not a unique quaternion representative. |
-| `weight_evaluators` | Optional independently named factor evaluators. Absence is reported and does not prevent geometry-only tracing. |
+| `weight_evaluators` | Optional independently named factor evaluators (`weights.WeightEvaluator`: callable plus declared unit and normalization). Absence is reported and does not prevent geometry-only tracing; evaluation happens on accepted poses after continuation and never alters termination. |
 
 Problem construction MUST validate finite values, unit directions, convention
 compatibility, and required evaluator capabilities before continuation. It MUST
@@ -465,7 +465,7 @@ Let `N` be the number of accepted pose samples. A result MUST contain:
 | `closure_diagnostics` | Accumulated length, stable seed distance, section values/crossing, tangent agreement, and final-correction outcome. |
 | `terminal_payload` | Last accepted state and relevant rejected/bracketed state, event/failure scalars, iteration/budget counters, and message. |
 | `conventions` | Coordinate/sign version, pose representation, metric/measure, dtype, units, and solver/options version. |
-| `weight_observables` | Each requested factor and availability status separately; never only an opaque product. |
+| `weight_observables` | Each requested factor and availability status separately (`weights.WeightObservable`: status, unit, normalization, `(N)` values when available); never only an opaque product. |
 
 Unavailable data MUST be explicit rather than encoded as a plausible zero,
 one, empty success value, or NaN without a reason. Partial samples on any
@@ -583,7 +583,7 @@ failure: the named prerequisite is outside the current reference core.
 | C11 | Too-small step and short step/arclength/evaluation budgets | Distinguishes `step_underflow` from each `budget_exhausted` reason and retains partial diagnostics. | Verified by `test_public_corrector_nonconvergence_and_step_underflow_are_distinct` and `test_public_budget_termination_retains_partial_geometry`. |
 | C12 | Near self-approach or incompatible-tangent return | Does not close unless distance, section crossing, tangent, minimum extent, and final correction all pass. | Verified at the closure boundary by `test_incompatible_tangent_cannot_pass_final_closure_correction`; discovery of remote self-intersections remains open. |
 | C13 | Quaternion `q` versus `-q` storage | Represents the same samples and produces zero pose distance, identical closure, length, and integral diagnostics. | Open until a quaternion storage adapter exists; the reference result currently declares rotation-matrix storage. |
-| C14 | Named factor audit | Every requested factor has value/unit/normalization/availability; the coarea denominator and Haar conversion remain separate. | Partial: `test_public_result_schema_preserves_units_shapes_dtype_and_availability` verifies that every standard factor is named and unavailable rather than silently set to one. Values and units remain owned by later weight/integration work. |
+| C14 | Named factor audit | Every requested factor has value/unit/normalization/availability; the coarea denominator and Haar conversion remain separate. | Partial: values, units, and normalization are exposed for `rho_pose`, `entry_measure`, `fresnel_transmission`, and `path_validity` on the canonical pixel fiber (`test_canonical_pixel_fiber_exposes_four_available_factors_pointwise`, `test_figure_data_exports_available_weight_arrays_for_the_canonical_pixel`); `test_public_result_schema_preserves_units_shapes_dtype_and_availability` verifies unregistered factors stay unavailable rather than silently one, and `conventions` carries `1/(8 pi^2)` and `J_perp` separately. Quadrature remains open (owner: `task-single-fiber-line-quadrature`). |
 
 ## 12. Explicit open items
 

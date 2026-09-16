@@ -186,6 +186,48 @@ Current expected evidence:
 Tests MUST use the tolerances and invariants in `phase1-math-contract.md`, not
 freeze incidental accepted-step counts as a correctness requirement.
 
+### 4.1 Canonical pixel fiber with named physical factors
+
+The fixture above binds a self-consistent target (seed maps to itself). The
+physical-integrand stage instead binds one real pixel of the section 3.3
+canonical scene. All values are `canonical-new`; the implementation lives in
+`lumice_integral.canonical_scene` (single authority for constants and problem
+assembly) and `lumice_integral.camera` (pixel-to-direction adapter).
+
+| Input | Value | Provenance |
+|-------|-------|------------|
+| Camera | Lumice `linear` lens, `fov = 6 deg`, resolution `251 x 801`, view `(azimuth 0, elevation -15)` | `canonical-new`, section 3.3 |
+| Pixel-to-direction convention | transcribed from Lumice `v4.6.0` `MakeCameraRotation` / `ProjectExitToPixel` / `ComputeLensScale` (read as evidence, never linked); same chain as the writing project's `halo_notes/sim/projection.py` | convention evidence |
+| Sun | altitude `15 deg`, azimuth `0`; `s = -(cos 15, 0, sin 15)` | `canonical-new` |
+| Pixel | row `150`, column `150` (pixel centre `u = 150.5`, `v = 150.5`); sky elevation `-9.0395 deg`, azimuth `+0.6024 deg`; deviation from the sun `24.047 deg` | `canonical-new` |
+| Pixel rationale | on the lit `3-5` band of the historical strip (raw value about `0.23`), about `2.2 deg` below the inner-edge caustic, right of the sun azimuth (`3-5` chirality) | historical raw array plus screen handedness |
+| Target `d` | `[-0.9875255807607193, -0.010382806499944452, 0.1571159593179154]` (crystal to observer; the sky direction negated at the adapter boundary) | derived |
+| Crystal | hexagonal column `h/a = 1.0` (`HexPrism.from_ratio(1.0)`, `a = 1`) | `historical-direct` ratio |
+| Pose density | c-axis zenith Gaussian, mean `90 deg`, std `0.5 deg`, uniform azimuth and spin, relative to Haar probability | `canonical-new` |
+| Seed | `Exp([-1.6021189246370302, -0.06647507226372225, 0.614105700979059])` | one recorded prescan, below |
+
+Seed provenance: `scripts/discover_canonical_pixel_seed.py --row 150 --column
+150` with `400000` Haar-uniform samples, `2 deg` direction tolerance, `12`
+Newton-corrected candidates, RNG seed `20260916`; among the admissible
+survivors (`path_3_5_domain` valid, `entry_measure > 0`) the one whose c-axis
+zenith is closest to `90 deg` was frozen. This is a fixture-selection scan,
+not component discovery; completeness of the component set remains `unknown`.
+
+Current expected evidence (Mac reference environment):
+
+| Output | Expected value |
+|--------|----------------|
+| Terminal state | `closed / closed_loop` |
+| Stored poses | `120` (not a correctness requirement) |
+| Fiber length | `4.758228` rad |
+| c-axis zenith along the loop | about `87.39 .. 90.09 deg` |
+| `rho_pose` | `1.1e-4 .. 91.43` (dimensionless, Haar-relative) |
+| `entry_measure` | `0.278 .. 0.559` (`length^2`, `a = 1`) |
+| `fresnel_transmission` | `0.9354 .. 0.9416` |
+| `path_validity` | `1` at every accepted pose |
+| Normal Jacobian range | about `0.0822 .. 0.1497` |
+| `visibility`, `source_factor`, `pixel_factor`, `other_radiometric` | `unavailable` |
+
 ## 5. Figure Capability Matrix
 
 | Figure or chapter need | Data owner | Current status | Missing capability |
@@ -195,8 +237,8 @@ freeze incidental accepted-step counts as a correctness requirement.
 | ch06 all-sky Monte Carlo example | Lumice through Writing-Lab validation glue | Supported | Not a Lumice Integral product output. |
 | ch06 pose-fiber geometry | Lumice Integral | Supported for one supplied regular seed/component | Add continuous-sign unit-quaternion and C-axis longitude/latitude/spin adapters; prescan points require seed-discovery output. |
 | ch06 solver/Jacobian diagnostics | Lumice Integral data; Writing-Lab presentation | Supported as versioned figure data | A production plotting consumer still belongs in Writing-Lab; an independent prototype consumer has been verified. |
-| ch06 named physical-factor curves | Lumice Integral | Not supported | Pose density, entry measure/visibility, Fresnel throughput, and evaluated factor samples. |
-| ch06 one-pixel integrand/integral | Lumice Integral | Not supported | Named factor evaluation plus converged line quadrature. |
+| ch06 named physical-factor curves | Lumice Integral | Supported for `rho_pose`, `entry_measure`, `fresnel_transmission`, `path_validity` on the canonical pixel fiber (section 4.1, figure-data v2 `weight_<name>` arrays) | `visibility` (finite-face obstruction) and the radiometric factors remain unavailable. |
+| ch06 one-pixel integrand/integral | Lumice Integral | Named factor values exposed pointwise; quadrature not supported | Converged line quadrature over the closed fiber (`task-single-fiber-line-quadrature`). |
 | ch06 `251 x 801` direct strip | Lumice Integral | Historical bytes can be loaded; physical rerender is not supported | Seed/component discovery, neighboring-pixel continuation, camera/pixel model, image driver, and the one-pixel stages above. |
 | ch10 halo-map/Jacobian/fold figures | Lumice Integral numerical data; Writing-Lab presentation | Partially supported | Target sweeps and singular/fold localization beyond one regular fiber. |
 | ch11 orientation-family comparison | Lumice Integral and/or independent Lumice validation | Not supported by the current ordinary-density slice | Pose-density models, physical weights, image driver; exactly constrained families require a separate measure/domain contract. |
@@ -205,35 +247,48 @@ freeze incidental accepted-step counts as a correctness requirement.
 
 Solver objects are useful in Python but are not a stable boundary for the
 writing project. `export_fiber_figure_data` writes versioned JSON metadata plus
-an NPZ array payload. The canonical 3-5 fixture can be exported with:
+an NPZ array payload. The canonical fixtures can be exported with:
 
 ```bash
-uv run python scripts/export_path_3_5_figure_data.py <output-directory>
+uv run python scripts/export_path_3_5_figure_data.py <output-directory>      # section 4, geometry only
+uv run python scripts/export_canonical_pixel_figure_data.py <output-directory>  # section 4.1, with weights
 ```
 
-The current `lumice-integral.figure-data/v1` payload contains:
+The current `lumice-integral.figure-data/v2` payload contains:
 
 ```text
-schema: lumice-integral.figure-data/v1
+schema: lumice-integral.figure-data/v2
 metadata:
   path, incident, target, material, wavelength
   pose convention, metric/measure, solver options
   component scope/completeness, terminal state
+  conventions: haar_to_dvol_g_factor (1/(8 pi^2)), coarea_denominator (J_perp)
 arrays:
   poses, cumulative_arclength, tangents, residual_norm
   singular_values, normal_jacobian, condition
   named branch margins
-weights:
-  each requested factor: status, unit, normalization, values-if-available
+  weight_<name> for every available factor (one float64 sample per pose)
+weights (result.weight_observables):
+  each requested factor: status, unit, normalization, array name or null
 quadrature:
-  status, method, refinements, value, error estimate
+  status, method, refinements, value, error estimate   (still open)
 ```
 
-The geometry exporter already writes the pose, tangent, residual, arclength,
-Jacobian, and branch-margin arrays. It preserves the current unavailable state
-of physical weights and does not yet emit evaluated weight or quadrature
-arrays. JSON metadata carries the semantic names, units, conventions, shapes,
-and SHA-256 of the NPZ payload. Empty failed fibers are represented without
+Schema history:
+
+- `v1`: geometry, diagnostics, and branch margins; `result.weight_observables`
+  mapped each factor name to a bare status string and no weight arrays existed.
+- `v2` (physical integrand stage): `result.weight_observables` values become
+  objects `{status, unit, normalization, array}`; every `available` factor adds
+  a `weight_<name>` array whose metadata entry carries the factor unit;
+  unavailable factors keep `array: null` and no stand-in values. The version
+  string changes because the field type changed; readers of `v1` status
+  strings must read `status` instead. The only known `v1` consumer was the
+  out-of-repository prototype below, which read geometry/diagnostic arrays
+  only (checked: no checked-in code reads `weight_observables` values).
+
+JSON metadata carries the semantic names, units, conventions, shapes,
+and SHA-256 of the NPZ payload. Quadrature data is still not emitted. Empty failed fibers are represented without
 invented samples; non-finite unavailable closure values become JSON `null`.
 The format does not serialize arbitrary Python objects or require Lumice at
 read time. The canonical fixture produces byte-identical JSON and NPZ files on
@@ -253,7 +308,10 @@ color-to-factor mapping.
 2. **Single-fiber figure data**: export the canonical geometry, diagnostics,
    provenance, and explicit unavailable-factor states.
 3. **Physical one-pixel result**: expose every named factor, the coarea
-   denominator, quadrature refinements, and a convergence estimate.
+   denominator, quadrature refinements, and a convergence estimate. Status:
+   the four factors of section 4.1 and `J_perp` are exposed pointwise with
+   units and normalization; quadrature refinements and convergence remain
+   open (`task-single-fiber-line-quadrature`).
 4. **Historical image scene**: render the canonical `251 x 801` strip and
    compare raw profiles with the historical binary plus an independently
    converged Lumice result after coordinate/radiometric alignment.
