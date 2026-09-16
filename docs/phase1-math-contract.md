@@ -531,6 +531,30 @@ convergence. The accepted sample counts differ and are deliberately not a pass
 criterion; in particular, the historical observation of 145 steps is not
 encoded in the tests.
 
+### 10.2 Reproducible validation record
+
+The 2026-09-16 conformance run used source commit
+`138f621a4f4430a9b0afb080db96280515a1582c`. The configured `home-wsl`
+rsync target intentionally excludes `.git`, so it has no meaningful remote
+`HEAD`. Before the remote test, SHA-256 was compared after synchronization for
+the contract, continuation core, and conformance test; the local and remote
+hashes respectively matched as `0732a5df...`, `600051e5...`, and
+`7dfa1aa5...`. This content check is the remote source-version evidence rather
+than a fabricated Git revision.
+
+| Environment | Runtime | Command and result |
+|---|---|---|
+| Mac | macOS 14.7 arm64; uv Python 3.12.11; uv 0.8.14; JAX 0.11.1 on `CpuDevice(id=0)` | `uv run pytest -q` -> `60 passed in 79.22s` |
+| `home-wsl` | Python 3.12.3; uv 0.8.14; JAX 0.11.1 on `CudaDevice(id=0)` | `XLA_PYTHON_CLIENT_PREALLOCATE=false uv run pytest -q` -> `60 passed in 411.40s` |
+
+The required 3-5 diagnostic run reported `closed/closed_loop`, 192 accepted
+steps, maximum residual `4.070836767583417e-16`, metric length
+`3.857976632802349`, and closure gap `1.054769277841672e-14`. These values are
+observations, not additional pass criteria. The precision comparison measured
+direction maximum absolute error `4.4773031837586075e-08` and Jacobian relative
+error `1.885098415478209e-07` for its float32 probe, while the reference trace
+remained float64 and rejected float32 construction explicitly.
+
 ## 11. Conformance evidence matrix
 
 “Verified” identifies durable automated evidence for current public behavior.
@@ -539,17 +563,17 @@ failure: the named prerequisite is outside the current reference core.
 
 | ID | Fixture or counterexample | Required invariant | Status and durable evidence |
 |---|---|---|---|
-| C01 | Analytic `F(R) = R e3`, target `e3` | Rank two; singular values `(1, 1)` and `J_perp = 1` at the identity under the declared bases/metric. | Verified by `test_regular_state_reports_analytic_singular_values_and_tangent` and the analytic conformance sweep. |
-| C02 | Same analytic fiber | Closed component length converges to `2 pi`; uniform Haar pose density pushes forward to sphere density `1 / (4 pi)` because `(2 pi)/(8 pi^2) = 1/(4 pi)`. | Verified by the analytic conformance sweep and its explicit Haar normalization assertion. |
-| C03 | Analytic and synthetic 3-5 roots with several `Q in O(2)` basis changes | Root poses, tangent line, rank, singular values, `J_perp`, and converged geometry agree; tangent order may reverse only with seed orientation. | Verified by the `O(2)` basis conformance tests; basis changes are metamorphic evidence, not an independent optical oracle. |
+| C01 | Analytic `F(R) = R e3`, target `e3` | Rank two; singular values `(1, 1)` and `J_perp = 1` at the identity under the declared bases/metric. | Verified by `test_regular_state_reports_analytic_singular_values_and_tangent` and `test_analytic_circle_truth_closure_and_haar_normalization`. |
+| C02 | Same analytic fiber | Closed component length converges to `2 pi`; uniform Haar pose density pushes forward to sphere density `1 / (4 pi)` because `(2 pi)/(8 pi^2) = 1/(4 pi)`. | Verified by `test_analytic_circle_truth_closure_and_haar_normalization`. |
+| C03 | Analytic and synthetic 3-5 roots with several `Q in O(2)` basis changes | Root poses, tangent line, rank, singular values, `J_perp`, and converged geometry agree; tangent order may reverse only with seed orientation. | Verified by `test_analytic_circle_is_invariant_under_orthogonal_target_basis` and `test_synthetic_3_5_is_invariant_under_orthogonal_target_basis`; basis changes are metamorphic evidence, not an independent optical oracle. |
 | C04 | Target antipode for the projected residual | Algebraic zero at `-d` is rejected by the target-neighborhood gate. | Verified by `test_antipode_algebraic_root_is_rejected_by_chart_gate` and the public termination conformance cases. |
-| C05 | Smooth synthetic 3-5 branch | Unit outgoing direction, positive branch margins, local rank two, and one seeded component closes under independently converged settings. Exact 145 steps is not asserted. | Verified for the synthetic branch by the independent NumPy ray oracle and 3-5 conformance sweep. This is not historical ch06 validation. |
-| C06 | Initial step sizes and controller thresholds perturbed around reference defaults | Accepted traces converge to the same component geometry, length, orientation-independent integral, and terminal status within reported errors. | Verified over the bounded configurations recorded in section 10.1; no global controller-convergence claim is made. |
+| C05 | Smooth synthetic 3-5 branch | Unit outgoing direction, positive branch margins, local rank two, and one seeded component closes under independently converged settings. Exact 145 steps is not asserted. | Verified by `test_synthetic_3_5_trace_matches_independent_direct_ray_oracle` and `test_synthetic_3_5_safe_step_sweep_converges_without_fixed_step_count`. This is not historical ch06 validation. |
+| C06 | Initial step sizes and controller thresholds perturbed around reference defaults | Accepted traces converge to the same component geometry, length, orientation-independent integral, and terminal status within reported errors. | Verified by the analytic and 3-5 safe-step tests over the bounded configurations in section 10.1; no global controller-convergence claim is made. |
 | C07 | Constructed rank-deficient map | Terminates as `event_terminated/rank_loss` with singular-value and `J_perp` diagnostics; no regular coarea value is emitted. | Verified by `test_rank_deficient_direction_map_has_typed_event_and_diagnostics` and the public termination conformance cases. |
 | C08 | TIR or explicit path-domain boundary | Terminates with the typed event and signed margin before unsafe evaluation; not merely NaN or corrector failure. | Verified by `test_known_event_precedes_unsafe_direction_evaluation`, `test_3_5_tir_is_reported_before_the_unsafe_exit_square_root`, and the public termination conformance cases. Event crossing/localization remains open. |
 | C09 | Corrector non-convergence and ill-conditioned linear solve without known physical event | Bounded retries end in the matching `numerical_failure` reason with trial history. | Partial: public conformance verifies bounded corrector non-convergence and rejected-trial history. Rank/conditioning rejection is covered by C07; a deterministic public `linear_solve_failure` fixture remains open. |
-| C10 | Non-finite input/evaluator output | Rejects or terminates deterministically with source and reason; never returns apparent closure. | Verified by constructor regressions and public non-finite evaluator conformance. |
-| C11 | Too-small step and short step/arclength/evaluation budgets | Distinguishes `step_underflow` from each `budget_exhausted` reason and retains partial diagnostics. | Verified by the public budget and underflow conformance cases. |
+| C10 | Non-finite input/evaluator output | Rejects or terminates deterministically with source and reason; never returns apparent closure. | Verified by constructor regressions and `test_public_nonfinite_evaluator_output_never_appears_closed`. |
+| C11 | Too-small step and short step/arclength/evaluation budgets | Distinguishes `step_underflow` from each `budget_exhausted` reason and retains partial diagnostics. | Verified by `test_public_corrector_nonconvergence_and_step_underflow_are_distinct` and `test_public_budget_termination_retains_partial_geometry`. |
 | C12 | Near self-approach or incompatible-tangent return | Does not close unless distance, section crossing, tangent, minimum extent, and final correction all pass. | Verified at the closure boundary by `test_incompatible_tangent_cannot_pass_final_closure_correction`; discovery of remote self-intersections remains open. |
 | C13 | Quaternion `q` versus `-q` storage | Represents the same samples and produces zero pose distance, identical closure, length, and integral diagnostics. | Open until a quaternion storage adapter exists; the reference result currently declares rotation-matrix storage. |
 | C14 | Named factor audit | Every requested factor has value/unit/normalization/availability; the coarea denominator and Haar conversion remain separate. | Partial: `test_public_result_schema_preserves_units_shapes_dtype_and_availability` verifies that every standard factor is named and unavailable rather than silently set to one. Values and units remain owned by later weight/integration work. |
