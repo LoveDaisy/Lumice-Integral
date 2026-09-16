@@ -120,14 +120,22 @@ PIXEL_CSV_COLUMNS = (
 
 @dataclass(frozen=True)
 class Window:
-    """Half-open pixel ranges ``rows[0]:rows[1]`` x ``columns[0]:columns[1]``."""
+    """Half-open pixel ranges ``rows[0]:rows[1]`` x ``columns[0]:columns[1]``.
+
+    ``column_step > 1`` renders every ``column_step``-th column only (a coarse
+    full-height preview); rows are always contiguous because the hot-start
+    chain runs down a column.
+    """
 
     rows: tuple[int, int]
     columns: tuple[int, int]
+    column_step: int = 1
 
     def __post_init__(self) -> None:
         if not (0 <= self.rows[0] < self.rows[1]) or not (0 <= self.columns[0] < self.columns[1]):
             raise ValueError("window ranges must be non-empty and non-negative")
+        if self.column_step < 1:
+            raise ValueError("column_step must be positive")
 
     @property
     def row_range(self) -> range:
@@ -135,14 +143,19 @@ class Window:
 
     @property
     def column_range(self) -> range:
-        return range(*self.columns)
+        return range(self.columns[0], self.columns[1], self.column_step)
 
     @property
     def pixel_count(self) -> int:
         return len(self.row_range) * len(self.column_range)
 
     def as_json(self) -> dict[str, Any]:
-        return {"rows": list(self.rows), "columns": list(self.columns), "pixel_count": self.pixel_count}
+        return {
+            "rows": list(self.rows),
+            "columns": list(self.columns),
+            "column_step": self.column_step,
+            "pixel_count": self.pixel_count,
+        }
 
 
 @dataclass(frozen=True)

@@ -88,6 +88,11 @@ def test_window_validates_and_counts():
     assert list(window.row_range) == [10, 11]
     with pytest.raises(ValueError):
         Window((5, 5), (0, 1))
+    strided = Window((0, 2), (0, 251), column_step=25)
+    assert list(strided.column_range) == list(range(0, 251, 25))
+    assert strided.pixel_count == 22 and strided.as_json()["column_step"] == 25
+    with pytest.raises(ValueError):
+        Window((0, 1), (0, 1), column_step=0)
 
 
 def test_assemble_arrays_keeps_unknown_pixels_distinguishable_from_complete_zeros():
@@ -135,7 +140,7 @@ def test_write_and_read_strip_round_trip_with_verified_hashes(tmp_path: Path):
     assert provenance["format"] == FORMAT_VERSION
     assert provenance["arrays"]["shape"] == [4, 3]
     assert provenance["arrays"]["status_bits"] == STATUS_BITS
-    assert provenance["window"] == {"rows": [0, 2], "columns": [0, 3], "pixel_count": 6}
+    assert provenance["window"] == {"rows": [0, 2], "columns": [0, 3], "column_step": 1, "pixel_count": 6}
     assert provenance["options"]["quadrature"]["relative_tolerance"] == 1e-6
     assert provenance["options"]["quadrature"]["convergence_order_levels"] == 0
     assert provenance["options"]["discovery"]["retry_step_budget"] == 4000

@@ -47,6 +47,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--rows", default=f"0:{height}", help=f"half-open row range a:b (default 0:{height})")
     parser.add_argument("--columns", default=f"0:{width}", help=f"half-open column range a:b (default 0:{width})")
+    parser.add_argument("--column-step", type=int, default=1, help="render every k-th column only (coarse preview)")
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--resume", action="store_true", help="reuse finished column checkpoints in <output-dir>/columns")
     parser.add_argument("--pixel-model", choices=PIXEL_MODELS, default="point")
@@ -64,7 +65,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args(argv)
 
-    window = Window(parse_range(args.rows, height), parse_range(args.columns, width))
+    window = Window(parse_range(args.rows, height), parse_range(args.columns, width), args.column_step)
     pixel_options = PixelOptions(
         rng_seed=args.rng_seed,
         prescan_samples=args.prescan_samples,
