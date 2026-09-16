@@ -19,6 +19,7 @@ uv sync --dev
 uv run pytest -q
 uv run python scripts/inspect_path_3_5.py
 uv run python benchmarks/benchmark_batch.py --dtype float64
+uv run python benchmarks/benchmark_fiber_trace.py
 # Linux/NVIDIA environment
 uv sync --extra cuda13 --dev
 XLA_PYTHON_CLIENT_PREALLOCATE=false uv run python benchmarks/benchmark_batch.py
