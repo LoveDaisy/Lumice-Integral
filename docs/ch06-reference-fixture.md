@@ -176,11 +176,11 @@ Current expected evidence:
 | Output | Expected value |
 |--------|----------------|
 | Terminal state | `closed / closed_loop` |
-| Stored poses | `193` |
-| Accepted steps | `192` |
+| Stored poses | `49` (not a correctness requirement) |
+| Accepted steps | `48` |
 | Maximum target residual | at most `5e-16` in the recorded reference environment |
-| Fiber length | `3.857976632802349` rad |
-| Closure gap | approximately `1.05e-14` rad |
+| Fiber length | `0.9643243178593905` rad (one traversal; the `3.857976632802349` recorded until 2026-09-17 was four traversals of this loop under the absolute closure gate retired by `task-continuation-gates-and-fixtures`) |
+| Closure gap | approximately `3.6e-15` rad |
 | Normal Jacobian range | approximately `0.02494 .. 0.04458` |
 
 Tests MUST use the tolerances and invariants in `phase1-math-contract.md`, not
@@ -214,16 +214,19 @@ zenith is closest to `90 deg` was frozen. This is a fixture-selection scan,
 not component discovery; completeness of the component set remains `unknown`.
 `lumice_integral.discovery.discover_components` on the same pixel and RNG
 seed (`tests/test_discovery.py`) finds one closed component of arclength
-`4.758247` from `7` admissible clusters, which is procedural evidence for a
-single component, not a completeness certificate.
+`2.379121` from `7` admissible clusters, which is procedural evidence for a
+single component, not a completeness certificate. (The `4.758247` recorded
+until 2026-09-17 was this loop traversed twice under the absolute closure
+gate, see `task-continuation-gates-and-fixtures`; every length and integral
+below halved accordingly.)
 
 Current expected evidence (Mac reference environment):
 
 | Output | Expected value |
 |--------|----------------|
 | Terminal state | `closed / closed_loop` |
-| Stored poses | `120` (not a correctness requirement) |
-| Fiber length | `4.758228` rad |
+| Stored poses | `61` (not a correctness requirement) |
+| Fiber length | `2.379121` rad |
 | c-axis zenith along the loop | about `87.39 .. 90.09 deg` |
 | `rho_pose` | `1.1e-4 .. 91.43` (dimensionless, Haar-relative) |
 | `entry_measure` | `0.278 .. 0.559` (`length^2`, `a = 1`) |
@@ -231,7 +234,7 @@ Current expected evidence (Mac reference environment):
 | `path_validity` | `1` at every accepted pose |
 | Normal Jacobian range | about `0.0822 .. 0.1497` |
 | `visibility`, `source_factor`, `pixel_factor`, `other_radiometric` | `unavailable` |
-| Line integral `value` (Haar-converted, `partial`) | `4.728847630` with `error_estimate` about `1.2e-8` (`raw_value` about `373.374843`, `raw_error_estimate` about `9.3e-7` before the `1/(8 pi^2)` factor) |
+| Line integral `value` (Haar-converted, `partial`) | `2.364423815` with `error_estimate` about `6.0e-9` (`raw_value` about `186.687422`, `raw_error_estimate` about `4.7e-7` before the `1/(8 pi^2)` factor) |
 | Quadrature method | adaptive composite Simpson over chord-parametrised edges, corrector-retracted midpoints, Richardson error estimate; `epsilon = 1e-6`, `relative_tolerance = 1e-8`, `maximum_refinement_depth = 24` |
 | Quadrature work | about `235` refinements, `1417` adaptive nodes (`120` accepted plus retracted midpoints), maximum depth reached `16`, no depth exhaustion, no retraction failure |
 | Convergence order | median per-edge Richardson order about `3.99`; global uniform-bisection order about `1.99` because `entry_measure` has slope jumps inside edges `3, 17, 32, 47, 77, 92, 106` (footprint-clipping vertex events), see below |
