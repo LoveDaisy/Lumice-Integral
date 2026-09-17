@@ -865,3 +865,45 @@ def test_arclength_to_event_is_the_rate_estimate_behind_the_step_limit():
     assert arclength_to_event({"a": 0.5}, {"a": 0.4}, 0.1) == np.inf
     assert arclength_to_event({"a": 0.01}, {}, 0.1) == 0.0
     assert arclength_to_event({"a": 0.01}, {"a": 0.03}, 0.0) == 0.0
+
+
+def test_domain_event_is_only_believed_inside_the_corrector_trust_region():
+    """task-pixel-pipeline-v2 (DECISION 2026-09-17 18:22): a Newton iterate
+    that lands in an invalid domain *outside* the trust region acceptance
+    itself requires (``maximum_correction`` / ``maximum_advance``) is a
+    rejected trial (``corrector_failure``, the step shrinks), not an event;
+    the same invalid domain reached inside the trust region is the event.
+    Pixel (50, 9) of the ch06 strip: a 0.17 loop whose first 0.04 predictor
+    sent the corrector 1.18 rad away into a TIR region and was reported as
+    ``tir_boundary`` with no accepted step."""
+    theta_max = 0.1
+
+    def cap(rotation):
+        margin = theta_max - float(jnp.arctan2(rotation[1, 0], rotation[0, 0]))
+        if margin < 0.0:
+            return DomainEvaluation(False, {"cap": margin}, EventCandidate(TerminationReason.TIR_BOUNDARY, margin))
+        return DomainEvaluation(True, {"cap": margin})
+
+    problem = analytic_problem(domain_evaluator=cap)
+    options = ContinuationOptions()
+    current = jnp.eye(3, dtype=jnp.float64)
+    tangent = jnp.array([0.0, 0.0, 1.0])
+    # A predictor 0.4 rad past the cap along the circle: an invalid domain reached
+    # with zero correction but an advance beyond ``maximum_advance = 0.2``.
+    runaway = jnp.asarray(exp(jnp.array([0.0, 0.0, 0.5])))
+    outcome = _correct_trial(problem, options, current, runaway, tangent)
+    assert not outcome.accepted
+    assert outcome.reason == TerminationReason.CORRECTOR_FAILURE
+    assert outcome.event is None and "trust region" in outcome.message
+    assert outcome.advance == pytest.approx(0.5, abs=1e-9)
+    # The same cap crossed by a predictor inside the trust region is an event.
+    near = jnp.asarray(exp(jnp.array([0.0, 0.0, 0.15])))
+    outcome = _correct_trial(problem, options, current, near, tangent)
+    assert not outcome.accepted
+    assert outcome.reason == TerminationReason.TIR_BOUNDARY
+    assert outcome.event is not None and outcome.event.kind == TerminationReason.TIR_BOUNDARY
+    # End to end the trace still stops at the cap as an event.
+    result = trace_fiber(problem)
+    assert result.status == FiberStatus.EVENT_TERMINATED
+    assert result.reason == TerminationReason.TIR_BOUNDARY
+    assert len(result.poses) > 1

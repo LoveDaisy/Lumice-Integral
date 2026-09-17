@@ -1,58 +1,70 @@
 """Single-pixel component discovery for the 3-5 fiber.
 
-Given one pixel's target direction ``d``, this module finds seeds on the
-inverse-image fiber ``X_(3-5, d)`` in SO(3) and traces each candidate with a
-small step budget, so that a caller such as a strip driver receives a list of
-distinct closed components plus the candidates that could not be classified.
+Given one pixel's target direction ``d``, this module finds the connected
+pieces of the inverse-image fiber ``X_(3-5, d)`` in SO(3) that the scene's
+prescan can reach, traces each once with the production continuation, and
+returns them as distinct *components* -- closed loops or open arcs -- plus the
+candidates that could not be classified.
 
-The procedure is the one validated by ``explore-component-discovery``:
+The procedure (task-pixel-pipeline-v2, after the author's ruling of
+2026-09-17 that an open arc is a first-class component, not a failure):
 
-1. Query the scene's :class:`.prescan.PrescanTable` (Haar samples that pass
-   all four refraction discriminants of the smooth 3-5 branch, built once per
-   ``(path, s, n)`` and indexed by outgoing direction) for the pool whose
-   outgoing direction lies within ``angle_tolerance_deg`` of ``d``.  The
-   table replaces the per-call prescan the survey used; for the same sample
-   count and seed the pool is the same set of poses in the same order
-   (task-scene-prescan-table).
+1. Candidate pool: ``extra_seeds`` (already converged poses of neighbouring
+   pixels, any neighbour -- the caller decides which) followed by the query of
+   the scene's :class:`.prescan.PrescanTable` (Haar samples that pass all
+   four refraction discriminants of the smooth 3-5 branch, indexed by
+   outgoing direction) for the poses whose outgoing direction lies within
+   ``angle_tolerance_deg`` of ``d``.
 2. Greedy geodesic clustering of the whole pool with radius
-   ``cluster_radius_rad`` (the whole pool, not a top-K by alignment).
-3. Per cluster: take the best-aligned member, Gauss-Newton it onto the fiber,
-   gate it with :func:`.optics.path_3_5_domain` and
-   :func:`.geometry.entry_measure`, then run :func:`.continuation.trace_fiber`
-   with ``maximum_accepted_steps = discovery_step_budget``.
-4. Deduplicate ``closed`` traces by the fingerprint
-   ``(status, reason, arclength within arclength_rtol)``.  Accepted pose
-   counts are *not* part of the fingerprint: adaptive stepping lands on a
-   different number of poses for the same physical loop depending on where
-   the corrector enters it.  Traces that did not close are never folded into
-   a component; they are returned separately as ``incomplete``.
+   ``cluster_radius_rad``.  A cluster's representative is its first extra
+   seed if it contains one (that is all a warm seed does: it puts the
+   Gauss-Newton start of its cluster on a neighbouring solution), else its
+   best-aligned prescan member.
+3. Per cluster, in pool order: Gauss-Newton the representative onto the
+   fiber, gate it with :func:`.optics.path_3_5_domain` and
+   :func:`.geometry.entry_measure`, then *deduplicate before tracing*: a
+   corrected seed whose SO(3) geodesic distance to any accepted pose of an
+   already accepted component is below ``distance_threshold`` is the same
+   component and is folded without a trace (``dedup_merged``).
+4. Otherwise :func:`.continuation.trace_fiber` once with the caller's
+   production :class:`.continuation.ContinuationOptions`:
+
+   - ``closed``: a :class:`DiscoveredComponent` of ``kind == "closed"``;
+   - ``event_terminated`` by one of the five named events
+     (:data:`ARC_EVENTS`: tir, branch, path-infeasible, visibility, chart):
+     trace the same seed once more with ``initial_tangent_sign = -1``; if
+     that also ends on a named event the two traces are stitched
+     (:func:`.resample.stitch_open_arc`) into a component of ``kind ==
+     "arc"`` (``arc_stitched``).  A backward trace that does not
+     (``arc_backward_failed``), or that closes -- which the forward trace of
+     the same seed should have done first (``arc_backward_closed_anomaly``)
+     -- leaves the candidate ``incomplete`` with both traces kept;
+   - any other outcome (``numerical_failure``, ``budget_exhausted``, or an
+     unnamed event such as ``rank_loss``, counted as
+     ``incomplete_unnamed_event``): an :class:`IncompleteCandidate`.
 
 ``completeness`` is a *procedural* signal, not a mathematical certificate.
-``"complete"`` means only that every admissible candidate in this sampling
-pool closed and no ``status != closed`` evidence was observed; it does not
-prove that every connected component of ``X_(P,d)`` was found (that remains
-an open item of ``docs/phase1-math-contract.md``).  A dark pixel with no
-admissible candidate is therefore ``"complete"`` with zero components.
+``"complete"`` means only that every admissible candidate of this pool
+converged (closed or arc) and no ``incomplete`` evidence was observed; it does
+not prove that every connected component of ``X_(P,d)`` was found (that
+remains an open item of ``docs/phase1-math-contract.md``).  A dark pixel with
+no admissible candidate is therefore ``"complete"`` with zero components.
 
-Discovery uses a deliberately small step budget (default 250) that is
-independent of the production :class:`.continuation.ContinuationOptions`
-default; a candidate that exhausts it is reported as ``incomplete`` and the
-caller decides whether to retrace it with the production budget.
-
-Batch callers may pass ``template`` (a 3-5 :class:`FiberProblem` for the same
-incident direction and refractive index) to :func:`discover_components` and
-:func:`hot_start_component`; the per-pixel problem is then
-:func:`retarget_problem` of that template, so the continuation kernels keyed on
-the template's ``direction_evaluator`` identity are compiled once per process
-instead of once per pixel (about 0.4 s per fresh problem on the M2 Max CPU,
-measured by ``task-strip-image-driver`` Step 0).  Without ``template`` every
-call builds a fresh problem, as before.
+Batch callers pass ``template`` (a 3-5 :class:`FiberProblem` for the same
+incident direction and refractive index); the per-pixel problem is then
+:func:`retarget_problem` of that template, so the continuation kernels keyed
+on the template's ``direction_evaluator`` identity are compiled once per
+process instead of once per pixel (about 0.4 s per fresh problem on the M2 Max
+CPU, task-strip-image-driver Step 0).  Without ``template`` every call builds
+a fresh problem.
 """
 
 from __future__ import annotations
 
+import time
+from collections import Counter
 from dataclasses import dataclass, replace
-from typing import Literal, Sequence
+from typing import Literal, Mapping, Sequence
 
 import jax
 import jax.numpy as jnp
@@ -65,7 +77,6 @@ from .continuation import (
     FiberProblem,
     FiberResult,
     FiberStatus,
-    StepDiagnostic,
     TargetChart,
     TerminationReason,
     local_residual_jacobian,
@@ -75,36 +86,77 @@ from .continuation import (
 from .geometry import Polyhedron, entry_measure
 from .optics import path_3_5_domain, path_3_5_problem
 from .prescan import PrescanTable
+from .resample import OpenArc, stitch_open_arc
 from .so3 import exp, rotation_distance
 
 PATH_3_5_FACES = (3, 5)
 
 Completeness = Literal["complete", "unknown"]
+ComponentKind = Literal["closed", "arc"]
+# The named events an arc may end on (docs/phase1-math-contract.md section 8);
+# ``rank_loss``/``topology_ambiguity`` are "open" degeneracies, not arc ends.
+ARC_EVENTS = frozenset(
+    {
+        TerminationReason.TIR_BOUNDARY,
+        TerminationReason.BRANCH_BOUNDARY,
+        TerminationReason.PATH_INFEASIBLE,
+        TerminationReason.VISIBILITY_BOUNDARY,
+        TerminationReason.CHART_BOUNDARY,
+    }
+)
+# Per-call counters of the classification funnel (module docstring step 3/4).
+DISCOVERY_EVENT_NAMES = (
+    "dedup_merged",
+    "arc_stitched",
+    "arc_backward_failed",
+    "arc_backward_closed_anomaly",
+    "incomplete_unnamed_event",
+    "incomplete_not_converged",
+)
 
 
 @dataclass(frozen=True)
 class DiscoveredComponent:
-    """One distinct closed component: its corrected seed and the discovery trace."""
+    """One distinct component: its corrected seed and the single production trace.
+
+    ``kind == "closed"``: ``result`` is the closed :class:`FiberResult`.
+    ``kind == "arc"``: ``result`` is the stitched :class:`.resample.OpenArc`
+    (its ``forward``/``backward`` traces, ``reason``/``start_reason`` events
+    and ``branch_diagnostics`` margins at both ends).  ``arclength`` is the
+    sum of the accepted chords of the whole curve; ``status``/``reason`` are
+    the curve's terminal ones (``closed``/``closed_loop`` or
+    ``event_terminated``/the forward end's event).
+    """
 
     seed: np.ndarray
-    result: FiberResult
+    kind: ComponentKind
+    result: FiberResult | OpenArc
     arclength: float
     status: FiberStatus
     reason: TerminationReason
 
+    @property
+    def start_reason(self) -> TerminationReason | None:
+        """The backward end's event of an arc; ``None`` for a closed loop."""
+        return self.result.start_reason if self.kind == "arc" else None
+
 
 @dataclass(frozen=True)
 class IncompleteCandidate:
-    """An admissible candidate whose discovery trace did not close.
+    """An admissible candidate whose trace did not converge to a closed loop or an arc.
 
     It is evidence of nothing conclusive: neither a distinct component nor a
-    duplicate of one.  ``result`` keeps the truncated trace for diagnosis.
+    duplicate of one.  ``result`` keeps the forward trace and ``backward`` the
+    backward one when it was attempted (module docstring step 4); ``cause``
+    is the :data:`DISCOVERY_EVENT_NAMES` entry that classified it.
     """
 
     seed: np.ndarray
     result: FiberResult
     status: FiberStatus
     reason: TerminationReason
+    cause: str
+    backward: FiberResult | None = None
 
 
 @dataclass(frozen=True)
@@ -112,20 +164,30 @@ class ComponentDiscoveryResult:
     """Components and unclassified candidates found for one target direction.
 
     ``completeness`` is procedural (see the module docstring): ``"complete"``
-    iff ``incomplete`` is empty.  The count fields record the funnel of the
-    prescan (pool -> clusters -> admissible) for regression and diagnosis.
+    iff ``incomplete`` is empty.  The count fields record the funnel
+    (``pool_count`` prescan poses plus ``extra_seed_count`` warm seeds ->
+    clusters -> admissible) for regression and diagnosis;
+    ``events`` the classification counters (:data:`DISCOVERY_EVENT_NAMES`);
+    ``trace_seconds`` the wall clock spent inside :func:`.continuation.trace_fiber`.
     """
 
     components: tuple[DiscoveredComponent, ...]
     incomplete: tuple[IncompleteCandidate, ...]
     completeness: Completeness
     pool_count: int
+    extra_seed_count: int
     raw_cluster_count: int
     admissible_count: int
+    events: Mapping[str, int]
+    trace_seconds: float
 
     @property
     def component_count(self) -> int:
         return len(self.components)
+
+    @property
+    def arc_count(self) -> int:
+        return sum(component.kind == "arc" for component in self.components)
 
     @property
     def incomplete_count(self) -> int:
@@ -150,6 +212,22 @@ def _geodesic_cluster(rotations: np.ndarray, radius: float) -> list[list[int]]:
     return clusters
 
 
+_distance_to_curve_kernel = jax.jit(
+    lambda rotation, poses: jnp.min(jax.vmap(lambda pose: rotation_distance(rotation, pose))(poses))
+)
+
+
+def distance_to_curve(rotation: np.ndarray, poses: np.ndarray) -> float:
+    """Smallest SO(3) geodesic distance from ``rotation`` to the sampled ``poses``.
+
+    The curve is represented by its accepted poses only (chords of at most
+    ``ContinuationOptions.maximum_step``), so a pose *on* the curve can still
+    be up to half a chord away from the nearest sample; the dedup threshold
+    must absorb that.
+    """
+    return float(_distance_to_curve_kernel(jnp.asarray(rotation), jnp.asarray(poses)))
+
+
 def _newton_correct(
     problem: FiberProblem, rotation: Array, tolerance: float, iterations: int = 30
 ) -> tuple[Array, float]:
@@ -169,23 +247,19 @@ def _newton_correct(
     return rotation, float(jnp.linalg.norm(target_residual(problem, rotation)))
 
 
-def _correct_and_trace(
+def _admissible_seed(
     template: FiberProblem,
     options: ContinuationOptions,
     crystal: Polyhedron,
     refractive_index: float,
     raw_rotation: Array,
-) -> DiscoveredComponent | IncompleteCandidate | None:
-    """Correct one candidate, gate its admissibility, and trace it once.
+) -> np.ndarray | None:
+    """Correct one candidate onto the fiber and gate it; ``None`` if inadmissible.
 
-    ``template`` fixes the incident direction and target chart; every
-    per-candidate :class:`FiberProblem` is ``replace(template, seed=...)`` so
-    the JIT caches keyed on the template's closures are shared across
-    candidates.  The incident direction is read from ``template`` so the
-    gates cannot drift from the problem being traced; ``refractive_index`` is
-    passed separately because :class:`FiberProblem` does not store it as a
-    number.  Returns ``None`` when the candidate fails the admissibility
-    gates (residual, domain validity, positive entry measure).
+    The incident direction is read from ``template`` so the gates cannot
+    drift from the problem being traced; ``refractive_index`` is passed
+    separately because :class:`FiberProblem` does not store it as a number.
+    The gates are the residual, domain validity and a positive entry measure.
     """
     tolerance = options.residual_tolerance + options.relative_residual_tolerance
     corrected, residual_norm = _newton_correct(template, raw_rotation, tolerance * 1e-2)
@@ -197,59 +271,48 @@ def _correct_and_trace(
     )
     if not (residual_norm <= tolerance and domain.valid and measure.value > 0):
         return None
-    result = trace_fiber(replace(template, seed=jnp.asarray(corrected_np)), options)
-    if result.status != FiberStatus.CLOSED:
-        return IncompleteCandidate(corrected_np, result, result.status, result.reason)
-    return DiscoveredComponent(
-        corrected_np,
-        result,
-        float(result.arclength_increments.sum()),
-        result.status,
-        result.reason,
-    )
+    return corrected_np
 
 
-def dedup_components(
-    records: Sequence[DiscoveredComponent | IncompleteCandidate],
-    arclength_rtol: float,
-    *,
-    pool_count: int,
-    raw_cluster_count: int,
-) -> ComponentDiscoveryResult:
-    """Fold closed records with the same ``(status, reason, arclength)`` fingerprint.
-
-    Public (like ``template``/:func:`retarget_problem`) so a batch caller such
-    as :mod:`.strip_pixel` can fold its own hot-start and incomplete-retry
-    records with the same fingerprint rule :func:`discover_components` uses
-    internally, instead of reimplementing deduplication against a private
-    symbol.
-    """
-    components: list[DiscoveredComponent] = []
-    incomplete: list[IncompleteCandidate] = []
-    for record in records:
-        if isinstance(record, IncompleteCandidate):
-            incomplete.append(record)
-            continue
-        duplicate = any(
-            record.status == component.status
-            and record.reason == component.reason
-            and np.isclose(record.arclength, component.arclength, rtol=arclength_rtol, atol=1e-6)
-            for component in components
+def _trace_and_classify(
+    template: FiberProblem,
+    options: ContinuationOptions,
+    seed: np.ndarray,
+    events: Counter,
+    timings: Counter,
+) -> DiscoveredComponent | IncompleteCandidate:
+    """One production trace of ``seed``, then the closed / arc / incomplete branch."""
+    problem = replace(template, seed=jnp.asarray(seed))
+    start = time.perf_counter()
+    forward = trace_fiber(problem, options)
+    timings["trace_s"] += time.perf_counter() - start
+    if forward.status == FiberStatus.CLOSED:
+        return DiscoveredComponent(
+            seed, "closed", forward, float(forward.arclength_increments.sum()), forward.status, forward.reason
         )
-        if not duplicate:
-            components.append(record)
-    return ComponentDiscoveryResult(
-        components=tuple(components),
-        incomplete=tuple(incomplete),
-        completeness="complete" if not incomplete else "unknown",
-        pool_count=pool_count,
-        raw_cluster_count=raw_cluster_count,
-        admissible_count=len(records),
-    )
-
-
-def _discovery_options(discovery_step_budget: int) -> ContinuationOptions:
-    return ContinuationOptions(maximum_accepted_steps=discovery_step_budget)
+    if forward.status != FiberStatus.EVENT_TERMINATED:
+        events["incomplete_not_converged"] += 1
+        return IncompleteCandidate(seed, forward, forward.status, forward.reason, "incomplete_not_converged")
+    if forward.reason not in ARC_EVENTS:
+        events["incomplete_unnamed_event"] += 1
+        return IncompleteCandidate(seed, forward, forward.status, forward.reason, "incomplete_unnamed_event")
+    start = time.perf_counter()
+    backward = trace_fiber(problem, replace(options, initial_tangent_sign=-options.initial_tangent_sign))
+    timings["trace_s"] += time.perf_counter() - start
+    if backward.status == FiberStatus.CLOSED:
+        # The forward trace of the same seed on the same one-dimensional
+        # fiber should have closed first; the data contradict the model, so
+        # the candidate is exposed as incomplete rather than accepted.
+        events["arc_backward_closed_anomaly"] += 1
+        return IncompleteCandidate(
+            seed, forward, forward.status, forward.reason, "arc_backward_closed_anomaly", backward
+        )
+    if backward.status != FiberStatus.EVENT_TERMINATED or backward.reason not in ARC_EVENTS:
+        events["arc_backward_failed"] += 1
+        return IncompleteCandidate(seed, forward, forward.status, forward.reason, "arc_backward_failed", backward)
+    arc = stitch_open_arc(forward, backward)
+    events["arc_stitched"] += 1
+    return DiscoveredComponent(seed, "arc", arc, arc.arclength, arc.status, arc.reason)
 
 
 def retarget_problem(
@@ -299,10 +362,11 @@ def discover_components(
     crystal: Polyhedron,
     table: PrescanTable,
     *,
-    discovery_step_budget: int = 250,
+    continuation: ContinuationOptions | None = None,
+    extra_seeds: Sequence[np.ndarray] = (),
     angle_tolerance_deg: float = 2.0,
     cluster_radius_rad: float = 0.3,
-    arclength_rtol: float = 1e-3,
+    distance_threshold: float = ContinuationOptions.closure_distance,
     template: FiberProblem | None = None,
 ) -> ComponentDiscoveryResult:
     """Discover the 3-5 fiber components reaching ``target_direction``.
@@ -311,20 +375,33 @@ def discover_components(
     and the single source of the incident direction and refractive index of
     the problem; ``crystal`` only feeds the finite-crystal
     :func:`.geometry.entry_measure` gate applied to each corrected candidate
-    (the table does not depend on it).  Defaults come from the
-    ``explore-component-discovery`` survey: 2 deg tolerance, 0.3 rad cluster
-    radius, and a 250-step discovery budget independent of the production
-    continuation default.  The result's ``completeness`` is procedural; see
-    the module docstring.  ``template`` (optional) is a 3-5 problem for the
-    same incident direction and index whose evaluator closures are reused via
-    :func:`retarget_problem`.
+    (the table does not depend on it).  ``continuation`` is the production
+    policy every trace runs under (default :class:`ContinuationOptions`);
+    ``extra_seeds`` are converged poses of neighbouring pixels used as
+    Gauss-Newton starts (module docstring step 2), never traced separately
+    and never a source of completeness.  Pool defaults come from the
+    ``explore-component-discovery`` survey (2 deg tolerance, 0.3 rad cluster
+    radius); ``distance_threshold`` defaults to the continuation's
+    ``closure_distance`` (same scale: "is this pose on that curve").  The
+    result's ``completeness`` is procedural; see the module docstring.
+    ``template`` (optional) is a 3-5 problem for the same incident direction
+    and index whose evaluator closures are reused via :func:`retarget_problem`.
     """
+    if distance_threshold <= 0.0:
+        raise ValueError("distance_threshold must be positive")
+    options = continuation or ContinuationOptions()
     incident = table.incident_direction
     refractive_index = table.refractive_index
     target = np.asarray(target_direction, dtype=np.float64)
     pool_indices = table.candidates(target, angle_tolerance_deg)
-    pool_rotations = table.rotations[pool_indices]
-    pool_alignment = table.directions[pool_indices] @ target
+    extra = np.asarray(extra_seeds, dtype=np.float64).reshape(-1, 3, 3)
+    pool_rotations = np.concatenate((extra, table.rotations[pool_indices]))
+    extra_count = len(extra)
+    # Alignment of the prescan members with the target; extra seeds have no
+    # table direction and are chosen as representatives by position instead.
+    pool_alignment = np.concatenate(
+        (np.full(extra_count, -np.inf), table.directions[pool_indices] @ target)
+    )
 
     clusters = _geodesic_cluster(pool_rotations, cluster_radius_rad)
     template = _problem_template(
@@ -334,121 +411,48 @@ def discover_components(
         pool_rotations[0] if len(pool_rotations) else np.eye(3),
         template,
     )
-    options = _discovery_options(discovery_step_budget)
-    records: list[DiscoveredComponent | IncompleteCandidate] = []
+    events: Counter = Counter({name: 0 for name in DISCOVERY_EVENT_NAMES})
+    timings: Counter = Counter({"trace_s": 0.0})
+    components: list[DiscoveredComponent] = []
+    incomplete: list[IncompleteCandidate] = []
+    admissible_count = 0
     for cluster in clusters:
-        representative = max(cluster, key=lambda i: pool_alignment[i])
-        record = _correct_and_trace(
+        warm = [i for i in cluster if i < extra_count]
+        representative = warm[0] if warm else max(cluster, key=lambda i: pool_alignment[i])
+        seed = _admissible_seed(
             template, options, crystal, refractive_index, jnp.asarray(pool_rotations[representative])
         )
-        if record is not None:
-            records.append(record)
-    return dedup_components(
-        records,
-        arclength_rtol,
-        pool_count=int(len(pool_indices)),
-        raw_cluster_count=len(clusters),
-    )
-
-
-def hot_start_component(
-    converged_seed: np.ndarray,
-    target_direction: np.ndarray,
-    incident_direction: np.ndarray,
-    refractive_index: float,
-    crystal: Polyhedron,
-    *,
-    discovery_step_budget: int = 250,
-    template: FiberProblem | None = None,
-) -> DiscoveredComponent | IncompleteCandidate | None:
-    """Re-seed a neighbouring pixel from a seed that converged on another.
-
-    Skips the prescan and clustering and runs the same correction, gates,
-    trace, and classification as :func:`discover_components` on the single
-    candidate ``converged_seed``.  Returns ``None`` if the candidate is not
-    admissible for the new target.  Without ``template`` a new 3-5 problem
-    (new target chart, fresh closures) is built per call; with it the problem
-    is :func:`retarget_problem` of the template.
-    """
-    problem = _problem_template(
-        target_direction, incident_direction, refractive_index, converged_seed, template
-    )
-    return _correct_and_trace(
-        problem,
-        _discovery_options(discovery_step_budget),
-        crystal,
-        refractive_index,
-        jnp.asarray(converged_seed, dtype=jnp.float64),
-    )
-
-
-def detect_arclength_jump(
-    arclengths: Sequence[float],
-    *,
-    relative_threshold: float = 0.2,
-) -> list[int]:
-    """Indices ``i`` where ``arclengths[i] -> arclengths[i+1]`` jumps by more than
-    ``relative_threshold`` relative to ``arclengths[i]``.
-
-    Meant for a component arclength sequence along a scan line: a jump marks
-    a topology change between neighbouring pixels (branch switch), where
-    hot-starting from the previous seed is unsafe.  The default ``0.2`` sits
-    between the one observed real boundary (row 225 -> 226 of the canonical
-    strip, about 50 %) and the per-row drift inside a clean run (well under
-    1 %); it is calibrated on that single sample only.
-    """
-    values = np.asarray(arclengths, dtype=np.float64)
-    if values.ndim != 1:
-        raise ValueError("arclengths must be a one-dimensional sequence")
-    if relative_threshold <= 0.0:
-        raise ValueError("relative_threshold must be positive")
-    if values.size < 2:
-        return []
-    change = np.abs(np.diff(values)) / np.abs(values[:-1])
-    return [int(i) for i in np.nonzero(change > relative_threshold)[0]]
-
-
-def is_floor_locked(
-    step_diagnostics: Sequence[StepDiagnostic],
-    *,
-    minimum_step: float,
-    window: int,
-) -> bool:
-    """``True`` iff the last ``window`` accepted steps all proposed ``minimum_step``.
-
-    Read-only criterion for the "step floor never left" stall diagnosed by
-    ``explore-continuation-degenerate-stall-diagnosis``: once some domain
-    margin sits below ``ContinuationOptions.event_slowdown_margin`` without
-    tending to zero, ``_adapt_accepted_step`` only ever shrinks the step, and
-    after it clamps to ``minimum_step`` the trace crawls there until its
-    budget runs out.  A caller that owns a budget-limited trace whose reason
-    is :attr:`TerminationReason.STEP_BUDGET` can therefore decide, from the
-    trace it already paid for, that a retrace with a larger budget of the
-    same seed and the same numerics would crawl the same way (the first steps
-    are deterministic), and skip it.
-
-    Only ``accepted`` entries count; a rejected trial that shrank the step is
-    not an accepted step at the floor.  The comparison is exact (``<=``):
-    ``_adapt_accepted_step`` writes ``max(minimum_step, step)``, so a step at
-    the floor *is* ``minimum_step``, not an approximation of it.  Fewer than
-    ``window`` accepted steps, or any step above the floor inside the window,
-    gives ``False``; the window must be positive.  ``window`` is a procedural
-    calibration (task-discovery-stall-early-exit Step 0), not a proof: it is
-    the smallest trailing run observed on stalled candidates with a margin
-    over the longest run observed on candidates that a production-budget
-    retrace did close.
-    """
-    if window < 1:
-        raise ValueError("window must be positive")
-    if minimum_step <= 0.0:
-        raise ValueError("minimum_step must be positive")
-    trailing = 0
-    for diagnostic in reversed(step_diagnostics):
-        if not diagnostic.accepted:
+        if seed is None:
             continue
-        if diagnostic.proposed_step > minimum_step:
-            return False
-        trailing += 1
-        if trailing >= window:
-            return True
-    return False
+        admissible_count += 1
+        if any(distance_to_curve(seed, component.result.poses) < distance_threshold for component in components):
+            events["dedup_merged"] += 1
+            continue
+        record = _trace_and_classify(template, options, seed, events, timings)
+        if isinstance(record, DiscoveredComponent):
+            components.append(record)
+        else:
+            incomplete.append(record)
+    return ComponentDiscoveryResult(
+        components=tuple(components),
+        incomplete=tuple(incomplete),
+        completeness="complete" if not incomplete else "unknown",
+        pool_count=int(len(pool_indices)),
+        extra_seed_count=extra_count,
+        raw_cluster_count=len(clusters),
+        admissible_count=admissible_count,
+        events={name: int(events[name]) for name in DISCOVERY_EVENT_NAMES},
+        trace_seconds=float(timings["trace_s"]),
+    )
+
+
+__all__ = [
+    "ARC_EVENTS",
+    "DISCOVERY_EVENT_NAMES",
+    "ComponentDiscoveryResult",
+    "DiscoveredComponent",
+    "IncompleteCandidate",
+    "discover_components",
+    "distance_to_curve",
+    "retarget_problem",
+]

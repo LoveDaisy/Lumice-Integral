@@ -36,8 +36,12 @@ the error estimate compares the grid with its every-other-node subset and the
 node count doubles until the estimate meets the tolerance or a declared
 maximum.  ``t`` is never reported as arclength.
 
-Everything here is host-side post-processing of a :class:`FiberResult`;
-nothing changes ``trace_fiber`` or its termination decisions.
+Everything here is host-side post-processing of a traced curve (a
+:class:`FiberResult`, or an :class:`.resample.OpenArc` stitched from a forward
+and a backward trace of one seed, task-pixel-pipeline-v2); nothing changes
+``trace_fiber`` or its termination decisions.  An ``OpenArc`` has an event at
+*both* ends, so it gets a start-side truncation estimate in addition to the
+terminal one (:func:`_endpoint_truncation`).
 """
 
 from __future__ import annotations
@@ -59,7 +63,7 @@ from .continuation import (
     arclength_to_event,
     retract_to_fiber_batch,
 )
-from .resample import FiberSpline, fiber_spline, resample_spline, uniform_parameters
+from .resample import FiberSpline, OpenArc, TraceLike, fiber_spline, resample_spline, uniform_parameters
 from .so3 import exp, vee
 from .weights import evaluate_weights_batch
 
@@ -227,10 +231,18 @@ class ResampledQuadratureResult:
     factors were non-finite (their integrand is taken as ``0`` and counted,
     never hidden).  ``endpoint_truncation_estimate`` (open arcs only) is the
     terminal integrand value times the linear-rate arclength to the nearest
-    event (:func:`.continuation.arclength_to_event`); the seed end of an arc
-    is where the trace started, not a boundary, and gets no estimate.
-    ``factor_seconds`` is the wall clock of every batch factor evaluation
-    (``entry_measure`` is a host loop).  Never claims component completeness.
+    event (:func:`.continuation.arclength_to_event`) at the curve's *terminal*
+    end.  For a one-sided :class:`FiberResult` the start is the seed, not a
+    boundary, and ``start_endpoint_truncation_estimate`` is ``nan``; for a
+    stitched :class:`.resample.OpenArc` the start is the backward trace's
+    event and gets the mirrored estimate.  Naming note: ``endpoint_truncation_*``
+    keeps its task-resample-and-integrate name (it is read by ``figure_data``
+    and frozen in ``tests/test_resample_quadrature.py``) and still means the
+    terminal end; ``start_endpoint_truncation_*`` is the newer, prefixed name
+    for the other end.  They are a historical name plus a new one, not a
+    symmetric start/end pair.  ``factor_seconds`` is the wall clock of every
+    batch factor evaluation (``entry_measure`` is a host loop).  Never claims
+    component completeness.
     """
 
     status: str
@@ -260,6 +272,8 @@ class ResampledQuadratureResult:
     endpoint_truncation_estimate: float
     endpoint_truncation_note: str
     factor_seconds: Mapping[str, float]
+    start_endpoint_truncation_estimate: float = float("nan")
+    start_endpoint_truncation_note: str = "one-sided trace: the start is the seed, not a boundary"
     coverage: str = COVERAGE_NOTE
     component_completeness: str = "unknown"
 
@@ -357,40 +371,89 @@ def _composite_simpson(values: np.ndarray, spacing: float) -> float:
     )
 
 
-def _endpoint_truncation(result: FiberResult, terminal_integrand: float) -> tuple[float, str]:
-    """Raw open-arc truncation estimate at the terminal end, with its note."""
+_EVENT_REASONS = {
+    TerminationReason.TIR_BOUNDARY, TerminationReason.BRANCH_BOUNDARY,
+    TerminationReason.PATH_INFEASIBLE, TerminationReason.VISIBILITY_BOUNDARY,
+    TerminationReason.CHART_BOUNDARY, TerminationReason.RANK_LOSS,
+    TerminationReason.TOPOLOGY_AMBIGUITY,
+}
+
+
+def _event_truncation(
+    reason: TerminationReason,
+    margins: Mapping[str, float],
+    previous_margins: Mapping[str, float],
+    advance: float,
+    integrand: float,
+    end: str,
+) -> tuple[float, str]:
+    """Raw truncation estimate beyond one event-terminated end of a curve.
+
+    ``margins`` belong to the end pose, ``previous_margins`` to its neighbour
+    along the curve and ``advance`` to the edge between them; ``end`` names
+    the end in the note (``"terminal"`` or ``"start"``).
+    """
+    if reason not in _EVENT_REASONS:
+        return float("nan"), (
+            f"open arc ended by {reason.value}, not by an event: the missing "
+            f"arclength beyond the {end} pose is unbounded by any margin"
+        )
+    distance = arclength_to_event(margins, previous_margins, advance)
+    if not np.isfinite(distance):
+        return float("nan"), (
+            f"open arc ended by {reason.value} but no margin decreased over "
+            f"the last accepted edge at the {end} end: no linear-rate distance to the event"
+        )
+    return float(integrand * distance), (
+        f"{end} integrand value times the linear-rate arclength from the {end} "
+        f"accepted pose to the {reason.value} event "
+        f"(continuation.arclength_to_event: {distance:.3e})"
+    )
+
+
+def _endpoint_truncation(result: TraceLike, terminal_integrand: float) -> tuple[float, str]:
+    """Raw open-arc truncation estimate at the terminal end, with its note.
+
+    The terminal end is the forward trace's end for a one-sided
+    :class:`FiberResult` and for a stitched :class:`.resample.OpenArc` alike;
+    the one-sided note states that the seed end is not a boundary, the
+    two-sided start is handled by :func:`_start_truncation`.
+    """
     if result.status == FiberStatus.CLOSED:
         return float("nan"), "closed loop: no endpoints"
-    if result.reason not in {
-        TerminationReason.TIR_BOUNDARY, TerminationReason.BRANCH_BOUNDARY,
-        TerminationReason.PATH_INFEASIBLE, TerminationReason.VISIBILITY_BOUNDARY,
-        TerminationReason.CHART_BOUNDARY, TerminationReason.RANK_LOSS,
-        TerminationReason.TOPOLOGY_AMBIGUITY,
-    }:
-        return float("nan"), (
-            f"open arc ended by {result.reason.value}, not by an event: the missing "
-            "arclength beyond the terminal pose is unbounded by any margin"
-        )
     margins = result.branch_diagnostics.accepted_margins
     if len(margins) < 2:
         return float("nan"), "open arc with a single accepted pose: no margin rate"
-    distance = arclength_to_event(
-        margins[-1], margins[-2], float(result.arclength_increments[-1])
+    estimate, note = _event_truncation(
+        result.reason, margins[-1], margins[-2], float(result.arclength_increments[-1]),
+        terminal_integrand, "terminal",
     )
-    if not np.isfinite(distance):
+    if not isinstance(result, OpenArc):
+        note += "; the seed end is not a boundary"
+    return estimate, note
+
+
+def _start_truncation(result: TraceLike, start_integrand: float) -> tuple[float, str]:
+    """Raw truncation estimate at the start end: only a stitched :class:`OpenArc` has one."""
+    if not isinstance(result, OpenArc):
+        return float("nan"), ResampledQuadratureResult.start_endpoint_truncation_note
+    margins = result.branch_diagnostics.accepted_margins
+    if result.seed_index < 1 or len(margins) < 2:
+        # The backward trace met its event at the seed: the start *is* the
+        # seed pose and the only edge is the forward one, whose margin rate
+        # describes the wrong end.
         return float("nan"), (
-            f"open arc ended by {result.reason.value} but no margin decreased over "
-            "the last accepted edge: no linear-rate distance to the event"
+            f"open arc whose start end is the seed itself ({result.start_reason.value} "
+            "met before any backward step): no margin rate at the start"
         )
-    return float(terminal_integrand * distance), (
-        "terminal integrand value times the linear-rate arclength from the last "
-        f"accepted pose to the {result.reason.value} event "
-        f"(continuation.arclength_to_event: {distance:.3e}); the seed end is not a boundary"
+    return _event_truncation(
+        result.start_reason, margins[0], margins[1], float(result.arclength_increments[0]),
+        start_integrand, "start",
     )
 
 
 def _resampled_unavailable(
-    status: str, result: FiberResult, options: ResampleOptions
+    status: str, result: TraceLike, options: ResampleOptions
 ) -> ResampledQuadratureResult:
     return ResampledQuadratureResult(
         status=status,
@@ -420,16 +483,19 @@ def _resampled_unavailable(
         endpoint_truncation_estimate=float("nan"),
         endpoint_truncation_note=f"not computed: {status}",
         factor_seconds={},
+        start_endpoint_truncation_note=f"not computed: {status}",
     )
 
 
 def integrate_fiber_resampled(
     problem: FiberProblem,
-    result: FiberResult,
+    result: TraceLike,
     options: ResampleOptions | None = None,
 ) -> ResampledQuadratureResult:
     """Integrate the partial physical integrand along ``result`` on a resampled grid.
 
+    ``result`` is a :class:`FiberResult` or a stitched :class:`.resample.OpenArc`
+    (any :class:`.resample.TraceLike`).
     See :data:`RESAMPLED_QUADRATURE_METHOD`.  The accepted samples define the
     predictor spline (:mod:`.resample`); every uniform grid node is retracted
     onto the fiber in one batch (:func:`.continuation.retract_to_fiber_batch`),
@@ -473,6 +539,7 @@ def integrate_fiber_resampled(
         node_count = 2 * node_count - 1
 
     truncation, truncation_note = _endpoint_truncation(result, float(grid.integrand[-1]))
+    start_truncation, start_truncation_note = _start_truncation(result, float(grid.integrand[0]))
     return ResampledQuadratureResult(
         status="available",
         method=RESAMPLED_QUADRATURE_METHOD,
@@ -501,6 +568,8 @@ def integrate_fiber_resampled(
         endpoint_truncation_estimate=truncation * HAAR_TO_DVOL_G_FACTOR,
         endpoint_truncation_note=truncation_note,
         factor_seconds=dict(grid.factor_seconds),
+        start_endpoint_truncation_estimate=start_truncation * HAAR_TO_DVOL_G_FACTOR,
+        start_endpoint_truncation_note=start_truncation_note,
     )
 
 

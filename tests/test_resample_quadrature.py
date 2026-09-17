@@ -34,6 +34,7 @@ from lumice_integral.quadrature import (
     ResampleOptions,
     integrate_fiber_resampled,
 )
+from lumice_integral.resample import OpenArc, TraceLike, fiber_spline, resample_spline, stitch_open_arc, uniform_parameters
 from lumice_integral.strip_pixel import PixelOptions, canonical_strip_scene, pixel_target
 from lumice_integral.weights import WeightEvaluator
 
@@ -256,6 +257,78 @@ def test_event_terminated_arc_integrates_to_its_extent_and_estimates_the_truncat
     assert quadrature.endpoint_truncation_estimate == pytest.approx(expected_truncation, rel=1e-9)
     assert "visibility_boundary" in quadrature.endpoint_truncation_note
     assert "seed end is not a boundary" in quadrature.endpoint_truncation_note
+
+
+def _two_sided_cap(theta_min: float, theta_max: float):
+    def cap(rotation):
+        theta = _circle_angle(np.asarray(rotation))
+        margins = {"cap_hi": theta_max - theta, "cap_lo": theta - theta_min}
+        if margins["cap_hi"] < 0.0:
+            return DomainEvaluation(False, margins, EventCandidate(TerminationReason.VISIBILITY_BOUNDARY, margins["cap_hi"]))
+        if margins["cap_lo"] < 0.0:
+            return DomainEvaluation(False, margins, EventCandidate(TerminationReason.TIR_BOUNDARY, margins["cap_lo"]))
+        return DomainEvaluation(True, margins)
+
+    return cap
+
+
+def test_stitched_two_sided_arc_integrates_like_its_halves_and_estimates_both_truncations():
+    """task-pixel-pipeline-v2 Step 0 probe, frozen: a forward and a backward
+    trace of one seed on the circle cut at both ends, stitched into an
+    :class:`OpenArc`, resample to a C^1 predictor with ``ds/dt > 0`` and
+    integrate to the analytic value (= the sum of the one-sided integrals),
+    with the terminal truncation equal to the one-sided estimate and the
+    start truncation the mirrored linear-rate estimate at the backward end."""
+    theta_min, theta_max = -1.3, 2.0
+    problem = _circle_problem(lambda r: 1.0 + 0.5 * np.cos(_circle_angle(np.asarray(r))), _two_sided_cap(theta_min, theta_max))
+    forward = trace_fiber(problem)
+    backward = trace_fiber(problem, ContinuationOptions(initial_tangent_sign=-1))
+    assert forward.reason == TerminationReason.VISIBILITY_BOUNDARY
+    assert backward.reason == TerminationReason.TIR_BOUNDARY
+
+    arc = stitch_open_arc(forward, backward)
+    assert isinstance(arc, OpenArc) and isinstance(arc, TraceLike) and isinstance(forward, TraceLike)
+    thetas = np.array([_circle_angle(pose) for pose in arc.poses])
+    assert np.all(np.diff(thetas) > 0.0) and arc.seed_index == len(backward.poses) - 1
+    spline = fiber_spline(arc)
+    assert not spline.closed
+    predictors = resample_spline(spline, uniform_parameters(spline, 2001))
+    speeds = np.linalg.norm(predictors.body_velocities, axis=1)
+    assert np.all(speeds > 0.0) and np.allclose(speeds, 1.0, atol=1e-9)
+    predictor_thetas = np.array([_circle_angle(r) for r in predictors.rotations])
+    assert np.abs(np.diff(predictor_thetas, 2)).max() < 1e-9  # C^1 through the seed knot
+
+    quadrature = integrate_fiber_resampled(problem, arc)
+    lo, hi = thetas[0], thetas[-1]
+    analytic = ((hi - lo) + 0.5 * (np.sin(hi) - np.sin(lo))) / (1.0 + EPSILON)
+    halves = integrate_fiber_resampled(problem, forward), integrate_fiber_resampled(problem, backward)
+    assert quadrature.fiber_status == "event_terminated"
+    assert quadrature.raw_value == pytest.approx(analytic, rel=1e-8)
+    assert quadrature.raw_value == pytest.approx(halves[0].raw_value + halves[1].raw_value, rel=1e-8)
+    assert quadrature.endpoint_truncation_estimate == pytest.approx(halves[0].endpoint_truncation_estimate, rel=1e-9)
+    assert "visibility_boundary" in quadrature.endpoint_truncation_note
+    assert "seed end" not in quadrature.endpoint_truncation_note
+    # Start end: constant-rate margin, so the linear-rate distance is exact.
+    start_integrand = (1.0 + 0.5 * np.cos(lo)) / (1.0 + EPSILON)
+    expected_start = start_integrand * (lo - theta_min) * HAAR_TO_DVOL_G_FACTOR
+    assert quadrature.start_endpoint_truncation_estimate == pytest.approx(expected_start, rel=1e-6)
+    assert "tir_boundary" in quadrature.start_endpoint_truncation_note
+    assert "start" in quadrature.start_endpoint_truncation_note
+    # One-sided inputs keep the start field inert (regression guard for the
+    # frozen ADAPTIVE_REFERENCE path).
+    assert np.isnan(halves[0].start_endpoint_truncation_estimate)
+    assert "seed" in halves[0].start_endpoint_truncation_note
+
+
+def test_stitch_open_arc_rejects_traces_of_different_seeds():
+    problem = _circle_problem(lambda _: 1.0, _two_sided_cap(-1.0, 1.0))
+    forward = trace_fiber(problem)
+    other = trace_fiber(
+        FiberProblem(**{**problem.__dict__, "seed": jnp.asarray(forward.poses[2])}),
+        ContinuationOptions(initial_tangent_sign=-1),
+    )
+    with pytest.raises(ValueError, match="same seed"):
+        stitch_open_arc(forward, other)
 
 
 def test_budget_truncated_arc_is_integrated_but_gets_no_truncation_estimate(canonical):

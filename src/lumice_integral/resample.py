@@ -32,17 +32,26 @@ differ at ``O(h^2)`` on a non-geodesic fiber, ``scratchpad/learnings.md``
 code-quality) and the normalised quaternion curve does not lie on the fiber.
 Both are absorbed downstream: the retraction moves each point onto the fiber
 and the implicit-function speed ``ds/dt`` is evaluated exactly there.
+
+Inputs.  :func:`fiber_spline` reads only the structural attributes declared by
+:class:`TraceLike`; both :class:`.continuation.FiberResult` (one trace from a
+seed) and :class:`OpenArc` (two traces from the same seed stitched into one
+curve, task-pixel-pipeline-v2) satisfy it.  The two are deliberately not
+related by inheritance: an ``OpenArc`` is a *pair* of traces with its own
+two-ended event bookkeeping, and the Protocol makes the shared contract
+checkable instead of a documented convention.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Protocol, runtime_checkable
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
-from .continuation import FiberResult, FiberStatus
+from .continuation import BranchDiagnostic, FiberResult, FiberStatus, TerminationReason
 from .so3 import (
     continuous_quaternion_signs,
     quaternion_derivative,
@@ -50,6 +59,116 @@ from .so3 import (
     rotation_from_quaternion,
     vee,
 )
+
+
+@runtime_checkable
+class TraceLike(Protocol):
+    """What the resampling and the quadrature read from a traced curve.
+
+    ``poses`` ``(N, 3, 3)``, ``tangents`` ``(N, 3)`` (unit fiber tangents in
+    the body frame, oriented along increasing sample order),
+    ``arclength_increments`` ``(N - 1,)`` (geodesic chords between consecutive
+    poses, all positive), ``status``/``reason`` of the curve's terminal end,
+    and ``branch_diagnostics.accepted_margins`` aligned with ``poses`` (the
+    event margins the endpoint truncation estimates read).
+    """
+
+    @property
+    def poses(self) -> np.ndarray: ...
+
+    @property
+    def tangents(self) -> np.ndarray: ...
+
+    @property
+    def arclength_increments(self) -> np.ndarray: ...
+
+    @property
+    def status(self) -> FiberStatus: ...
+
+    @property
+    def reason(self) -> TerminationReason: ...
+
+    @property
+    def branch_diagnostics(self) -> BranchDiagnostic: ...
+
+
+@dataclass(frozen=True)
+class OpenArc:
+    """Two traces from one seed, stitched into one curve with an event at each end.
+
+    Built by :func:`stitch_open_arc` from a ``forward`` trace and a
+    ``backward`` trace (``ContinuationOptions.initial_tangent_sign = -1``) of
+    the same corrected seed, both terminated by a named event.  The stitched
+    curve runs from the backward end through the seed to the forward end:
+    ``poses[seed_index]`` is the seed, the reversed backward tangents are
+    negated so every ``tangents[i]`` points along increasing ``i``, and the
+    seed knot carries ``forward.tangents[0]``.
+
+    ``status`` is :attr:`.continuation.FiberStatus.EVENT_TERMINATED` and
+    ``reason`` is the *forward* end's event (the terminal end of the
+    parametrisation, as for a one-sided arc); ``start_reason`` is the backward
+    end's.  ``branch_diagnostics.accepted_margins`` is aligned with ``poses``
+    so the quadrature can estimate the truncation at both ends.  The one
+    continuation-level scope statement still holds: one component reached
+    from one seed, completeness unknown.
+    """
+
+    forward: FiberResult
+    backward: FiberResult
+    poses: np.ndarray
+    tangents: np.ndarray
+    arclength_increments: np.ndarray
+    branch_diagnostics: BranchDiagnostic
+    seed_index: int
+    status: FiberStatus = FiberStatus.EVENT_TERMINATED
+
+    @property
+    def reason(self) -> TerminationReason:
+        return self.forward.reason
+
+    @property
+    def start_reason(self) -> TerminationReason:
+        return self.backward.reason
+
+    @property
+    def arclength(self) -> float:
+        return float(np.sum(self.arclength_increments)) if len(self.poses) > 1 else 0.0
+
+
+def stitch_open_arc(forward: FiberResult, backward: FiberResult) -> OpenArc:
+    """Stitch a forward and a backward trace of the same seed (see :class:`OpenArc`).
+
+    Both traces must start at the same pose (the seed, index 0 of each) and
+    have at least one accepted pose; neither is required to have advanced
+    (a trace that met its event at the seed contributes only the seed).  The
+    tangent sign convention is the one the Step 0 probe of
+    task-pixel-pipeline-v2 verified on an analytic two-sided arc: the
+    stitched spline is C^1 through the seed, ``ds/dt > 0`` everywhere, and its
+    integral equals the sum of the two one-sided integrals.
+    """
+    if len(forward.poses) < 1 or len(backward.poses) < 1:
+        raise ValueError("both traces need at least the seed pose")
+    if not np.allclose(forward.poses[0], backward.poses[0], atol=1e-12):
+        raise ValueError("forward and backward traces do not start at the same seed")
+    back_poses = np.asarray(backward.poses[1:][::-1], dtype=np.float64)
+    back_tangents = -np.asarray(backward.tangents[1:][::-1], dtype=np.float64)
+    back_increments = np.asarray(backward.arclength_increments[::-1], dtype=np.float64)
+    back_margins = tuple(backward.branch_diagnostics.accepted_margins[1:][::-1])
+    return OpenArc(
+        forward=forward,
+        backward=backward,
+        poses=np.concatenate((back_poses, np.asarray(forward.poses, dtype=np.float64))),
+        tangents=np.concatenate((back_tangents, np.asarray(forward.tangents, dtype=np.float64))),
+        arclength_increments=np.concatenate(
+            (back_increments, np.asarray(forward.arclength_increments, dtype=np.float64))
+        ),
+        branch_diagnostics=BranchDiagnostic(
+            path=forward.branch_diagnostics.path,
+            accepted_margins=back_margins + tuple(forward.branch_diagnostics.accepted_margins),
+            terminal_margins=forward.branch_diagnostics.terminal_margins,
+        ),
+        seed_index=len(back_poses),
+    )
 
 
 @dataclass(frozen=True)
@@ -112,12 +231,13 @@ def _quaternion_derivative_batch(quaternions: np.ndarray, tangents: np.ndarray) 
     )
 
 
-def fiber_spline(result: FiberResult) -> FiberSpline:
-    """Build the predictor spline of a traced fiber (closed loop or open arc).
+def fiber_spline(result: TraceLike) -> FiberSpline:
+    """Build the predictor spline of a traced curve (closed loop or open arc).
 
-    Requires at least two accepted poses (three for a closed loop, whose
-    duplicated closing sample is dropped) and aligned ``tangents`` /
-    ``arclength_increments``.
+    ``result`` is any :class:`TraceLike` (a :class:`.continuation.FiberResult`
+    or a stitched :class:`OpenArc`).  Requires at least two accepted poses
+    (three for a closed loop, whose duplicated closing sample is dropped) and
+    aligned ``tangents`` / ``arclength_increments``.
     """
     poses = np.asarray(result.poses, dtype=np.float64)
     tangents = np.asarray(result.tangents, dtype=np.float64)
@@ -185,7 +305,7 @@ def _rotation_and_body_velocity_kernel(quaternions: jnp.ndarray, derivatives: jn
     return jax.vmap(one)(quaternions, derivatives)
 
 
-def resample_fiber(result: FiberResult, node_count: int) -> ResampledPredictors:
+def resample_fiber(result: TraceLike, node_count: int) -> ResampledPredictors:
     """``node_count`` predictor poses at uniform parameters over the whole fiber."""
     spline = fiber_spline(result)
     return resample_spline(spline, uniform_parameters(spline, node_count))
@@ -221,10 +341,13 @@ def resample_spline(spline: FiberSpline, parameters: np.ndarray) -> ResampledPre
 
 __all__ = [
     "FiberSpline",
+    "OpenArc",
     "ResampledPredictors",
+    "TraceLike",
     "evaluate_spline",
     "fiber_spline",
     "resample_fiber",
     "resample_spline",
+    "stitch_open_arc",
     "uniform_parameters",
 ]

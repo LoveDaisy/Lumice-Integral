@@ -947,7 +947,22 @@ def _correct_trial(
         evaluations += 1
         if not domain.valid:
             event = domain.event
-            reason = event.kind if event is not None else TerminationReason.PATH_INFEASIBLE
+            correction_norm = float(np.linalg.norm(np.asarray(delta)))
+            advance = float(_rotation_distance_kernel(current, candidate))
+            if correction_norm > options.maximum_correction or advance > options.maximum_advance:
+                # A Newton iterate outside the trust region that acceptance
+                # itself requires is not evidence of a boundary: it could never
+                # have been accepted where it stands, so the invalid domain it
+                # reports is the corrector running away, not the fiber leaving
+                # the domain.  Reject the trial (the step shrinks) instead of
+                # terminating on a false event (task-pixel-pipeline-v2: pixel
+                # (50, 9), a 0.17 loop whose first 0.04 predictor sent the
+                # corrector 1.18 rad away into a TIR region).
+                reason = TerminationReason.CORRECTOR_FAILURE
+                message = "corrector left the trust region into an invalid domain"
+            else:
+                reason = event.kind if event is not None else TerminationReason.PATH_INFEASIBLE
+                message = event.message if event is not None else "invalid path domain"
             return _CorrectorOutcome(
                 False,
                 None,
@@ -956,13 +971,13 @@ def _correct_trial(
                 iteration,
                 last_residual,
                 last_update,
-                float(np.linalg.norm(np.asarray(delta))),
-                float(_rotation_distance_kernel(current, candidate)),
+                correction_norm,
+                advance,
                 float("nan"),
                 reason,
-                event,
+                event if reason != TerminationReason.CORRECTOR_FAILURE else None,
                 evaluations,
-                event.message if event is not None else "invalid path domain",
+                message,
             )
         try:
             newton = _trial_newton_step_kernel(
