@@ -6,14 +6,18 @@ too-steep fall-off: every metric here is sensitive to *multiplicative* bias
 and every panel is on a log scale.
 
 1. Row-band ratio: for each 50-row band, ``median(ours / historical)`` over
-   pixels that are rendered, ``complete`` and positive in both; the curve is
-   reported raw and relative to its whole-image median, so a uniform scale
-   factor (the two arrays have unrelated units) sits at ``1`` and any band
-   that decays differently stands out.
+   pixels that are rendered, ``complete`` and positive in both, on the
+   centre columns ``101-151`` (the two images differ in width, so an
+   all-column median mixes the wings into the vertical decay; the
+   all-column curve is kept as a secondary series); the curve is reported
+   raw and relative to its whole-image median, so a uniform scale factor
+   (the two arrays have unrelated units) sits at ``1`` and any band that
+   decays differently stands out.
 2. Log-domain profiles: the vertical profile of column ``126`` and the
    horizontal profiles of rows ``150 / 300 / 450``; every profile is
    max-normalised, taken to ``log10`` and the RMS of the difference against
-   the historical profile is reported (points where both are positive).
+   the historical profile is reported, over the lit band (both above
+   ``1e-3``) and over every positive point.
 3. Inner-edge row offset: the first row of the column-``126`` profile whose
    normalised value exceeds a threshold, for ours and the historical raw,
    reported at several thresholds because the choice is a calibration.
@@ -55,6 +59,8 @@ HEIGHT, WIDTH = 801, 251
 PROBE_COLUMN = 126
 PROBE_ROWS = (150, 300, 450)
 BAND_ROWS = 50
+CENTRE_COLUMNS = (101, 152)  # half-open; +-25 columns around the profile column
+PROFILE_LIT_FLOOR = 1e-3  # normalised level above which a profile point counts as inside the lit band
 EDGE_THRESHOLDS = (1e-3, 1e-2, 1e-1)
 PROFILE_FLOOR = 1e-4
 
@@ -131,19 +137,30 @@ def band_ratios(ours: np.ndarray, hist: np.ndarray, usable: np.ndarray) -> list[
 
 
 def log_profile_rms(a: np.ndarray, b: np.ndarray, valid: np.ndarray | None = None) -> dict[str, Any]:
+    """RMS of ``log10(norm(a)) - log10(norm(b))``: over every positive point, and over the lit band only.
+
+    The far wings of the historical raw hold values down to ``1e-8`` where the
+    strip is ``1e-12``; their log difference says nothing about the band, so the
+    ``lit_band`` numbers (both profiles above :data:`PROFILE_LIT_FLOOR`) are the
+    ones to read, the ``all`` numbers show how much the wings add.
+    """
     na, nb = norm(a), norm(b)
     mask = np.isfinite(na) & np.isfinite(nb) & (na > 0) & (nb > 0)
     if valid is not None:
         mask &= valid
-    if not mask.any():
-        return {"rms_log10": float("nan"), "count": 0}
-    diff = np.log10(na[mask]) - np.log10(nb[mask])
-    return {
-        "rms_log10": float(np.sqrt(np.mean(diff**2))),
-        "mean_log10": float(np.mean(diff)),
-        "count": int(mask.sum()),
-        "spearman": float(spearmanr(na[mask], nb[mask]).correlation),
-    }
+    out: dict[str, Any] = {}
+    for key, m in (("all", mask), ("lit_band", mask & (na >= PROFILE_LIT_FLOOR) & (nb >= PROFILE_LIT_FLOOR))):
+        if not m.any():
+            out[key] = {"rms_log10": float("nan"), "count": 0}
+            continue
+        diff = np.log10(na[m]) - np.log10(nb[m])
+        out[key] = {
+            "rms_log10": float(np.sqrt(np.mean(diff**2))),
+            "mean_log10": float(np.mean(diff)),
+            "count": int(m.sum()),
+            "spearman": float(spearmanr(na[m], nb[m]).correlation),
+        }
+    return out
 
 
 def first_index_above(profile: np.ndarray, threshold: float) -> int | None:
@@ -206,6 +223,7 @@ def make_figures(
     rendered: np.ndarray,
     unknown: np.ndarray,
     bands: list[dict[str, Any]],
+    bands_all_columns: list[dict[str, Any]],
     baseline_bands: list[dict[str, Any]] | None,
     bands_on_baseline_columns: list[dict[str, Any]] | None,
     column: int,
@@ -253,16 +271,19 @@ def make_figures(
     rel = [b["median_relative"] for b in bands[1:] if "median_relative" in b]
     lo = [b["p25_relative"] for b in bands[1:] if "median_relative" in b]
     hi = [b["p75_relative"] for b in bands[1:] if "median_relative" in b]
-    ax.fill_between(centres, lo, hi, color="#2a7de1", alpha=0.15, lw=0, label="ours: p25-p75")
-    ax.semilogy(centres, rel, "o-", color="#2a7de1", lw=2, label="ours v2 (median per 50-row band)")
+    ax.fill_between(centres, lo, hi, color="#2a7de1", alpha=0.15, lw=0, label="ours: p25-p75 (centre columns)")
+    ax.semilogy(centres, rel, "o-", color="#2a7de1", lw=2, label=f"ours v2, columns {CENTRE_COLUMNS[0]}-{CENTRE_COLUMNS[1] - 1} (median per 50-row band)")
+    ac = [0.5 * (b["rows"][0] + b["rows"][1]) for b in bands_all_columns[1:] if "median_relative" in b]
+    ar = [b["median_relative"] for b in bands_all_columns[1:] if "median_relative" in b]
+    ax.semilogy(ac, ar, "x-", color="#7fb3e6", lw=1, ms=5, label="ours v2, all columns (wing shapes differ)")
     if baseline_bands:
         bc = [0.5 * (b["rows"][0] + b["rows"][1]) for b in baseline_bands[1:] if "median_relative" in b]
         br = [b["median_relative"] for b in baseline_bands[1:] if "median_relative" in b]
-        ax.semilogy(bc, br, "s--", color="#999999", lw=1.5, ms=4, label="v1 baseline (its 58 columns)")
+        ax.semilogy(bc, br, "s--", color="#999999", lw=1.5, ms=4, label="v1 baseline (its centre columns)")
     if bands_on_baseline_columns:
         bc = [0.5 * (b["rows"][0] + b["rows"][1]) for b in bands_on_baseline_columns[1:] if "median_relative" in b]
         br = [b["median_relative"] for b in bands_on_baseline_columns[1:] if "median_relative" in b]
-        ax.semilogy(bc, br, "^:", color="#2a7de1", lw=1.2, ms=4, alpha=0.7, label="ours v2 on the v1 columns")
+        ax.semilogy(bc, br, "^:", color="#2a7de1", lw=1.2, ms=4, alpha=0.7, label="ours v2 on the same columns")
     ax.axhline(1.0, color="#e07b00", lw=1.2, ls="--", label="uniform scale")
     ax.set_ylim(0.05, 20)
     ax.set_xlabel("row (band centre)")
@@ -341,13 +362,17 @@ def main(argv: list[str] | None = None) -> None:
     column = int(rendered_columns[np.argmin(np.abs(rendered_columns - args.column))])
     label = args.label or provenance.get("execution", {}).get("label", "") or str(args.strip_dir)
 
-    bands = band_ratios(ours, hist, complete)
+    centre = np.zeros(WIDTH, dtype=bool)
+    centre[CENTRE_COLUMNS[0] : CENTRE_COLUMNS[1]] = True
+    bands = band_ratios(ours, hist, complete & centre[None, :])
+    bands_all_columns = band_ratios(ours, hist, complete)
     baseline_bands = None
     bands_on_baseline_columns = None
     if baseline is not None:
-        baseline_bands = band_ratios(baseline, hist, np.isfinite(baseline))
-        # like-for-like: ours restricted to the columns the v1 baseline rendered
-        bands_on_baseline_columns = band_ratios(ours, hist, complete & np.isfinite(baseline).any(axis=0)[None, :])
+        # like-for-like on the centre columns the v1 baseline rendered (108 .. 144, every ninth)
+        baseline_columns = np.isfinite(baseline).any(axis=0) & centre
+        baseline_bands = band_ratios(baseline, hist, np.isfinite(baseline) & baseline_columns[None, :])
+        bands_on_baseline_columns = band_ratios(ours, hist, complete & baseline_columns[None, :])
     profiles: dict[str, Any] = {
         f"column_{column}_vs_historical": log_profile_rms(np.where(rendered[:, column], ours[:, column], 0.0), hist[:, column], complete[:, column]),
         f"column_{column}_vs_lumice": log_profile_rms(np.where(rendered[:, column], ours[:, column], 0.0), lum[:, column], complete[:, column]),
@@ -385,7 +410,9 @@ def main(argv: list[str] | None = None) -> None:
         "lumice_caveat": "tone-mapped 8-bit grey; log-domain numbers against it measure display space, not radiometry",
         "profile_column": column,
         "status_summary": status_summary,
+        "band_ratio_columns": list(CENTRE_COLUMNS),
         "band_ratio_vs_historical": bands,
+        "band_ratio_vs_historical_all_columns": bands_all_columns,
         "band_ratio_v1_baseline": baseline_bands,
         "band_ratio_ours_on_v1_columns": bands_on_baseline_columns,
         "column_decay_ratio": decay_ratio_along_column(ours, hist, complete, column),
@@ -403,6 +430,7 @@ def main(argv: list[str] | None = None) -> None:
             rendered=rendered,
             unknown=unknown,
             bands=bands,
+            bands_all_columns=bands_all_columns,
             baseline_bands=baseline_bands,
             bands_on_baseline_columns=bands_on_baseline_columns,
             column=column,
@@ -412,12 +440,12 @@ def main(argv: list[str] | None = None) -> None:
     out.write_text(json.dumps(metrics, indent=2) + "\n")
 
     print(f"strip: {status_summary['rendered']} rendered, {status_summary['complete']} complete, {status_summary['unknown']} unknown, {status_summary['has_arc']} with arcs")
-    print("band ratio (median relative to whole-image median):")
+    print(f"band ratio, columns {CENTRE_COLUMNS[0]}-{CENTRE_COLUMNS[1] - 1} (median relative to whole-image median):")
     for b in bands[1:]:
         if "median_relative" in b:
             print(f"  rows {b['rows'][0]:3d}-{b['rows'][1]:3d}: {b['median_relative']:.3f}  (n={b['count']})")
     for key, value in profiles.items():
-        print(f"log profile {key}: rms {value['rms_log10']:.3f} (n={value['count']})")
+        print(f"log profile {key}: lit-band rms {value['lit_band']['rms_log10']:.3f} (n={value['lit_band']['count']}), all rms {value['all']['rms_log10']:.3f} (n={value['all']['count']})")
     for key, value in edges.items():
         for e in value:
             print(f"edge {key} @{e['threshold']:g}: hist {e['historical_row']} ours {e['ours_row']} lumice {e['lumice_row']} -> ours-hist {e['ours_minus_historical']}")
