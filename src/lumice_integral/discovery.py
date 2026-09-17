@@ -64,6 +64,7 @@ from __future__ import annotations
 import time
 from collections import Counter
 from dataclasses import dataclass, replace
+from functools import partial
 from typing import Literal, Mapping, Sequence
 
 import jax
@@ -74,12 +75,12 @@ from jax import Array
 from .analytic import tangent_basis
 from .continuation import (
     ContinuationOptions,
+    DirectionEvaluator,
     FiberProblem,
     FiberResult,
     FiberStatus,
     TargetChart,
     TerminationReason,
-    local_residual_jacobian,
     target_residual,
     trace_fiber,
 )
@@ -194,6 +195,9 @@ class ComponentDiscoveryResult:
         return len(self.incomplete)
 
 
+_distances_kernel = jax.jit(jax.vmap(rotation_distance, in_axes=(None, 0)))
+
+
 def _geodesic_cluster(rotations: np.ndarray, radius: float) -> list[list[int]]:
     """Greedy clustering by SO(3) geodesic distance to the first unassigned member."""
     count = rotations.shape[0]
@@ -202,19 +206,11 @@ def _geodesic_cluster(rotations: np.ndarray, radius: float) -> list[list[int]]:
     rotation_array = jnp.asarray(rotations)
     while unassigned:
         seed_index = next(iter(unassigned))
-        seed_rotation = rotation_array[seed_index]
-        distances = np.asarray(
-            jax.vmap(lambda r: rotation_distance(seed_rotation, r))(rotation_array)
-        )
+        distances = np.asarray(_distances_kernel(rotation_array[seed_index], rotation_array))
         members = [i for i in unassigned if distances[i] < radius]
         clusters.append(members)
         unassigned -= set(members)
     return clusters
-
-
-_distance_to_curve_kernel = jax.jit(
-    lambda rotation, poses: jnp.min(jax.vmap(lambda pose: rotation_distance(rotation, pose))(poses))
-)
 
 
 def distance_to_curve(rotation: np.ndarray, poses: np.ndarray) -> float:
@@ -225,7 +221,27 @@ def distance_to_curve(rotation: np.ndarray, poses: np.ndarray) -> float:
     be up to half a chord away from the nearest sample; the dedup threshold
     must absorb that.
     """
-    return float(_distance_to_curve_kernel(jnp.asarray(rotation), jnp.asarray(poses)))
+    return float(jnp.min(_distances_kernel(jnp.asarray(rotation), jnp.asarray(poses))))
+
+
+@partial(jax.jit, static_argnums=(0,))
+def _newton_step_kernel(
+    direction_evaluator: DirectionEvaluator, rotation: Array, chart_direction: Array, chart_basis: Array
+) -> tuple[Array, Array]:
+    """One Gauss-Newton update of ``rotation`` towards the target chart's fiber.
+
+    Returns the updated pose and the residual norm *before* the update, so
+    the caller can stop when the pose it already holds is on the fiber.
+    """
+
+    def residual(delta: Array) -> Array:
+        direction = direction_evaluator(rotation @ exp(delta))
+        return chart_basis.T @ (direction - chart_direction)
+
+    zero = jnp.zeros(3, dtype=rotation.dtype)
+    value, jacobian = residual(zero), jax.jacfwd(residual)(zero)
+    delta = -jacobian.T @ jnp.linalg.solve(jacobian @ jacobian.T, value)
+    return rotation @ exp(delta), jnp.linalg.norm(value)
 
 
 def _newton_correct(
@@ -235,15 +251,15 @@ def _newton_correct(
 
     Unlike :func:`.continuation.retract_to_fiber` this needs no on-fiber base
     pose or phase tangent; it only pulls a prescan sample onto the fiber.
+    Each iteration is one compiled kernel keyed on the problem's
+    ``direction_evaluator`` (shared through ``template``).
     """
+    chart = problem.target_chart
     for _ in range(iterations):
-        residual = target_residual(problem, rotation)
-        norm = float(jnp.linalg.norm(residual))
-        if norm <= tolerance:
-            return rotation, norm
-        jacobian = local_residual_jacobian(problem, rotation)
-        delta = -jacobian.T @ jnp.linalg.solve(jacobian @ jacobian.T, residual)
-        rotation = rotation @ exp(delta)
+        updated, norm = _newton_step_kernel(problem.direction_evaluator, rotation, chart.direction, chart.basis)
+        if float(norm) <= tolerance:
+            return rotation, float(norm)
+        rotation = updated
     return rotation, float(jnp.linalg.norm(target_residual(problem, rotation)))
 
 
