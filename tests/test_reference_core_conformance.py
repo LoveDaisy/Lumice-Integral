@@ -14,6 +14,12 @@ import numpy as np
 import pytest
 
 from lumice_integral.analytic import BODY_AXIS, direction_map, tangent_basis
+from lumice_integral.camera import linear_pixel_outgoing_direction
+from lumice_integral.canonical_scene import (
+    CANONICAL_REFRACTIVE_INDEX,
+    CANONICAL_RENDER,
+    canonical_incident_direction,
+)
 from lumice_integral.continuation import (
     ContinuationOptions,
     DomainEvaluation,
@@ -25,9 +31,14 @@ from lumice_integral.continuation import (
     TerminationReason,
     trace_fiber,
 )
-from lumice_integral.optics import path_3_5
+from lumice_integral.optics import path_3_5, path_3_5_problem
 from lumice_integral.so3 import exp
 from lumice_integral.weights import WeightObservable
+
+# Reference defaults of the closure extent gate before
+# task-continuation-gates-and-fixtures (absolute: 40 steps and pi arclength).
+# Passed literally to reproduce the pre-fix behaviour on the same fixtures.
+_LEGACY_CLOSURE_GATE = dict(closure_minimum_steps=40, closure_minimum_arclength=np.pi)
 
 
 def _analytic_problem(*, direction_evaluator=direction_map) -> FiberProblem:
@@ -37,6 +48,99 @@ def _analytic_problem(*, direction_evaluator=direction_map) -> FiberProblem:
         target_chart=TargetChart(BODY_AXIS, tangent_basis(BODY_AXIS)),
         direction_evaluator=direction_evaluator,
         seed=jnp.eye(3, dtype=jnp.float64),
+    )
+
+
+# --- Analytic short loops: the conjugation circle --------------------------
+#
+# Every map of the form ``G(R v)`` (the body-axis map above, a double-mirror
+# reflection, ...) has fibers that are cosets of a one-parameter subgroup and
+# hence length ``2 pi``, so a short analytic loop needs a map that reads more
+# than one body vector.  ``_conjugation_map`` reads the rotation angle
+# ``phi`` and the axis component ``sin(phi) u . a`` of the pose itself:
+# ``F(R) = normalize((cos phi, sin(phi) u . a, 1))``.  Its fiber through
+# ``Rot(u0, theta)`` is the conjugation circle ``t -> Rot(exp(t a) u0, theta)``
+# of rotations by the fixed angle ``theta`` about axes on the cone
+# ``u . a = cos beta``.  Its body angular velocity ``R^T a - a`` has the
+# constant norm ``2 sin(theta / 2) sin(beta)``, so the loop length is exactly
+# ``4 pi sin(theta / 2) sin(beta)`` under the section 5.1 metric: two knobs
+# that place the length anywhere below ``2 pi``.  Both ``(cos phi, sin phi u)``
+# are smooth functions of ``R`` away from angle ``pi``.
+_CONJUGATION_CONE_AXIS = jnp.array([0.0, 0.0, 1.0], dtype=jnp.float64)
+_CONJUGATION_ANGLE = np.pi / 2.0
+
+
+def _conjugation_map(rotation):
+    cos_angle = (jnp.trace(rotation) - 1.0) / 2.0
+    sin_angle_axis = jnp.array(
+        [
+            rotation[2, 1] - rotation[1, 2],
+            rotation[0, 2] - rotation[2, 0],
+            rotation[1, 0] - rotation[0, 1],
+        ]
+    ) / 2.0
+    lifted = jnp.array([cos_angle, sin_angle_axis @ _CONJUGATION_CONE_AXIS, 1.0])
+    return lifted / jnp.linalg.norm(lifted)
+
+
+def _conjugation_loop_length(cone_angle: float) -> float:
+    return 4.0 * np.pi * np.sin(_CONJUGATION_ANGLE / 2.0) * np.sin(cone_angle)
+
+
+def _conjugation_cone_angle(loop_length: float) -> float:
+    return float(np.arcsin(loop_length / (4.0 * np.pi * np.sin(_CONJUGATION_ANGLE / 2.0))))
+
+
+def _conjugation_problem(loop_length: float) -> FiberProblem:
+    cone_angle = _conjugation_cone_angle(loop_length)
+    axis = jnp.array([np.sin(cone_angle), 0.0, np.cos(cone_angle)], dtype=jnp.float64)
+    seed = exp(_CONJUGATION_ANGLE * axis)
+    target = _conjugation_map(seed)
+    return FiberProblem(
+        path=f"analytic-conjugation-circle:L={loop_length}",
+        incident_direction=jnp.array([1.0, 0.0, 0.0], dtype=jnp.float64),
+        target_chart=TargetChart(target, tangent_basis(target)),
+        direction_evaluator=_conjugation_map,
+        seed=seed,
+    )
+
+
+# --- ch06 strip pixels: short loops and a boundary-hugging loop -------------
+#
+# Seeds frozen from ``discovery.discover_components`` on the canonical scene
+# (``rng_seed=20260916``, 400k prescan samples, 2 deg, 0.3 rad; the
+# ``tests/test_discovery.py`` parameters), task-continuation-gates-and-fixtures
+# Step 0.  Column 126 rows 100/150/224 sit on the lit band below the inner
+# caustic where the 3-5 loop is shorter than pi; column 150 rows 700/780 are
+# the strip's lower band where the loop runs parallel to the exit TIR boundary
+# (``exit_snell_discriminant`` near 0.0175 for the whole lower half of the
+# loop).  Exponential coordinates, ``so3.exp`` gives the seed pose.
+_STRIP_PIXEL_SEED_COORDINATES: dict[tuple[int, int], tuple[float, float, float]] = {
+    (100, 126): (-1.5066578217593831, 0.39664283175724213, 0.0890374620046349),
+    (150, 126): (-1.4208326302791248, 0.614453957148551, -0.0473172496332926),
+    (224, 126): (-1.5933577786781372, -0.12433770957520761, 0.4211233203809581),
+    (700, 150): (-1.614678779370118, -0.3852552208498327, 1.2983286011517758),
+    (780, 150): (-1.68895386947514, 0.14376477560238074, 1.4516482547130902),
+}
+# Single-traversal metric lengths under the reference defaults (Mac, float64);
+# the pre-fix absolute gate closed these three on the second traversal at
+# exactly twice these values (issue evidence: 3.291 / 4.751 / 6.222).
+_STRIP_SHORT_LOOP_LENGTHS = {
+    (100, 126): 1.645239,
+    (150, 126): 2.375620,
+    (224, 126): 3.111244,
+}
+
+
+def _strip_pixel_problem(row: int, column: int) -> FiberProblem:
+    return path_3_5_problem(
+        exp(jnp.asarray(_STRIP_PIXEL_SEED_COORDINATES[(row, column)], dtype=jnp.float64)),
+        jnp.asarray(canonical_incident_direction(), dtype=jnp.float64),
+        target_direction=jnp.asarray(
+            linear_pixel_outgoing_direction(row, column, **CANONICAL_RENDER),
+            dtype=jnp.float64,
+        ),
+        refractive_index=jnp.asarray(CANONICAL_REFRACTIVE_INDEX, dtype=jnp.float64),
     )
 
 
@@ -235,6 +339,31 @@ def optical_controller_sweep(optical_fixture, optical_sweep):
                 maximum_retries=10,
             ),
         ),
+    }
+
+
+_CONJUGATION_SWEEP_STEPS = (0.01, 0.02, 0.04, 0.2)
+
+
+@pytest.fixture(scope="module")
+def conjugation_sweep():
+    # ``maximum_step=step`` so that the step actually sets the resolution
+    # (the controller otherwise grows every run to the same 0.12 cap).
+    return {
+        (length, step): trace_fiber(
+            _conjugation_problem(length),
+            ContinuationOptions(initial_step=step, maximum_step=step),
+        )
+        for length in (1.0, 2.0)
+        for step in _CONJUGATION_SWEEP_STEPS
+    }
+
+
+@pytest.fixture(scope="module")
+def strip_short_loops():
+    return {
+        pixel: trace_fiber(_strip_pixel_problem(*pixel))
+        for pixel in _STRIP_SHORT_LOOP_LENGTHS
     }
 
 
@@ -467,10 +596,150 @@ def test_synthetic_3_5_controller_threshold_perturbation_converges_consistently(
         float(perturbed.arclength_increments.sum())
         - float(reference.arclength_increments.sum())
     ) <= 0.0015
-    assert _rotation_set_distance(perturbed.poses, reference.poses) <= 0.008
+    # Sampled-pose set distance between two discretisations of one traversal
+    # of the 0.964 loop (0.0093 observed; the earlier 0.008 bound was measured
+    # on four traversals, whose interleaved samples lay closer).
+    assert _rotation_set_distance(perturbed.poses, reference.poses) <= 0.012
     assert abs(float(np.dot(perturbed.tangents[0], reference.tangents[0]))) >= (
         1.0 - 2e-14
     )
+
+
+def test_analytic_conjugation_loops_shorter_than_pi_close_on_the_first_traversal(
+    conjugation_sweep,
+):
+    """(a) Loops of length 1.0 and 2.0 close once, with the closed-form length."""
+    for (length, step), result in conjugation_sweep.items():
+        assert result.status == FiberStatus.CLOSED
+        assert result.reason == TerminationReason.CLOSED_LOOP
+        assert result.residual_norms.max() <= 1e-11
+        assert result.closure_diagnostics.section_crossed
+        assert result.closure_diagnostics.final_correction_accepted
+        assert result.closure_diagnostics.seed_distance <= 1e-12
+        assert all(diagnostic.rank == 2 for diagnostic in result.jacobian_diagnostics)
+        # Chord lengths of the sampled polygon under-estimate the metric
+        # length by O(h^2): within 1e-2 relative even at the 0.2 cap.
+        traced = float(result.arclength_increments.sum())
+        assert 0.0 < length - traced <= 1e-2 * length
+    for length in (1.0, 2.0):
+        # Second-order convergence to the closed-form length over the capped
+        # steps 0.01 / 0.02 / 0.04 (error ratio about 4 per halving); the
+        # finest is within 2e-4 relative.
+        errors = [
+            length - float(conjugation_sweep[(length, step)].arclength_increments.sum())
+            for step in _CONJUGATION_SWEEP_STEPS[:3]
+        ]
+        assert errors[0] <= 2e-4 * length
+        for coarse, fine in zip(errors[1:], errors[:-1]):
+            assert 3.0 <= coarse / fine <= 5.0
+
+
+def test_legacy_absolute_closure_gate_traverses_the_analytic_short_loops_repeatedly(
+    conjugation_sweep,
+):
+    """Counterexample: the pre-fix gate closes at the first traversal past pi."""
+    for length, traversals in ((1.0, 4), (2.0, 2)):
+        legacy = trace_fiber(
+            _conjugation_problem(length), ContinuationOptions(**_LEGACY_CLOSURE_GATE)
+        )
+        reference = conjugation_sweep[(length, 0.04)]
+        assert legacy.reason == TerminationReason.CLOSED_LOOP
+        assert float(legacy.arclength_increments.sum()) == pytest.approx(
+            traversals * float(reference.arclength_increments.sum()), rel=1e-3
+        )
+
+
+def test_strip_short_loops_close_at_their_single_traversal_length(strip_short_loops):
+    """(b) Column 126 rows 100/150/224 recover the single-loop lengths."""
+    for pixel, result in strip_short_loops.items():
+        assert result.status == FiberStatus.CLOSED
+        assert result.reason == TerminationReason.CLOSED_LOOP
+        assert result.residual_norms.max() <= 1e-11
+        assert result.closure_diagnostics.section_crossed
+        assert result.closure_diagnostics.final_correction_accepted
+        assert result.closure_diagnostics.seed_distance <= 1e-12
+        assert float(result.arclength_increments.sum()) == pytest.approx(
+            _STRIP_SHORT_LOOP_LENGTHS[pixel], abs=1e-6
+        )
+
+
+@pytest.mark.parametrize("pixel", sorted(_STRIP_SHORT_LOOP_LENGTHS))
+def test_legacy_absolute_closure_gate_doubles_the_strip_short_loops(
+    strip_short_loops, pixel
+):
+    """(c) Double traversal: the pre-fix defaults on the same seeds, literally.
+
+    This is the real behaviour of the reference defaults before
+    task-continuation-gates-and-fixtures on rows 58-225 of the ch06 strip,
+    not a constructed scenario: the loop is shorter than pi, so the absolute
+    gate let the trace pass its seed once and close on the second return.
+    """
+    legacy = trace_fiber(_strip_pixel_problem(*pixel), ContinuationOptions(**_LEGACY_CLOSURE_GATE))
+    single = float(strip_short_loops[pixel].arclength_increments.sum())
+    assert legacy.reason == TerminationReason.CLOSED_LOOP
+    # The second traversal is sampled on a different polygon, hence rtol 1e-3
+    # (the arclength fingerprint tolerance of ``discovery.dedup_components``).
+    assert float(legacy.arclength_increments.sum()) == pytest.approx(2.0 * single, rel=1e-3)
+    assert legacy.closure_diagnostics.seed_distance <= 1e-12
+    assert single == pytest.approx(_STRIP_SHORT_LOOP_LENGTHS[pixel], abs=1e-6)
+
+
+@pytest.mark.parametrize("pixel", [(700, 150), (780, 150)])
+def test_strip_boundary_hugging_loops_no_longer_exhaust_the_step_budget(pixel):
+    """(d) Loops running parallel to the exit TIR boundary close normally.
+
+    Before the rate-based event slowdown these seeds crawled at
+    ``minimum_step`` from about the 80th accepted step until the 4000-step
+    budget ran out (``explore-continuation-degenerate-stall-diagnosis``).
+    """
+    options = ContinuationOptions()
+    result = trace_fiber(_strip_pixel_problem(*pixel), options)
+    assert result.reason != TerminationReason.STEP_BUDGET
+    assert result.status == FiberStatus.CLOSED
+    assert result.reason == TerminationReason.CLOSED_LOOP
+    assert result.residual_norms.max() <= 1e-11
+    assert result.closure_diagnostics.seed_distance <= 1e-12
+    accepted = [d for d in result.step_diagnostics if d.accepted]
+    assert not any(d.proposed_step <= options.minimum_step for d in accepted)
+    margins = [d.event_margins["exit_snell_discriminant"] for d in accepted]
+    assert min(margins) < options.event_slowdown_margin
+    assert min(margins) > 0.0
+
+
+def test_analytic_circle_closes_on_the_first_traversal_with_a_large_step():
+    """(e) A 0.2 initial step cannot jump the section or close early."""
+    result = trace_fiber(
+        _analytic_problem(), ContinuationOptions(initial_step=0.2, maximum_step=0.2)
+    )
+    assert result.status == FiberStatus.CLOSED
+    assert result.reason == TerminationReason.CLOSED_LOOP
+    assert result.residual_norms.max() <= 1e-11
+    assert result.closure_diagnostics.section_crossed
+    assert result.closure_diagnostics.final_correction_accepted
+    assert result.closure_diagnostics.seed_distance <= 1e-12
+    np.testing.assert_allclose(
+        result.closure_diagnostics.accumulated_arclength, 2.0 * np.pi, rtol=0.0, atol=1e-12
+    )
+    # One crossing only: the seed-relative transverse coordinate (the axis
+    # component of ``seed^T pose`` along the seed tangent) changes sign exactly
+    # once along the sampled loop, at the closing edge.
+    seed = np.asarray(result.poses[0])
+    tangent = np.asarray(result.tangents[0])
+    sections = []
+    for pose in result.poses[1:]:
+        relative = seed.T @ np.asarray(pose)
+        skew = np.array(
+            [
+                relative[2, 1] - relative[1, 2],
+                relative[0, 2] - relative[2, 0],
+                relative[1, 0] - relative[0, 1],
+            ]
+        ) / 2.0
+        sections.append(float(np.dot(tangent, skew)))
+    sign_changes = sum(
+        1 for left, right in zip(sections[:-1], sections[1:]) if left * right < 0.0
+    )
+    assert sign_changes == 1
 
 
 def test_synthetic_3_5_is_invariant_under_orthogonal_target_basis(

@@ -33,10 +33,12 @@ from lumice_integral.strip_pixel import (
 )
 
 # docs/ch06-reference-fixture.md section 4.1 (rtol 1e-8, Haar-converted, partial).
-CANONICAL_PIXEL_VALUE = 4.728847630
+# Half of the 4.728847630 recorded before task-continuation-gates-and-fixtures:
+# the canonical loop (2.379 < pi) was integrated over two traversals.
+CANONICAL_PIXEL_VALUE = 2.364423815
 # tests/test_discovery.py baselines.
-CANONICAL_ARCLENGTH = 4.758247
-ROW_225_ARCLENGTH = 6.243734
+CANONICAL_ARCLENGTH = 2.379121
+ROW_225_ARCLENGTH = 3.121867
 ROW_226_ARCLENGTH = 3.130201
 
 
@@ -131,10 +133,23 @@ def test_cold_check_agreeing_with_the_hot_start_keeps_the_hot_result(scene, opti
     assert checked.timings["cold_discovery_s"] > 0
 
 
-def test_topology_boundary_row_226_falls_back_to_cold_discovery(scene, options):
+def test_row_226_hot_starts_from_row_225_and_a_doubled_arclength_falls_back_to_cold(
+    scene, options
+):
+    # Rows 225/226 were the one real arclength jump (6.24 -> 3.13) until
+    # task-continuation-gates-and-fixtures showed the 6.24 to be row 225's
+    # 3.12 loop traversed twice under the absolute closure gate.  The hot
+    # start now continues; the jump fallback path is exercised by handing row
+    # 226 the retired doubled arclength as its neighbour's.
     upper = render_pixel(scene, 225, 150, options)
-    lower = render_pixel(scene, 226, 150, options, previous=upper.hot_seeds)
     assert upper.components[0].discovery_arclength == pytest.approx(ROW_225_ARCLENGTH, rel=1e-3)
+    continued = render_pixel(scene, 226, 150, options, previous=upper.hot_seeds)
+    assert continued.seed_source == "hot"
+    assert continued.events["arclength_jump"] == 0
+    assert continued.components[0].discovery_arclength == pytest.approx(ROW_226_ARCLENGTH, rel=1e-3)
+    assert not continued.status_bits & STATUS_ARCLENGTH_JUMP
+    doubled = tuple(HotSeed(seed.seed, 2.0 * seed.arclength) for seed in upper.hot_seeds)
+    lower = render_pixel(scene, 226, 150, options, previous=doubled)
     assert lower.components[0].discovery_arclength == pytest.approx(ROW_226_ARCLENGTH, rel=1e-3)
     assert lower.seed_source == "cold-fallback"
     assert lower.events["arclength_jump"] == 1
@@ -145,55 +160,59 @@ def test_topology_boundary_row_226_falls_back_to_cold_discovery(scene, options):
     assert lower.value == pytest.approx(render_pixel(scene, 226, 150, options).value, rel=1e-6)
 
 
-@pytest.mark.parametrize("row, candidates", [(700, 12), (780, 13)])
-def test_degenerate_pixel_is_unknown_with_a_finite_zero_partial_sum(scene, options, row, candidates):
+@pytest.mark.parametrize("row, arclength", [(700, 5.408495), (780, 5.635867)])
+def test_boundary_hugging_pixel_is_complete_with_one_component(scene, options, row, arclength):
+    # Until task-continuation-gates-and-fixtures every candidate here (12/13)
+    # was floor-locked after its 250 discovery steps and the pixel stayed
+    # ``unknown`` with value 0 (the strip's rows 655-800); the rate-based event
+    # slowdown closes them all on one loop.
     result = render_pixel(scene, row, 150, options)
-    assert result.component_count == 0
-    assert result.incomplete_count == candidates
-    assert result.completeness == "unknown"
-    assert result.discovery_completeness == "unknown"
-    assert result.events["incomplete_candidate"] == candidates
-    # Every candidate is floor-locked after its 250 discovery steps, so none
-    # is retraced with the production budget (task-discovery-stall-early-exit);
-    # the classification above is exactly what the retrace used to produce.
-    assert result.events["incomplete_stall_skip"] == candidates
+    assert result.component_count == 1
+    assert result.incomplete_count == 0
+    assert result.completeness == "complete"
+    assert result.discovery_completeness == "complete"
+    assert result.components[0].discovery_arclength == pytest.approx(arclength, rel=1e-3)
+    assert result.events["incomplete_candidate"] == 0
+    assert result.events["incomplete_stall_skip"] == 0
     assert result.events["incomplete_retry"] == 0
-    assert result.events["incomplete_recovered"] == 0
-    assert result.value == 0.0 and np.isfinite(result.value)
-    assert result.hot_seeds == ()
-    assert result.status_bits & STATUS_UNKNOWN_COMPLETENESS
-    assert not result.status_bits & STATUS_HAS_COMPONENT
+    assert result.value > 0.0 and np.isfinite(result.value)
+    assert len(result.hot_seeds) == 1
+    assert not result.status_bits & STATUS_UNKNOWN_COMPLETENESS
+    assert result.status_bits & STATUS_HAS_COMPONENT
 
 
-def test_degenerate_pixel_with_the_early_exit_disabled_retraces_to_the_same_classification(scene):
-    # A window above the discovery budget can never be met: this is the
-    # pre-task behaviour (one production-budget retrace per candidate) and
-    # must classify the pixel identically, only slower.
+def test_early_exit_window_setting_does_not_change_a_pixel_without_stalled_candidates(scene):
+    # A window above the discovery budget can never be met (the pre-early-exit
+    # behaviour).  With no ``step_budget`` candidate left on this pixel both
+    # settings must produce the same classification and value.
     disabled = replace(PixelOptions(), stall_floor_window=PixelOptions().discovery_step_budget + 1)
     result = render_pixel(scene, 700, 150, disabled)
+    reference = render_pixel(scene, 700, 150, PixelOptions())
     assert result.events["incomplete_stall_skip"] == 0
-    assert result.events["incomplete_retry"] == 12
-    assert result.events["incomplete_recovered"] == 0
-    assert result.events["incomplete_candidate"] == 12
-    assert result.component_count == 0 and result.incomplete_count == 12
-    assert result.completeness == "unknown" and result.value == 0.0
-    assert result.status_bits == render_pixel(scene, 700, 150, PixelOptions()).status_bits
+    assert result.events["incomplete_retry"] == 0
+    assert result.events["incomplete_candidate"] == 0
+    assert result.component_count == 1 and result.incomplete_count == 0
+    assert result.completeness == "complete"
+    assert result.value == pytest.approx(reference.value, rel=1e-9)
+    assert result.status_bits == reference.status_bits
 
 
-def test_legit_slow_closers_are_still_retraced_and_recovered(scene, options):
+def test_event_terminated_candidates_are_still_retraced_not_stall_skipped(scene, options):
     # Row 49, column 0 (home-wsl-preview-step9 pixels.csv: retry 4, recovered
     # 2, candidate 2, one component of arclength 3.228596 closing after 1290
-    # production steps).  Two step_budget candidates never touch the floor and
-    # must be retraced; the two event-terminated ones are outside the
-    # criterion's reason gate and go through the (free) retrace as before.
+    # production steps).  That component is a 0.19 loop that the absolute
+    # closure gate traversed 17 times (task-continuation-gates-and-fixtures);
+    # it now closes inside the discovery budget, so only the two
+    # event-terminated candidates remain.  They are outside the criterion's
+    # reason gate and go through the (free) retrace as before.
     events = Counter()
     discovered = strip_pixel_module._cold_discovery(scene, pixel_target(scene.render, 49, 0), options, events)
     assert events["incomplete_stall_skip"] == 0
-    assert events["incomplete_retry"] == 4
-    assert events["incomplete_recovered"] == 2
+    assert events["incomplete_retry"] == 2
+    assert events["incomplete_recovered"] == 0
     assert discovered.component_count == 1 and discovered.incomplete_count == 2
-    assert discovered.components[0].arclength == pytest.approx(3.228596, rel=1e-5)
-    assert len(discovered.components[0].result.poses) == 1290
+    assert discovered.components[0].arclength == pytest.approx(0.189896, rel=1e-4)
+    assert len(discovered.components[0].result.poses) < 250
     assert {c.reason for c in discovered.incomplete} == {
         TerminationReason.PATH_INFEASIBLE,
         TerminationReason.TIR_BOUNDARY,

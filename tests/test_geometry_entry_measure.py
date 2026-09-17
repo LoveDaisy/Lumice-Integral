@@ -184,7 +184,7 @@ def test_canonical_fiber_entry_measure_is_finite_and_nonnegative(canonical_fiber
     result = canonical_fiber
     assert result.status.value == "closed"
     poses = np.asarray(result.poses, dtype=np.float64)
-    assert len(poses) > 100          # the fixture stores ~193 poses; do not freeze the incidental count
+    assert len(poses) > 20           # the fixture stores ~49 poses (one traversal of its 0.964 loop); do not freeze the incidental count
     values = np.array([entry_measure(R, (3, 5), MIN_DEV_INCIDENT, CRYSTAL).value for R in poses])
     assert np.isfinite(values).all()
     assert (values >= 0.0).all()
