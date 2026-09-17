@@ -15,17 +15,31 @@ Every factor is exposed on its own; nothing here multiplies factors together,
 substitutes ``1`` for a missing factor, or folds in ``J_perp`` or the
 ``1 / (8 pi^2)`` Haar conversion.  Evaluation is host-side numpy on already
 accepted poses (after continuation), never inside a ``jax.jit`` kernel.
+
+Each factor has a scalar form (``evaluate``, one pose) and an optional batch
+form (``evaluate_batch``, ``(N, 3, 3)`` poses at once) that must agree
+elementwise; :func:`evaluate_weights_batch` prefers the batch form and falls
+back to a host loop over the scalar one.  ``entry_measure`` has no vectorised
+implementation (pure-numpy polygon clipping, ~0.23 ms per pose on the
+canonical fiber, task-resample-and-integrate Step 0 fact 5), so its batch
+form is that loop and its wall clock is reported alongside the values.
 """
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
-from typing import Callable, Mapping
+from typing import Callable, Mapping, NamedTuple
 
 import numpy as np
 
 from .geometry import HexPrism, entry_measure
-from .optics import fresnel_transmission_3_5, path_3_5_domain
+from .optics import (
+    fresnel_transmission_3_5,
+    fresnel_transmission_3_5_batch,
+    path_3_5_domain,
+    path_3_5_domain_batch,
+)
 from .pose_density import ZenithGaussianPoseDensity
 
 STANDARD_WEIGHT_NAMES = (
@@ -40,19 +54,28 @@ STANDARD_WEIGHT_NAMES = (
 )
 
 WeightFunction = Callable[[np.ndarray], float]
+BatchWeightFunction = Callable[[np.ndarray], np.ndarray]
 
 
 @dataclass(frozen=True)
 class WeightEvaluator:
-    """One named factor: a pose -> scalar map plus its declared unit/normalization."""
+    """One named factor: a pose -> scalar map plus its declared unit/normalization.
+
+    ``evaluate_batch`` (``(N, 3, 3)`` poses -> ``(N,)`` values) is optional
+    and must agree with ``evaluate`` elementwise; ``None`` means "loop over
+    ``evaluate``" (see :func:`evaluate_weights_batch`).
+    """
 
     evaluate: WeightFunction
     unit: str
     normalization: str
+    evaluate_batch: BatchWeightFunction | None = None
 
     def __post_init__(self) -> None:
         if not callable(self.evaluate):
             raise ValueError("weight evaluator must be callable")
+        if self.evaluate_batch is not None and not callable(self.evaluate_batch):
+            raise ValueError("weight batch evaluator must be callable")
         if not self.unit or not self.normalization:
             raise ValueError("weight evaluator must declare unit and normalization")
 
@@ -108,6 +131,41 @@ def evaluate_weights(
     return observables
 
 
+class BatchWeights(NamedTuple):
+    """Batch factor values aligned with the poses, and the wall clock each took."""
+
+    values: dict[str, np.ndarray]
+    seconds: dict[str, float]
+
+
+def evaluate_weights_batch(
+    evaluators: Mapping[str, WeightEvaluator], poses: np.ndarray, names: tuple[str, ...]
+) -> BatchWeights:
+    """Evaluate the named factors on ``(N, 3, 3)`` poses, batch form where available.
+
+    Raises ``KeyError`` for a name without an evaluator: a batch caller has
+    already declared the factors it needs (``quadrature.integrand_availability``),
+    and an unavailable factor must not be silently replaced.
+    """
+    poses = np.asarray(poses, dtype=np.float64)
+    if poses.ndim != 3 or poses.shape[1:] != (3, 3):
+        raise ValueError("poses must have shape (N, 3, 3)")
+    values: dict[str, np.ndarray] = {}
+    seconds: dict[str, float] = {}
+    for name in names:
+        evaluator = evaluators[name]
+        start = time.perf_counter()
+        if evaluator.evaluate_batch is not None:
+            result = np.asarray(evaluator.evaluate_batch(poses), dtype=np.float64)
+        else:
+            result = np.asarray([float(evaluator.evaluate(pose)) for pose in poses], dtype=np.float64)
+        seconds[name] = time.perf_counter() - start
+        if result.shape != (len(poses),):
+            raise ValueError(f"batch weight {name!r} must return one value per pose")
+        values[name] = result
+    return BatchWeights(values, seconds)
+
+
 def entry_measure_weight(
     rotation: np.ndarray,
     *,
@@ -135,6 +193,41 @@ def fresnel_transmission_weight(
         np.asarray(incident_direction, dtype=np.float64),
         refractive_index,
     )
+
+
+class _EntryMeasureBatch:
+    """``entry_measure_weight`` over ``(N, 3, 3)`` poses as a host loop, memoised once.
+
+    ``entry_measure`` and ``path_validity`` need the same per-pose footprint
+    areas; the memo keeps the most recent pose array object and its values so
+    that a batch caller evaluating both factors on one array pays the loop
+    once.  The array itself is held (identity test with ``is``), so a freed
+    array's id can never be mistaken for a live one.  Explicitly not a
+    general cache: one entry, replaced on every new array.
+    """
+
+    def __init__(self, *, incident_direction: np.ndarray, crystal: HexPrism, refractive_index: float) -> None:
+        self._incident = np.asarray(incident_direction, dtype=np.float64)
+        self._crystal = crystal
+        self._index = float(refractive_index)
+        self._last: tuple[object, np.ndarray] | None = None
+
+    def __call__(self, rotations: np.ndarray) -> np.ndarray:
+        if self._last is not None and self._last[0] is rotations:
+            return self._last[1]
+        rotation_array = np.asarray(rotations, dtype=np.float64)
+        values = np.asarray(
+            [
+                entry_measure_weight(
+                    rotation, incident_direction=self._incident, crystal=self._crystal,
+                    refractive_index=self._index,
+                )
+                for rotation in rotation_array
+            ],
+            dtype=np.float64,
+        ).reshape(len(rotation_array))
+        self._last = (rotations, values)
+        return values
 
 
 def path_validity_weight(
@@ -172,9 +265,18 @@ def build_3_5_weight_evaluators(
     """
     incident = np.asarray(incident_direction, dtype=np.float64)
     index = float(refractive_index)
+    entry_measure_batch = _EntryMeasureBatch(
+        incident_direction=incident, crystal=crystal, refractive_index=index
+    )
+
+    def path_validity_batch(rotations: np.ndarray) -> np.ndarray:
+        valid = path_3_5_domain_batch(rotations, incident, index).valid
+        return np.where(valid & (entry_measure_batch(rotations) > 0.0), 1.0, 0.0)
+
     return {
         "rho_pose": WeightEvaluator(
-            pose_density, pose_density.unit, pose_density.normalization
+            pose_density, pose_density.unit, pose_density.normalization,
+            evaluate_batch=pose_density.evaluate_batch,
         ),
         "entry_measure": WeightEvaluator(
             lambda rotation: entry_measure_weight(
@@ -190,6 +292,7 @@ def build_3_5_weight_evaluators(
                 "divided by any face area or reference cross-section; 0 when "
                 "any gate fails (see geometry.entry_measure)"
             ),
+            evaluate_batch=entry_measure_batch,
         ),
         "fresnel_transmission": WeightEvaluator(
             lambda rotation: fresnel_transmission_weight(
@@ -201,6 +304,9 @@ def build_3_5_weight_evaluators(
                 "the face-3 entry and face-5 exit interfaces; 0 outside the smooth "
                 "3-5 domain"
             ),
+            evaluate_batch=lambda rotations: fresnel_transmission_3_5_batch(
+                rotations, incident, index
+            ),
         ),
         "path_validity": WeightEvaluator(
             lambda rotation: path_validity_weight(
@@ -211,5 +317,6 @@ def build_3_5_weight_evaluators(
             ),
             "boolean (0 or 1)",
             "gate: path_3_5_domain(...).valid and entry_measure > 0; not a gain",
+            evaluate_batch=path_validity_batch,
         ),
     }

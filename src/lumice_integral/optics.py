@@ -274,6 +274,32 @@ def fresnel_transmission_3_5(
     return float(entry * exit)
 
 
+def fresnel_transmission_3_5_batch(
+    rotations: Array,
+    incident_direction: Array,
+    refractive_index: Array = ICE_REFRACTIVE_INDEX,
+) -> np.ndarray:
+    """Batch form of :func:`fresnel_transmission_3_5` over ``(N, 3, 3)`` rotations.
+
+    Reads the cosines and Snell discriminants off :func:`path_3_5_domain_batch`
+    (the batch authority of the smooth-domain gates) and applies the same
+    :func:`fresnel_unpolarized_transmittance` arithmetic elementwise; invalid
+    poses get ``0.0`` and their (possibly negative) discriminants are never
+    square-rooted, so no ``RuntimeWarning``/NaN leaks into valid entries.
+    """
+    check = path_3_5_domain_batch(rotations, incident_direction, refractive_index)
+    index = float(np.asarray(refractive_index))
+    valid = check.valid
+    margins = check.margins
+    entry_cosine = np.where(valid, margins["entry_incidence_cosine"], 1.0)
+    exit_cosine = np.where(valid, margins["exit_incidence_cosine"], 1.0)
+    entry_transmitted = np.sqrt(np.where(valid, margins["entry_snell_discriminant"], 1.0))
+    exit_transmitted = np.sqrt(np.where(valid, margins["exit_snell_discriminant"], 1.0))
+    entry = fresnel_unpolarized_transmittance(1.0, entry_cosine, index, entry_transmitted)
+    exit = fresnel_unpolarized_transmittance(index, exit_cosine, 1.0, exit_transmitted)
+    return np.where(valid, entry * exit, 0.0).astype(np.float64)
+
+
 def path_3_5_problem(
     seed: Array,
     incident_direction: Array,
