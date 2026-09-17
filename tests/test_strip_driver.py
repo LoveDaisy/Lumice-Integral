@@ -14,6 +14,7 @@ import pytest
 from lumice_integral.strip_driver import (
     WORKER_MALLOC_ENV,
     DriverOptions,
+    PrescanBuildOptions,
     _merge_subpixels,
     load_checkpoints,
     render_column,
@@ -127,6 +128,7 @@ def test_write_and_read_strip_round_trip_with_verified_hashes(tmp_path: Path):
         width=3,
         pixel_model={"model": "point", "epsilon": 1e-6},
         execution={"wall_clock_s": 1.0, "workers": 1},
+        prescan=PrescanBuildOptions(sample_count=123, rng_seed=7).as_json(),
     )
     assert set(files) == set(FILE_NAMES)
     assert all(path.exists() for path in files.values())
@@ -146,6 +148,8 @@ def test_write_and_read_strip_round_trip_with_verified_hashes(tmp_path: Path):
     assert provenance["options"]["quadrature"]["relative_tolerance"] == 1e-6
     assert provenance["options"]["quadrature"]["convergence_order_levels"] == 0
     assert provenance["options"]["discovery"]["retry_step_budget"] == 4000
+    assert provenance["options"]["discovery"]["prescan"] == {"sample_count": 123, "rng_seed": 7, "cache_path": None}
+    assert "prescan table" in provenance["options"]["discovery"]["strategy"]
     assert provenance["options"]["discovery"]["stall_floor_window"] == PixelOptions().stall_floor_window
     assert "incomplete_stall_skip" in provenance["options"]["discovery"]["strategy"]
     assert provenance["scene"]["refractive_index"] == {"value": 1.31, "provenance": "canonical-new"}
@@ -214,6 +218,38 @@ def test_load_checkpoints_recomputes_instead_of_crashing_on_a_factory_default_fi
     assert messages == ["column 0 checkpoint options predate a current option field; recomputing"]
 
 
+def test_load_checkpoints_recomputes_a_checkpoint_that_predates_the_scene_prescan(tmp_path: Path):
+    # task-scene-prescan-table replaced the per-pixel 400k prescan by the
+    # scene-level table: a checkpoint without ``DriverOptions.prescan`` was
+    # rendered under the old discovery policy and must not be reused.
+    options = DriverOptions()
+    old_options = object.__new__(DriverOptions)
+    old_options.__dict__.update({k: v for k, v in options.__dict__.items() if k != "prescan"})
+    (tmp_path / "column_0000.pkl").write_bytes(
+        pickle.dumps({"rows": [0, 1], "results": [_pixel(0, 0, 1.0)], "options": old_options})
+    )
+    messages: list[str] = []
+    assert load_checkpoints(tmp_path, Window((0, 1), (0, 1)), options, log=messages.append) == {}
+    assert messages == ["column 0 checkpoint options predate a current option field; recomputing"]
+
+
+def test_prescan_build_options_fingerprint_ignores_the_cache_path(tmp_path: Path):
+    base = DriverOptions(prescan=PrescanBuildOptions(sample_count=1_000, rng_seed=1))
+    (tmp_path / "column_0000.pkl").write_bytes(
+        pickle.dumps({"rows": [0, 1], "results": [_pixel(0, 0, 1.0)], "options": base})
+    )
+    window = Window((0, 1), (0, 1))
+    moved = DriverOptions(prescan=PrescanBuildOptions(sample_count=1_000, rng_seed=1, cache_path=tmp_path / "t.npz"))
+    assert sorted(load_checkpoints(tmp_path, window, moved)) == [0]
+    denser = DriverOptions(prescan=PrescanBuildOptions(sample_count=2_000, rng_seed=1))
+    assert load_checkpoints(tmp_path, window, denser) == {}
+    reseeded = DriverOptions(prescan=PrescanBuildOptions(sample_count=1_000, rng_seed=2))
+    assert load_checkpoints(tmp_path, window, reseeded) == {}
+    with pytest.raises(ValueError):
+        PrescanBuildOptions(sample_count=0)
+    assert moved.prescan.as_json()["cache_path"] == str(tmp_path / "t.npz")
+
+
 def test_merge_subpixels_averages_and_propagates_unknown():
     parts = [_pixel(5, 5, 1.0), _pixel(5, 5, 3.0, completeness="unknown"), _pixel(5, 5, 2.0)]
     merged = _merge_subpixels(5, 5, parts)
@@ -237,9 +273,13 @@ def test_driver_options_validate():
 # --- solver-backed window tests ---------------------------------------------------
 
 
+# The survey's prescan (400k samples); see tests/test_strip_pixel.py.
+TEST_PRESCAN = PrescanBuildOptions(sample_count=400_000)
+
+
 @pytest.fixture(scope="module")
 def scene():
-    return canonical_strip_scene()
+    return canonical_strip_scene(prescan_sample_count=TEST_PRESCAN.sample_count, prescan_rng_seed=TEST_PRESCAN.rng_seed)
 
 
 def test_render_column_chain_matches_independent_pixels(scene):
@@ -274,12 +314,32 @@ def test_render_window_serial_writes_checkpoints_and_resumes(scene, tmp_path: Pa
     results, execution = render_window(window, options, workers=1, checkpoint_dir=tmp_path, scene=scene)
     assert len(results) == 4
     assert execution["columns_rendered_now"] == 2 and execution["columns_resumed"] == 0
+    assert execution["prescan"]["source"] == "scene" and execution["prescan"]["valid_count"] == 64427
     assert sorted(load_checkpoints(tmp_path, window, options)) == [150, 151]
     assert load_checkpoints(tmp_path, Window((150, 153), (150, 152)), options) == {}
 
     resumed, execution = render_window(window, options, workers=1, checkpoint_dir=tmp_path, resume=True, scene=scene)
     assert execution["columns_rendered_now"] == 0 and execution["columns_resumed"] == 2
+    assert execution["prescan"]["source"] == "not-needed"
     assert [(r.row, r.column, r.value) for r in resumed] == [(r.row, r.column, r.value) for r in results]
+
+
+def test_render_window_without_a_scene_builds_the_table_once_from_the_options(scene, tmp_path: Path):
+    window = Window((150, 151), (150, 151))
+    cache = tmp_path / "prescan.npz"
+    options = DriverOptions(cold_check_interval=0, prescan=PrescanBuildOptions(sample_count=400_000, cache_path=cache))
+    messages: list[str] = []
+    results, execution = render_window(window, options, workers=1, log=messages.append)
+    assert execution["prescan"]["source"] == str(cache)
+    assert execution["prescan"]["sample_count"] == 400_000 and execution["prescan"]["valid_count"] == 64427
+    assert cache.exists() and any("prescan table built" in m for m in messages)
+    reference = render_pixel(scene, 150, 150, options.pixel)
+    assert results[0].value == pytest.approx(reference.value, rel=1e-12)
+    # A second run loads the cache instead of sampling again.
+    messages.clear()
+    render_window(window, options, workers=1, log=messages.append)
+    assert any(m.startswith("prescan table loaded from") for m in messages)
+    assert not any("prescan table built" in m for m in messages)
 
 
 def test_render_window_resume_recomputes_columns_whose_options_changed(scene, tmp_path: Path):
@@ -317,10 +377,11 @@ def test_render_window_parallel_matches_serial(scene, tmp_path: Path):
     if multiprocessing.get_start_method(allow_none=True) not in (None, "spawn", "fork", "forkserver"):
         pytest.skip("unsupported start method")
     window = Window((150, 152), (150, 152))
-    options = DriverOptions(cold_check_interval=0)
+    options = DriverOptions(cold_check_interval=0, prescan=TEST_PRESCAN)
     serial, _ = render_window(window, options, workers=1, scene=scene)
     parallel, execution = render_window(window, options, workers=2)
     assert execution["workers"] == 2
+    assert execution["prescan"]["source"] == "in-memory" and execution["prescan"]["valid_count"] == 64427
     assert [(r.row, r.column) for r in parallel] == [(r.row, r.column) for r in serial]
     for a, b in zip(serial, parallel):
         assert a.value == pytest.approx(b.value, rel=1e-12)

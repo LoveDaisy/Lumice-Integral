@@ -9,8 +9,9 @@ For one target direction ``d`` it
    with the production step budget, gated by
    :func:`.discovery.detect_arclength_jump`) or, when no neighbour is given, a
    hot start fails, a jump is detected, or a cold check is requested, by the
-   full prescan :func:`.discovery.discover_components` with the small discovery
-   budget, whose ``incomplete`` candidates are then retraced once with the
+   cold discovery :func:`.discovery.discover_components` (a query of the
+   scene's :class:`.prescan.PrescanTable`) with the small discovery budget,
+   whose ``incomplete`` candidates are then retraced once with the
    production budget (rows just below the 22-degree inner-edge caustic close
    only after 300-1300 accepted steps; task-strip-image-driver Step 1) --
    except a candidate whose discovery trace is already locked at the step
@@ -94,6 +95,7 @@ from .discovery import (
 from .geometry import HexPrism
 from .optics import path_3_5_problem
 from .pose_density import ZenithGaussianPoseDensity
+from .prescan import DEFAULT_RNG_SEED, DEFAULT_SAMPLE_COUNT, PrescanTable, build_prescan_table
 from .quadrature import QuadratureOptions, integrate_fiber
 from .weights import build_3_5_weight_evaluators
 
@@ -133,12 +135,14 @@ STAGE_NAMES = ("hot_start_s", "cold_discovery_s", "production_s", "quadrature_s"
 
 @dataclass(frozen=True)
 class StripScene:
-    """Scene constants plus the two shared problem templates of one process.
+    """Scene constants, the prescan table and the two shared problem templates of one process.
 
     ``discovery_template`` is weightless (discovery traces must not pay for
     weight evaluation); ``production_template`` carries the four named weights.
     Both share the same evaluator closures, so every per-pixel problem derived
     by :func:`.discovery.retarget_problem` hits the same ``jax.jit`` caches.
+    ``prescan_table`` is the scene-level :class:`.prescan.PrescanTable` every
+    cold discovery queries (built once per scene, read-only afterwards).
     """
 
     incident_direction: np.ndarray
@@ -148,6 +152,14 @@ class StripScene:
     render: Mapping[str, Any]
     discovery_template: FiberProblem
     production_template: FiberProblem
+    prescan_table: PrescanTable
+
+    def __post_init__(self) -> None:
+        table = self.prescan_table
+        if not np.array_equal(table.incident_direction, np.asarray(self.incident_direction, dtype=np.float64)):
+            raise ValueError("prescan_table incident direction does not match the scene")
+        if table.refractive_index != float(self.refractive_index):
+            raise ValueError("prescan_table refractive index does not match the scene")
 
     @property
     def width(self) -> int:
@@ -158,11 +170,25 @@ class StripScene:
         return int(self.render["height"])
 
 
-def canonical_strip_scene() -> StripScene:
-    """The ch06 canonical scene (``docs/ch06-reference-fixture.md`` section 3.3)."""
+def canonical_strip_scene(
+    *,
+    prescan_table: PrescanTable | None = None,
+    prescan_sample_count: int = DEFAULT_SAMPLE_COUNT,
+    prescan_rng_seed: int = DEFAULT_RNG_SEED,
+) -> StripScene:
+    """The ch06 canonical scene (``docs/ch06-reference-fixture.md`` section 3.3).
+
+    ``prescan_table`` (a table the driver built or loaded once) is used as is;
+    otherwise one is built here from ``prescan_sample_count`` /
+    ``prescan_rng_seed`` (in-process rendering and tests).
+    """
     incident = canonical_incident_direction()
     crystal = canonical_crystal()
     pose_density = canonical_pose_density()
+    if prescan_table is None:
+        prescan_table = build_prescan_table(
+            incident, CANONICAL_REFRACTIVE_INDEX, sample_count=prescan_sample_count, rng_seed=prescan_rng_seed
+        )
     template = path_3_5_problem(
         jnp.asarray(np.eye(3)),
         jnp.asarray(incident),
@@ -183,6 +209,7 @@ def canonical_strip_scene() -> StripScene:
         render=dict(CANONICAL_RENDER),
         discovery_template=template,
         production_template=replace(template, weight_evaluators=evaluators),
+        prescan_table=prescan_table,
     )
 
 
@@ -209,10 +236,13 @@ def subpixel_targets(render: Mapping[str, Any], row: int, column: int, grid: int
 
 @dataclass(frozen=True)
 class PixelOptions:
-    """Every numerical policy of one pixel, in one place (exported to provenance)."""
+    """Every numerical policy of one pixel, in one place (exported to provenance).
 
-    rng_seed: int = 20260916
-    prescan_samples: int = 400_000
+    The prescan sampling (sample count, seed) is a scene policy, not a pixel
+    one: it lives in :class:`.strip_driver.PrescanBuildOptions` and the
+    resulting :attr:`StripScene.prescan_table`.
+    """
+
     discovery_step_budget: int = 250
     # Budget of the one retrace of every cold-discovery ``incomplete`` candidate
     # and of every hot start; ``None`` means the production budget.
@@ -248,8 +278,6 @@ class PixelOptions:
 
     def discovery_kwargs(self) -> dict[str, Any]:
         return dict(
-            rng_seed=self.rng_seed,
-            prescan_samples=self.prescan_samples,
             discovery_step_budget=self.discovery_step_budget,
             angle_tolerance_deg=self.angle_tolerance_deg,
             cluster_radius_rad=self.cluster_radius_rad,
@@ -399,9 +427,8 @@ def _cold_discovery(
     """
     first = discover_components(
         target,
-        scene.incident_direction,
-        scene.refractive_index,
         scene.crystal,
+        scene.prescan_table,
         template=scene.discovery_template,
         **options.discovery_kwargs(),
     )

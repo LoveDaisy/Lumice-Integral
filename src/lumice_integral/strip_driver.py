@@ -23,12 +23,21 @@ state must not be inherited); each builds its own :class:`.strip_pixel.StripScen
 once, so per-process JIT compilation happens once.  Finished columns are
 checkpointed as pickles so a long run can be resumed.
 
-Worker memory: every cold discovery evaluates the 400k-sample prescan eagerly,
-and on glibc the freed intermediates stay in the malloc arenas, so a worker's
-RSS climbs by ~60-100 MB per cold check (measured 2026-09-16 on ``home-wsl``:
-2.4 GB after 400 rows of one column, flat at 0.37 GB with trimming enabled).
-:data:`WORKER_MALLOC_ENV` is applied with ``setdefault`` before the pool is
-spawned; it is a no-op on macOS and is recorded in ``provenance.environment``.
+Prescan table: the scene-level :class:`.prescan.PrescanTable` is built (or
+loaded from ``DriverOptions.prescan.cache_path``) exactly once in the parent
+process before any column is scheduled and handed to every worker through the
+pool's ``initargs``; workers only unpickle it (rebuilding the kd-tree) and
+never sample.  ``prescan.cache_path`` is optional and outside the checkpoint
+fingerprint (it changes where the table is read from, not what it holds).
+
+Worker memory: before task-scene-prescan-table every cold discovery evaluated
+a 400k-sample prescan eagerly, and on glibc the freed intermediates stayed in
+the malloc arenas, so a worker's RSS climbed by ~60-100 MB per cold check
+(measured 2026-09-16 on ``home-wsl``: 2.4 GB after 400 rows of one column,
+flat at 0.37 GB with trimming enabled).  :data:`WORKER_MALLOC_ENV` is still
+applied with ``setdefault`` before the pool is spawned (the per-pixel
+clustering and tracing allocate too); it is a no-op on macOS and is recorded
+in ``provenance.environment``.
 """
 
 from __future__ import annotations
@@ -42,6 +51,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
+from .canonical_scene import CANONICAL_REFRACTIVE_INDEX, canonical_incident_direction
+from .prescan import DEFAULT_RNG_SEED, DEFAULT_SAMPLE_COUNT, PrescanTable, build_or_load_prescan_table
 from .strip_io import Window
 from .strip_pixel import (
     HotSeed,
@@ -66,8 +77,39 @@ WORKER_MALLOC_ENV: dict[str, str] = {
 
 
 @dataclass(frozen=True)
+class PrescanBuildOptions:
+    """How the scene-level prescan table is built (or where it is cached).
+
+    ``sample_count``/``rng_seed`` determine the table's content and are part
+    of the checkpoint fingerprint; ``cache_path`` only says where to keep it
+    and is excluded from equality, so a resumed run may point at another
+    cache file without recomputing columns.
+    """
+
+    sample_count: int = DEFAULT_SAMPLE_COUNT
+    rng_seed: int = DEFAULT_RNG_SEED
+    cache_path: Path | None = field(default=None, compare=False)
+
+    def __post_init__(self) -> None:
+        if self.sample_count < 1:
+            raise ValueError("prescan sample_count must be positive")
+
+    def as_json(self) -> dict[str, Any]:
+        return {
+            "sample_count": int(self.sample_count),
+            "rng_seed": int(self.rng_seed),
+            "cache_path": str(self.cache_path) if self.cache_path is not None else None,
+        }
+
+
+@dataclass(frozen=True)
 class DriverOptions:
     pixel: PixelOptions = field(default_factory=PixelOptions)
+    # ``default_factory`` on purpose: a checkpoint written before the scene-
+    # level prescan existed was rendered under a different discovery policy
+    # (per-pixel 400k prescan) and must be recomputed, which the
+    # ``AttributeError`` branch of :func:`load_checkpoints` does.
+    prescan: PrescanBuildOptions = field(default_factory=PrescanBuildOptions)
     cold_check_interval: int = 8  # rows; 0 disables the spot checks
     pixel_model: str = "point"
     subpixel_grid: int = 3
@@ -186,10 +228,25 @@ _WORKER_SCENE: StripScene | None = None
 _WORKER_OPTIONS: DriverOptions | None = None
 
 
-def _init_worker(options: DriverOptions) -> None:
+def _init_worker(options: DriverOptions, table: PrescanTable) -> None:
     global _WORKER_SCENE, _WORKER_OPTIONS
-    _WORKER_SCENE = canonical_strip_scene()
+    _WORKER_SCENE = canonical_strip_scene(prescan_table=table)
     _WORKER_OPTIONS = options
+
+
+def build_scene_prescan_table(
+    options: DriverOptions, *, log: LogCallback | None = None, repo: Path | None = None
+) -> PrescanTable:
+    """The canonical scene's table for ``options.prescan`` (built or loaded once per run)."""
+    return build_or_load_prescan_table(
+        options.prescan.cache_path,
+        canonical_incident_direction(),
+        CANONICAL_REFRACTIVE_INDEX,
+        sample_count=options.prescan.sample_count,
+        rng_seed=options.prescan.rng_seed,
+        repo=repo,
+        log=log,
+    )
 
 
 def _render_column_task(task: tuple[int, tuple[int, int]]) -> tuple[int, list[PixelResult], float]:
@@ -266,8 +323,11 @@ def render_window(
 ) -> tuple[list[PixelResult], dict[str, Any]]:
     """Render every pixel of ``window``; returns the results and an execution record.
 
-    ``workers <= 1`` renders in-process (``scene`` may be supplied);
-    otherwise ``workers`` spawn processes each take whole columns.
+    ``workers <= 1`` renders in-process (``scene`` may be supplied, in which
+    case its own ``prescan_table`` is used and ``options.prescan`` is not
+    consulted); otherwise ``workers`` spawn processes each take whole
+    columns and share the table built here (module docstring).  The table's
+    size and build time are reported in the execution record.
     """
     if workers < 1:
         raise ValueError("workers must be positive")
@@ -297,8 +357,31 @@ def render_window(
                 f"{seconds:.1f}s ({len(done)}/{len(window.column_range)} columns)"
             )
 
+    # The table is obtained once, before any column: built or loaded per
+    # ``options.prescan`` unless an in-process ``scene`` already carries one.
+    prescan: dict[str, Any] = {"source": "not-needed", "seconds": 0.0}
+    if pending and (workers > 1 or scene is None):
+        prescan_start = time.perf_counter()
+        table = build_scene_prescan_table(options, log=log)
+        prescan = {
+            "source": str(options.prescan.cache_path) if options.prescan.cache_path is not None else "in-memory",
+            "seconds": time.perf_counter() - prescan_start,
+            "sample_count": table.sample_count,
+            "valid_count": table.valid_count,
+            "rng_seed": table.rng_seed,
+        }
+        if workers == 1:
+            scene = canonical_strip_scene(prescan_table=table)
+    elif pending:
+        prescan = {
+            "source": "scene",
+            "seconds": 0.0,
+            "sample_count": scene.prescan_table.sample_count,
+            "valid_count": scene.prescan_table.valid_count,
+            "rng_seed": scene.prescan_table.rng_seed,
+        }
+
     if workers == 1:
-        scene = scene or canonical_strip_scene()
         for column in pending:
             column_start = time.perf_counter()
             results = render_column(scene, column, window.row_range, options, log)
@@ -308,7 +391,7 @@ def render_window(
             os.environ.setdefault(name, value)
         context = multiprocessing.get_context("spawn")
         tasks = [(column, window.rows) for column in pending]
-        with context.Pool(workers, initializer=_init_worker, initargs=(options,)) as pool:
+        with context.Pool(workers, initializer=_init_worker, initargs=(options, table)) as pool:
             for column, results, seconds in pool.imap_unordered(_render_column_task, tasks):
                 finish(column, results, seconds)
 
@@ -320,6 +403,7 @@ def render_window(
         "columns_resumed": len(window.column_range) - len(pending),
         "column_seconds": {str(column): seconds for column, seconds in sorted(column_seconds.items())},
         "checkpoint_dir": str(checkpoint_dir) if checkpoint_dir is not None else None,
+        "prescan": prescan,
     }
     return results, execution
 
@@ -327,7 +411,9 @@ def render_window(
 __all__ = [
     "DriverOptions",
     "PIXEL_MODELS",
+    "PrescanBuildOptions",
     "WORKER_MALLOC_ENV",
+    "build_scene_prescan_table",
     "load_checkpoints",
     "render_column",
     "render_window",

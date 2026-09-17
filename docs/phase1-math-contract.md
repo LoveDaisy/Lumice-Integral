@@ -653,19 +653,30 @@ failure: the named prerequisite is outside the current reference core.
   deduplication are outside the single-component interface.
   `lumice_integral.discovery` provides them for one pixel of the 3-5 path as
   a separate module with its own, weaker contract:
-  - `discover_components(target_direction, incident_direction,
-    refractive_index, crystal, *, rng_seed, prescan_samples=400000,
+  - `discover_components(target_direction, crystal, table, *,
     discovery_step_budget=250, angle_tolerance_deg=2.0,
     cluster_radius_rad=0.3, arclength_rtol=1e-3)` returns
     `ComponentDiscoveryResult(components, incomplete, completeness,
-    pool_count, raw_cluster_count, admissible_count)`.  It Haar-samples
-    `SO(3)`, keeps the pool within the angular tolerance that passes both
-    refraction discriminants, clusters the *whole* pool geodesically, Gauss-
-    Newton-corrects one representative per cluster, applies the
-    `path_3_5_domain` and `entry_measure > 0` gates, and traces each
-    admissible candidate with `trace_fiber` under
-    `maximum_accepted_steps = discovery_step_budget`.  `rng_seed` is
-    required; batch callers decide explicitly whether pixels share it.
+    pool_count, raw_cluster_count, admissible_count)`.  `table` is a
+    scene-level `prescan.PrescanTable` (`build_prescan_table(incident_direction,
+    refractive_index, *, sample_count, rng_seed)`): the Haar samples of
+    `SO(3)` that pass all four smooth-branch gates of
+    `optics.path_3_5_domain_batch` (the single batch authority for the
+    per-pose `path_3_5_domain` gates), stored once per `(path, s, n)` with
+    their outgoing directions and indexed by direction; the table does not
+    depend on the crystal.  Discovery queries `table.candidates(d,
+    angle_tolerance_deg)` (a kd-tree chord ball followed by the exact
+    `direction . d >= cos(tol)` test, so the pool equals the brute-force
+    filter), clusters the *whole* pool geodesically, Gauss-Newton-corrects
+    one representative per cluster, applies the `path_3_5_domain` and
+    `entry_measure > 0` gates, and traces each admissible candidate with
+    `trace_fiber` under `maximum_accepted_steps = discovery_step_budget`.
+    The incident direction and refractive index are read from `table`, so
+    they have one source; `sample_count`/`rng_seed` are table-build
+    parameters that a batch caller fixes once per run, not per pixel.  For
+    the same sample count and seed the pool is the same set of poses in the
+    same order as the retired per-pixel prescan, so the six-pixel baselines
+    and funnel counts of `tests/test_discovery.py` are unchanged.
   - Two closed traces are the same component iff `(status, reason)` agree and
     their arclengths agree within `arclength_rtol = 1e-3` (`atol = 1e-6`).
     Accepted pose counts are not part of the fingerprint: the survey observed
@@ -691,7 +702,9 @@ failure: the named prerequisite is outside the current reference core.
   - Defaults and regression baselines come from
     `scratchpad/scrum-ch06-direct-integration/explore-component-discovery`
     (400k samples stable to 1.6M, 0.3 rad cluster radius, 34+ pixels) and are
-    locked by `tests/test_discovery.py`.
+    locked by `tests/test_discovery.py` with a 400k-sample table; the
+    production table size is `prescan.DEFAULT_SAMPLE_COUNT`, pinned by the
+    density survey in `docs/ch06-reference-fixture.md`.
 - Continuation through rank loss, bifurcation, singular intersections, TIR, or
   path-branch changes is unsupported pending dedicated exploration.
 - Absolute source radiometry, wavelength/polarization integration, pixel solid

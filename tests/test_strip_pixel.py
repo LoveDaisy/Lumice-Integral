@@ -16,6 +16,7 @@ from lumice_integral.canonical_scene import (
 )
 from lumice_integral.continuation import FiberStatus, TerminationReason
 from lumice_integral.discovery import ComponentDiscoveryResult, DiscoveredComponent
+from lumice_integral.prescan import DEFAULT_SAMPLE_COUNT, build_prescan_table
 from lumice_integral.strip_pixel import (
     EVENT_NAMES,
     STATUS_ARCLENGTH_JUMP,
@@ -40,11 +41,15 @@ CANONICAL_PIXEL_VALUE = 2.364423815
 CANONICAL_ARCLENGTH = 2.379121
 ROW_225_ARCLENGTH = 3.121867
 ROW_226_ARCLENGTH = 3.130201
+# The survey's prescan (400k samples, seed 20260916): every count baseline
+# below (``pool_count == 210`` etc.) is pinned to this table, not to the
+# production default of ``prescan.DEFAULT_SAMPLE_COUNT``.
+TEST_PRESCAN_SAMPLES = 400_000
 
 
 @pytest.fixture(scope="module")
 def scene():
-    return canonical_strip_scene()
+    return canonical_strip_scene(prescan_sample_count=TEST_PRESCAN_SAMPLES)
 
 
 @pytest.fixture(scope="module")
@@ -62,11 +67,28 @@ def test_pixel_options_defaults_are_the_image_policy(options):
     assert options.quadrature.convergence_order_levels == 0
     assert options.continuation.maximum_accepted_steps == 4000
     assert options.discovery_step_budget == 250
-    assert options.rng_seed == 20260916
     # task-discovery-stall-early-exit Step 0: inside the [0, 141] separation
     # band between legit slow-closers (never at the floor) and stalls.
     assert options.stall_floor_window == 100
-    assert "stall_floor_window" not in options.discovery_kwargs()
+    assert set(options.discovery_kwargs()) == {
+        "discovery_step_budget", "angle_tolerance_deg", "cluster_radius_rad", "arclength_rtol"
+    }
+    # The prescan sampling is a scene policy (task-scene-prescan-table), not a pixel one.
+    assert not hasattr(options, "rng_seed") and not hasattr(options, "prescan_samples")
+
+
+def test_canonical_scene_carries_a_matching_prescan_table(scene):
+    table = scene.prescan_table
+    assert table.sample_count == TEST_PRESCAN_SAMPLES and table.valid_count == 64427
+    assert np.array_equal(table.incident_direction, scene.incident_direction)
+    assert table.refractive_index == scene.refractive_index
+    # A supplied table is used as is; one for another scene is rejected.
+    reused = canonical_strip_scene(prescan_table=table)
+    assert reused.prescan_table is table
+    foreign = build_prescan_table(scene.incident_direction, 1.33, sample_count=1_000)
+    with pytest.raises(ValueError, match="refractive index"):
+        canonical_strip_scene(prescan_table=foreign)
+    assert DEFAULT_SAMPLE_COUNT >= 4_000_000
 
 
 def test_pixel_target_matches_the_canonical_scene(scene):
@@ -271,7 +293,7 @@ def test_hot_start_chain_cannot_discover_a_component_absent_from_the_previous_se
     def fake_hot_start_component(seed, target, incident_direction, refractive_index, crystal, *, discovery_step_budget, template):
         return existing
 
-    def fake_discover_components(target, incident_direction, refractive_index, crystal, *, template, **kwargs):
+    def fake_discover_components(target, crystal, table, *, template, **kwargs):
         return ComponentDiscoveryResult(
             components=(existing, new_component),
             incomplete=(),

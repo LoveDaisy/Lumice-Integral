@@ -7,10 +7,13 @@ distinct closed components plus the candidates that could not be classified.
 
 The procedure is the one validated by ``explore-component-discovery``:
 
-1. Haar-uniform prescan of ``prescan_samples`` rotations through the smooth
-   3-5 branch; keep the pool whose outgoing direction lies within
-   ``angle_tolerance_deg`` of ``d`` and passes all four refraction
-   discriminants.
+1. Query the scene's :class:`.prescan.PrescanTable` (Haar samples that pass
+   all four refraction discriminants of the smooth 3-5 branch, built once per
+   ``(path, s, n)`` and indexed by outgoing direction) for the pool whose
+   outgoing direction lies within ``angle_tolerance_deg`` of ``d``.  The
+   table replaces the per-call prescan the survey used; for the same sample
+   count and seed the pool is the same set of poses in the same order
+   (task-scene-prescan-table).
 2. Greedy geodesic clustering of the whole pool with radius
    ``cluster_radius_rad`` (the whole pool, not a top-K by alignment).
 3. Per cluster: take the best-aligned member, Gauss-Newton it onto the fiber,
@@ -70,7 +73,8 @@ from .continuation import (
     trace_fiber,
 )
 from .geometry import Polyhedron, entry_measure
-from .optics import path_3_5_domain, path_3_5_domain_batch, path_3_5_problem
+from .optics import path_3_5_domain, path_3_5_problem
+from .prescan import PrescanTable
 from .so3 import exp, rotation_distance
 
 PATH_3_5_FACES = (3, 5)
@@ -126,21 +130,6 @@ class ComponentDiscoveryResult:
     @property
     def incomplete_count(self) -> int:
         return len(self.incomplete)
-
-
-def _haar_rotations(count: int, rng: np.random.Generator) -> np.ndarray:
-    """Haar-uniform rotation matrices from normalised Gaussian quaternions."""
-    quaternion = rng.standard_normal((count, 4))
-    quaternion /= np.linalg.norm(quaternion, axis=1, keepdims=True)
-    w, x, y, z = quaternion.T
-    return np.stack(
-        [
-            np.stack([1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)], -1),
-            np.stack([2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)], -1),
-            np.stack([2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)], -1),
-        ],
-        axis=1,
-    )
 
 
 def _geodesic_cluster(rotations: np.ndarray, radius: float) -> list[list[int]]:
@@ -307,12 +296,9 @@ def _problem_template(
 
 def discover_components(
     target_direction: np.ndarray,
-    incident_direction: np.ndarray,
-    refractive_index: float,
     crystal: Polyhedron,
+    table: PrescanTable,
     *,
-    rng_seed: int,
-    prescan_samples: int = 400_000,
     discovery_step_budget: int = 250,
     angle_tolerance_deg: float = 2.0,
     cluster_radius_rad: float = 0.3,
@@ -321,25 +307,24 @@ def discover_components(
 ) -> ComponentDiscoveryResult:
     """Discover the 3-5 fiber components reaching ``target_direction``.
 
-    ``rng_seed`` is required so that a batch caller decides explicitly whether
-    pixels share a prescan or not.  Defaults come from the
-    ``explore-component-discovery`` survey: 400k samples (count stable up to
-    1.6M), 2 deg tolerance, 0.3 rad cluster radius, and a 250-step discovery
-    budget independent of the production continuation default.  The result's
-    ``completeness`` is procedural; see the module docstring.  ``template``
-    (optional) is a 3-5 problem for the same incident direction and index whose
-    evaluator closures are reused via :func:`retarget_problem`.
+    ``table`` is the scene's prescan (:func:`.prescan.build_prescan_table`)
+    and the single source of the incident direction and refractive index of
+    the problem; ``crystal`` only feeds the finite-crystal
+    :func:`.geometry.entry_measure` gate applied to each corrected candidate
+    (the table does not depend on it).  Defaults come from the
+    ``explore-component-discovery`` survey: 2 deg tolerance, 0.3 rad cluster
+    radius, and a 250-step discovery budget independent of the production
+    continuation default.  The result's ``completeness`` is procedural; see
+    the module docstring.  ``template`` (optional) is a 3-5 problem for the
+    same incident direction and index whose evaluator closures are reused via
+    :func:`retarget_problem`.
     """
-    incident = np.asarray(incident_direction, dtype=np.float64)
+    incident = table.incident_direction
+    refractive_index = table.refractive_index
     target = np.asarray(target_direction, dtype=np.float64)
-    rng = np.random.default_rng(rng_seed)
-    rotations = _haar_rotations(prescan_samples, rng)
-    domain = path_3_5_domain_batch(rotations, incident, refractive_index)
-    alignment = domain.direction @ target
-    within = domain.valid & (alignment >= np.cos(np.radians(angle_tolerance_deg)))
-    pool_indices = np.nonzero(within)[0]
-    pool_rotations = rotations[pool_indices]
-    pool_alignment = alignment[pool_indices]
+    pool_indices = table.candidates(target, angle_tolerance_deg)
+    pool_rotations = table.rotations[pool_indices]
+    pool_alignment = table.directions[pool_indices] @ target
 
     clusters = _geodesic_cluster(pool_rotations, cluster_radius_rad)
     template = _problem_template(

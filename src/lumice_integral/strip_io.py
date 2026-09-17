@@ -294,11 +294,11 @@ def scene_block() -> dict[str, Any]:
     }
 
 
-def options_block(options: PixelOptions) -> dict[str, Any]:
+def options_block(options: PixelOptions, prescan: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """``PixelOptions`` plus the scene-level prescan build parameters (``prescan``, if any)."""
     return {
         "discovery": {
-            "rng_seed": options.rng_seed,
-            "prescan_samples": options.prescan_samples,
+            "prescan": dict(prescan) if prescan is not None else None,
             "discovery_step_budget": options.discovery_step_budget,
             "retry_step_budget": options.effective_retry_step_budget,
             "stall_floor_window": options.stall_floor_window,
@@ -309,7 +309,10 @@ def options_block(options: PixelOptions) -> dict[str, Any]:
             "strategy": (
                 "column-wise top-down scan; hot start every integrated component of "
                 "the pixel above with the production step budget, reject on arclength "
-                "jump and fall back to the cold prescan; cold prescan with the small "
+                "jump and fall back to cold discovery; cold discovery queries the scene-level "
+                "prescan table (built once per run from prescan.sample_count Haar samples with "
+                "prescan.rng_seed, domain-valid poses indexed by outgoing direction) for the "
+                "candidates within angle_tolerance_deg, then runs the small "
                 "discovery budget, incomplete candidates retraced once with retry_step_budget "
                 "unless a step_budget candidate's last stall_floor_window accepted discovery "
                 "steps all sat at continuation.minimum_step (counted as incomplete_stall_skip, "
@@ -340,8 +343,14 @@ def write_strip(
     pixel_model: Mapping[str, Any],
     execution: Mapping[str, Any],
     repo: Path | None = None,
+    prescan: Mapping[str, Any] | None = None,
 ) -> dict[str, Path]:
-    """Write every payload plus ``provenance.json``; returns the file map."""
+    """Write every payload plus ``provenance.json``; returns the file map.
+
+    ``prescan`` is the scene-level prescan build record
+    (:meth:`.strip_driver.PrescanBuildOptions.as_json`), stored under
+    ``options.discovery.prescan``.
+    """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     arrays = assemble_arrays(results, height=height, width=width)
@@ -366,7 +375,7 @@ def write_strip(
             "lumice_dependency": "none (independent implementation; Lumice is neither imported nor invoked)",
         },
         "scene": scene_block(),
-        "options": options_block(options),
+        "options": options_block(options, prescan),
         "pixel_model": dict(pixel_model),
         "window": window.as_json(),
         "arrays": {
