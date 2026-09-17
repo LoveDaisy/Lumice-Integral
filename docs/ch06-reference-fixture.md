@@ -447,6 +447,66 @@ color-to-factor mapping.
      the cold prescan plus twelve 250-step traces. Evidence:
      `scratchpad/scrum-ch06-direct-integration/task-discovery-stall-early-exit/`
      (`scripts/calibrate_stall_window.py`, `artifacts/stall_calibration.json`).
+   - Scene-level prescan table (task-scene-prescan-table, 2026-09-17): cold
+     discovery no longer throws `400k` Haar poses per pixel; `strip_driver`
+     builds one `prescan.PrescanTable` per scene (`DEFAULT_SAMPLE_COUNT =
+     4_000_000` poses, seed `20260916`, the `16 %` that pass the four
+     `optics.path_3_5_domain_batch` gates kept with their outgoing
+     directions in a kd-tree) before the workers start, and each pixel
+     queries `table.candidates(d, 2 deg)`. Density evidence
+     (`scripts/prescan_density_survey.py`, M2 Max, `32` pixels: rows
+     `40-800` on column 150, the `225/226` pair, the caustic band
+     `700-800` on columns 0/50/200/250, the inner-edge slow closers
+     `(49,0)`/`(50,9)`; one `16M` table and its exact prefixes `500k` ..
+     `8M`, so every rung is a prefix of the same sampling stream):
+
+     | N | valid | pixels whose components changed vs N/2 | clusters (sum) | components (sum) | incomplete (sum) |
+     |---|---|---|---|---|---|
+     | 500k | 80550 | - | 295 | 32 | 3 |
+     | 1M | 161124 | 1 `(50,9)` | 305 | 33 | 1 |
+     | 2M | 321004 | 1 `(50,9)` | 309 | 32 | 1 |
+     | 4M | 642416 | 0 | 311 | 32 | 2 |
+     | 8M | 1283274 | 1 `(50,9)` | 313 | 31 | 2 |
+     | 16M | 2565241 | 0 | 313 | 31 | 0 |
+
+     The criterion is the discovered result (component count and arclength
+     multiset within `1e-3`), not the raw cluster count: the geodesic
+     clustering keeps splitting a denser pool into one more cluster on
+     lower-band pixels (`(300,150)` `9 -> 11`, `(400,250)` `10 -> 12 -> 11`)
+     all the way to `16M` without finding anything new, so cluster counts
+     do not converge and cannot pin `N`. On `31` of the `32` pixels the
+     result is identical from `500k` to `16M`; `(50,9)` is the one
+     exception and it is a dedup-tolerance effect, not a density effect:
+     it has `5` clusters at every rung up to `8M` (`4` at `16M`), but the
+     single `0.165 rad` loop there is traced from different entry points
+     with arclengths
+     `0.16520 / 0.16538 / 0.16560`, i.e. `1.4e-3` apart, just outside
+     `dedup_components`' `arclength_rtol = 1e-3`, so it is reported as
+     `1-3` components depending on which entries the pool contains (the
+     independent cold check below reproduces the pair `0.165424 / 0.165602`
+     with a different seed). `4M` is therefore the first rung whose halving
+     changes no pixel, and the default; the tolerance question on very
+     short loops is left to the discovery contract, not to `N`. The rows
+     `700-800` pixels that stayed `incomplete` on the preview now close on
+     this branch at every `N` (the continuation-gate change of `2352724`,
+     not the table); the only `incomplete` candidates in the survey are
+     `1-2` event-terminated seeds (`tir_boundary` / `path_infeasible` at
+     their first step) at `(49,0)` and `(50,9)`.
+     Independent cold check (`scripts/prescan_cold_check.py`, throw-away
+     `16M` table, seed `20260917`): `(150,150)` `1` component `2.379108`
+     (survey `2.379109-2.379116` over the ladder), `(700,150)` `1` component
+     `5.408495` (survey `5.408495` at every `N`), `(50,9)` the dedup pair
+     above. Cost (`benchmarks/benchmark_prescan_table.py`, M2 Max, CPU
+     JAX): `4M` builds in `0.62 s`, `candidates` costs `0.14 ms` per pixel
+     (`2252` candidates mean, `4443` max on column 150; target `<= 5 ms`),
+     the pickled table is `87 MB` and a worker unpickles it in `0.19 s`;
+     `16M` is `2.9 s` / `0.71 ms` / `349 MB` / `1.06 s`. Cold discovery per
+     pixel is `1.65 s` mean at `4M` on the survey pixels (`1.83 s` at
+     `500k`: the pool query is not the cost, the traces are). Evidence:
+     `scratchpad/scrum-strip-pipeline-v2/task-scene-prescan-table/artifacts/`
+     (`prescan-density/density_survey.{csv,md}`,
+     `benchmark_prescan_table_mac.json`, `prescan_cold_check_mac.log`);
+     `home-wsl` numbers are not recorded yet.
    - Morphology against the historical raw (native orientation, Spearman
      rank correlation): `0.990` on the `16876` pixels lit in both, `0.970` on
      the `18383` complete pixels, `0.657` on all rendered pixels (the

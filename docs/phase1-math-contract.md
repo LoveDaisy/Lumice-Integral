@@ -703,7 +703,7 @@ failure: the named prerequisite is outside the current reference core.
     `scratchpad/scrum-ch06-direct-integration/explore-component-discovery`
     (400k samples stable to 1.6M, 0.3 rad cluster radius, 34+ pixels) and are
     locked by `tests/test_discovery.py` with a 400k-sample table; the
-    production table size is `prescan.DEFAULT_SAMPLE_COUNT`, pinned by the
+    production table size is `prescan.DEFAULT_SAMPLE_COUNT` (`4_000_000`), pinned by the
     density survey in `docs/ch06-reference-fixture.md`.
 - Continuation through rank loss, bifurcation, singular intersections, TIR, or
   path-branch changes is unsupported pending dedicated exploration.

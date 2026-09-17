@@ -55,7 +55,11 @@ from scipy.spatial import cKDTree
 from .optics import DOMAIN_MARGIN_NAMES, path_3_5_domain_batch
 
 DEFAULT_PATH_ID = "3-5"
-# Placeholder until the density survey (plan Step 4) pins the production value.
+# Pinned by the density survey of docs/ch06-reference-fixture.md (section 7,
+# stage 4): on 32 strip pixels the discovered components and arclengths are
+# unchanged from 2M to 16M samples (the one exception is a dedup-tolerance
+# effect on a 0.165 rad loop, not a missed component), so 4M is the first
+# rung whose halving changes nothing; scripts/prescan_density_survey.py.
 DEFAULT_SAMPLE_COUNT = 4_000_000
 DEFAULT_RNG_SEED = 20260916
 DEFAULT_BATCH_SIZE = 200_000
