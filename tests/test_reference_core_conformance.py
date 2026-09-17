@@ -678,7 +678,7 @@ def test_legacy_absolute_closure_gate_doubles_the_strip_short_loops(
     single = float(strip_short_loops[pixel].arclength_increments.sum())
     assert legacy.reason == TerminationReason.CLOSED_LOOP
     # The second traversal is sampled on a different polygon, hence rtol 1e-3
-    # (the arclength fingerprint tolerance of ``discovery.dedup_components``).
+    # (the arclength tolerance the retired fingerprint dedup of ``discovery`` used).
     assert float(legacy.arclength_increments.sum()) == pytest.approx(2.0 * single, rel=1e-3)
     assert legacy.closure_diagnostics.seed_distance <= 1e-12
     assert single == pytest.approx(_STRIP_SHORT_LOOP_LENGTHS[pixel], abs=1e-6)

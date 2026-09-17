@@ -276,8 +276,9 @@ factors are not in the product.
 | ch06 pose-fiber geometry | Lumice Integral | Supported for one supplied regular seed/component; seeds for one pixel can come from `lumice_integral.discovery`; continuous-sign unit-quaternion adapters exist (`so3.quaternion_from_rotation` / `continuous_quaternion_signs`, used by `resample.fiber_spline`) | Add C-axis longitude/latitude/spin adapters; the prescan-cloud figure still needs recorded spacing/feasibility output from the discovery scan. |
 | ch06 solver/Jacobian diagnostics | Lumice Integral data; Writing-Lab presentation | Supported as versioned figure data | A production plotting consumer still belongs in Writing-Lab; an independent prototype consumer has been verified. |
 | ch06 named physical-factor curves | Lumice Integral | Supported for `rho_pose`, `entry_measure`, `fresnel_transmission`, `path_validity` on the canonical pixel fiber (section 4.1, figure-data `weight_<name>` arrays); the pointwise final `integrand` curve (product over `J_perp + epsilon`) is exported alongside | `visibility` (finite-face obstruction) and the radiometric factors remain unavailable. |
-| ch06 one-pixel integrand/integral | Lumice Integral | Supported as a `partial` value: resampled fixed-grid line quadrature over the closed canonical fiber with error estimate and grid/retraction evidence (sections 4.1 and 6, `result.quadrature`); single-pixel component discovery is available as a separate primitive (`lumice_integral.discovery`, procedural `completeness` only) | Integration of discovered components into the quadrature product; a completeness certificate; pixel averaging (point value only); the missing factors above. |
-| ch06 `251 x 801` direct strip | Lumice Integral | Supported as a `partial` physical rerender: `scripts/render_ch06_strip.py` (`lumice_integral.strip_pixel` / `strip_driver` / `strip_io`) renders any window of the canonical `251 x 801` grid with column-wise hot-start continuation, cold-prescan fallback and spot checks, and writes float64/float32 raw in the historical layout plus a per-pixel status layer and `provenance.json`; pixel model: pixel-centre point value with `epsilon` regularisation (section 7, stage 4) | A completeness certificate (the status layer is procedural); the missing factors of the one-pixel row; sub-pixel averaging is implemented but off by default (6-10x cost; `O(10-40 %)` effect in the centre-column caustic band, section 7 stage 4); finite-sun averaging; rows `600-800` (the lower quarter) come back `unknown` with value `0` because every discovery candidate there stays `incomplete` (section 7 stage 4); a full-resolution run is `1-1.5 days` on a 30-core machine. |
+| ch06 one-pixel integrand/integral | Lumice Integral | Supported as a `partial` value: resampled fixed-grid line quadrature over the closed canonical fiber with error estimate and grid/retraction evidence (sections 4.1 and 6, `result.quadrature`); single-pixel component discovery is available as a separate primitive (`lumice_integral.discovery`, procedural `completeness` only) | A completeness certificate; pixel averaging (point value only); the missing factors above. |
+| ch06 single-pixel pipeline (`strip_pixel.render_pixel`) | Lumice Integral | Supported (task-pixel-pipeline-v2, section 7 stage 4): one discovery pass per pixel over the scene prescan table plus the warm seeds of any neighbouring pixels, SO(3)-distance dedup before tracing, one production trace per distinct candidate, closed loops *and* open arcs (forward + backward trace stitched, `resample.OpenArc`) integrated by the resampled quadrature with per-end truncation estimates, linear component sum; `0.07 s` per lit pixel and `0.13 s` per lower-band pixel on the M2 Max | A completeness certificate (`completeness` is procedural); no real open arc exists in the current picture, so the arc path is validated on the analytic two-sided fixture only; the missing factors of the one-pixel row. |
+| ch06 `251 x 801` direct strip | Lumice Integral | Supported as a `partial` physical rerender: `scripts/render_ch06_strip.py` (`lumice_integral.strip_pixel` / `strip_driver` / `strip_io`, format `lumice-integral.strip/v2`) renders any window of the canonical `251 x 801` grid column-wise, each pixel warmed by the one above, and writes float64/float32 raw in the historical layout plus a per-pixel status layer (`has_arc`, `quadrature_unavailable`, ...) and `provenance.json`; pixel model: pixel-centre point value with `epsilon` regularisation (section 7, stage 4); `--workers` is capped at `4` on macOS | A completeness certificate (the status layer is procedural); the missing factors of the one-pixel row; sub-pixel averaging is implemented but off by default (6-10x cost; `O(10-40 %)` effect in the centre-column caustic band, section 7 stage 4); finite-sun averaging; the full-image rerender and the log-domain comparison with the historical raw on the v2 pipeline are pending (task-strip-rerender-and-compare). |
 | ch10 halo-map/Jacobian/fold figures | Lumice Integral numerical data; Writing-Lab presentation | Partially supported | Target sweeps and singular/fold localization beyond one regular fiber. |
 | ch11 orientation-family comparison | Lumice Integral and/or independent Lumice validation | Not supported by the current ordinary-density slice | Pose-density models, physical weights, image driver; exactly constrained families require a separate measure/domain contract. |
 
@@ -541,6 +542,49 @@ color-to-factor mapping.
      `rng_seed`/`prescan_samples` fields were replaced by a nested
      `prescan` object (`sample_count`/`rng_seed`/`cache_path`); no consumer
      in this repository reads the old flat fields.
+   - Single-pixel pipeline v2 (task-pixel-pipeline-v2, 2026-09-17): the
+     hot-start chain, the small discovery budget with its production
+     retrace, the arclength-fingerprint dedup, the arclength-jump gate, the
+     floor-lock early exit and the periodic cold check above are all retired
+     (their evidence stays here as history).  `render_pixel` now runs one
+     `discovery.discover_components` pass per pixel: the prescan pool plus
+     the integrated components of the pixel above as warm Gauss-Newton
+     starts, greedy geodesic clustering, and *before* any trace a fold of
+     every corrected candidate that lies within `distance_threshold = 0.08`
+     (the continuation's `closure_distance`) of an already traced curve, so
+     a loop reached by `7-13` candidates is traced once (`(700,150)`: `12`
+     admissible, `1` trace, `11` `dedup_merged`); each distinct candidate is
+     traced once with the production options, a closed trace is a `closed`
+     component and a trace ended by a named event is traced backward from
+     the same seed and stitched into an `arc` component
+     (`docs/phase1-math-contract.md` sections 7-8).  One continuation
+     change came out of it: a Newton iterate outside the corrector trust
+     region that lands in an invalid domain is a rejected trial, not an
+     event (`(50,9)`: the `0.17` loop's first `0.04` predictor sent the
+     corrector `1.18 rad` into a TIR region and was reported as
+     `tir_boundary`; the `1-2` first-step event candidates of `(49,0)` /
+     `(50,9)` in the density survey above were this).  Open-arc census
+     (Step 0, current picture, every 10th row and column, `2106` pixels,
+     `4` workers, `671 s`): `1954` lit, all closed, no multi-pose
+     event-terminated candidate, so the arc path is validated on the
+     analytic two-sided circle only (`tests/test_discovery.py`,
+     `tests/test_resample_quadrature.py`).  Baselines: canonical `2.364412980`
+     unchanged, `(700,150)` `5.408495`, `(780,150)` `5.635867`, `(60,126)`
+     `0.466397` / `19.038`, `(50,9)` one loop `0.165603` (the dedup pair of
+     the survey is folded).  Cost on the M2 Max (warm process, medians):
+     canonical `0.067 s` (trace `0.040`, quadrature `0.021`), lit warm
+     `0.075 s`, lower band `0.12-0.13 s`, dark `0.005 s`, against `5.8 s`
+     for the canonical pixel before; the trace is now ~60 % of a lit pixel.
+     Mac smoke `rows 140:160 x columns 145:155`, `4` workers: `200` pixels
+     in `21.6 s` wall, `0.355 s` per pixel including JIT warm-up, all
+     `complete`.  Format `lumice-integral.strip/v2`: status bits `rendered`
+     / `unknown_completeness` / `has_component` / `has_arc` /
+     `quadrature_unavailable` / `node_count_exhausted`; `pixels.csv` gains
+     `component_kinds`, `component_end_reasons` and both truncation
+     columns; checkpoints carry the format tag and v1 checkpoints are
+     recomputed.  Evidence:
+     `scratchpad/scrum-strip-pipeline-v2/task-pixel-pipeline-v2/`
+     (`probe_step0.py`, `probe_step0_scan.json`, `probe_step7_timing.py`).
    - Morphology against the historical raw (native orientation, Spearman
      rank correlation): `0.990` on the `16876` pixels lit in both, `0.970` on
      the `18383` complete pixels, `0.657` on all rendered pixels (the

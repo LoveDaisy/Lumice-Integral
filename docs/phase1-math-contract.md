@@ -363,6 +363,23 @@ partial until an external discovery layer establishes completeness. The
 formula is not applicable at `J_perp = 0` without a separately justified
 singular treatment.
 
+A regular component `C` need not be a closed loop. A single fixed-path
+solution set is often an *open arc*: a piece of the fiber cut at both ends by
+a named event of section 8 (the smooth branch ends where TIR, a face change,
+path infeasibility, visibility, or the chart ends it), and only the sum over
+symmetric paths closes into the full halo. The integral above applies to an
+arc verbatim over the traced extent; the integrand is continuous down to zero
+at a TIR boundary (`fresnel_transmission -> 0`) and simply stops at the other
+events, so an arc is a legitimate partial contribution, not a failure. What
+an arc does not include is the untraced tail between the last accepted pose
+and the event on each side; the quadrature reports that as a per-end
+truncation estimate (terminal integrand value times the linear-rate arclength
+to the event, `quadrature.ResampledQuadratureResult.endpoint_truncation_estimate`
+and `start_endpoint_truncation_estimate`), never added to the value. A
+consumer that sums components MUST keep the closed / arc kind and the two end
+events observable next to the value (`strip_pixel.ComponentRecord`,
+task-pixel-pipeline-v2).
+
 Every multiplicative factor MUST be independently observable before forming
 `W_P`. Missing or unimplemented factors MUST be marked unavailable; they MUST
 NOT be silently substituted by one in a result claiming physical completeness.
@@ -407,6 +424,29 @@ intersections is open. The reference solver MUST stop honestly at the supported
 boundary rather than extrapolate the smooth branch. Discovering other connected
 components, proving seed coverage, and deduplicating components are also open
 and external to a single `FiberResult`.
+
+An event is only evidence of a boundary when it is met by a corrector iterate
+inside the acceptance trust region (`maximum_correction`, `maximum_advance`
+of section 6.2). A Newton iterate outside it that lands in an invalid domain
+could never have been accepted where it stands, so `_correct_trial` reports
+it as a rejected trial (`corrector_failure`, the step shrinks) rather than an
+event (task-pixel-pipeline-v2: a `0.17` loop whose first `0.04` predictor
+sent the corrector `1.18 rad` away into a TIR region was reported as
+`tir_boundary` with no accepted step).
+
+Standard downstream use of an event-terminated result (`discovery`): a trace
+that ends on one of the five named boundary events (`tir_boundary`,
+`branch_boundary`, `path_infeasible`, `visibility_boundary`,
+`chart_boundary`) is traced once more from the same seed with
+`initial_tangent_sign = -1`; when that also ends on a named event the two
+traces are stitched (`resample.stitch_open_arc`) into one *open arc*
+component whose curve runs from the backward end through the seed to the
+forward end (reversed backward samples with negated tangents, the seed knot
+carrying the forward tangent). The event classification itself is unchanged;
+`rank_loss` and `topology_ambiguity` stay "open" and never form an arc, and
+a backward trace that fails, or that closes where the forward trace did not
+(a contradiction the data cannot resolve), leaves the candidate `incomplete`
+with both traces kept.
 
 ## 9. Backend-independent interface semantics
 
@@ -652,59 +692,69 @@ failure: the named prerequisite is outside the current reference core.
 - Seed search, component discovery, completeness certificates, and component
   deduplication are outside the single-component interface.
   `lumice_integral.discovery` provides them for one pixel of the 3-5 path as
-  a separate module with its own, weaker contract:
+  a separate module with its own, weaker contract (task-pixel-pipeline-v2):
   - `discover_components(target_direction, crystal, table, *,
-    discovery_step_budget=250, angle_tolerance_deg=2.0,
-    cluster_radius_rad=0.3, arclength_rtol=1e-3)` returns
+    continuation=ContinuationOptions(), extra_seeds=(),
+    angle_tolerance_deg=2.0, cluster_radius_rad=0.3,
+    distance_threshold=continuation.closure_distance)` returns
     `ComponentDiscoveryResult(components, incomplete, completeness,
-    pool_count, raw_cluster_count, admissible_count)`.  `table` is a
-    scene-level `prescan.PrescanTable` (`build_prescan_table(incident_direction,
+    pool_count, extra_seed_count, raw_cluster_count, admissible_count,
+    events, trace_seconds)`.  `table` is a scene-level
+    `prescan.PrescanTable` (`build_prescan_table(incident_direction,
     refractive_index, *, sample_count, rng_seed)`): the Haar samples of
     `SO(3)` that pass all four smooth-branch gates of
     `optics.path_3_5_domain_batch` (the single batch authority for the
     per-pose `path_3_5_domain` gates), stored once per `(path, s, n)` with
     their outgoing directions and indexed by direction; the table does not
-    depend on the crystal.  Discovery queries `table.candidates(d,
-    angle_tolerance_deg)` (a kd-tree chord ball followed by the exact
-    `direction . d >= cos(tol)` test, so the pool equals the brute-force
-    filter), clusters the *whole* pool geodesically, Gauss-Newton-corrects
-    one representative per cluster, applies the `path_3_5_domain` and
-    `entry_measure > 0` gates, and traces each admissible candidate with
-    `trace_fiber` under `maximum_accepted_steps = discovery_step_budget`.
-    The incident direction and refractive index are read from `table`, so
-    they have one source; `sample_count`/`rng_seed` are table-build
-    parameters that a batch caller fixes once per run, not per pixel.  For
-    the same sample count and seed the pool is the same set of poses in the
-    same order as the retired per-pixel prescan, so the six-pixel baselines
-    and funnel counts of `tests/test_discovery.py` are unchanged.
-  - Two closed traces are the same component iff `(status, reason)` agree and
-    their arclengths agree within `arclength_rtol = 1e-3` (`atol = 1e-6`).
-    Accepted pose counts are not part of the fingerprint: the survey observed
-    one loop traced with `173 / 180 / 172` poses from different entry points.
-    Traces with `status != closed` never form or join a component; they are
-    returned as `incomplete` with their truncated `FiberResult`.
+    depend on the crystal.  The candidate pool is `extra_seeds` (converged
+    poses of any neighbouring pixels, used only as Gauss-Newton starts of
+    their cluster, never traced on their own and never a source of
+    completeness) followed by `table.candidates(d, angle_tolerance_deg)` (a
+    kd-tree chord ball followed by the exact `direction . d >= cos(tol)`
+    test, so the pool equals the brute-force filter); the whole pool is
+    clustered geodesically, one representative per cluster is
+    Gauss-Newton-corrected and gated (`path_3_5_domain`, `entry_measure > 0`),
+    and every admissible candidate is traced *once* with the caller's
+    production `continuation` options.  The incident direction and
+    refractive index are read from `table`, so they have one source;
+    `sample_count`/`rng_seed` are table-build parameters that a batch caller
+    fixes once per run, not per pixel.
+  - Components are of two kinds: `closed` (the trace closed) and `arc` (a
+    forward and a backward trace of the same seed, each ended by a named
+    event, stitched per section 8).  Deduplication happens *before* tracing:
+    a corrected candidate whose SO(3) geodesic distance to any accepted pose
+    of an already accepted component's curve (`distance_to_curve`) is below
+    `distance_threshold` is the same component and is folded without a
+    trace (`dedup_merged`).  The threshold is the continuation's
+    `closure_distance` (`0.08`) by default: the same "is this pose on that
+    curve" scale, and above half the largest accepted chord (`maximum_step /
+    2 = 0.06`), so a pose on the curve is never farther than that from the
+    nearest sample.  Traces that neither close nor stitch are returned as
+    `incomplete` with their cause (`incomplete_not_converged`,
+    `incomplete_unnamed_event`, `arc_backward_failed`,
+    `arc_backward_closed_anomaly`) and both traces.
   - `completeness` is procedural, not a certificate: `"complete"` means every
-    admissible candidate of this pool closed and no `status != closed`
-    evidence was seen (a dark pixel with no admissible candidate is
-    `"complete"` with zero components); `"unknown"` means at least one
-    candidate did not close.  It does not prove that every connected
-    component of `X_(P,d)` was found, so the single-component result's
+    admissible candidate of this pool converged (closed or arc) and no
+    `incomplete` evidence was seen (a dark pixel with no admissible candidate
+    is `"complete"` with zero components); `"unknown"` means at least one
+    candidate did not.  It does not prove that every connected component of
+    `X_(P,d)` was found, so the single-component result's
     `component_completeness = "unknown"` stays authoritative for quadrature.
-  - The discovery budget is independent of the production
-    `ContinuationOptions` default (`4000`); the caller retraces a discovered
-    seed with production options for quadrature.
-  - `hot_start_component(converged_seed, target_direction, ...)` runs the
-    same correction, gates, trace, and classification on one caller-supplied
-    seed (no prescan), and `detect_arclength_jump(arclengths,
-    relative_threshold=0.2)` flags neighbouring-pixel arclength jumps as
-    topology-boundary evidence; the `0.2` default is calibrated on the single
-    observed boundary (canonical strip rows `225 -> 226`, about `50 %`).
+  - There is one step budget, `continuation.maximum_accepted_steps`; the
+    retired small discovery budget, the production retrace, the arclength
+    fingerprint dedup, the arclength-jump gate and the periodic cold check
+    of the strip driver no longer exist (every pixel always queries the
+    table, so a warm seed cannot hide a component).
   - Defaults and regression baselines come from
     `scratchpad/scrum-ch06-direct-integration/explore-component-discovery`
     (400k samples stable to 1.6M, 0.3 rad cluster radius, 34+ pixels) and are
     locked by `tests/test_discovery.py` with a 400k-sample table; the
     production table size is `prescan.DEFAULT_SAMPLE_COUNT` (`4_000_000`), pinned by the
-    density survey in `docs/ch06-reference-fixture.md`.
+    density survey in `docs/ch06-reference-fixture.md`.  No real open arc
+    exists in the current ch06 picture (task-pixel-pipeline-v2 Step 0: every
+    10th row and column, 2106 pixels, 1954 lit, all closed), so the arc path
+    is validated on the analytic two-sided circle fixture
+    (`tests/test_discovery.py`, `tests/test_resample_quadrature.py`).
 - Continuation through rank loss, bifurcation, singular intersections, TIR, or
   path-branch changes is unsupported pending dedicated exploration.
 - Absolute source radiometry, wavelength/polarization integration, pixel solid
