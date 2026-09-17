@@ -25,7 +25,7 @@ uv run python scripts/render_ch06_strip.py --rows 140:160 --columns 145:155 --wo
 # ... and the full image on the many-core reference machine (home-wsl, <= 30 workers,
 # CPU JAX: one small kernel per pixel does not pay for a shared GPU; resumable per column;
 # spawned workers get glibc malloc trimming by default, see strip_driver.WORKER_MALLOC_ENV).
-# 251 x 801 took 1.6 h wall clock with 30 workers on 2026-09-17.
+# 251 x 801 took 1.86 h wall clock with 30 workers on 2026-09-17 (0.8-1.1 s per pixel per worker; ~10x the single-process Mac cost, not diagnosed).
 JAX_PLATFORMS=cpu XLA_FLAGS="--xla_cpu_multi_thread_eigen=false" OMP_NUM_THREADS=1 \
   uv run python scripts/render_ch06_strip.py --workers 30 --output-dir artifacts/strip-full --resume
 # log-domain comparison with the historical raw and the Lumice remake (matplotlib is not a dependency)
