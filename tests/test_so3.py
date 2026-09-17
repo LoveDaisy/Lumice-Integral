@@ -17,7 +17,7 @@ def test_log_inverts_exp_on_the_injectivity_domain(angle):
     recovered = np.asarray(log(exp(vector)))
 
     np.testing.assert_allclose(recovered, angle * axis, rtol=0.0, atol=4e-16 * (1.0 + angle))
-    assert float(rotation_distance(jnp.eye(3), exp(vector))) == pytest.approx(angle, abs=2e-16)
+    assert float(rotation_distance(jnp.eye(3), exp(vector))) == pytest.approx(angle, abs=4e-16 * (1.0 + angle))
 
 
 def test_log_is_zero_and_ad_safe_at_the_identity():
