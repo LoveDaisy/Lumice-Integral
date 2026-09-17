@@ -221,3 +221,27 @@ def test_entry_measure_internal_direction_matches_optics_path_3_5_in_world_frame
         np.testing.assert_allclose(R @ res.internal_direction, world, atol=1e-13)
         checked += 1
     assert checked >= 10
+
+
+# ---- 6. batch form (task-resample-and-integrate Step 3) --------------------------------------------
+
+
+def test_entry_measure_batch_matches_the_scalar_form_pose_by_pose(canonical_fiber):
+    """Elementwise agreement of ``entry_measure_batch`` with ``entry_measure``: fiber poses (open
+    corridor), Haar-like random poses (every gate verdict) and a batch that is empty."""
+    from lumice_integral.geometry import entry_measure_batch
+
+    rng = np.random.default_rng(11)
+    random_poses = np.asarray([np.asarray(exp(jnp.asarray(rng.normal(size=3)))) for _ in range(500)])
+    poses = np.concatenate([np.asarray(canonical_fiber.poses, dtype=np.float64), random_poses])
+
+    batch = entry_measure_batch(poses, (3, 5), MIN_DEV_INCIDENT, CRYSTAL, n_ice=N_ICE)
+    scalar = np.array([entry_measure(R, (3, 5), MIN_DEV_INCIDENT, CRYSTAL, n_ice=N_ICE).value for R in poses])
+    statuses = {entry_measure(R, (3, 5), MIN_DEV_INCIDENT, CRYSTAL, n_ice=N_ICE).status for R in random_poses}
+
+    assert batch.shape == (len(poses),) and batch.dtype == np.float64
+    np.testing.assert_allclose(batch, scalar, rtol=0.0, atol=1e-15)
+    assert {"ok", "entry_backface"} <= statuses      # both the open corridor and a failed gate are exercised
+    assert entry_measure_batch(np.zeros((0, 3, 3)), (3, 5), MIN_DEV_INCIDENT, CRYSTAL).shape == (0,)
+    with pytest.raises(ValueError):
+        entry_measure_batch(np.eye(3), (3, 5), MIN_DEV_INCIDENT, CRYSTAL)

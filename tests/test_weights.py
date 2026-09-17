@@ -187,3 +187,57 @@ def test_event_terminated_fiber_still_reports_weights_on_accepted_poses_only():
     for name in FOUR_FACTORS:
         assert result.weight_observables[name].status == "available"
         assert result.weight_observables[name].values.shape == (0,)
+
+
+# --- batch factor forms (task-resample-and-integrate Step 3) -------------------
+
+
+def test_batch_factors_agree_with_the_scalar_evaluators_on_fiber_and_random_poses():
+    """The four 3-5 factors have scalar and batch forms that must not drift apart.
+
+    Checked on the canonical fiber poses (all gates open) and on random poses
+    (every gate verdict), the batch form of each named factor equals the loop
+    over its scalar form to ``atol=1e-12`` (float64 is the package-wide
+    baseline).  ``path_validity``'s batch reuses the ``entry_measure`` memo of
+    the same pose array, so the memo must be transparent as well.
+    """
+    from lumice_integral.weights import evaluate_weights_batch
+
+    problem = canonical_pixel_problem()
+    result = trace_fiber(problem)
+    rng = np.random.default_rng(9)
+    random_poses = np.asarray([np.asarray(exp(jnp.asarray(rng.normal(size=3)))) for _ in range(400)])
+    poses = np.concatenate([np.asarray(result.poses), random_poses])
+    names = ("rho_pose", "entry_measure", "fresnel_transmission", "path_validity")
+
+    batch = evaluate_weights_batch(problem.weight_evaluators, poses, names)
+
+    assert set(batch.values) == set(batch.seconds) == set(names)
+    for name in names:
+        scalar = np.array([problem.weight_evaluators[name].evaluate(pose) for pose in poses])
+        assert batch.values[name].shape == (len(poses),) and batch.values[name].dtype == np.float64
+        np.testing.assert_allclose(batch.values[name], scalar, rtol=0.0, atol=1e-12, err_msg=name)
+        assert batch.seconds[name] >= 0.0
+    assert 0 < np.count_nonzero(batch.values["path_validity"]) < len(poses)
+    # A second, different array with the same shape is recomputed, not served from the memo.
+    other = np.asarray(poses[::-1])
+    np.testing.assert_allclose(
+        evaluate_weights_batch(problem.weight_evaluators, other, ("entry_measure",)).values["entry_measure"],
+        batch.values["entry_measure"][::-1], rtol=0.0, atol=0.0,
+    )
+
+
+def test_batch_evaluation_falls_back_to_the_scalar_loop_and_refuses_missing_factors():
+    from lumice_integral.weights import evaluate_weights_batch
+
+    evaluators = {
+        "rho_pose": WeightEvaluator(lambda rotation: float(rotation[0, 0]) + 2.0, "dimensionless", "test"),
+    }
+    poses = np.asarray([np.eye(3), np.asarray(exp(jnp.array([0.0, 0.0, 1.0])))])
+
+    batch = evaluate_weights_batch(evaluators, poses, ("rho_pose",))
+    np.testing.assert_allclose(batch.values["rho_pose"], [3.0, 2.0 + np.cos(1.0)])
+    with pytest.raises(KeyError):
+        evaluate_weights_batch(evaluators, poses, ("rho_pose", "entry_measure"))
+    with pytest.raises(ValueError):
+        WeightEvaluator(lambda _: 1.0, "u", "n", evaluate_batch=3)

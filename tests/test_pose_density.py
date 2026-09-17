@@ -83,3 +83,16 @@ def test_invalid_parameters_are_rejected():
         ZenithGaussianPoseDensity(np.pi / 2.0, 0.0)
     with pytest.raises(ValueError):
         ZenithGaussianPoseDensity(-0.1, 0.1)
+
+
+def test_batch_density_matches_the_scalar_call_pose_by_pose():
+    density = ZenithGaussianPoseDensity(np.pi / 2.0, np.radians(0.5))
+    rotations = haar_rotations(3000, np.random.default_rng(5))
+
+    batch = density.evaluate_batch(rotations)
+    scalar = np.array([density(rotation) for rotation in rotations])
+
+    assert batch.shape == (len(rotations),) and batch.dtype == np.float64
+    np.testing.assert_allclose(batch, scalar, rtol=0.0, atol=1e-12)
+    with pytest.raises(ValueError):
+        density.evaluate_batch(np.eye(3))

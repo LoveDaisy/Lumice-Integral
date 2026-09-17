@@ -793,3 +793,75 @@ def test_nonfinite_trial_remains_nonfinite_after_retry_exhaustion():
     assert result.status == FiberStatus.NUMERICAL_FAILURE
     assert result.reason == TerminationReason.NON_FINITE
     assert len(result.step_diagnostics) == 3
+
+
+# --- batch retraction (task-resample-and-integrate Step 2) ---------------------
+
+
+def test_batch_retraction_matches_the_scalar_corrector_and_reports_both_residuals():
+    from lumice_integral.canonical_scene import canonical_pixel_problem
+    from lumice_integral.continuation import retract_to_fiber_batch
+    from lumice_integral.resample import resample_fiber
+    from lumice_integral.so3 import rotation_distance
+
+    problem = canonical_pixel_problem()
+    result = trace_fiber(problem)
+    predictors = resample_fiber(result, 65)
+
+    one = retract_to_fiber_batch(problem, predictors.rotations, predictors.phase_tangents, iterations=1)
+    two = retract_to_fiber_batch(problem, predictors.rotations, predictors.phase_tangents, iterations=2)
+
+    assert two.rotations.shape == (65, 3, 3) and two.tangents.shape == (65, 3)
+    assert np.all(one.finite) and np.all(two.finite)
+    # The spline predictor sits ~1e-6 off the fiber; one Newton iteration
+    # leaves ~1e-11, two reach round-off (evidence for the default of 2).
+    assert 1e-8 < one.residual_before.max() < 1e-5
+    np.testing.assert_array_equal(one.residual_before, two.residual_before)
+    assert one.residual_after.max() < 1e-9
+    assert two.residual_after.max() < 1e-14
+    assert two.residual_after.max() < 1e-3 * one.residual_after.max()
+    np.testing.assert_allclose(np.linalg.norm(two.tangents, axis=1), 1.0, atol=1e-14)
+    assert np.all(np.sum(two.tangents * predictors.phase_tangents, axis=1) > 0.99)
+    for index in (0, 7, 40, 64):
+        scalar = retract_to_fiber(
+            problem, ContinuationOptions(), predictors.rotations[index],
+            predictors.rotations[index], predictors.phase_tangents[index],
+        )
+        assert scalar.accepted
+        assert float(rotation_distance(scalar.rotation, two.rotations[index])) < 1e-13
+        assert scalar.jacobian_diagnostic.normal_jacobian == pytest.approx(two.normal_jacobians[index], abs=1e-13)
+        assert float(np.dot(scalar.tangent, two.tangents[index])) > 1.0 - 1e-12
+
+
+def test_batch_retraction_of_far_predictors_reports_large_residuals_instead_of_crashing():
+    from lumice_integral.continuation import retract_to_fiber_batch
+
+    problem = analytic_problem()
+    result = trace_fiber(problem)
+    poses = np.asarray(result.poses[:8])
+    far = np.asarray([pose @ np.asarray(exp(jnp.array([0.4, 0.0, 0.0]))) for pose in poses])
+    phase = np.asarray(result.tangents[:8])
+
+    retraction = retract_to_fiber_batch(problem, far, phase, iterations=1)
+
+    assert retraction.residual_before.min() > 0.1
+    assert np.all(np.isfinite(retraction.residual_after))
+    assert retraction.residual_after.max() > retraction.residual_before.max() * 1e-3
+    with pytest.raises(ValueError):
+        retract_to_fiber_batch(problem, far, phase, iterations=0)
+    with pytest.raises(ValueError):
+        retract_to_fiber_batch(problem, far[:, 0], phase)
+
+
+def test_arclength_to_event_is_the_rate_estimate_behind_the_step_limit():
+    from lumice_integral.continuation import _EVENT_APPROACH_STEP_FRACTION, arclength_to_event
+
+    margins = {"a": 0.01, "b": 0.5}
+    previous = {"a": 0.03, "b": 0.4}
+    assert arclength_to_event(margins, previous, 0.1) == pytest.approx(0.01 * 0.1 / 0.02)
+    assert _event_step_limit(margins, previous, 0.1, 0.02) == pytest.approx(
+        _EVENT_APPROACH_STEP_FRACTION * arclength_to_event(margins, previous, 0.1, threshold=0.02)
+    )
+    assert arclength_to_event({"a": 0.5}, {"a": 0.4}, 0.1) == np.inf
+    assert arclength_to_event({"a": 0.01}, {}, 0.1) == 0.0
+    assert arclength_to_event({"a": 0.01}, {"a": 0.03}, 0.0) == 0.0

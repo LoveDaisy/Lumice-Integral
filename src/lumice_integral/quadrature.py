@@ -726,12 +726,19 @@ class ResampleOptions:
 
     ``initial_node_count`` and every doubled count must be ``4k + 1`` so the
     Simpson rule applies at ``N`` and at the every-other-node subset
-    ``(N + 1) / 2`` that provides the error estimate.  Defaults calibrated on
-    the canonical pixel (task-resample-and-integrate Step 4/5, progress.md).
+    ``(N + 1) / 2`` that provides the error estimate.  Defaults from the
+    task-resample-and-integrate Step 5 evidence on the canonical pixel and
+    rows 100/300/500 (col 126) of the ch06 strip: the slope jumps of
+    ``entry_measure`` make the uniform grid converge at order ~2, so
+    ``relative_tolerance = 1e-4`` (final grids 129-513 nodes, 13-26 ms) is
+    what keeps every fixture within 1e-4 of the rtol=1e-8 adaptive reference;
+    ``1e-3`` stops at 129 nodes and misses that on the longer loops (1e-4 and
+    2e-4).  Two Newton iterations take the spline predictor's ~1e-6 residual
+    to round-off (one leaves ~1e-11).
     """
 
     epsilon: float = 1e-6
-    relative_tolerance: float = 1e-3
+    relative_tolerance: float = 1e-4
     initial_node_count: int = 129
     maximum_node_count: int = 1025
     retraction_iterations: int = 2

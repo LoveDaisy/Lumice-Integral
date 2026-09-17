@@ -229,3 +229,23 @@ def test_batch_domain_check_validates_its_inputs():
         path_3_5_domain_batch(np.eye(3)[None], incident, -1.0)
     empty = path_3_5_domain_batch(np.zeros((0, 3, 3)), incident)
     assert empty.valid.shape == (0,) and empty.direction.shape == (0, 3)
+
+
+def test_batch_fresnel_transmission_matches_the_scalar_form_pose_by_pose():
+    """``fresnel_transmission_3_5_batch`` vs ``fresnel_transmission_3_5`` on Haar samples
+    (every verdict) with no NaN or warning from the invalid rows."""
+    from lumice_integral.optics import fresnel_transmission_3_5_batch
+
+    incident = np.asarray(minimum_deviation_incident())
+    rotations = np.concatenate([haar_rotations(2000, np.random.default_rng(3)), np.eye(3)[None]])
+
+    with np.errstate(all="raise"):
+        batch = fresnel_transmission_3_5_batch(rotations, incident, ICE_REFRACTIVE_INDEX)
+    scalar = np.array([fresnel_transmission_3_5(r, incident, ICE_REFRACTIVE_INDEX) for r in rotations])
+
+    assert batch.shape == (len(rotations),) and batch.dtype == np.float64
+    assert np.all(np.isfinite(batch))
+    # The batch reads its cosines off the jitted ``path_3_5`` while the scalar
+    # form recomputes them in numpy: round-off only (observed 7e-15).
+    np.testing.assert_allclose(batch, scalar, rtol=0.0, atol=1e-13)
+    assert 0 < np.count_nonzero(batch) < len(batch)

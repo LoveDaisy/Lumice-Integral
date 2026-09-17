@@ -19,10 +19,9 @@ accepted poses (after continuation), never inside a ``jax.jit`` kernel.
 Each factor has a scalar form (``evaluate``, one pose) and an optional batch
 form (``evaluate_batch``, ``(N, 3, 3)`` poses at once) that must agree
 elementwise; :func:`evaluate_weights_batch` prefers the batch form and falls
-back to a host loop over the scalar one.  ``entry_measure`` has no vectorised
-implementation (pure-numpy polygon clipping, ~0.23 ms per pose on the
-canonical fiber, task-resample-and-integrate Step 0 fact 5), so its batch
-form is that loop and its wall clock is reported alongside the values.
+back to a host loop over the scalar one and reports the wall clock of each
+factor (``entry_measure`` is numpy polygon clipping and dominates:
+task-resample-and-integrate Step 0 fact 5 / Step 3).
 """
 
 from __future__ import annotations
@@ -33,7 +32,7 @@ from typing import Callable, Mapping, NamedTuple
 
 import numpy as np
 
-from .geometry import HexPrism, entry_measure
+from .geometry import HexPrism, entry_measure, entry_measure_batch
 from .optics import (
     fresnel_transmission_3_5,
     fresnel_transmission_3_5_batch,
@@ -196,14 +195,14 @@ def fresnel_transmission_weight(
 
 
 class _EntryMeasureBatch:
-    """``entry_measure_weight`` over ``(N, 3, 3)`` poses as a host loop, memoised once.
+    """:func:`.geometry.entry_measure_batch` for the 3-5 path, memoised once.
 
     ``entry_measure`` and ``path_validity`` need the same per-pose footprint
     areas; the memo keeps the most recent pose array object and its values so
-    that a batch caller evaluating both factors on one array pays the loop
-    once.  The array itself is held (identity test with ``is``), so a freed
-    array's id can never be mistaken for a live one.  Explicitly not a
-    general cache: one entry, replaced on every new array.
+    that a batch caller evaluating both factors on one array pays the
+    clipping once.  The array itself is held (identity test with ``is``), so
+    a freed array's id can never be mistaken for a live one.  Explicitly not
+    a general cache: one entry, replaced on every new array.
     """
 
     def __init__(self, *, incident_direction: np.ndarray, crystal: HexPrism, refractive_index: float) -> None:
@@ -215,17 +214,13 @@ class _EntryMeasureBatch:
     def __call__(self, rotations: np.ndarray) -> np.ndarray:
         if self._last is not None and self._last[0] is rotations:
             return self._last[1]
-        rotation_array = np.asarray(rotations, dtype=np.float64)
         values = np.asarray(
-            [
-                entry_measure_weight(
-                    rotation, incident_direction=self._incident, crystal=self._crystal,
-                    refractive_index=self._index,
-                )
-                for rotation in rotation_array
-            ],
+            entry_measure_batch(
+                np.asarray(rotations, dtype=np.float64), (3, 5), self._incident, self._crystal,
+                n_ice=self._index,
+            ),
             dtype=np.float64,
-        ).reshape(len(rotation_array))
+        )
         self._last = (rotations, values)
         return values
 
