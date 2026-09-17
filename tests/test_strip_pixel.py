@@ -257,6 +257,9 @@ def test_arc_component_is_integrated_and_flagged(monkeypatch, scene, options):
     backward = trace_fiber(problem, ContinuationOptions(maximum_arclength=0.6, initial_tangent_sign=-1))
     assert forward.reason == backward.reason == TerminationReason.ARCLENGTH_BUDGET
     arc = stitch_open_arc(forward, backward)
+    # `reason` is deliberately TIR_BOUNDARY, not the real trace's ARCLENGTH_BUDGET
+    # (asserted above): `_integrate_component` must read `component.reason`, and this
+    # mismatch is what would expose it silently re-deriving the reason from `arc` instead.
     component = DiscoveredComponent(
         seed=np.asarray(problem.seed), kind="arc", result=arc, arclength=arc.arclength,
         status=FiberStatus.EVENT_TERMINATED, reason=TerminationReason.TIR_BOUNDARY,

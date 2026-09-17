@@ -210,7 +210,11 @@ def pixel_csv_row(result: PixelResult) -> dict[str, Any]:
         "component_kinds": ";".join(c.kind for c in components),
         "component_arclengths": ";".join(f"{c.arclength:.6f}" for c in components),
         "component_pose_counts": ";".join(str(c.pose_count) for c in components),
-        # ``start|end`` event names of each component (``closed_loop`` alone for a loop).
+        # ``start|end`` event names for an arc; a closed loop has no start event and is
+        # written as the bare ``reason`` (no ``|``) rather than a symmetric ``-|reason`` —
+        # consumers must branch on the paired ``component_kinds`` entry, not on the
+        # presence of ``|``, since a reason string can itself contain no such ambiguity
+        # only because none of the ``TerminationReason`` names do.
         "component_end_reasons": ";".join(
             f"{c.start_reason}|{c.reason}" if c.kind == "arc" else c.reason for c in components
         ),

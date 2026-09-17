@@ -234,7 +234,9 @@ class ComponentRecord:
 
     ``kind`` is ``"closed"`` or ``"arc"``; ``reason`` the terminal event of the
     curve and ``start_reason`` the backward end's for an arc (``""`` for a
-    closed loop).  ``start_truncation_estimate``/``end_truncation_estimate``
+    closed loop — the picklable/CSV-safe encoding of the upstream
+    ``DiscoveredComponent.start_reason: TerminationReason | None``, not a
+    semantic downgrade from ``Optional``).  ``start_truncation_estimate``/``end_truncation_estimate``
     are the Haar-converted open-arc truncation estimates of
     :class:`.quadrature.ResampledQuadratureResult` (``nan`` when not
     applicable; never added to ``value``).
