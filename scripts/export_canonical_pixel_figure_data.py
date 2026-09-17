@@ -1,10 +1,11 @@
 """Export the canonical ch06 pixel 3-5 fiber with its factors and line integral.
 
-Writes ``lumice-integral.figure-data/v2`` metadata plus arrays, including one
+Writes ``lumice-integral.figure-data/v3`` metadata plus arrays, including one
 ``weight_<name>`` array per available factor (``rho_pose``, ``entry_measure``,
 ``fresnel_transmission``, ``path_validity``), the pointwise ``integrand`` array
-and the ``result.quadrature`` block of the adaptive line quadrature; the
-remaining contract factors are exported as explicitly unavailable.
+and the ``result.quadrature`` block of the resampled fixed-grid line
+quadrature; the remaining contract factors are exported as explicitly
+unavailable.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from pathlib import Path
 from lumice_integral.canonical_scene import canonical_fixture_metadata, canonical_pixel_problem
 from lumice_integral.continuation import trace_fiber
 from lumice_integral.figure_data import export_fiber_figure_data
-from lumice_integral.quadrature import integrate_fiber
+from lumice_integral.quadrature import integrate_fiber_resampled
 
 
 def main() -> None:
@@ -25,7 +26,7 @@ def main() -> None:
 
     problem = canonical_pixel_problem()
     result = trace_fiber(problem)
-    quadrature = integrate_fiber(problem, result)
+    quadrature = integrate_fiber_resampled(problem, result)
     files = export_fiber_figure_data(
         result,
         args.output,
@@ -52,13 +53,13 @@ def main() -> None:
     print(
         f"quadrature: status={quadrature.status} value={quadrature.value:.12g} "
         f"error_estimate={quadrature.error_estimate:.3g} epsilon={quadrature.epsilon:g} "
-        f"refinements={quadrature.refinements} node_count={quadrature.node_count} "
-        f"maximum_depth_reached={quadrature.maximum_depth_reached} "
-        f"convergence_order_estimate={quadrature.convergence_order_estimate} "
-        f"median_edge_convergence_order={quadrature.median_edge_convergence_order} "
-        f"low_order_edges={list(quadrature.low_order_edges)} "
-        f"depth_exhausted_edges={list(quadrature.depth_exhausted_edges)} "
-        f"refinement_failures={len(quadrature.refinement_failures)}"
+        f"relative_tolerance={quadrature.relative_tolerance:g} node_count={quadrature.node_count} "
+        f"refinement_rounds={quadrature.refinement_rounds} "
+        f"node_count_exhausted={quadrature.node_count_exhausted} "
+        f"node_count_history={list(quadrature.node_count_history)} "
+        f"residual_before_max={quadrature.residual_before_max:.3g} "
+        f"residual_after_max={quadrature.residual_after_max:.3g} "
+        f"non_finite_node_count={quadrature.non_finite_node_count}"
     )
     print(f"quadrature method: {quadrature.method}")
 

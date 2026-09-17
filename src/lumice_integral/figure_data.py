@@ -14,7 +14,7 @@ from typing import Any
 import numpy as np
 
 from .continuation import FiberResult
-from .quadrature import QuadratureResult, pointwise_integrand
+from .quadrature import ResampledQuadratureResult, pointwise_integrand
 from .weights import WeightObservable
 
 
@@ -24,7 +24,12 @@ from .weights import WeightObservable
 # Still v2 (task-single-fiber-line-quadrature): the optional ``result.quadrature``
 # object and ``integrand`` sample array are pure additions; no existing field
 # changed type.
-SCHEMA_VERSION = "lumice-integral.figure-data/v2"
+# v3 (task-resample-and-integrate): ``result.quadrature`` describes the
+# resampled fixed-grid quadrature; the adaptive method's fields (refinements,
+# maximum_refinement_depth, maximum_depth_reached, convergence order fields,
+# refinement_failures, depth_exhausted_edges) are gone and the grid/retraction
+# evidence fields replace them.  Every other field and array is unchanged.
+SCHEMA_VERSION = "lumice-integral.figure-data/v3"
 WEIGHT_ARRAY_PREFIX = "weight_"
 INTEGRAND_ARRAY_NAME = "integrand"
 
@@ -103,7 +108,7 @@ def _branch_margin_arrays(result: FiberResult) -> tuple[list[str], np.ndarray]:
     return names, values
 
 
-def _quadrature_metadata(quadrature: QuadratureResult) -> dict[str, Any]:
+def _quadrature_metadata(quadrature: ResampledQuadratureResult) -> dict[str, Any]:
     return {
         "status": quadrature.status,
         "method": quadrature.method,
@@ -114,23 +119,27 @@ def _quadrature_metadata(quadrature: QuadratureResult) -> dict[str, Any]:
         "factor_names": list(quadrature.factor_names),
         "epsilon": quadrature.epsilon,
         "relative_tolerance": quadrature.relative_tolerance,
-        "maximum_refinement_depth": quadrature.maximum_refinement_depth,
-        "refinements": quadrature.refinements,
-        "maximum_depth_reached": quadrature.maximum_depth_reached,
+        "initial_node_count": quadrature.initial_node_count,
+        "maximum_node_count": quadrature.maximum_node_count,
+        "retraction_iterations": quadrature.retraction_iterations,
         "node_count": quadrature.node_count,
+        "refinement_rounds": quadrature.refinement_rounds,
+        "node_count_exhausted": quadrature.node_count_exhausted,
+        "node_count_history": [[count, value] for count, value in quadrature.node_count_history],
         "value": quadrature.value,
         "error_estimate": quadrature.error_estimate,
         "raw_value": quadrature.raw_value,
         "raw_error_estimate": quadrature.raw_error_estimate,
         "haar_to_dvol_g_factor": quadrature.haar_to_dvol_g_factor,
-        "convergence_order_estimate": quadrature.convergence_order_estimate,
-        "convergence_order_note": quadrature.convergence_order_note,
-        "raw_convergence_order_levels": list(quadrature.raw_convergence_order_levels),
-        "convergence_order_node_count": quadrature.convergence_order_node_count,
-        "median_edge_convergence_order": quadrature.median_edge_convergence_order,
-        "low_order_edges": list(quadrature.low_order_edges),
-        "refinement_failures": list(quadrature.refinement_failures),
-        "depth_exhausted_edges": list(quadrature.depth_exhausted_edges),
+        "residual_before_max": quadrature.residual_before_max,
+        "residual_before_median": quadrature.residual_before_median,
+        "residual_after_max": quadrature.residual_after_max,
+        "residual_after_median": quadrature.residual_after_median,
+        "non_finite_node_count": quadrature.non_finite_node_count,
+        "endpoint_truncation_estimate": quadrature.endpoint_truncation_estimate,
+        "endpoint_truncation_note": quadrature.endpoint_truncation_note,
+        # ``factor_seconds`` (wall clock) is deliberately not exported: the
+        # canonical export must stay byte-identical across runs (section 6).
         "integrand_array": (
             INTEGRAND_ARRAY_NAME if quadrature.status == "available" else None
         ),
@@ -138,7 +147,7 @@ def _quadrature_metadata(quadrature: QuadratureResult) -> dict[str, Any]:
 
 
 def _integrand_arrays(
-    result: FiberResult, quadrature: QuadratureResult | None
+    result: FiberResult, quadrature: ResampledQuadratureResult | None
 ) -> dict[str, np.ndarray]:
     if quadrature is None or quadrature.status != "available":
         return {}
@@ -147,7 +156,7 @@ def _integrand_arrays(
 
 
 def _arrays(
-    result: FiberResult, quadrature: QuadratureResult | None
+    result: FiberResult, quadrature: ResampledQuadratureResult | None
 ) -> tuple[dict[str, np.ndarray], list[str]]:
     margin_names, margins = _branch_margin_arrays(result)
     singular_values = np.asarray(
@@ -215,7 +224,7 @@ def _arrays(
 def _array_metadata(
     arrays: Mapping[str, np.ndarray],
     result: FiberResult,
-    quadrature: QuadratureResult | None,
+    quadrature: ResampledQuadratureResult | None,
 ) -> dict[str, dict[str, Any]]:
     units = {
         "arclength_increments": "radian",
@@ -270,7 +279,7 @@ def export_fiber_figure_data(
     *,
     fixture: Mapping[str, Any],
     provenance: Mapping[str, Any] | None = None,
-    quadrature: QuadratureResult | None = None,
+    quadrature: ResampledQuadratureResult | None = None,
 ) -> FigureDataFiles:
     """Write one ``FiberResult`` as JSON metadata plus an NPZ array payload.
 

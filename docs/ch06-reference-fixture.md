@@ -234,27 +234,37 @@ Current expected evidence (Mac reference environment):
 | `path_validity` | `1` at every accepted pose |
 | Normal Jacobian range | about `0.0822 .. 0.1497` |
 | `visibility`, `source_factor`, `pixel_factor`, `other_radiometric` | `unavailable` |
-| Line integral `value` (Haar-converted, `partial`) | `2.364423815` with `error_estimate` about `6.0e-9` (`raw_value` about `186.687422`, `raw_error_estimate` about `4.7e-7` before the `1/(8 pi^2)` factor) |
-| Quadrature method | adaptive composite Simpson over chord-parametrised edges, corrector-retracted midpoints, Richardson error estimate; `epsilon = 1e-6`, `relative_tolerance = 1e-8`, `maximum_refinement_depth = 24` |
-| Quadrature work | about `235` refinements, `1417` adaptive nodes (`120` accepted plus retracted midpoints), maximum depth reached `16`, no depth exhaustion, no retraction failure |
-| Convergence order | median per-edge Richardson order about `3.99`; global uniform-bisection order about `1.99` because `entry_measure` has slope jumps inside edges `3, 17, 32, 47, 77, 92, 106` (footprint-clipping vertex events), see below |
+| Line integral `value` (Haar-converted, `partial`) | `2.364400114` with `error_estimate` about `5.7e-5` (`raw_value` about `186.6855`, before the `1/(8 pi^2)` factor); `1.0e-5` below the retired adaptive integrator's `2.364423815 +- 6.0e-9` (rtol `1e-8`), which stays the frozen alignment reference (`tests/test_resample_quadrature.py::ADAPTIVE_REFERENCE`) |
+| Quadrature method | resampled fixed grid (`task-resample-and-integrate`): C1 cubic Hermite quaternion spline through the accepted poses with the trace's exact tangents, uniform grid of the cumulative-chord parameter, every node retracted onto the fiber by `2` batched bordered Newton iterations, exact `ds/dt` from the implicit function theorem at the retracted node, composite Simpson, error estimate `\|I_N - I_(N+1)/2\|`, node count doubled (`N -> 2N - 1`) until the estimate meets `relative_tolerance`; `epsilon = 1e-6`, `relative_tolerance = 1e-4`, `initial_node_count = 129`, `maximum_node_count = 1025` |
+| Quadrature work | `257` grid nodes after one doubling (`129 -> 257`), predictor residual before retraction at most `1.2e-6`, after retraction at most `3.6e-16`, no non-finite node; about `19 ms` per fiber (Mac reference environment, warm), against `2.4 s` for the retired adaptive integrator at rtol `1e-8` (`713` nodes) and `0.92 s` at its production rtol `1e-6` |
+| Convergence | the uniform grid converges at order about `2` because `entry_measure` has slope jumps (footprint-clipping vertex events) that fall between grid nodes: deviation from the adaptive reference `7.0e-5 / 3.4e-5 / 1.0e-5 / 3.4e-6` at `65 / 129 / 257 / 513` nodes; the `\|I_N - I_(N+1)/2\|` estimate bounded the actual deviation on every fixture checked |
+| Retired adaptive integrator (historical, `2026-09-17`) | adaptive composite Simpson over chord-parametrised edges with one host-side Newton retraction per refinement node: `235` refinements, `1417` nodes, depth `16` at rtol `1e-8`, median per-edge Richardson order `3.99`, global order `1.99` (kinks inside edges `3, 17, 32, 47, 77, 92, 106`); removed because it cost `4-7 s` per lit strip pixel (85 % of the per-pixel budget) |
 
-Quadrature evidence (`tests/test_quadrature.py`): on the analytic circle a
-constant weight reproduces `2 pi / (1 + epsilon)` to `1e-13` and the Haar
-identity `1/(4 pi)` within `epsilon`; the weight `1 + cos(theta)/2` matches
-`2 pi / (1 + epsilon)` inside the reported error with an empirical order of
-`4.00`; reversing the seed orientation (`initial_tangent_sign = -1`) keeps
-the arclength and the integral. On the canonical pixel fiber the integrals
-for `initial_step` `0.03 / 0.04 / 0.08`, `relative_tolerance` `1e-6 / 1e-8 /
-1e-9`, and both seed orientations agree within the sum of their error
-estimates (observed differences `3e-11 .. 5e-7`), without comparing sample
-counts. The integrand is only piecewise smooth: `entry_measure` (a clipped
-polygon area) changes slope inside seven edges, so uniform bisection shows
-order about `2` there while the smooth edges show Simpson's `4`; the adaptive
-pass localises those kinks (depth `16` at `1e-8`, `20` at `1e-9`), which is
-why the default depth is `24`. The value is `partial`: one component from one
-seed, completeness `unknown`; `visibility` and the radiometric factors are
-not in the product.
+Quadrature evidence (`tests/test_resample_quadrature.py`): on the analytic
+circle a constant weight reproduces `2 pi / (1 + epsilon)` to `1e-9`
+(the spline parameter's C1 knots leave a round-off-level kink in `ds/dt`)
+and the weight `1 + cos(theta)/2` matches `2 pi / (1 + epsilon)` to `1e-8`
+on every grid from `17` nodes; the node count doubles `5 -> 9 -> 17 -> 33`
+on `1 / (1.2 + cos theta)` until the estimate meets `1e-7`, and hitting
+`maximum_node_count` is reported as `node_count_exhausted`, never as
+converged. An event-terminated open arc of the circle integrates to its
+extent to `1e-9` and its `endpoint_truncation_estimate` (terminal integrand
+times the linear-rate arclength to the event, `continuation.arclength_to_event`)
+matches the analytic remainder; a budget-truncated arc gets no estimate
+(reported as unbounded). On the canonical pixel fiber the integrals for
+`initial_step` `0.03 / 0.04 / 0.08`, `relative_tolerance` `1e-3 / 1e-4 /
+1e-5` and both seed orientations agree within the sum of their error
+estimates, without comparing sample counts. External alignment: with the
+default options the canonical pixel and strip rows `100 / 300 / 500`
+(column `126`) stay within `3.6e-5` of the retired adaptive integrator's
+rtol `1e-8` values (`129 / 513 / 513` nodes on the strip rows, `13-26 ms`
+per fiber). The integrand is only piecewise smooth: `entry_measure` (a
+clipped polygon area) changes slope at footprint-clipping vertex events, so
+the uniform grid converges at order about `2` and `relative_tolerance =
+1e-4` is what the `1e-4` alignment requires (`1e-3` stops at `129` nodes
+and misses it on the longer loops). The value is `partial`: one component
+from one seed, completeness `unknown`; `visibility` and the radiometric
+factors are not in the product.
 
 ## 5. Figure Capability Matrix
 
@@ -263,10 +273,10 @@ not in the product.
 | ch06 crystal-orientation schematic | Writing-Lab drawing code | Supported | None in Lumice Integral; not a numerical-solver responsibility. |
 | ch06 ray-splitting schematic | Writing-Lab drawing code | Supported | None in Lumice Integral. |
 | ch06 all-sky Monte Carlo example | Lumice through Writing-Lab validation glue | Supported | Not a Lumice Integral product output. |
-| ch06 pose-fiber geometry | Lumice Integral | Supported for one supplied regular seed/component; seeds for one pixel can come from `lumice_integral.discovery` | Add continuous-sign unit-quaternion and C-axis longitude/latitude/spin adapters; the prescan-cloud figure still needs recorded spacing/feasibility output from the discovery scan. |
+| ch06 pose-fiber geometry | Lumice Integral | Supported for one supplied regular seed/component; seeds for one pixel can come from `lumice_integral.discovery`; continuous-sign unit-quaternion adapters exist (`so3.quaternion_from_rotation` / `continuous_quaternion_signs`, used by `resample.fiber_spline`) | Add C-axis longitude/latitude/spin adapters; the prescan-cloud figure still needs recorded spacing/feasibility output from the discovery scan. |
 | ch06 solver/Jacobian diagnostics | Lumice Integral data; Writing-Lab presentation | Supported as versioned figure data | A production plotting consumer still belongs in Writing-Lab; an independent prototype consumer has been verified. |
-| ch06 named physical-factor curves | Lumice Integral | Supported for `rho_pose`, `entry_measure`, `fresnel_transmission`, `path_validity` on the canonical pixel fiber (section 4.1, figure-data v2 `weight_<name>` arrays); the pointwise final `integrand` curve (product over `J_perp + epsilon`) is exported alongside | `visibility` (finite-face obstruction) and the radiometric factors remain unavailable. |
-| ch06 one-pixel integrand/integral | Lumice Integral | Supported as a `partial` value: converged adaptive line quadrature over the closed canonical fiber with error estimate and order evidence (sections 4.1 and 6, `result.quadrature`); single-pixel component discovery is available as a separate primitive (`lumice_integral.discovery`, procedural `completeness` only) | Integration of discovered components into the quadrature product; a completeness certificate; pixel averaging (point value only); the missing factors above. |
+| ch06 named physical-factor curves | Lumice Integral | Supported for `rho_pose`, `entry_measure`, `fresnel_transmission`, `path_validity` on the canonical pixel fiber (section 4.1, figure-data `weight_<name>` arrays); the pointwise final `integrand` curve (product over `J_perp + epsilon`) is exported alongside | `visibility` (finite-face obstruction) and the radiometric factors remain unavailable. |
+| ch06 one-pixel integrand/integral | Lumice Integral | Supported as a `partial` value: resampled fixed-grid line quadrature over the closed canonical fiber with error estimate and grid/retraction evidence (sections 4.1 and 6, `result.quadrature`); single-pixel component discovery is available as a separate primitive (`lumice_integral.discovery`, procedural `completeness` only) | Integration of discovered components into the quadrature product; a completeness certificate; pixel averaging (point value only); the missing factors above. |
 | ch06 `251 x 801` direct strip | Lumice Integral | Supported as a `partial` physical rerender: `scripts/render_ch06_strip.py` (`lumice_integral.strip_pixel` / `strip_driver` / `strip_io`) renders any window of the canonical `251 x 801` grid with column-wise hot-start continuation, cold-prescan fallback and spot checks, and writes float64/float32 raw in the historical layout plus a per-pixel status layer and `provenance.json`; pixel model: pixel-centre point value with `epsilon` regularisation (section 7, stage 4) | A completeness certificate (the status layer is procedural); the missing factors of the one-pixel row; sub-pixel averaging is implemented but off by default (6-10x cost; `O(10-40 %)` effect in the centre-column caustic band, section 7 stage 4); finite-sun averaging; rows `600-800` (the lower quarter) come back `unknown` with value `0` because every discovery candidate there stays `incomplete` (section 7 stage 4); a full-resolution run is `1-1.5 days` on a 30-core machine. |
 | ch10 halo-map/Jacobian/fold figures | Lumice Integral numerical data; Writing-Lab presentation | Partially supported | Target sweeps and singular/fold localization beyond one regular fiber. |
 | ch11 orientation-family comparison | Lumice Integral and/or independent Lumice validation | Not supported by the current ordinary-density slice | Pose-density models, physical weights, image driver; exactly constrained families require a separate measure/domain contract. |
@@ -282,10 +292,10 @@ uv run python scripts/export_path_3_5_figure_data.py <output-directory>      # s
 uv run python scripts/export_canonical_pixel_figure_data.py <output-directory>  # section 4.1, with weights
 ```
 
-The current `lumice-integral.figure-data/v2` payload contains:
+The current `lumice-integral.figure-data/v3` payload contains:
 
 ```text
-schema: lumice-integral.figure-data/v2
+schema: lumice-integral.figure-data/v3
 metadata:
   path, incident, target, material, wavelength
   pose convention, metric/measure, solver options
@@ -303,14 +313,18 @@ weights (result.weight_observables):
 quadrature (result.quadrature, null when the export ran without it):
   status, method, fiber_status, coverage, component_completeness
   density_factor_name, factor_names, epsilon, relative_tolerance,
-  maximum_refinement_depth
-  refinements, maximum_depth_reached, node_count
+  initial_node_count, maximum_node_count, retraction_iterations
+  node_count, refinement_rounds, node_count_exhausted,
+  node_count_history ([[N, raw I_N], ...] including the coarsest half grid)
   value, error_estimate (Haar-converted), raw_value, raw_error_estimate,
   haar_to_dvol_g_factor
-  convergence_order_estimate, convergence_order_note,
-  raw_convergence_order_levels, convergence_order_node_count,
-  median_edge_convergence_order, low_order_edges
-  refinement_failures, depth_exhausted_edges, integrand_array
+  residual_before_max, residual_before_median (spline predictor off the fiber),
+  residual_after_max, residual_after_median (after the batched retraction),
+  non_finite_node_count
+  endpoint_truncation_estimate (null on closed loops and non-event arcs),
+  endpoint_truncation_note, integrand_array
+  (the in-memory result's factor_seconds wall clock is not exported: the
+   canonical export stays byte-identical across runs)
 ```
 
 Schema history:
@@ -332,6 +346,20 @@ Schema history:
   field changed type), so the version string stays `v2`. `normal_jacobian`
   remains the unregularised `J_perp`; `epsilon` lives only in the integrand
   and in `result.quadrature.epsilon`.
+- `v3` (`task-resample-and-integrate`, 2026-09-17): `result.quadrature`
+  describes the resampled fixed-grid quadrature that replaced the adaptive
+  integrator. The adaptive method's fields are removed (`maximum_refinement_depth`,
+  `refinements`, `maximum_depth_reached`, `convergence_order_estimate`,
+  `convergence_order_note`, `raw_convergence_order_levels`,
+  `convergence_order_node_count`, `median_edge_convergence_order`,
+  `low_order_edges`, `refinement_failures`, `depth_exhausted_edges`) and the
+  grid/retraction evidence fields listed above are added; `status`, `method`,
+  `value`, `error_estimate`, `raw_*`, `epsilon`, `relative_tolerance`,
+  `node_count`, `factor_names` and `integrand_array` keep their names and
+  types. The version string changes because fields a `v2` reader may have
+  read no longer exist (not an additive change); every array and every other
+  metadata field is unchanged. The `integrand` array is still the pointwise
+  value at the accepted poses, not at the quadrature grid nodes.
 
 JSON metadata carries the semantic names, units, conventions, shapes,
 and SHA-256 of the NPZ payload. Empty failed fibers are represented without
@@ -356,10 +384,12 @@ color-to-factor mapping.
 3. **Physical one-pixel result**: expose every named factor, the coarea
    denominator, quadrature refinements, and a convergence estimate. Status:
    the four factors of section 4.1 and `J_perp` are exposed pointwise with
-   units and normalization; the adaptive line quadrature of section 4.1
-   reports method, refinements, node count, value, error estimate, `epsilon`
-   and order evidence for the canonical pixel fiber (`tests/test_quadrature.py`,
-   `result.quadrature` in the figure data). The value stays `partial` (single
+   units and normalization; the resampled fixed-grid line quadrature of
+   section 4.1 reports method, grid node count and doubling history,
+   retraction residuals, value, error estimate and `epsilon` for the
+   canonical pixel fiber (`tests/test_resample_quadrature.py`,
+   `result.quadrature` in the figure data), aligned to `1e-4` with the
+   retired adaptive integrator whose values are frozen there. The value stays `partial` (single
    component, missing factors); strip-level coverage is stage 4.
 4. **Historical image scene**: render the canonical `251 x 801` strip and
    compare raw profiles with the historical binary plus an independently

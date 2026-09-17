@@ -20,7 +20,7 @@ For one target direction ``d`` it
 2. retraces every closed component with the production
    :class:`.continuation.ContinuationOptions` and the four named weights
    (the discovery traces are weightless and budget-limited by design);
-3. integrates each production trace with :func:`.quadrature.integrate_fiber`;
+3. integrates each production trace with :func:`.quadrature.integrate_fiber_resampled`;
 4. sums the component values and error estimates linearly (the error sum is a
    conservative bound, not a root-sum-square).
 
@@ -96,7 +96,7 @@ from .geometry import HexPrism
 from .optics import path_3_5_problem
 from .pose_density import ZenithGaussianPoseDensity
 from .prescan import DEFAULT_RNG_SEED, DEFAULT_SAMPLE_COUNT, PrescanTable, build_prescan_table
-from .quadrature import QuadratureOptions, integrate_fiber
+from .quadrature import ResampleOptions, integrate_fiber_resampled
 from .weights import build_3_5_weight_evaluators
 
 Completeness = str  # "complete" | "unknown"
@@ -110,7 +110,7 @@ STATUS_HAS_COMPONENT = 4
 STATUS_COLD_DISCOVERY = 8
 STATUS_ARCLENGTH_JUMP = 16
 STATUS_PRODUCTION_FAILURE = 32
-STATUS_DEPTH_EXHAUSTED = 64
+STATUS_NODE_COUNT_EXHAUSTED = 64
 STATUS_COLD_CHECK_MISMATCH = 128
 
 EVENT_NAMES = (
@@ -127,7 +127,8 @@ EVENT_NAMES = (
     "production_not_closed",
     "production_arclength_mismatch",
     "quadrature_unavailable",
-    "quadrature_depth_exhausted",
+    "quadrature_node_count_exhausted",
+    "quadrature_non_finite_nodes",
 )
 # Per-pixel wall-clock stages (seconds); ``total_s`` wraps the other four.
 STAGE_NAMES = ("hot_start_s", "cold_discovery_s", "production_s", "quadrature_s", "total_s")
@@ -261,14 +262,12 @@ class PixelOptions:
     arclength_rtol: float = 1e-3
     jump_relative_threshold: float = 0.2
     continuation: ContinuationOptions = field(default_factory=ContinuationOptions)
-    # Image default: 1e-6 (the float32 copy resolves ~1e-7 relative) and no
-    # order-estimate pass; the single-pixel fixture defaults (1e-8, levels 2)
-    # cost ~4x more per fiber for a diagnostic the image does not consume.
-    quadrature: QuadratureOptions = field(
-        default_factory=lambda: QuadratureOptions(
-            relative_tolerance=1e-6, convergence_order_levels=0
-        )
-    )
+    # The resampled fixed-grid quadrature at its calibrated defaults
+    # (``relative_tolerance=1e-4``: within 1e-4 of the retired adaptive
+    # rtol=1e-8 integrator on the four Step 5 fixtures at 13-26 ms per fiber,
+    # task-resample-and-integrate).  The float32 image copy resolves ~1e-7
+    # relative, so the image is now quadrature-limited at 1e-4, visibly.
+    quadrature: ResampleOptions = field(default_factory=ResampleOptions)
 
     @property
     def effective_retry_step_budget(self) -> int:
@@ -306,10 +305,10 @@ class ComponentRecord:
     quadrature_status: str
     value: float
     error_estimate: float
-    refinements: int
     node_count: int
-    maximum_depth_reached: int
-    depth_exhausted_edge_count: int
+    refinement_rounds: int
+    node_count_exhausted: bool
+    non_finite_node_count: int
 
     @property
     def integrated(self) -> bool:
@@ -361,8 +360,8 @@ class PixelResult:
             bits |= STATUS_ARCLENGTH_JUMP
         if self.events.get("production_not_closed", 0) or self.events.get("quadrature_unavailable", 0):
             bits |= STATUS_PRODUCTION_FAILURE
-        if self.events.get("quadrature_depth_exhausted", 0):
-            bits |= STATUS_DEPTH_EXHAUSTED
+        if self.events.get("quadrature_node_count_exhausted", 0):
+            bits |= STATUS_NODE_COUNT_EXHAUSTED
         if self.events.get("cold_check_mismatch", 0):
             bits |= STATUS_COLD_CHECK_MISMATCH
         return bits
@@ -509,12 +508,14 @@ def _integrate_component(
     elif not np.isclose(production_arclength, component.arclength, rtol=options.arclength_rtol, atol=1e-6):
         events["production_arclength_mismatch"] += 1
     start = time.perf_counter()
-    quadrature = integrate_fiber(problem, result, options.continuation, options.quadrature)
+    quadrature = integrate_fiber_resampled(problem, result, options.quadrature)
     timings["quadrature_s"] += time.perf_counter() - start
     if quadrature.status != "available":
         events["quadrature_unavailable"] += 1
-    if quadrature.depth_exhausted_edges:
-        events["quadrature_depth_exhausted"] += 1
+    if quadrature.node_count_exhausted:
+        events["quadrature_node_count_exhausted"] += 1
+    if quadrature.non_finite_node_count:
+        events["quadrature_non_finite_nodes"] += 1
     return ComponentRecord(
         seed=np.asarray(component.seed, dtype=np.float64),
         discovery_arclength=float(component.arclength),
@@ -525,10 +526,10 @@ def _integrate_component(
         quadrature_status=quadrature.status,
         value=float(quadrature.value) if quadrature.status == "available" else 0.0,
         error_estimate=float(quadrature.error_estimate) if quadrature.status == "available" else 0.0,
-        refinements=int(quadrature.refinements),
         node_count=int(quadrature.node_count),
-        maximum_depth_reached=int(quadrature.maximum_depth_reached),
-        depth_exhausted_edge_count=len(quadrature.depth_exhausted_edges),
+        refinement_rounds=int(quadrature.refinement_rounds),
+        node_count_exhausted=bool(quadrature.node_count_exhausted),
+        non_finite_node_count=int(quadrature.non_finite_node_count),
     )
 
 
@@ -622,8 +623,8 @@ __all__ = [
     "STATUS_ARCLENGTH_JUMP",
     "STATUS_COLD_CHECK_MISMATCH",
     "STATUS_COLD_DISCOVERY",
-    "STATUS_DEPTH_EXHAUSTED",
     "STATUS_HAS_COMPONENT",
+    "STATUS_NODE_COUNT_EXHAUSTED",
     "STATUS_PRODUCTION_FAILURE",
     "STATUS_RENDERED",
     "STATUS_UNKNOWN_COMPLETENESS",

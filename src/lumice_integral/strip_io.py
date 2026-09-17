@@ -46,14 +46,14 @@ from .canonical_scene import (
     CANONICAL_ZENITH_STD_DEG,
 )
 from .provenance import git_commit as _git_commit, sha256_of
-from .quadrature import INTEGRAND_FACTOR_NAMES, QUADRATURE_METHOD
+from .quadrature import INTEGRAND_FACTOR_NAMES, RESAMPLED_QUADRATURE_METHOD
 from .strip_pixel import (
     EVENT_NAMES,
     STAGE_NAMES,
     STATUS_ARCLENGTH_JUMP,
     STATUS_COLD_CHECK_MISMATCH,
     STATUS_COLD_DISCOVERY,
-    STATUS_DEPTH_EXHAUSTED,
+    STATUS_NODE_COUNT_EXHAUSTED,
     STATUS_HAS_COMPONENT,
     STATUS_PRODUCTION_FAILURE,
     STATUS_RENDERED,
@@ -78,7 +78,7 @@ STATUS_BITS: dict[str, int] = {
     "cold_discovery": STATUS_COLD_DISCOVERY,
     "arclength_jump": STATUS_ARCLENGTH_JUMP,
     "production_failure": STATUS_PRODUCTION_FAILURE,
-    "depth_exhausted": STATUS_DEPTH_EXHAUSTED,
+    "node_count_exhausted": STATUS_NODE_COUNT_EXHAUSTED,
     "cold_check_mismatch": STATUS_COLD_CHECK_MISMATCH,
 }
 STATUS_BIT_MEANINGS: dict[str, str] = {
@@ -92,7 +92,10 @@ STATUS_BIT_MEANINGS: dict[str, str] = {
     "cold_discovery": "the prescan ran for this pixel (first pixel, fallback, or cold check); unset = pure hot start",
     "arclength_jump": "hot start from the previous pixel was rejected by detect_arclength_jump (topology boundary)",
     "production_failure": "a production retrace did not close or a quadrature was unavailable",
-    "depth_exhausted": "adaptive quadrature hit maximum_refinement_depth on some edge",
+    "node_count_exhausted": (
+        "the resampled quadrature reached maximum_node_count on some component with its "
+        "error estimate still above relative_tolerance; the value is reported as is"
+    ),
     "cold_check_mismatch": "a scheduled cold check disagreed with the hot-start chain; the cold result was kept",
 }
 PIXEL_CSV_COLUMNS = (
@@ -111,8 +114,8 @@ PIXEL_CSV_COLUMNS = (
     "status_bits",
     "component_arclengths",
     "production_pose_counts",
-    "quadrature_refinements",
-    "quadrature_max_depth",
+    "quadrature_node_counts",
+    "quadrature_refinement_rounds",
     *(f"event_{name}" for name in EVENT_NAMES),
     *STAGE_NAMES,
 )
@@ -200,8 +203,8 @@ def pixel_csv_row(result: PixelResult) -> dict[str, Any]:
         "status_bits": result.status_bits,
         "component_arclengths": ";".join(f"{c.discovery_arclength:.6f}" for c in result.components),
         "production_pose_counts": ";".join(str(c.production_pose_count) for c in result.components),
-        "quadrature_refinements": ";".join(str(c.refinements) for c in result.components),
-        "quadrature_max_depth": ";".join(str(c.maximum_depth_reached) for c in result.components),
+        "quadrature_node_counts": ";".join(str(c.node_count) for c in result.components),
+        "quadrature_refinement_rounds": ";".join(str(c.refinement_rounds) for c in result.components),
         **{f"event_{name}": result.events.get(name, 0) for name in EVENT_NAMES},
         **{name: f"{timings.get(name, 0.0):.4f}" for name in STAGE_NAMES},
     }
@@ -301,7 +304,7 @@ def options_block(options: PixelOptions, prescan: Mapping[str, Any] | None = Non
         "continuation": asdict(options.continuation),
         "quadrature": {
             **asdict(options.quadrature),
-            "method": QUADRATURE_METHOD,
+            "method": RESAMPLED_QUADRATURE_METHOD,
             "integrand_factors": list(INTEGRAND_FACTOR_NAMES),
             "density_factor": "rho_pose",
             "haar_to_dvol_g_factor_applied": True,

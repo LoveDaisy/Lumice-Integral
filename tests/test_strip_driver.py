@@ -55,10 +55,10 @@ def _component(value: float, arclength: float = 4.7) -> ComponentRecord:
         quadrature_status="available",
         value=value,
         error_estimate=1e-7,
-        refinements=10,
-        node_count=250,
-        maximum_depth_reached=6,
-        depth_exhausted_edge_count=0,
+        node_count=257,
+        refinement_rounds=1,
+        node_count_exhausted=False,
+        non_finite_node_count=0,
     )
 
 
@@ -145,8 +145,9 @@ def test_write_and_read_strip_round_trip_with_verified_hashes(tmp_path: Path):
     assert provenance["arrays"]["shape"] == [4, 3]
     assert provenance["arrays"]["status_bits"] == STATUS_BITS
     assert provenance["window"] == {"rows": [0, 2], "columns": [0, 3], "column_step": 1, "pixel_count": 6}
-    assert provenance["options"]["quadrature"]["relative_tolerance"] == 1e-6
-    assert provenance["options"]["quadrature"]["convergence_order_levels"] == 0
+    assert provenance["options"]["quadrature"]["relative_tolerance"] == 1e-4
+    assert provenance["options"]["quadrature"]["initial_node_count"] == 129
+    assert provenance["options"]["quadrature"]["method"].startswith("composite Simpson on a uniform grid")
     assert provenance["options"]["discovery"]["retry_step_budget"] == 4000
     assert provenance["options"]["discovery"]["prescan"] == {"sample_count": 123, "rng_seed": 7, "cache_path": None}
     assert "prescan table" in provenance["options"]["discovery"]["strategy"]

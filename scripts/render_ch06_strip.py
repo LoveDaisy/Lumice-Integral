@@ -1,7 +1,7 @@
 """Render the canonical ch06 251 x 801 direct 3-5 strip (or a window of it).
 
 Per pixel: component discovery with neighbour hot start -> production trace
-with the four named weights -> adaptive line quadrature -> component sum
+with the four named weights -> resampled fixed-grid line quadrature -> component sum
 (``lumice_integral.strip_pixel``).  Columns are rendered in parallel by
 spawned worker processes (``lumice_integral.strip_driver``) and written as
 headerless float64/float32 raw arrays plus a status layer, a per-pixel CSV
@@ -35,7 +35,7 @@ from pathlib import Path
 
 from lumice_integral.canonical_scene import CANONICAL_RENDER
 from lumice_integral.continuation import ContinuationOptions
-from lumice_integral.quadrature import QuadratureOptions
+from lumice_integral.quadrature import ResampleOptions
 from lumice_integral.prescan import DEFAULT_RNG_SEED, DEFAULT_SAMPLE_COUNT
 from lumice_integral.strip_driver import PIXEL_MODELS, DriverOptions, PrescanBuildOptions, render_window
 from lumice_integral.strip_io import Window, write_strip
@@ -64,9 +64,10 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--subpixel-grid", type=int, default=3)
     parser.add_argument("--subpixel-rows", default=None, help="row band a:b where the subpixel model applies")
     parser.add_argument("--cold-check-interval", type=int, default=8)
-    parser.add_argument("--quadrature-rtol", type=float, default=1e-6)
-    parser.add_argument("--epsilon", type=float, default=1e-6)
-    parser.add_argument("--order-estimate", action="store_true", help="also run the 2-level order-estimate pass per fiber")
+    parser.add_argument("--quadrature-rtol", type=float, default=ResampleOptions.relative_tolerance)
+    parser.add_argument("--epsilon", type=float, default=ResampleOptions.epsilon)
+    parser.add_argument("--initial-node-count", type=int, default=ResampleOptions.initial_node_count, help="4k + 1")
+    parser.add_argument("--maximum-node-count", type=int, default=ResampleOptions.maximum_node_count)
     parser.add_argument("--discovery-step-budget", type=int, default=250)
     parser.add_argument("--retry-step-budget", type=int, default=None, help="default: production maximum_accepted_steps")
     parser.add_argument(
@@ -99,10 +100,11 @@ def main(argv: list[str] | None = None) -> None:
         retry_step_budget=args.retry_step_budget,
         stall_floor_window=args.stall_floor_window,
         continuation=ContinuationOptions(),
-        quadrature=QuadratureOptions(
+        quadrature=ResampleOptions(
             epsilon=args.epsilon,
             relative_tolerance=args.quadrature_rtol,
-            convergence_order_levels=2 if args.order_estimate else 0,
+            initial_node_count=args.initial_node_count,
+            maximum_node_count=args.maximum_node_count,
         ),
     )
     options = DriverOptions(

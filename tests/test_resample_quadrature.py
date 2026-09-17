@@ -328,6 +328,48 @@ def test_deviation_from_the_reference_shrinks_with_the_grid(canonical):
     assert deviations[1] < 1e-4 and deviations[3] < 1e-5
 
 
+@pytest.mark.parametrize("initial_step", [0.03, 0.08])
+def test_canonical_pixel_integral_is_invariant_under_initial_step(canonical, initial_step):
+    problem, _ = canonical
+    reference = integrate_fiber_resampled(problem, canonical[1])
+    result = trace_fiber(problem, ContinuationOptions(initial_step=initial_step))
+    assert result.status == FiberStatus.CLOSED
+
+    quadrature = integrate_fiber_resampled(problem, result)
+
+    # Invariants only: the sample layout is a controller observation, not a criterion.
+    assert not quadrature.node_count_exhausted and quadrature.non_finite_node_count == 0
+    assert abs(quadrature.value - reference.value) <= quadrature.error_estimate + reference.error_estimate
+
+
+@pytest.mark.parametrize("relative_tolerance", [1e-3, 1e-5])
+def test_canonical_pixel_integral_is_invariant_under_tolerance(canonical, relative_tolerance):
+    problem, result = canonical
+    reference = integrate_fiber_resampled(problem, result)
+
+    quadrature = integrate_fiber_resampled(problem, result, ResampleOptions(relative_tolerance=relative_tolerance))
+
+    assert not quadrature.node_count_exhausted
+    assert abs(quadrature.value - reference.value) <= quadrature.error_estimate + reference.error_estimate
+    if relative_tolerance < reference.relative_tolerance:
+        assert quadrature.node_count > reference.node_count
+        assert quadrature.error_estimate < reference.error_estimate
+
+
+def test_canonical_pixel_integral_is_invariant_under_reversed_orientation(canonical):
+    problem, forward = canonical
+    reverse = trace_fiber(problem, ContinuationOptions(initial_tangent_sign=-1))
+    assert reverse.status == FiberStatus.CLOSED
+    assert float(np.dot(forward.tangents[0], reverse.tangents[0])) < 0.0
+
+    forward_quadrature = integrate_fiber_resampled(problem, forward)
+    reverse_quadrature = integrate_fiber_resampled(problem, reverse)
+
+    assert abs(forward_quadrature.value - reverse_quadrature.value) <= (
+        forward_quadrature.error_estimate + reverse_quadrature.error_estimate
+    )
+
+
 def test_performance_evidence_is_printed_not_asserted(canonical, strip_pixels, capsys):
     """Wall clock per fiber with the default options (median of 5 after one warm-up).
 

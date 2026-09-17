@@ -33,10 +33,19 @@ from lumice_integral.strip_pixel import (
     subpixel_targets,
 )
 
-# docs/ch06-reference-fixture.md section 4.1 (rtol 1e-8, Haar-converted, partial).
-# Half of the 4.728847630 recorded before task-continuation-gates-and-fixtures:
-# the canonical loop (2.379 < pi) was integrated over two traversals.
+# docs/ch06-reference-fixture.md section 4.1: the retired adaptive integrator's
+# rtol=1e-8 value (Haar-converted, partial), frozen as the alignment reference
+# of tests/test_resample_quadrature.py.  Half of the 4.728847630 recorded before
+# task-continuation-gates-and-fixtures: the canonical loop (2.379 < pi) was
+# integrated over two traversals.  The production pipeline now integrates with
+# the resampled quadrature (rtol 1e-4) from the *discovered* seed: 2.364412980
+# at 257 nodes (61 production poses), 4.6e-6 below the reference and inside
+# its own error estimate 9.8e-5; the frozen-seed fixture of
+# tests/test_resample_quadrature.py gives 2.364400114 on the same grid size
+# (the O(h^2) kink error depends on where the grid falls, ~1e-5 between seeds;
+# task-resample-and-integrate Step 7, progress.md).
 CANONICAL_PIXEL_VALUE = 2.364423815
+CANONICAL_PIXEL_RESAMPLED_VALUE = 2.364412980
 # tests/test_discovery.py baselines.
 CANONICAL_ARCLENGTH = 2.379121
 ROW_225_ARCLENGTH = 3.121867
@@ -63,8 +72,9 @@ def canonical(scene, options) -> PixelResult:
 
 
 def test_pixel_options_defaults_are_the_image_policy(options):
-    assert options.quadrature.relative_tolerance == 1e-6
-    assert options.quadrature.convergence_order_levels == 0
+    assert options.quadrature.relative_tolerance == 1e-4
+    assert options.quadrature.initial_node_count == 129
+    assert options.quadrature.maximum_node_count == 1025
     assert options.continuation.maximum_accepted_steps == 4000
     assert options.discovery_step_budget == 250
     # task-discovery-stall-early-exit Step 0: inside the [0, 141] separation
@@ -127,8 +137,14 @@ def test_canonical_pixel_single_component_reproduces_the_fixture_value(canonical
     assert component.discovery_arclength == pytest.approx(CANONICAL_ARCLENGTH, rel=1e-3)
     assert component.production_arclength == pytest.approx(component.discovery_arclength, rel=1e-6)
     assert canonical.value == component.value
-    assert abs(canonical.value - CANONICAL_PIXEL_VALUE) <= canonical.error_estimate + 1e-9
-    assert canonical.error_estimate < 1e-5
+    assert canonical.value == pytest.approx(CANONICAL_PIXEL_RESAMPLED_VALUE, abs=5e-9)
+    assert abs(canonical.value - CANONICAL_PIXEL_VALUE) <= canonical.error_estimate
+    assert abs(canonical.value - CANONICAL_PIXEL_VALUE) <= 1e-4 * CANONICAL_PIXEL_VALUE
+    assert component.node_count == 257 and component.refinement_rounds == 1
+    assert not component.node_count_exhausted and component.non_finite_node_count == 0
+    # |I_257 - I_129| / I at rtol 1e-4: a conservative estimate (order ~2 grid),
+    # not the 1e-9 of the retired adaptive integrator.
+    assert canonical.error_estimate < 1e-4 * canonical.value
     assert set(canonical.events) == set(EVENT_NAMES)
     assert not any(canonical.events.values())
     assert canonical.status_bits == STATUS_RENDERED | STATUS_HAS_COMPONENT | STATUS_COLD_DISCOVERY
