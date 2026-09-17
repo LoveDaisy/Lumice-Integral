@@ -39,10 +39,13 @@ def _build(sample_count: int = SMALL, **kwargs) -> PrescanTable:
 def _assert_same_table(left: PrescanTable, right: PrescanTable) -> None:
     assert left.build_parameters() == right.build_parameters()
     assert np.array_equal(left.rotations, right.rotations)
-    assert np.array_equal(left.directions, right.directions)
     assert np.array_equal(left.sample_indices, right.sample_indices)
+    # The same poses survive and the per-pose values agree to round-off: the GPU
+    # backend evaluates a batch with a chunk-size-dependent reduction order (home-wsl,
+    # jax 0.11: 2.8e-15 max difference in the directions), the CPU backend bitwise.
+    assert np.allclose(left.directions, right.directions, rtol=0.0, atol=1e-12)
     for name in DOMAIN_MARGIN_NAMES:
-        assert np.array_equal(left.margins[name], right.margins[name])
+        assert np.allclose(left.margins[name], right.margins[name], rtol=0.0, atol=1e-12)
 
 
 @pytest.fixture(scope="module")

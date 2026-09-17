@@ -116,9 +116,10 @@ def test_subpixel_targets_tile_the_pixel_and_average_to_its_centre(scene):
     mean = np.mean(targets, axis=0)
     assert np.dot(mean / np.linalg.norm(mean), centre) > 1.0 - 1e-9
     offsets_deg = [np.degrees(np.arccos(np.clip(t @ centre, -1, 1))) for t in targets]
-    # Odd grid: the middle sub-pixel is the pixel centre; every other one lies
-    # inside the pixel (edge 6/251 deg ~ 0.024 deg).
-    assert offsets_deg[4] == 0.0
+    # Odd grid: the middle sub-pixel is the pixel centre (arccos of a dot product one
+    # ulp below 1 is ~1e-6 deg on the GPU backend); every other one lies inside the
+    # pixel (edge 6/251 deg ~ 0.024 deg).
+    assert offsets_deg[4] < 1e-5
     assert all(0.0 < offset < 0.02 for i, offset in enumerate(offsets_deg) if i != 4)
     assert len({round(offset, 6) for offset in offsets_deg}) == 5  # 4-fold symmetric tiling
     with pytest.raises(ValueError):
