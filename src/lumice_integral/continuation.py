@@ -140,6 +140,15 @@ class FiberProblem:
                 )
 
 
+# Closure extent gate (contract section 6.4 item 1): a trace may only close
+# after it has accumulated this many ``initial_step`` lengths of arclength.
+# The bound scales with the problem's own step, not with any particular
+# fiber length, so that loops shorter than an absolute threshold are not
+# traversed twice before the first return through the section is accepted
+# (task-continuation-gates-and-fixtures: rows 58-225 of the ch06 strip).
+_CLOSURE_ARCLENGTH_STEP_MULTIPLIER = 2.0
+
+
 @dataclass(frozen=True)
 class ContinuationOptions:
     """Observable numerical policy for the float64 reference solver."""
@@ -169,8 +178,13 @@ class ContinuationOptions:
     # corrector iterate; sub-operations cannot consume a partial unit.
     maximum_evaluations: int = 100_000
     maximum_arclength: float = 20.0
-    closure_minimum_steps: int = 40
-    closure_minimum_arclength: float = np.pi
+    # Closure extent gate: at least this many accepted steps, and accumulated
+    # arclength of at least ``max(closure_minimum_arclength,
+    # _CLOSURE_ARCLENGTH_STEP_MULTIPLIER * initial_step)``.  The built-in
+    # relative bound excludes an immediate return to the seed; the absolute
+    # field is an optional caller-side addition and is ``0.0`` by default.
+    closure_minimum_steps: int = 3
+    closure_minimum_arclength: float = 0.0
     closure_distance: float = 0.08
     closure_tangent_dot: float = 0.8
     closure_section_tolerance: float = 1e-11
@@ -196,6 +210,11 @@ class ContinuationOptions:
             raise ValueError("step and evaluation budgets must be positive")
         if self.maximum_arclength <= 0.0:
             raise ValueError("arclength budget must be positive")
+        if self.closure_minimum_steps < 1 or self.closure_minimum_arclength < 0.0:
+            raise ValueError(
+                "closure_minimum_steps must be positive and "
+                "closure_minimum_arclength nonnegative"
+            )
         if (
             self.corrector_phase_tolerance <= 0.0
             or self.corrector_update_tolerance <= 0.0
@@ -1308,17 +1327,63 @@ def _step_diagnostic(
     )
 
 
+# Event approach control (contract section 6.3, "event clearance"): a domain
+# margin at or below ``event_slowdown_margin`` restrains the step only while it
+# is shrinking, and then through the arclength it would need to reach zero at
+# the rate observed over the last accepted edge.  A fiber running parallel to
+# a boundary (ch06 strip rows 700/780: ``exit_snell_discriminant`` sitting near
+# 0.0175 and drifting by about -0.03 per radian of arclength, so more than half
+# a radian from the event) is therefore no longer pinned to ``minimum_step``
+# until the step budget runs out, while a fiber heading into a boundary is
+# still slowed so that the terminating pose lands close to it.
+_EVENT_APPROACH_STEP_FRACTION = 0.5
+
+
+def _event_step_limit(
+    margins: Mapping[str, float],
+    previous_margins: Mapping[str, float],
+    advance: float,
+    threshold: float,
+) -> float:
+    """Largest next step the event-approach rule allows after an accepted edge.
+
+    ``margins`` belong to the accepted state, ``previous_margins`` to the
+    state the edge started from, and ``advance`` is the edge's arclength.
+    Margins above ``threshold`` or not decreasing impose no limit (``inf``).
+    A margin at or below ``threshold`` whose previous value is unknown, or
+    reached without a measurable advance, has an unknown approach rate and
+    returns ``0.0``: the step is shrunk, as it was unconditionally before.
+    """
+    limit = np.inf
+    for name, margin in margins.items():
+        if margin > threshold:
+            continue
+        previous = previous_margins.get(name)
+        if previous is None or advance <= 0.0:
+            return 0.0
+        drop = previous - margin
+        if drop <= 0.0:
+            continue
+        arclength_to_event = margin * advance / drop
+        limit = min(limit, _EVENT_APPROACH_STEP_FRACTION * arclength_to_event)
+    return float(limit)
+
+
 def _adapt_accepted_step(
     step: float,
     outcome: _CorrectorOutcome,
     options: ContinuationOptions,
+    previous_margins: Mapping[str, float] | None = None,
 ) -> float:
     state = outcome.state
     assert state is not None and state.jacobian_diagnostic is not None
-    clear_of_event = all(
-        margin > options.event_slowdown_margin
-        for margin in state.domain.margins.values()
+    event_limit = _event_step_limit(
+        state.domain.margins,
+        previous_margins or {},
+        outcome.advance,
+        options.event_slowdown_margin,
     )
+    clear_of_event = event_limit >= step
     residual_ratio = outcome.residual_norm / options.residual_tolerance
     easy = (
         outcome.iterations <= 2
@@ -1339,6 +1404,7 @@ def _adapt_accepted_step(
         step *= options.growth_factor
     elif difficult:
         step *= options.shrink_factor
+    step = min(step, event_limit)
     return min(options.maximum_step, max(options.minimum_step, step))
 
 
@@ -1657,6 +1723,10 @@ def trace_fiber(
     accepted_margins: list[Mapping[str, float]] = [dict(initial.domain.margins)]
     closure_diagnostic = _empty_closure_diagnostic()
     step = options.initial_step
+    closure_minimum_arclength = max(
+        options.closure_minimum_arclength,
+        _CLOSURE_ARCLENGTH_STEP_MULTIPLIER * options.initial_step,
+    )
     total_arclength = 0.0
     total_retries = 0
     previous_section = 0.0
@@ -1849,7 +1919,7 @@ def trace_fiber(
             )
             extent_gate = (
                 len(states) - 1 >= options.closure_minimum_steps
-                and total_arclength >= options.closure_minimum_arclength
+                and total_arclength >= closure_minimum_arclength
             )
             closure_diagnostic = ClosureDiagnostic(
                 accumulated_arclength=total_arclength,
@@ -2007,5 +2077,8 @@ def trace_fiber(
                     )
 
             previous_section = section
-            step = _adapt_accepted_step(step, outcome, options)
+            # ``accepted_margins`` already holds this step's margins at ``-1``
+            # and always holds the seed's at ``0``, so ``-2`` exists.
+            previous_step_margins = accepted_margins[-2]
+            step = _adapt_accepted_step(step, outcome, options, previous_step_margins)
             break

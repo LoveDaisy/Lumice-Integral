@@ -20,6 +20,7 @@ from lumice_integral.continuation import (
     _correct_closure,
     _evaluate_regular_state,
     _adapt_accepted_step,
+    _event_step_limit,
     retract_to_fiber,
     trace_fiber,
 )
@@ -364,6 +365,119 @@ def test_residual_headroom_participates_in_step_adaptation():
         residual_norm=0.75 * options.residual_tolerance,
     )
     assert _adapt_accepted_step(0.04, near_residual_limit, options) < 0.04
+
+
+def _easy_accepted_outcome(margins: dict[str, float]):
+    """An accepted outcome that satisfies every non-event ``easy`` gate."""
+    problem = analytic_problem()
+    options = ContinuationOptions()
+    initial = _evaluate_regular_state(problem, options, problem.seed)
+    accepted = _correct_trial(
+        problem,
+        options,
+        problem.seed,
+        problem.seed @ exp(0.04 * initial.tangent),
+        initial.tangent,
+    )
+    assert accepted.accepted and accepted.state is not None
+    state = replace(accepted.state, domain=DomainEvaluation(True, margins))
+    return (
+        replace(
+            accepted,
+            state=state,
+            iterations=1,
+            correction_norm=0.0,
+            tangent_dot=1.0,
+            residual_norm=0.0,
+            advance=0.04,
+        ),
+        options,
+    )
+
+
+def test_event_step_limit_only_restrains_margins_that_are_shrinking():
+    threshold = 0.02
+    # Above the threshold: never a limit, whatever the trend.
+    assert _event_step_limit({"m": 0.5}, {"m": 0.9}, 0.04, threshold) == np.inf
+    # Below the threshold but receding or flat (task-continuation-gates-and-
+    # fixtures Step 0: a fiber running parallel to a boundary): no limit.
+    assert _event_step_limit({"m": 0.015}, {"m": 0.014}, 0.04, threshold) == np.inf
+    assert _event_step_limit({"m": 0.015}, {"m": 0.015}, 0.04, threshold) == np.inf
+    # Below the threshold and shrinking: half of the linear arclength to zero.
+    limit = _event_step_limit({"m": 0.015}, {"m": 0.019}, 0.04, threshold)
+    assert limit == pytest.approx(0.5 * 0.015 * 0.04 / 0.004)
+    # The tightest margin wins.
+    assert _event_step_limit(
+        {"m": 0.015, "n": 0.005}, {"m": 0.019, "n": 0.01}, 0.04, threshold
+    ) == pytest.approx(0.5 * 0.005 * 0.04 / 0.005)
+    # Unknown history or no advance: unknown rate, shrink as before.
+    assert _event_step_limit({"m": 0.015}, {}, 0.04, threshold) == 0.0
+    assert _event_step_limit({"m": 0.015}, {"m": 0.019}, 0.0, threshold) == 0.0
+    # No margins at all (the analytic fixture): nothing to restrain.
+    assert _event_step_limit({}, {}, 0.04, threshold) == np.inf
+
+
+def test_step_adaptation_grows_past_a_receding_margin_and_shrinks_into_one():
+    threshold = ContinuationOptions().event_slowdown_margin
+    low = 0.5 * threshold
+    receding, options = _easy_accepted_outcome({"exit_snell_discriminant": low})
+    # Margin below the threshold but not decreasing: the easy gate may grow.
+    grown = _adapt_accepted_step(
+        0.04, receding, options, {"exit_snell_discriminant": low - 1e-4}
+    )
+    assert grown == pytest.approx(0.04 * options.growth_factor)
+    # Same margin, now decreasing fast enough that half the linear distance to
+    # the event is below the current step: shrink, clamped to that distance.
+    approaching = {"exit_snell_discriminant": low + 0.02}
+    shrunk = _adapt_accepted_step(0.04, receding, options, approaching)
+    assert shrunk == pytest.approx(0.5 * low * 0.04 / 0.02)
+    assert shrunk < 0.04 * options.shrink_factor
+    # Decreasing with the limit between the shrunk and the current step: the
+    # ordinary shrink factor applies and the limit does not bite.
+    gently = {"exit_snell_discriminant": low + 0.0065}
+    assert _adapt_accepted_step(0.04, receding, options, gently) == pytest.approx(
+        0.04 * options.shrink_factor
+    )
+    # Decreasing slowly (the strip's edge pixels drift by about -0.03 per
+    # radian): the distance to the event is large and growth is allowed.
+    slow = {"exit_snell_discriminant": low + 0.03 * 0.04}
+    assert _adapt_accepted_step(0.04, receding, options, slow) == pytest.approx(
+        0.04 * options.growth_factor
+    )
+    # No history for a low margin keeps the previous unconditional shrink.
+    assert _adapt_accepted_step(0.04, receding, options, None) == pytest.approx(
+        max(options.minimum_step, 0.0)
+    )
+    assert _adapt_accepted_step(0.04, receding, options) == options.minimum_step
+
+
+def test_first_accepted_step_sees_the_seed_margins_as_its_history():
+    """``accepted_margins[-2]`` exists on the very first accepted step and is
+    the seed's margin set, so a margin already low at the seed is judged by
+    its trend rather than shrunk unconditionally."""
+    calls: list[tuple[dict[str, float], dict[str, float] | None]] = []
+    original = continuation._adapt_accepted_step
+
+    def recording(step, outcome, options, previous_margins=None):
+        calls.append((dict(outcome.state.domain.margins), previous_margins))
+        return original(step, outcome, options, previous_margins)
+
+    def evaluator(rotation):
+        # A constant low margin: never an event, never shrinking.
+        return DomainEvaluation(True, {"m": 0.01})
+
+    problem = analytic_problem(domain_evaluator=evaluator)
+    continuation._adapt_accepted_step = recording
+    try:
+        result = trace_fiber(problem, ContinuationOptions(maximum_accepted_steps=3))
+    finally:
+        continuation._adapt_accepted_step = original
+    assert result.reason == TerminationReason.STEP_BUDGET
+    assert calls[0] == ({"m": 0.01}, {"m": 0.01})
+    assert len(calls) == 3
+    # Flat margin below the threshold: the step was allowed to grow.
+    proposed = [d.proposed_step for d in result.step_diagnostics if d.accepted]
+    assert proposed == pytest.approx([0.04, 0.05, 0.0625])
 
 
 def test_adaptive_analytic_trace_closes_with_quadrature_ready_geometry():
