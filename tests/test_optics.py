@@ -18,6 +18,7 @@ from lumice_integral.optics import (
     path_3_5_domain_batch,
     path_3_5_problem,
 )
+from lumice_integral.prescan import haar_rotations
 from lumice_integral.so3 import exp
 from test_analytic_fiber import central_difference_jacobian
 
@@ -182,20 +183,6 @@ def test_fresnel_3_5_lies_in_the_unit_interval_and_drops_toward_the_critical_ang
 # --- task-scene-prescan-table Step 1: batch domain check ----------------------
 
 
-def _haar_rotations(count: int, seed: int) -> np.ndarray:
-    quaternion = np.random.default_rng(seed).standard_normal((count, 4))
-    quaternion /= np.linalg.norm(quaternion, axis=1, keepdims=True)
-    w, x, y, z = quaternion.T
-    return np.stack(
-        [
-            np.stack([1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)], -1),
-            np.stack([2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)], -1),
-            np.stack([2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)], -1),
-        ],
-        axis=1,
-    )
-
-
 def test_batch_domain_check_matches_the_scalar_gate_pose_by_pose():
     """White-box equivalence of the batch and scalar forms of the four gates.
 
@@ -208,7 +195,7 @@ def test_batch_domain_check_matches_the_scalar_gate_pose_by_pose():
     incident = np.asarray(minimum_deviation_incident())
     rotations = np.concatenate(
         [
-            _haar_rotations(2000, 7),
+            haar_rotations(2000, np.random.default_rng(7)),
             np.eye(3)[None],
             np.asarray(exp(jnp.array([0.5447316801391622, -1.506228738763967, -1.190186580432801])))[None],
         ]

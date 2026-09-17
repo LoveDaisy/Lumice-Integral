@@ -506,7 +506,11 @@ color-to-factor mapping.
      `scratchpad/scrum-strip-pipeline-v2/task-scene-prescan-table/artifacts/`
      (`prescan-density/density_survey.{csv,md}`,
      `benchmark_prescan_table_mac.json`, `prescan_cold_check_mac.log`);
-     `home-wsl` numbers are not recorded yet.
+     `home-wsl` numbers are not recorded yet. `provenance.json`'s
+     `options.discovery` block changed shape with this table: the flat
+     `rng_seed`/`prescan_samples` fields were replaced by a nested
+     `prescan` object (`sample_count`/`rng_seed`/`cache_path`); no consumer
+     in this repository reads the old flat fields.
    - Morphology against the historical raw (native orientation, Spearman
      rank correlation): `0.990` on the `16876` pixels lit in both, `0.970` on
      the `18383` complete pixels, `0.657` on all rendered pixels (the

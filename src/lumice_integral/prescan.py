@@ -53,6 +53,7 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 from .optics import DOMAIN_MARGIN_NAMES, path_3_5_domain_batch
+from .provenance import git_commit, sha256_of
 
 DEFAULT_PATH_ID = "3-5"
 # Pinned by the density survey of docs/ch06-reference-fixture.md (section 7,
@@ -193,10 +194,6 @@ class PrescanTable:
 
     def save(self, path: Path, *, repo: Path | None = None) -> dict[str, Path]:
         """Write ``path`` (``.npz``) and ``path + PROVENANCE_SUFFIX``; returns both."""
-        # ``strip_io`` imports ``strip_pixel`` -> ``discovery`` -> this module,
-        # so its hashing/git helpers are imported here rather than at module load.
-        from .strip_io import _git_commit, sha256_of
-
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         np.savez(
@@ -210,7 +207,7 @@ class PrescanTable:
             "format": "lumice-integral-prescan-table-v1",
             "build": self.build_parameters(),
             "valid_count": self.valid_count,
-            "git_commit": _git_commit(repo),
+            "git_commit": git_commit(repo),
             "arrays": {"name": path.name, "sha256": sha256_of(path)},
         }
         provenance_path = provenance_path_of(path)
@@ -220,8 +217,6 @@ class PrescanTable:
     @classmethod
     def load(cls, path: Path) -> PrescanTable:
         """Read a table written by :meth:`save`; verifies the ``.npz`` hash first."""
-        from .strip_io import sha256_of
-
         path = Path(path)
         provenance = json.loads(provenance_path_of(path).read_text())
         actual = sha256_of(path)
@@ -338,7 +333,10 @@ def build_or_load_prescan_table(
                 if log is not None:
                     log(f"prescan cache {cache_path} was built with different parameters; rebuilding")
         elif log is not None:
-            log(f"prescan cache {cache_path} absent; building")
+            if cache_path.exists():
+                log(f"prescan cache {cache_path} missing provenance sidecar; rebuilding")
+            else:
+                log(f"prescan cache {cache_path} absent; building")
     start = time.perf_counter()
     table = build_prescan_table(
         incident_direction,

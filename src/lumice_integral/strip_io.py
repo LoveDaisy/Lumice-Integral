@@ -25,11 +25,9 @@ this file's constants only (:func:`read_strip`).
 from __future__ import annotations
 
 import csv
-import hashlib
 import json
 import os
 import platform
-import subprocess
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -47,6 +45,7 @@ from .canonical_scene import (
     CANONICAL_ZENITH_MEAN_DEG,
     CANONICAL_ZENITH_STD_DEG,
 )
+from .provenance import git_commit as _git_commit, sha256_of
 from .quadrature import INTEGRAND_FACTOR_NAMES, QUADRATURE_METHOD
 from .strip_pixel import (
     EVENT_NAMES,
@@ -215,27 +214,6 @@ def write_pixel_csv(path: Path, results: Sequence[PixelResult]) -> None:
         writer.writeheader()
         for result in ordered:
             writer.writerow(pixel_csv_row(result))
-
-
-def sha256_of(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _git_commit(repo: Path | None) -> str | None:
-    try:
-        return subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=repo or Path(__file__).resolve().parent,
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
-    except (OSError, subprocess.CalledProcessError):
-        return None
 
 
 def environment_block() -> dict[str, Any]:
