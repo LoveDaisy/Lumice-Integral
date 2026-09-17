@@ -324,6 +324,22 @@ def test_render_window_serial_writes_checkpoints_and_resumes(scene, tmp_path: Pa
     assert [(r.row, r.column, r.value) for r in resumed] == [(r.row, r.column, r.value) for r in results]
 
 
+def test_render_window_parallel_resume_with_nothing_pending_never_touches_the_pool(scene, tmp_path: Path):
+    """``workers > 1`` with every column already checkpointed must render nothing
+    and never attempt to build a ``Pool`` (round 2 code review dispute: a disputed
+    claim that this path could read an unbound ``table`` before any ``Pool`` is
+    ever created; no process is spawned here, so this needs no ``spawn`` support)."""
+    window = Window((150, 152), (150, 152))
+    options = DriverOptions(cold_check_interval=0)
+    render_window(window, options, workers=1, checkpoint_dir=tmp_path, scene=scene)
+    assert sorted(load_checkpoints(tmp_path, window, options)) == [150, 151]
+
+    resumed, execution = render_window(window, options, workers=2, checkpoint_dir=tmp_path, resume=True)
+    assert execution["columns_rendered_now"] == 0 and execution["columns_resumed"] == 2
+    assert execution["prescan"]["source"] == "not-needed"
+    assert len(resumed) == 4
+
+
 def test_render_window_without_a_scene_builds_the_table_once_from_the_options(scene, tmp_path: Path):
     window = Window((150, 151), (150, 151))
     cache = tmp_path / "prescan.npz"

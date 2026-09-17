@@ -357,36 +357,30 @@ def render_window(
                 f"{seconds:.1f}s ({len(done)}/{len(window.column_range)} columns)"
             )
 
-    # The table is obtained once, before any column: built or loaded per
-    # ``options.prescan`` unless an in-process ``scene`` already carries one.
-    prescan: dict[str, Any] = {"source": "not-needed", "seconds": 0.0}
-    if pending and (workers > 1 or scene is None):
+    def build_table() -> tuple[PrescanTable, dict[str, Any]]:
         prescan_start = time.perf_counter()
         table = build_scene_prescan_table(options, log=log)
-        prescan = {
+        report = {
             "source": str(options.prescan.cache_path) if options.prescan.cache_path is not None else "in-memory",
             "seconds": time.perf_counter() - prescan_start,
             "sample_count": table.sample_count,
             "valid_count": table.valid_count,
             "rng_seed": table.rng_seed,
         }
-        if workers == 1:
-            scene = canonical_strip_scene(prescan_table=table)
-    elif pending:
-        prescan = {
-            "source": "scene",
-            "seconds": 0.0,
-            "sample_count": scene.prescan_table.sample_count,
-            "valid_count": scene.prescan_table.valid_count,
-            "rng_seed": scene.prescan_table.rng_seed,
-        }
+        return table, report
 
-    if workers == 1:
-        for column in pending:
-            column_start = time.perf_counter()
-            results = render_column(scene, column, window.row_range, options, log)
-            finish(column, results, time.perf_counter() - column_start)
-    elif pending:
+    # The table is obtained once, before any column: built or loaded per
+    # ``options.prescan`` unless an in-process ``scene`` already carries one.
+    # Whether to build it and whether a ``Pool`` will read it are decided by
+    # the same branch (rather than two separately-shaped conditions) so that
+    # "table is bound before ``Pool(...)`` uses it" holds by construction
+    # instead of requiring two independent conditions to be kept in sync
+    # (round 2 code review: a split if/elif pair made that invariant provable
+    # only by cross-referencing two conditions, and was twice misread as a
+    # possible ``UnboundLocalError``).
+    prescan: dict[str, Any] = {"source": "not-needed", "seconds": 0.0}
+    if pending and workers > 1:
+        table, prescan = build_table()
         for name, value in WORKER_MALLOC_ENV.items():
             os.environ.setdefault(name, value)
         context = multiprocessing.get_context("spawn")
@@ -394,6 +388,22 @@ def render_window(
         with context.Pool(workers, initializer=_init_worker, initargs=(options, table)) as pool:
             for column, results, seconds in pool.imap_unordered(_render_column_task, tasks):
                 finish(column, results, seconds)
+    elif pending:
+        if scene is None:
+            table, prescan = build_table()
+            scene = canonical_strip_scene(prescan_table=table)
+        else:
+            prescan = {
+                "source": "scene",
+                "seconds": 0.0,
+                "sample_count": scene.prescan_table.sample_count,
+                "valid_count": scene.prescan_table.valid_count,
+                "rng_seed": scene.prescan_table.rng_seed,
+            }
+        for column in pending:
+            column_start = time.perf_counter()
+            results = render_column(scene, column, window.row_range, options, log)
+            finish(column, results, time.perf_counter() - column_start)
 
     results = [result for column in sorted(done) for result in done[column]]
     execution = {
