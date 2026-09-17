@@ -1,8 +1,7 @@
-"""Per-pixel strip pipeline: canonical value, six-pixel regressions, hot-start chain."""
+"""Per-pixel strip pipeline: canonical value, pixel regressions, warm seeds, arcs."""
 
 from __future__ import annotations
 
-from collections import Counter
 from dataclasses import replace
 
 import numpy as np
@@ -14,17 +13,18 @@ from lumice_integral.canonical_scene import (
     CANONICAL_PIXEL_ROW,
     canonical_target_direction,
 )
-from lumice_integral.continuation import FiberStatus, TerminationReason
-from lumice_integral.discovery import ComponentDiscoveryResult, DiscoveredComponent
+from lumice_integral.continuation import ContinuationOptions, FiberStatus, TerminationReason, trace_fiber
+from lumice_integral.discovery import DISCOVERY_EVENT_NAMES, ComponentDiscoveryResult, DiscoveredComponent
 from lumice_integral.prescan import DEFAULT_SAMPLE_COUNT, build_prescan_table
+from lumice_integral.resample import stitch_open_arc
 from lumice_integral.strip_pixel import (
     EVENT_NAMES,
-    STATUS_ARCLENGTH_JUMP,
-    STATUS_COLD_DISCOVERY,
+    STAGE_NAMES,
+    STATUS_HAS_ARC,
     STATUS_HAS_COMPONENT,
+    STATUS_QUADRATURE_UNAVAILABLE,
     STATUS_RENDERED,
     STATUS_UNKNOWN_COMPLETENESS,
-    HotSeed,
     PixelOptions,
     PixelResult,
     canonical_strip_scene,
@@ -37,13 +37,11 @@ from lumice_integral.strip_pixel import (
 # rtol=1e-8 value (Haar-converted, partial), frozen as the alignment reference
 # of tests/test_resample_quadrature.py.  Half of the 4.728847630 recorded before
 # task-continuation-gates-and-fixtures: the canonical loop (2.379 < pi) was
-# integrated over two traversals.  The production pipeline now integrates with
-# the resampled quadrature (rtol 1e-4) from the *discovered* seed: 2.364412980
-# at 257 nodes (61 production poses), 4.6e-6 below the reference and inside
-# its own error estimate 9.8e-5; the frozen-seed fixture of
-# tests/test_resample_quadrature.py gives 2.364400114 on the same grid size
-# (the O(h^2) kink error depends on where the grid falls, ~1e-5 between seeds;
-# task-resample-and-integrate Step 7, progress.md).
+# integrated over two traversals.  The pipeline integrates with the resampled
+# quadrature (rtol 1e-4) from the *discovered* seed: 2.364412980 at 257 nodes
+# (61 poses), 4.6e-6 below the reference and inside its own error estimate
+# 9.8e-5; unchanged by task-pixel-pipeline-v2 (the one production trace is
+# the same trace the old pipeline ran last).
 CANONICAL_PIXEL_VALUE = 2.364423815
 CANONICAL_PIXEL_RESAMPLED_VALUE = 2.364412980
 # tests/test_discovery.py baselines.
@@ -76,15 +74,17 @@ def test_pixel_options_defaults_are_the_image_policy(options):
     assert options.quadrature.initial_node_count == 129
     assert options.quadrature.maximum_node_count == 1025
     assert options.continuation.maximum_accepted_steps == 4000
-    assert options.discovery_step_budget == 250
-    # task-discovery-stall-early-exit Step 0: inside the [0, 141] separation
-    # band between legit slow-closers (never at the floor) and stalls.
-    assert options.stall_floor_window == 100
+    assert options.distance_threshold == options.continuation.closure_distance == 0.08
     assert set(options.discovery_kwargs()) == {
-        "discovery_step_budget", "angle_tolerance_deg", "cluster_radius_rad", "arclength_rtol"
+        "continuation", "angle_tolerance_deg", "cluster_radius_rad", "distance_threshold"
     }
+    # One budget: the retired discovery/retry budgets and stall window are gone.
+    for retired in ("discovery_step_budget", "retry_step_budget", "stall_floor_window", "jump_relative_threshold"):
+        assert not hasattr(options, retired)
     # The prescan sampling is a scene policy (task-scene-prescan-table), not a pixel one.
     assert not hasattr(options, "rng_seed") and not hasattr(options, "prescan_samples")
+    assert set(EVENT_NAMES) >= set(DISCOVERY_EVENT_NAMES)
+    assert STAGE_NAMES == ("discovery_s", "trace_s", "quadrature_s", "total_s")
 
 
 def test_canonical_scene_carries_a_matching_prescan_table(scene):
@@ -126,16 +126,18 @@ def test_subpixel_targets_tile_the_pixel_and_average_to_its_centre(scene):
 
 
 def test_canonical_pixel_single_component_reproduces_the_fixture_value(canonical):
-    assert canonical.component_count == 1
+    assert canonical.component_count == 1 and canonical.arc_count == 0
     assert canonical.incomplete_count == 0
     assert canonical.completeness == "complete"
-    assert canonical.discovery_completeness == "complete"
-    assert canonical.seed_source == "cold"
+    assert canonical.pool_count == 415 and canonical.extra_seed_count == 0
+    assert canonical.raw_cluster_count == 7 and canonical.admissible_count == 7
     component = canonical.components[0]
-    assert component.production_status == "closed"
+    assert component.kind == "closed"
+    assert component.status == "closed" and component.reason == "closed_loop" and component.start_reason == ""
     assert component.quadrature_status == "available"
-    assert component.discovery_arclength == pytest.approx(CANONICAL_ARCLENGTH, rel=1e-3)
-    assert component.production_arclength == pytest.approx(component.discovery_arclength, rel=1e-6)
+    assert component.arclength == pytest.approx(CANONICAL_ARCLENGTH, rel=1e-3)
+    assert component.pose_count == 61
+    assert np.isnan(component.start_truncation_estimate) and np.isnan(component.end_truncation_estimate)
     assert canonical.value == component.value
     assert canonical.value == pytest.approx(CANONICAL_PIXEL_RESAMPLED_VALUE, abs=5e-9)
     assert abs(canonical.value - CANONICAL_PIXEL_VALUE) <= canonical.error_estimate
@@ -146,55 +148,34 @@ def test_canonical_pixel_single_component_reproduces_the_fixture_value(canonical
     # not the 1e-9 of the retired adaptive integrator.
     assert canonical.error_estimate < 1e-4 * canonical.value
     assert set(canonical.events) == set(EVENT_NAMES)
-    assert not any(canonical.events.values())
-    assert canonical.status_bits == STATUS_RENDERED | STATUS_HAS_COMPONENT | STATUS_COLD_DISCOVERY
-    assert canonical.timings["quadrature_s"] > 0 and canonical.timings["total_s"] > 0
+    assert canonical.events == {**{name: 0 for name in EVENT_NAMES}, "dedup_merged": 6}
+    assert canonical.status_bits == STATUS_RENDERED | STATUS_HAS_COMPONENT
+    assert set(canonical.timings) == set(STAGE_NAMES)
+    assert 0.0 < canonical.timings["trace_s"] < canonical.timings["discovery_s"] < canonical.timings["total_s"]
+    assert canonical.timings["quadrature_s"] > 0
+    assert len(canonical.warm_seeds) == 1 and canonical.warm_seeds[0].shape == (3, 3)
 
 
-def test_hot_start_to_the_next_row_matches_cold_discovery(scene, options, canonical):
-    hot = render_pixel(scene, 151, 150, options, previous=canonical.hot_seeds)
+def test_warm_seeds_from_the_row_above_give_the_cold_value(scene, options, canonical):
+    warm = render_pixel(scene, 151, 150, options, warm_seeds=canonical.warm_seeds)
     cold = render_pixel(scene, 151, 150, options)
-    assert hot.seed_source == "hot" and cold.seed_source == "cold"
-    assert hot.discovery_completeness == "not-run"
-    assert hot.completeness == cold.completeness == "complete"
-    assert hot.component_count == cold.component_count == 1
-    assert hot.value == pytest.approx(cold.value, rel=1e-6)
-    assert hot.status_bits == STATUS_RENDERED | STATUS_HAS_COMPONENT
-    assert hot.timings["hot_start_s"] > 0 and hot.timings["cold_discovery_s"] == 0.0
+    assert warm.extra_seed_count == 1 and cold.extra_seed_count == 0
+    assert warm.pool_count == cold.pool_count
+    assert warm.completeness == cold.completeness == "complete"
+    assert warm.component_count == cold.component_count == 1
+    assert warm.value == pytest.approx(cold.value, rel=1e-6)
+    assert warm.status_bits == cold.status_bits == STATUS_RENDERED | STATUS_HAS_COMPONENT
+    # The warm seed's cluster is traced first and every prescan cluster on the
+    # same loop is folded without a trace.
+    assert warm.events["dedup_merged"] == warm.admissible_count - 1
 
 
-def test_cold_check_agreeing_with_the_hot_start_keeps_the_hot_result(scene, options, canonical):
-    checked = render_pixel(scene, 151, 150, options, previous=canonical.hot_seeds, cold_check=True)
-    assert checked.seed_source == "hot"
-    assert checked.events["cold_check"] == 1
-    assert checked.events["cold_check_mismatch"] == 0
-    assert checked.timings["cold_discovery_s"] > 0
-
-
-def test_row_226_hot_starts_from_row_225_and_a_doubled_arclength_falls_back_to_cold(
-    scene, options
-):
-    # Rows 225/226 were the one real arclength jump (6.24 -> 3.13) until
-    # task-continuation-gates-and-fixtures showed the 6.24 to be row 225's
-    # 3.12 loop traversed twice under the absolute closure gate.  The hot
-    # start now continues; the jump fallback path is exercised by handing row
-    # 226 the retired doubled arclength as its neighbour's.
+def test_rows_225_and_226_chain_without_a_jump_gate(scene, options):
     upper = render_pixel(scene, 225, 150, options)
-    assert upper.components[0].discovery_arclength == pytest.approx(ROW_225_ARCLENGTH, rel=1e-3)
-    continued = render_pixel(scene, 226, 150, options, previous=upper.hot_seeds)
-    assert continued.seed_source == "hot"
-    assert continued.events["arclength_jump"] == 0
-    assert continued.components[0].discovery_arclength == pytest.approx(ROW_226_ARCLENGTH, rel=1e-3)
-    assert not continued.status_bits & STATUS_ARCLENGTH_JUMP
-    doubled = tuple(HotSeed(seed.seed, 2.0 * seed.arclength) for seed in upper.hot_seeds)
-    lower = render_pixel(scene, 226, 150, options, previous=doubled)
-    assert lower.components[0].discovery_arclength == pytest.approx(ROW_226_ARCLENGTH, rel=1e-3)
-    assert lower.seed_source == "cold-fallback"
-    assert lower.events["arclength_jump"] == 1
-    assert lower.completeness == "complete"
-    assert lower.status_bits & STATUS_ARCLENGTH_JUMP
-    assert lower.status_bits & STATUS_COLD_DISCOVERY
-    assert not lower.status_bits & STATUS_UNKNOWN_COMPLETENESS
+    assert upper.components[0].arclength == pytest.approx(ROW_225_ARCLENGTH, rel=1e-3)
+    lower = render_pixel(scene, 226, 150, options, warm_seeds=upper.warm_seeds)
+    assert lower.components[0].arclength == pytest.approx(ROW_226_ARCLENGTH, rel=1e-3)
+    assert lower.completeness == "complete" and lower.component_count == 1
     assert lower.value == pytest.approx(render_pixel(scene, 226, 150, options).value, rel=1e-6)
 
 
@@ -203,58 +184,27 @@ def test_boundary_hugging_pixel_is_complete_with_one_component(scene, options, r
     # Until task-continuation-gates-and-fixtures every candidate here (12/13)
     # was floor-locked after its 250 discovery steps and the pixel stayed
     # ``unknown`` with value 0 (the strip's rows 655-800); the rate-based event
-    # slowdown closes them all on one loop.
+    # slowdown closes the first one and the rest are folded by distance.
     result = render_pixel(scene, row, 150, options)
-    assert result.component_count == 1
+    assert result.component_count == 1 and result.arc_count == 0
     assert result.incomplete_count == 0
     assert result.completeness == "complete"
-    assert result.discovery_completeness == "complete"
-    assert result.components[0].discovery_arclength == pytest.approx(arclength, rel=1e-3)
+    assert result.components[0].kind == "closed"
+    assert result.components[0].arclength == pytest.approx(arclength, rel=1e-3)
     assert result.events["incomplete_candidate"] == 0
-    assert result.events["incomplete_stall_skip"] == 0
-    assert result.events["incomplete_retry"] == 0
+    assert result.events["dedup_merged"] == result.admissible_count - 1
     assert result.value > 0.0 and np.isfinite(result.value)
-    assert len(result.hot_seeds) == 1
+    assert len(result.warm_seeds) == 1
     assert not result.status_bits & STATUS_UNKNOWN_COMPLETENESS
     assert result.status_bits & STATUS_HAS_COMPONENT
 
 
-def test_early_exit_window_setting_does_not_change_a_pixel_without_stalled_candidates(scene):
-    # A window above the discovery budget can never be met (the pre-early-exit
-    # behaviour).  With no ``step_budget`` candidate left on this pixel both
-    # settings must produce the same classification and value.
-    disabled = replace(PixelOptions(), stall_floor_window=PixelOptions().discovery_step_budget + 1)
-    result = render_pixel(scene, 700, 150, disabled)
-    reference = render_pixel(scene, 700, 150, PixelOptions())
-    assert result.events["incomplete_stall_skip"] == 0
-    assert result.events["incomplete_retry"] == 0
-    assert result.events["incomplete_candidate"] == 0
-    assert result.component_count == 1 and result.incomplete_count == 0
-    assert result.completeness == "complete"
-    assert result.value == pytest.approx(reference.value, rel=1e-9)
-    assert result.status_bits == reference.status_bits
-
-
-def test_event_terminated_candidates_are_still_retraced_not_stall_skipped(scene, options):
-    # Row 49, column 0 (home-wsl-preview-step9 pixels.csv: retry 4, recovered
-    # 2, candidate 2, one component of arclength 3.228596 closing after 1290
-    # production steps).  That component is a 0.19 loop that the absolute
-    # closure gate traversed 17 times (task-continuation-gates-and-fixtures);
-    # it now closes inside the discovery budget, so only the two
-    # event-terminated candidates remain.  They are outside the criterion's
-    # reason gate and go through the (free) retrace as before.
-    events = Counter()
-    discovered = strip_pixel_module._cold_discovery(scene, pixel_target(scene.render, 49, 0), options, events)
-    assert events["incomplete_stall_skip"] == 0
-    assert events["incomplete_retry"] == 2
-    assert events["incomplete_recovered"] == 0
-    assert discovered.component_count == 1 and discovered.incomplete_count == 2
-    assert discovered.components[0].arclength == pytest.approx(0.189896, rel=1e-4)
-    assert len(discovered.components[0].result.poses) < 250
-    assert {c.reason for c in discovered.incomplete} == {
-        TerminationReason.PATH_INFEASIBLE,
-        TerminationReason.TIR_BOUNDARY,
-    }
+def test_caustic_neighbourhood_pixel_60_126_is_one_short_closed_loop(scene, options):
+    result = render_pixel(scene, 60, 126, options)
+    assert result.component_count == 1 and result.completeness == "complete"
+    assert result.components[0].kind == "closed"
+    assert result.components[0].arclength == pytest.approx(0.466397, rel=1e-4)
+    assert result.value == pytest.approx(19.0379, rel=1e-3)
 
 
 def test_dark_pixel_is_complete_with_zero_value(scene, options):
@@ -263,88 +213,111 @@ def test_dark_pixel_is_complete_with_zero_value(scene, options):
     assert result.admissible_count == 0 and result.pool_count == 210
     assert result.completeness == "complete"
     assert result.value == 0.0
-    assert result.status_bits == STATUS_RENDERED | STATUS_COLD_DISCOVERY
+    assert result.status_bits == STATUS_RENDERED
+    assert result.warm_seeds == ()
 
 
-def test_bad_hot_seed_falls_back_to_cold_discovery(scene, options):
-    # The identity pose is nowhere near the canonical fiber: the hot start is
-    # either inadmissible, incomplete, or lands with a jumped arclength; in
-    # every case the pixel must fall back to the cold prescan, not be poisoned.
-    result = render_pixel(
-        scene, 150, 150, options, previous=(HotSeed(np.eye(3), 100.0),)
-    )
-    assert result.seed_source == "cold-fallback"
-    assert (
-        result.events["hot_start_inadmissible"]
-        + result.events["hot_start_incomplete"]
-        + result.events["arclength_jump"]
-    ) == 1
+def test_bad_warm_seed_neither_poisons_nor_adds_a_component(scene, options, canonical):
+    # The identity pose is nowhere near the canonical fiber: it is either
+    # inadmissible or folded; the prescan pool still finds the loop.
+    result = render_pixel(scene, 150, 150, options, warm_seeds=(np.eye(3),))
+    assert result.extra_seed_count == 1
     assert result.component_count == 1
     assert result.completeness == "complete"
+    assert result.value == pytest.approx(canonical.value, rel=1e-9)
 
 
-def test_hot_start_chain_cannot_discover_a_component_absent_from_the_previous_seeds(
-    monkeypatch, scene, options
-):
-    """Known limitation (code-review round 1 Major 2, see the module docstring):
-    ``_hot_start_all`` only revisits the neighbour's own seeds one by one, so
-    its result always has exactly ``len(previous)`` components. A component
-    that first becomes admissible between two rows (a caustic/topology branch)
-    has no matching seed, so the hot chain has no opportunity to find it and
-    fires no event; ``render_pixel`` then reports ``completeness="complete"``
-    even though a real component was missed. Only the periodic ``cold_check``
-    (``DriverOptions.cold_check_interval``, default 8 rows) recovers it, and
-    only for the rows from there on -- this test pins that bounded, not
-    eliminated, blind spot rather than leaving it un-exercised.
-    """
-    existing = DiscoveredComponent(
-        seed=np.eye(3), result=None, arclength=1.0,
-        status=FiberStatus.CLOSED, reason=TerminationReason.CLOSED_LOOP,
-    )
-    new_component = DiscoveredComponent(
-        seed=np.eye(3) * 2.0, result=None, arclength=2.0,
-        status=FiberStatus.CLOSED, reason=TerminationReason.CLOSED_LOOP,
-    )
-
-    def fake_hot_start_component(seed, target, incident_direction, refractive_index, crystal, *, discovery_step_budget, template):
-        return existing
-
-    def fake_discover_components(target, crystal, table, *, template, **kwargs):
-        return ComponentDiscoveryResult(
-            components=(existing, new_component),
-            incomplete=(),
-            completeness="complete",
-            pool_count=2,
-            raw_cluster_count=2,
-            admissible_count=2,
-        )
-
-    monkeypatch.setattr(strip_pixel_module, "hot_start_component", fake_hot_start_component)
-    monkeypatch.setattr(strip_pixel_module, "discover_components", fake_discover_components)
-
-    target = np.array([0.0, 0.0, 1.0])
-    events: Counter = Counter()
-    hot = strip_pixel_module._hot_start_all(scene, target, (HotSeed(existing.seed, 1.0),), options, events)
-    assert hot is not None and hot.component_count == 1
-    assert not events["hot_start_inadmissible"]
-    assert not events["hot_start_incomplete"]
-    assert not events["arclength_jump"]
-
-    cold = strip_pixel_module._cold_discovery(scene, target, options, events)
-    assert cold.component_count == 2  # the periodic cold_check is what actually recovers it
-
-
-def test_tiny_production_budget_is_reported_not_hidden(scene, canonical):
+def test_starved_production_budget_is_reported_not_hidden(scene, canonical):
     starved = replace(
         PixelOptions(),
         continuation=replace(PixelOptions().continuation, maximum_accepted_steps=20),
     )
     result = render_pixel(scene, 150, 150, starved)
-    assert result.component_count == 1
-    component = result.components[0]
-    assert component.production_status == "budget_exhausted"
-    assert result.events["production_not_closed"] == 1
+    # No candidate converges, so nothing is integrated; the evidence is the
+    # incomplete count, not a silently truncated partial value.
+    assert result.component_count == 0
+    assert result.incomplete_count >= 1
+    assert result.events["incomplete_candidate"] == result.incomplete_count
+    assert result.events["incomplete_not_converged"] == result.incomplete_count
     assert result.completeness == "unknown"
-    # The truncated trace is still integrated as a partial value, visibly.
-    assert component.quadrature_status == "available"
-    assert 0.0 < result.value < canonical.value
+    assert result.value == 0.0
+    assert result.status_bits == STATUS_RENDERED | STATUS_UNKNOWN_COMPLETENESS
+
+
+def test_arc_component_is_integrated_and_flagged(monkeypatch, scene, options):
+    """No real open arc exists in the current ch06 picture (Step 0 scan of
+    2106 pixels, every 10th row and column: 1954 lit, all closed), so the arc
+    path of ``render_pixel`` is exercised with a synthetic discovery result:
+    the canonical loop cut into a two-sided arc by an arclength window."""
+    target = pixel_target(scene.render, 150, 150)
+    from lumice_integral.discovery import retarget_problem
+
+    problem = retarget_problem(scene.discovery_template, target, canonical_seed_of(scene, options))
+    forward = trace_fiber(problem, ContinuationOptions(maximum_arclength=0.9))
+    backward = trace_fiber(problem, ContinuationOptions(maximum_arclength=0.6, initial_tangent_sign=-1))
+    assert forward.reason == backward.reason == TerminationReason.ARCLENGTH_BUDGET
+    arc = stitch_open_arc(forward, backward)
+    component = DiscoveredComponent(
+        seed=np.asarray(problem.seed), kind="arc", result=arc, arclength=arc.arclength,
+        status=FiberStatus.EVENT_TERMINATED, reason=TerminationReason.TIR_BOUNDARY,
+    )
+
+    def fake_discover_components(target, crystal, table, *, template, extra_seeds=(), **kwargs):
+        return ComponentDiscoveryResult(
+            components=(component,), incomplete=(), completeness="complete",
+            pool_count=1, extra_seed_count=len(extra_seeds), raw_cluster_count=1, admissible_count=1,
+            events={**{name: 0 for name in DISCOVERY_EVENT_NAMES}, "arc_stitched": 1}, trace_seconds=0.01,
+        )
+
+    monkeypatch.setattr(strip_pixel_module, "discover_components", fake_discover_components)
+    result = render_pixel(scene, 150, 150, options)
+    assert result.component_count == 1 and result.arc_count == 1
+    assert result.completeness == "complete"
+    assert result.status_bits == STATUS_RENDERED | STATUS_HAS_COMPONENT | STATUS_HAS_ARC
+    assert result.events["arc_stitched"] == 1
+    record = result.components[0]
+    assert record.kind == "arc" and record.status == "event_terminated"
+    assert record.reason == "tir_boundary" and record.start_reason == "arclength_budget"
+    assert record.pose_count == len(arc.poses)
+    assert record.arclength == pytest.approx(1.5, abs=0.15)
+    assert record.quadrature_status == "available"
+    # A 1.5 / 2.379 piece of the canonical loop: a partial value, reported as such.
+    assert 0.0 < record.value < CANONICAL_PIXEL_RESAMPLED_VALUE
+    assert result.value == record.value
+    # Budget-cut ends carry no margin rate, so both truncation estimates are nan
+    # (they exist as fields either way and are never added to the value).
+    assert np.isnan(record.start_truncation_estimate) and np.isnan(record.end_truncation_estimate)
+    assert result.warm_seeds == (record.seed,)
+
+
+def canonical_seed_of(scene, options) -> np.ndarray:
+    return render_pixel(scene, 150, 150, options).components[0].seed
+
+
+def test_quadrature_unavailable_component_makes_the_pixel_unknown(monkeypatch, scene, options):
+    """A component whose curve has no edge (a single accepted pose) cannot be
+    integrated: it contributes 0, is counted, and flips completeness."""
+    from lumice_integral.discovery import retarget_problem
+
+    problem = retarget_problem(scene.discovery_template, pixel_target(scene.render, 150, 150), canonical_seed_of(scene, options))
+    single = trace_fiber(problem, ContinuationOptions(maximum_accepted_steps=1, maximum_evaluations=1))
+    assert len(single.poses) == 1
+    component = DiscoveredComponent(
+        seed=np.asarray(problem.seed), kind="arc", result=stitch_open_arc(single, single),
+        arclength=0.0, status=FiberStatus.EVENT_TERMINATED, reason=single.reason,
+    )
+
+    def fake_discover_components(target, crystal, table, *, template, extra_seeds=(), **kwargs):
+        return ComponentDiscoveryResult(
+            components=(component,), incomplete=(), completeness="complete",
+            pool_count=1, extra_seed_count=0, raw_cluster_count=1, admissible_count=1,
+            events={name: 0 for name in DISCOVERY_EVENT_NAMES}, trace_seconds=0.0,
+        )
+
+    monkeypatch.setattr(strip_pixel_module, "discover_components", fake_discover_components)
+    result = render_pixel(scene, 150, 150, options)
+    assert result.components[0].quadrature_status == "unavailable_no_edges"
+    assert result.events["quadrature_unavailable"] == 1
+    assert result.completeness == "unknown" and result.value == 0.0
+    assert result.status_bits == STATUS_RENDERED | STATUS_UNKNOWN_COMPLETENESS | STATUS_QUADRATURE_UNAVAILABLE
+    assert result.warm_seeds == ()  # not integrated -> not a warm seed

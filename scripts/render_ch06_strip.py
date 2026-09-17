@@ -1,7 +1,8 @@
 """Render the canonical ch06 251 x 801 direct 3-5 strip (or a window of it).
 
-Per pixel: component discovery with neighbour hot start -> production trace
-with the four named weights -> resampled fixed-grid line quadrature -> component sum
+Per pixel: prescan-table candidates warmed by the pixel above -> one production
+trace per distinct candidate (closed loop, or forward + backward stitched into an
+open arc) -> resampled fixed-grid line quadrature -> component sum
 (``lumice_integral.strip_pixel``).  Columns are rendered in parallel by
 spawned worker processes (``lumice_integral.strip_driver``) and written as
 headerless float64/float32 raw arrays plus a status layer, a per-pixel CSV
@@ -21,7 +22,9 @@ is built once in the parent before the workers start and shared with them;
 Spawned workers get glibc malloc trimming (``strip_driver.WORKER_MALLOC_ENV``)
 unless the variables are already set; without it a Linux worker's RSS grows by
 ~2 GB per column.  ``--workers 1`` renders in-process, so export them yourself
-there if the run is long.
+there if the run is long.  On macOS ``--workers`` is capped at
+:data:`MAC_MAX_WORKERS`: the laptop is for sub-window smokes, the full image
+belongs on the many-core Linux reference machine.
 """
 
 from __future__ import annotations
@@ -40,6 +43,8 @@ from lumice_integral.prescan import DEFAULT_RNG_SEED, DEFAULT_SAMPLE_COUNT
 from lumice_integral.strip_driver import PIXEL_MODELS, DriverOptions, PrescanBuildOptions, render_window
 from lumice_integral.strip_io import Window, write_strip
 from lumice_integral.strip_pixel import PixelOptions
+
+MAC_MAX_WORKERS = 4
 
 
 def parse_range(text: str, upper: int) -> tuple[int, int]:
@@ -63,19 +68,15 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--pixel-model", choices=PIXEL_MODELS, default="point")
     parser.add_argument("--subpixel-grid", type=int, default=3)
     parser.add_argument("--subpixel-rows", default=None, help="row band a:b where the subpixel model applies")
-    parser.add_argument("--cold-check-interval", type=int, default=8)
     parser.add_argument("--quadrature-rtol", type=float, default=ResampleOptions.relative_tolerance)
     parser.add_argument("--epsilon", type=float, default=ResampleOptions.epsilon)
     parser.add_argument("--initial-node-count", type=int, default=ResampleOptions.initial_node_count, help="4k + 1")
     parser.add_argument("--maximum-node-count", type=int, default=ResampleOptions.maximum_node_count)
-    parser.add_argument("--discovery-step-budget", type=int, default=250)
-    parser.add_argument("--retry-step-budget", type=int, default=None, help="default: production maximum_accepted_steps")
     parser.add_argument(
-        "--stall-floor-window",
-        type=int,
-        default=PixelOptions.stall_floor_window,
-        help="skip the retrace of a step_budget candidate whose last N accepted discovery steps sat at "
-        "minimum_step; a value above --discovery-step-budget disables the skip",
+        "--distance-threshold",
+        type=float,
+        default=PixelOptions.distance_threshold,
+        help="SO(3) distance below which a candidate seed is folded into an already traced component",
     )
     parser.add_argument(
         "--prescan-samples",
@@ -93,12 +94,17 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--label", default="", help="free-text note stored in provenance.execution")
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args(argv)
+    if args.workers < 1:
+        parser.error("--workers must be positive")
+    if platform.system() == "Darwin" and args.workers > MAC_MAX_WORKERS:
+        parser.error(
+            f"--workers {args.workers} exceeds the macOS limit of {MAC_MAX_WORKERS}: "
+            "render sub-window smokes here and the full image on the Linux reference machine (home-wsl)"
+        )
 
     window = Window(parse_range(args.rows, height), parse_range(args.columns, width), args.column_step)
     pixel_options = PixelOptions(
-        discovery_step_budget=args.discovery_step_budget,
-        retry_step_budget=args.retry_step_budget,
-        stall_floor_window=args.stall_floor_window,
+        distance_threshold=args.distance_threshold,
         continuation=ContinuationOptions(),
         quadrature=ResampleOptions(
             epsilon=args.epsilon,
@@ -112,7 +118,6 @@ def main(argv: list[str] | None = None) -> None:
         prescan=PrescanBuildOptions(
             sample_count=args.prescan_samples, rng_seed=args.rng_seed, cache_path=args.prescan_cache
         ),
-        cold_check_interval=args.cold_check_interval,
         pixel_model=args.pixel_model,
         subpixel_grid=args.subpixel_grid,
         subpixel_rows=parse_range(args.subpixel_rows, height) if args.subpixel_rows else None,
@@ -159,8 +164,9 @@ def main(argv: list[str] | None = None) -> None:
     )
     unknown = sum(r.completeness != "complete" for r in results)
     lit = sum(r.component_count > 0 for r in results)
+    arcs = sum(r.arc_count > 0 for r in results)
     log(
-        f"done: {len(results)} pixels ({lit} with components, {unknown} unknown completeness) "
+        f"done: {len(results)} pixels ({lit} with components, {arcs} with arcs, {unknown} unknown completeness) "
         f"in {execution['wall_clock_s']:.1f}s wall clock; provenance {files['provenance']}"
     )
 

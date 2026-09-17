@@ -13,7 +13,7 @@ the historical ``data_251x801.bin`` read as ``(801, 251)``):
   pixel was not rendered;
 - ``component_count_uint8.bin``: integrated components per pixel;
 - ``pixels.csv``: one diagnostic row per rendered pixel (value, error
-  estimate, completeness, seed source, counts, events, timings);
+  estimate, completeness, component kinds, counts, events, timings);
 - ``provenance.json``: scene binding with provenance tags, every numerical
   option, the pixel model, window, environment, timings, and the SHA-256 of
   every payload above.
@@ -50,19 +50,19 @@ from .quadrature import INTEGRAND_FACTOR_NAMES, RESAMPLED_QUADRATURE_METHOD
 from .strip_pixel import (
     EVENT_NAMES,
     STAGE_NAMES,
-    STATUS_ARCLENGTH_JUMP,
-    STATUS_COLD_CHECK_MISMATCH,
-    STATUS_COLD_DISCOVERY,
-    STATUS_NODE_COUNT_EXHAUSTED,
+    STATUS_HAS_ARC,
     STATUS_HAS_COMPONENT,
-    STATUS_PRODUCTION_FAILURE,
+    STATUS_NODE_COUNT_EXHAUSTED,
+    STATUS_QUADRATURE_UNAVAILABLE,
     STATUS_RENDERED,
     STATUS_UNKNOWN_COMPLETENESS,
     PixelOptions,
     PixelResult,
 )
 
-FORMAT_VERSION = "lumice-integral.strip/v1"
+# v2 (task-pixel-pipeline-v2): single-trace pipeline with open-arc
+# components; status bits, CSV columns and the checkpoint payload changed.
+FORMAT_VERSION = "lumice-integral.strip/v2"
 FILE_NAMES = {
     "float64": "strip_float64.bin",
     "float32": "strip_float32.bin",
@@ -75,28 +75,29 @@ STATUS_BITS: dict[str, int] = {
     "rendered": STATUS_RENDERED,
     "unknown_completeness": STATUS_UNKNOWN_COMPLETENESS,
     "has_component": STATUS_HAS_COMPONENT,
-    "cold_discovery": STATUS_COLD_DISCOVERY,
-    "arclength_jump": STATUS_ARCLENGTH_JUMP,
-    "production_failure": STATUS_PRODUCTION_FAILURE,
+    "has_arc": STATUS_HAS_ARC,
+    "quadrature_unavailable": STATUS_QUADRATURE_UNAVAILABLE,
     "node_count_exhausted": STATUS_NODE_COUNT_EXHAUSTED,
-    "cold_check_mismatch": STATUS_COLD_CHECK_MISMATCH,
 }
 STATUS_BIT_MEANINGS: dict[str, str] = {
     "rendered": "pixel was computed (0 = outside the rendered window; its value is a placeholder 0)",
     "unknown_completeness": (
-        "procedural completeness is 'unknown': an unclassified candidate, a "
-        "production trace that did not close or changed arclength, or an "
-        "unavailable quadrature; the value is the partial sum of what was integrated"
+        "procedural completeness is 'unknown': an admissible candidate did not converge to a "
+        "closed loop or an open arc (incomplete), or a component's quadrature was unavailable; "
+        "the value is the partial sum of what was integrated.  'complete' is not a certificate "
+        "that every connected component of the fiber was found"
     ),
-    "has_component": "at least one closed component was integrated into the value",
-    "cold_discovery": "the prescan ran for this pixel (first pixel, fallback, or cold check); unset = pure hot start",
-    "arclength_jump": "hot start from the previous pixel was rejected by detect_arclength_jump (topology boundary)",
-    "production_failure": "a production retrace did not close or a quadrature was unavailable",
+    "has_component": "at least one component (closed loop or open arc) was integrated into the value",
+    "has_arc": (
+        "at least one integrated component is an open arc: a fiber piece cut by a named event "
+        "(TIR, branch, path infeasibility, visibility, chart) at both ends, traced forward and "
+        "backward from one seed; its truncation estimates are in pixels.csv, not in the value"
+    ),
+    "quadrature_unavailable": "a component's quadrature was unavailable (it contributes 0 to the value)",
     "node_count_exhausted": (
         "the resampled quadrature reached maximum_node_count on some component with its "
         "error estimate still above relative_tolerance; the value is reported as is"
     ),
-    "cold_check_mismatch": "a scheduled cold check disagreed with the hot-start chain; the cold result was kept",
 }
 PIXEL_CSV_COLUMNS = (
     "row",
@@ -104,16 +105,20 @@ PIXEL_CSV_COLUMNS = (
     "value",
     "error_estimate",
     "component_count",
+    "arc_count",
     "completeness",
-    "discovery_completeness",
-    "seed_source",
     "incomplete_count",
     "pool_count",
+    "extra_seed_count",
     "raw_cluster_count",
     "admissible_count",
     "status_bits",
+    "component_kinds",
     "component_arclengths",
-    "production_pose_counts",
+    "component_pose_counts",
+    "component_end_reasons",
+    "component_start_truncations",
+    "component_end_truncations",
     "quadrature_node_counts",
     "quadrature_refinement_rounds",
     *(f"event_{name}" for name in EVENT_NAMES),
@@ -126,7 +131,7 @@ class Window:
     """Half-open pixel ranges ``rows[0]:rows[1]`` x ``columns[0]:columns[1]``.
 
     ``column_step > 1`` renders every ``column_step``-th column only (a coarse
-    full-height preview); rows are always contiguous because the hot-start
+    full-height preview); rows are always contiguous because the warm-seed
     chain runs down a column.
     """
 
@@ -187,24 +192,32 @@ def assemble_arrays(results: Iterable[PixelResult], *, height: int, width: int) 
 
 def pixel_csv_row(result: PixelResult) -> dict[str, Any]:
     timings = result.timings
+    components = result.components
     return {
         "row": result.row,
         "column": result.column,
         "value": repr(result.value),
         "error_estimate": repr(result.error_estimate),
         "component_count": result.component_count,
+        "arc_count": result.arc_count,
         "completeness": result.completeness,
-        "discovery_completeness": result.discovery_completeness,
-        "seed_source": result.seed_source,
         "incomplete_count": result.incomplete_count,
         "pool_count": result.pool_count,
+        "extra_seed_count": result.extra_seed_count,
         "raw_cluster_count": result.raw_cluster_count,
         "admissible_count": result.admissible_count,
         "status_bits": result.status_bits,
-        "component_arclengths": ";".join(f"{c.discovery_arclength:.6f}" for c in result.components),
-        "production_pose_counts": ";".join(str(c.production_pose_count) for c in result.components),
-        "quadrature_node_counts": ";".join(str(c.node_count) for c in result.components),
-        "quadrature_refinement_rounds": ";".join(str(c.refinement_rounds) for c in result.components),
+        "component_kinds": ";".join(c.kind for c in components),
+        "component_arclengths": ";".join(f"{c.arclength:.6f}" for c in components),
+        "component_pose_counts": ";".join(str(c.pose_count) for c in components),
+        # ``start|end`` event names of each component (``closed_loop`` alone for a loop).
+        "component_end_reasons": ";".join(
+            f"{c.start_reason}|{c.reason}" if c.kind == "arc" else c.reason for c in components
+        ),
+        "component_start_truncations": ";".join(repr(c.start_truncation_estimate) for c in components),
+        "component_end_truncations": ";".join(repr(c.end_truncation_estimate) for c in components),
+        "quadrature_node_counts": ";".join(str(c.node_count) for c in components),
+        "quadrature_refinement_rounds": ";".join(str(c.refinement_rounds) for c in components),
         **{f"event_{name}": result.events.get(name, 0) for name in EVENT_NAMES},
         **{name: f"{timings.get(name, 0.0):.4f}" for name in STAGE_NAMES},
     }
@@ -280,25 +293,21 @@ def options_block(options: PixelOptions, prescan: Mapping[str, Any] | None = Non
     return {
         "discovery": {
             "prescan": dict(prescan) if prescan is not None else None,
-            "discovery_step_budget": options.discovery_step_budget,
-            "retry_step_budget": options.effective_retry_step_budget,
-            "stall_floor_window": options.stall_floor_window,
             "angle_tolerance_deg": options.angle_tolerance_deg,
             "cluster_radius_rad": options.cluster_radius_rad,
-            "arclength_rtol": options.arclength_rtol,
-            "jump_relative_threshold": options.jump_relative_threshold,
+            "distance_threshold": options.distance_threshold,
             "strategy": (
-                "column-wise top-down scan; hot start every integrated component of "
-                "the pixel above with the production step budget, reject on arclength "
-                "jump and fall back to cold discovery; cold discovery queries the scene-level "
-                "prescan table (built once per run from prescan.sample_count Haar samples with "
-                "prescan.rng_seed, domain-valid poses indexed by outgoing direction) for the "
-                "candidates within angle_tolerance_deg, then runs the small "
-                "discovery budget, incomplete candidates retraced once with retry_step_budget "
-                "unless a step_budget candidate's last stall_floor_window accepted discovery "
-                "steps all sat at continuation.minimum_step (counted as incomplete_stall_skip, "
-                "kept incomplete without a retrace); "
-                "components deduplicated by (status, reason, arclength within arclength_rtol)"
+                "column-wise top-down scan; per pixel one discovery: the candidate pool is the "
+                "scene-level prescan table (built once per run from prescan.sample_count Haar "
+                "samples with prescan.rng_seed, domain-valid poses indexed by outgoing direction) "
+                "queried within angle_tolerance_deg, plus the integrated components of the pixel "
+                "above as warm Gauss-Newton starts (never traced on their own); greedy geodesic "
+                "clustering with cluster_radius_rad; each representative is Newton-corrected, gated "
+                "(residual, path domain, entry measure), deduplicated by SO(3) distance below "
+                "distance_threshold to any accepted curve, and traced once with the production "
+                "continuation options; closed -> closed component; a named event (tir, branch, "
+                "path_infeasible, visibility, chart) -> traced backward from the same seed and "
+                "stitched into an open-arc component; anything else -> incomplete"
             ),
         },
         "continuation": asdict(options.continuation),
@@ -308,7 +317,11 @@ def options_block(options: PixelOptions, prescan: Mapping[str, Any] | None = Non
             "integrand_factors": list(INTEGRAND_FACTOR_NAMES),
             "density_factor": "rho_pose",
             "haar_to_dvol_g_factor_applied": True,
-            "component_sum": "linear sum of component values; error estimates summed linearly (conservative bound)",
+            "component_sum": (
+                "linear sum of component values (closed loops and open arcs); error estimates "
+                "summed linearly (conservative bound); open-arc truncation estimates reported per "
+                "component in pixels.csv, not added"
+            ),
         },
     }
 
@@ -372,7 +385,7 @@ def write_strip(
             "status_bits": STATUS_BITS,
             "status_bit_meanings": STATUS_BIT_MEANINGS,
             "value_semantics": (
-                "sum over integrated closed components of the Haar-converted partial integral "
+                "sum over integrated components (closed loops and open arcs) of the Haar-converted partial integral "
                 "(1/(8 pi^2)) rho_pose * entry_measure * fresnel_transmission * path_validity / (J_perp + epsilon) dH^1; "
                 "unknown-completeness pixels hold the partial sum of what was integrated (never NaN); "
                 "unrendered pixels hold 0 with status 0"
@@ -383,9 +396,9 @@ def write_strip(
             "rendered_pixels": int(rendered.sum()),
             "unknown_completeness_pixels": int(unknown.sum()),
             "pixels_with_components": int(((arrays.status & STATUS_HAS_COMPONENT) != 0).sum()),
-            "cold_discovery_pixels": int(((arrays.status & STATUS_COLD_DISCOVERY) != 0).sum()),
-            "arclength_jump_pixels": int(((arrays.status & STATUS_ARCLENGTH_JUMP) != 0).sum()),
-            "cold_check_mismatch_pixels": int(((arrays.status & STATUS_COLD_CHECK_MISMATCH) != 0).sum()),
+            "pixels_with_arcs": int(((arrays.status & STATUS_HAS_ARC) != 0).sum()),
+            "quadrature_unavailable_pixels": int(((arrays.status & STATUS_QUADRATURE_UNAVAILABLE) != 0).sum()),
+            "event_totals": {name: int(sum(r.events.get(name, 0) for r in results)) for name in EVENT_NAMES},
             "value_min": float(values.min()) if values.size else None,
             "value_max": float(values.max()) if values.size else None,
             "value_mean": float(values.mean()) if values.size else None,
