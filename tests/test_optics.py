@@ -8,12 +8,14 @@ import pytest
 from lumice_integral.analytic import tangent_basis
 from lumice_integral.continuation import FiberStatus, TerminationReason, trace_fiber
 from lumice_integral.optics import (
+    DOMAIN_MARGIN_NAMES,
     ICE_REFRACTIVE_INDEX,
     fresnel_transmission_3_5,
     fresnel_unpolarized_transmittance,
     minimum_deviation_incident,
     path_3_5,
     path_3_5_domain,
+    path_3_5_domain_batch,
     path_3_5_problem,
 )
 from lumice_integral.so3 import exp
@@ -175,3 +177,68 @@ def test_fresnel_3_5_lies_in_the_unit_interval_and_drops_toward_the_critical_ang
     tir_pose = exp(jnp.array([0.5447316801391622, -1.506228738763967, -1.190186580432801], dtype=jnp.float64))
     assert path_3_5_domain(tir_pose, incident).event_kind == "tir_boundary"
     assert fresnel_transmission_3_5(tir_pose, incident) == 0.0
+
+
+# --- task-scene-prescan-table Step 1: batch domain check ----------------------
+
+
+def _haar_rotations(count: int, seed: int) -> np.ndarray:
+    quaternion = np.random.default_rng(seed).standard_normal((count, 4))
+    quaternion /= np.linalg.norm(quaternion, axis=1, keepdims=True)
+    w, x, y, z = quaternion.T
+    return np.stack(
+        [
+            np.stack([1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)], -1),
+            np.stack([2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)], -1),
+            np.stack([2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)], -1),
+        ],
+        axis=1,
+    )
+
+
+def test_batch_domain_check_matches_the_scalar_gate_pose_by_pose():
+    """White-box equivalence of the batch and scalar forms of the four gates.
+
+    Haar samples cover every verdict (valid / ``path_infeasible`` at either
+    face / ``tir_boundary`` at either face); the symmetric pose and a known
+    exit-TIR pose are appended as fixed boundary cases.  Where the scalar
+    check returns early it reports only the entry margins, so only the
+    margins it did evaluate are compared; the batch always reports all four.
+    """
+    incident = np.asarray(minimum_deviation_incident())
+    rotations = np.concatenate(
+        [
+            _haar_rotations(2000, 7),
+            np.eye(3)[None],
+            np.asarray(exp(jnp.array([0.5447316801391622, -1.506228738763967, -1.190186580432801])))[None],
+        ]
+    )
+    batch = path_3_5_domain_batch(rotations, incident, 1.31)
+    assert batch.valid.shape == (rotations.shape[0],)
+    assert batch.direction.shape == (rotations.shape[0], 3)
+    assert set(batch.margins) == set(DOMAIN_MARGIN_NAMES)
+    verdicts = set()
+    for i, rotation in enumerate(rotations):
+        scalar = path_3_5_domain(rotation, incident, 1.31)
+        verdicts.add(scalar.event_kind)
+        assert bool(batch.valid[i]) == scalar.valid
+        for name, value in scalar.margins.items():
+            assert batch.margins[name][i] == pytest.approx(value, rel=1e-12, abs=1e-15)
+        if scalar.valid:
+            direction = np.asarray(path_3_5(jnp.asarray(rotation), jnp.asarray(incident), jnp.asarray(1.31)).direction)
+            # vmap lowers ``rotation @ normal`` to a batched contraction whose
+            # summation order differs from the scalar dot: ulp-level only.
+            assert np.allclose(batch.direction[i], direction, rtol=0, atol=1e-14)
+            assert np.linalg.norm(batch.direction[i]) == pytest.approx(1.0, abs=1e-12)
+    assert verdicts == {None, "path_infeasible", "tir_boundary"}
+    assert 0 < batch.valid.sum() < rotations.shape[0]
+
+
+def test_batch_domain_check_validates_its_inputs():
+    incident = np.asarray(minimum_deviation_incident())
+    with pytest.raises(ValueError, match="shape"):
+        path_3_5_domain_batch(np.eye(3), incident)
+    with pytest.raises(ValueError, match="refractive_index"):
+        path_3_5_domain_batch(np.eye(3)[None], incident, -1.0)
+    empty = path_3_5_domain_batch(np.zeros((0, 3, 3)), incident)
+    assert empty.valid.shape == (0,) and empty.direction.shape == (0, 3)

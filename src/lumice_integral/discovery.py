@@ -70,7 +70,7 @@ from .continuation import (
     trace_fiber,
 )
 from .geometry import Polyhedron, entry_measure
-from .optics import path_3_5, path_3_5_domain, path_3_5_problem
+from .optics import path_3_5_domain, path_3_5_domain_batch, path_3_5_problem
 from .so3 import exp, rotation_distance
 
 PATH_3_5_FACES = (3, 5)
@@ -334,17 +334,9 @@ def discover_components(
     target = np.asarray(target_direction, dtype=np.float64)
     rng = np.random.default_rng(rng_seed)
     rotations = _haar_rotations(prescan_samples, rng)
-    evaluation = jax.vmap(
-        lambda r: path_3_5(r, jnp.asarray(incident), jnp.asarray(refractive_index))
-    )(jnp.asarray(rotations))
-    valid = (
-        (np.asarray(evaluation.entry.incidence_cosine) > 0)
-        & (np.asarray(evaluation.entry.discriminant) > 0)
-        & (np.asarray(evaluation.exit.incidence_cosine) > 0)
-        & (np.asarray(evaluation.exit.discriminant) > 0)
-    )
-    alignment = np.asarray(evaluation.direction) @ target
-    within = valid & (alignment >= np.cos(np.radians(angle_tolerance_deg)))
+    domain = path_3_5_domain_batch(rotations, incident, refractive_index)
+    alignment = domain.direction @ target
+    within = domain.valid & (alignment >= np.cos(np.radians(angle_tolerance_deg)))
     pool_indices = np.nonzero(within)[0]
     pool_rotations = rotations[pool_indices]
     pool_alignment = alignment[pool_indices]

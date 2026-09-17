@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Mapping, NamedTuple
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -168,6 +169,60 @@ def path_3_5_domain(
             "exit Snell discriminant is non-positive",
         )
     return PathDomainCheck(True, margins)
+
+
+DOMAIN_MARGIN_NAMES = (
+    "entry_incidence_cosine",
+    "entry_snell_discriminant",
+    "exit_incidence_cosine",
+    "exit_snell_discriminant",
+)
+
+
+class BatchDomainCheck(NamedTuple):
+    """Host-side 3-5 feasibility of many rotations at once (see :func:`path_3_5_domain_batch`)."""
+
+    valid: np.ndarray
+    margins: Mapping[str, np.ndarray]
+    direction: np.ndarray
+
+
+def path_3_5_domain_batch(
+    rotations: Array,
+    incident_direction: Array,
+    refractive_index: Array = ICE_REFRACTIVE_INDEX,
+) -> BatchDomainCheck:
+    """Vectorised 3-5 feasibility: ``valid`` iff all four margins are positive.
+
+    The single authority for the batch form of the four smooth-branch gates
+    that :func:`path_3_5_domain` applies one pose at a time
+    (``entry_incidence_cosine > 0``, ``entry_snell_discriminant > 0``,
+    ``exit_incidence_cosine > 0``, ``exit_snell_discriminant > 0``); the
+    prescan table and component discovery both go through here so the two
+    forms cannot drift apart.  Margins are the cosines and Snell
+    discriminants :func:`path_3_5` evaluates on its way through both faces,
+    read straight off its :class:`PathEvaluation` (no second derivation); a
+    non-finite margin compares ``False`` and therefore invalidates the pose,
+    matching the scalar ``non_finite`` verdict.  ``direction`` is the outgoing
+    direction of every pose, meaningful only where ``valid`` holds.  Runs as
+    one eager ``jax.vmap`` over ``rotations`` of shape ``(N, 3, 3)``.
+    """
+    rotation_array = jnp.asarray(rotations, dtype=jnp.float64)
+    if rotation_array.ndim != 3 or rotation_array.shape[1:] != (3, 3):
+        raise ValueError("rotations must have shape (N, 3, 3)")
+    incident = jnp.asarray(np.asarray(incident_direction, dtype=np.float64))
+    index = jnp.asarray(_require_positive_finite_scalar("refractive_index", refractive_index))
+    evaluation = jax.vmap(lambda r: path_3_5(r, incident, index))(rotation_array)
+    margins = {
+        "entry_incidence_cosine": np.asarray(evaluation.entry.incidence_cosine),
+        "entry_snell_discriminant": np.asarray(evaluation.entry.discriminant),
+        "exit_incidence_cosine": np.asarray(evaluation.exit.incidence_cosine),
+        "exit_snell_discriminant": np.asarray(evaluation.exit.discriminant),
+    }
+    valid = np.ones(rotation_array.shape[0], dtype=bool)
+    for name in DOMAIN_MARGIN_NAMES:
+        valid &= margins[name] > 0
+    return BatchDomainCheck(valid, margins, np.asarray(evaluation.direction))
 
 
 def fresnel_unpolarized_transmittance(
