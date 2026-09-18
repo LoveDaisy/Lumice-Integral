@@ -1,8 +1,16 @@
-"""Small SO(3) helpers using right-trivialized tangent coordinates."""
+"""Small SO(3) helpers using right-trivialized tangent coordinates.
+
+Unit quaternions appear only as an interpolation chart (``(w, x, y, z)``,
+scalar first): :func:`quaternion_from_rotation` / :func:`rotation_from_quaternion`
+convert to and from the ``(3, 3)`` matrices everything else works with, and
+:func:`continuous_quaternion_signs` fixes the ``q ~ -q`` ambiguity along a
+sequence so that componentwise splines see a continuous curve.
+"""
 
 from __future__ import annotations
 
 import jax.numpy as jnp
+import numpy as np
 from jax import Array, lax
 
 
@@ -93,3 +101,90 @@ def rotation_distance(left: Array, right: Array) -> Array:
     ) / 2.0
     sine = jnp.linalg.norm(skew_vector)
     return jnp.arctan2(sine, cosine)
+
+
+def quaternion_from_rotation(rotation: Array) -> Array:
+    """Unit quaternion ``(w, x, y, z)`` of a rotation matrix (Shepperd's method).
+
+    Branch-free (all four candidate pivots are formed and the largest one is
+    selected), so it is ``jax.vmap``-safe and well conditioned for every
+    rotation including angles near ``pi`` where :func:`log` is not.  The sign
+    is the pivot's own; use :func:`continuous_quaternion_signs` on sequences.
+    """
+    m = rotation
+    trace = m[0, 0] + m[1, 1] + m[2, 2]
+    # Pivot k = 0 on the trace, k = 1..3 on the diagonal entries; each 4-vector
+    # is (w, x, y, z) times 4 * pivot component, a positive multiple of q.
+    candidates = jnp.stack(
+        [
+            jnp.array([1.0 + trace, m[2, 1] - m[1, 2], m[0, 2] - m[2, 0], m[1, 0] - m[0, 1]]),
+            jnp.array([m[2, 1] - m[1, 2], 1.0 + m[0, 0] - m[1, 1] - m[2, 2], m[1, 0] + m[0, 1], m[0, 2] + m[2, 0]]),
+            jnp.array([m[0, 2] - m[2, 0], m[1, 0] + m[0, 1], 1.0 - m[0, 0] + m[1, 1] - m[2, 2], m[2, 1] + m[1, 2]]),
+            jnp.array([m[1, 0] - m[0, 1], m[0, 2] + m[2, 0], m[2, 1] + m[1, 2], 1.0 - m[0, 0] - m[1, 1] + m[2, 2]]),
+        ]
+    )
+    pivots = jnp.array([1.0 + trace, 1.0 + m[0, 0] - m[1, 1] - m[2, 2], 1.0 - m[0, 0] + m[1, 1] - m[2, 2], 1.0 - m[0, 0] - m[1, 1] + m[2, 2]])
+    best = jnp.argmax(pivots)
+    quaternion = candidates[best]
+    return quaternion / jnp.linalg.norm(quaternion)
+
+
+def rotation_from_quaternion(quaternion: Array) -> Array:
+    """Rotation matrix of a quaternion ``(w, x, y, z)``, normalised first.
+
+    Differentiable in the quaternion, so ``jax.jvp`` through it turns the
+    derivative of a componentwise quaternion spline into a body angular
+    velocity (:func:`body_velocity`).
+    """
+    q = quaternion / jnp.linalg.norm(quaternion)
+    w, x, y, z = q
+    return jnp.array(
+        [
+            [1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y - w * z), 2.0 * (x * z + w * y)],
+            [2.0 * (x * y + w * z), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z - w * x)],
+            [2.0 * (x * z - w * y), 2.0 * (y * z + w * x), 1.0 - 2.0 * (x * x + y * y)],
+        ],
+        dtype=quaternion.dtype,
+    )
+
+
+def quaternion_derivative(quaternion: Array, body_velocity: Array) -> Array:
+    """``dq/ds = q * (0, omega) / 2`` for the body angular velocity ``omega``.
+
+    Consistent with :func:`rotation_from_quaternion` and the right-trivialized
+    convention ``dR/ds = R hat(omega)`` used by :func:`exp`; the caller's unit
+    fiber tangent is such an ``omega``.
+    """
+    w, x, y, z = quaternion
+    ox, oy, oz = body_velocity
+    return 0.5 * jnp.array(
+        [
+            -x * ox - y * oy - z * oz,
+            w * ox + y * oz - z * oy,
+            w * oy + z * ox - x * oz,
+            w * oz + x * oy - y * ox,
+        ]
+    )
+
+
+def vee(matrix: Array) -> Array:
+    """Inverse of :func:`hat` on a skew-symmetric matrix."""
+    return jnp.array([matrix[2, 1], matrix[0, 2], matrix[1, 0]])
+
+
+def continuous_quaternion_signs(quaternions: np.ndarray) -> np.ndarray:
+    """Flip signs along a ``(M, 4)`` sequence so consecutive dot products are positive.
+
+    Host-side and sequential (each sign depends on the previous one).  A loop
+    is *not* made periodic: for a closed fiber in the non-trivial class of
+    ``pi_1(SO(3)) = Z/2`` the propagated last sign is ``-q_0``, which a caller
+    handles locally by aligning wrapped neighbours pairwise (see
+    ``resample.py``; task-resample-and-integrate Step 0 fact 2).
+    """
+    signed = np.array(quaternions, dtype=np.float64, copy=True)
+    if signed.ndim != 2 or signed.shape[1] != 4:
+        raise ValueError("quaternions must have shape (M, 4)")
+    for index in range(1, len(signed)):
+        if float(np.dot(signed[index], signed[index - 1])) < 0.0:
+            signed[index] = -signed[index]
+    return signed

@@ -1,62 +1,40 @@
-"""One pixel of the ch06 strip: discovery -> production trace -> quadrature -> sum.
+"""One pixel of the ch06 strip: candidates -> one trace each -> quadrature -> sum.
 
 :func:`render_pixel` is the pure per-pixel pipeline behind the strip image
 driver (:mod:`.strip_driver` schedules it, :mod:`.strip_io` writes it out).
 For one target direction ``d`` it
 
-1. finds the 3-5 fiber components reaching ``d`` -- either by hot-starting
-   every component of a neighbouring pixel (:func:`.discovery.hot_start_component`
-   with the production step budget, gated by
-   :func:`.discovery.detect_arclength_jump`) or, when no neighbour is given, a
-   hot start fails, a jump is detected, or a cold check is requested, by the
-   full prescan :func:`.discovery.discover_components` with the small discovery
-   budget, whose ``incomplete`` candidates are then retraced once with the
-   production budget (rows just below the 22-degree inner-edge caustic close
-   only after 300-1300 accepted steps; task-strip-image-driver Step 1) --
-   except a candidate whose discovery trace is already locked at the step
-   floor (:func:`.discovery.is_floor_locked`), which the retrace could only
-   repeat (task-discovery-stall-early-exit);
-2. retraces every closed component with the production
-   :class:`.continuation.ContinuationOptions` and the four named weights
-   (the discovery traces are weightless and budget-limited by design);
-3. integrates each production trace with :func:`.quadrature.integrate_fiber`;
-4. sums the component values and error estimates linearly (the error sum is a
+1. runs :func:`.discovery.discover_components` once: the candidate pool is
+   the scene's :class:`.prescan.PrescanTable` query plus ``warm_seeds`` (the
+   converged poses of any neighbouring pixels the caller chooses; they only
+   warm the Gauss-Newton start of their cluster and are neither traced on
+   their own nor a source of completeness); every cluster representative is
+   corrected, gated, deduplicated against the components already accepted by
+   SO(3) distance, and traced *once* with the production
+   :class:`.continuation.ContinuationOptions`; a trace ending on a named event
+   is traced backward from the same seed and stitched into an open arc
+   (task-pixel-pipeline-v2);
+2. integrates every component (closed loop or arc) with
+   :func:`.quadrature.integrate_fiber_resampled` on the production problem
+   (the four named weights) retargeted to ``d``;
+3. sums the component values and error estimates linearly (the error sum is a
    conservative bound, not a root-sum-square).
 
-Completeness vocabulary (two different signals, deliberately named apart):
+There is no separate hot-start path and no periodic cold check: every pixel
+always queries the prescan table, so the blind spot the old hot-start chain
+had (a component with no seed in the neighbour) does not exist here, and the
+cold check that bounded it has nothing left to bound.
 
-- ``discovery_completeness`` is :attr:`.discovery.ComponentDiscoveryResult.completeness`
-  of the cold prescan that ran for this pixel (``"not-run"`` on a pure hot
-  start): procedural, "no unclassified candidate in this pool".
-- ``completeness`` is the pixel-level procedural signal: ``"complete"`` iff no
-  step above produced evidence of a missing or unusable component (no
-  incomplete candidate in the discovery that was finally used, every
-  production trace closed with the discovery arclength, every quadrature
-  available).  A hot-start failure or arclength jump that fell back to a
-  successful cold prescan does not by itself make the pixel ``"unknown"``;
-  it is reported through ``seed_source``/``events`` and the status bits.
-  It is *not* a certificate that every connected component of ``X_(3-5, d)``
-  was found; ``value`` is always the partial sum of the
-  components that were integrated, never ``NaN`` and never silently
-  substituted.  Consumers must read the status layer, not the raw value.
-
-  Known bounded blind spot (code-review round 1 Major 2): :func:`_hot_start_all`
-  only revisits the neighbour's own seeds, one hot start per entry of
-  ``previous``, so a component that first becomes admissible between two rows
-  (a caustic/topology branch) has no matching seed and produces no event; the
-  hot-started pixel is reported ``"complete"`` even though a real component
-  was missed.  A full supplementary discovery on every hot-started pixel
-  would pay the same ~0.4 s JIT/prescan tax the ``template`` reuse in
-  :mod:`.discovery` exists to avoid (task-strip-image-driver Step 0 DECISION,
-  progress.md 20:40), so it is deliberately not attempted here.  The only
-  mitigation is :data:`.strip_driver.DriverOptions.cold_check_interval`'s
-  periodic cold prescan, which bounds the miss to at most
-  ``cold_check_interval - 1`` rows before self-healing (see
-  ``test_hot_start_chain_cannot_discover_a_component_absent_from_the_previous_seeds``
-  in ``tests/test_strip_pixel.py``, which pins this exact bound rather than
-  leaving it unexercised); it does not retroactively fix rows already
-  emitted inside that window.  A caustic-heavy region that needs a tighter
-  bound should lower ``cold_check_interval``.
+``completeness`` is the pixel-level procedural signal: ``"complete"`` iff every
+admissible candidate converged (closed or arc, no ``incomplete`` candidate)
+and every component's quadrature was available.  It is *not* a certificate
+that every connected component of ``X_(3-5, d)`` was found (that remains an
+open item of ``docs/phase1-math-contract.md`` section 8); ``value`` is always
+the partial sum of the components that were integrated, never ``NaN`` and
+never silently substituted.  An arc is a legitimate partial contribution (the
+integrand is continuous to zero at a TIR boundary, and truncation estimates
+at both ends are reported per component); consumers must read the status
+layer, not the raw value.
 
 Nothing here imports or calls Lumice.
 """
@@ -79,22 +57,13 @@ from .canonical_scene import (
     canonical_incident_direction,
     canonical_pose_density,
 )
-from .continuation import ContinuationOptions, FiberProblem, FiberStatus, TerminationReason, trace_fiber
-from .discovery import (
-    ComponentDiscoveryResult,
-    DiscoveredComponent,
-    IncompleteCandidate,
-    dedup_components,
-    detect_arclength_jump,
-    discover_components,
-    hot_start_component,
-    is_floor_locked,
-    retarget_problem,
-)
+from .continuation import ContinuationOptions, FiberProblem
+from .discovery import DISCOVERY_EVENT_NAMES, DiscoveredComponent, discover_components, retarget_problem
 from .geometry import HexPrism
 from .optics import path_3_5_problem
 from .pose_density import ZenithGaussianPoseDensity
-from .quadrature import QuadratureOptions, integrate_fiber
+from .prescan import DEFAULT_RNG_SEED, DEFAULT_SAMPLE_COUNT, PrescanTable, build_prescan_table
+from .quadrature import ResampleOptions, integrate_fiber_resampled
 from .weights import build_3_5_weight_evaluators
 
 Completeness = str  # "complete" | "unknown"
@@ -105,40 +74,34 @@ Completeness = str  # "complete" | "unknown"
 STATUS_RENDERED = 1
 STATUS_UNKNOWN_COMPLETENESS = 2
 STATUS_HAS_COMPONENT = 4
-STATUS_COLD_DISCOVERY = 8
-STATUS_ARCLENGTH_JUMP = 16
-STATUS_PRODUCTION_FAILURE = 32
-STATUS_DEPTH_EXHAUSTED = 64
-STATUS_COLD_CHECK_MISMATCH = 128
+STATUS_HAS_ARC = 8
+STATUS_QUADRATURE_UNAVAILABLE = 16
+STATUS_NODE_COUNT_EXHAUSTED = 32
 
 EVENT_NAMES = (
-    "incomplete_retry",
-    "incomplete_recovered",
-    "incomplete_stall_skip",
+    *DISCOVERY_EVENT_NAMES,
     "incomplete_candidate",
-    "hot_start_inadmissible",
-    "hot_start_incomplete",
-    "hot_start_merged",
-    "arclength_jump",
-    "cold_check",
-    "cold_check_mismatch",
-    "production_not_closed",
-    "production_arclength_mismatch",
     "quadrature_unavailable",
-    "quadrature_depth_exhausted",
+    "quadrature_node_count_exhausted",
+    "quadrature_non_finite_nodes",
 )
-# Per-pixel wall-clock stages (seconds); ``total_s`` wraps the other four.
-STAGE_NAMES = ("hot_start_s", "cold_discovery_s", "production_s", "quadrature_s", "total_s")
+# Per-pixel wall-clock stages (seconds): ``discovery_s`` is the whole
+# discover_components call, ``trace_s`` the part of it inside trace_fiber,
+# ``quadrature_s`` the integrations; ``total_s`` wraps everything.
+STAGE_NAMES = ("discovery_s", "trace_s", "quadrature_s", "total_s")
 
 
 @dataclass(frozen=True)
 class StripScene:
-    """Scene constants plus the two shared problem templates of one process.
+    """Scene constants, the prescan table and the two shared problem templates of one process.
 
-    ``discovery_template`` is weightless (discovery traces must not pay for
-    weight evaluation); ``production_template`` carries the four named weights.
-    Both share the same evaluator closures, so every per-pixel problem derived
-    by :func:`.discovery.retarget_problem` hits the same ``jax.jit`` caches.
+    ``discovery_template`` is weightless (the traces must not pay for weight
+    evaluation at every accepted pose); ``production_template`` carries the
+    four named weights the quadrature evaluates on its own grid.  Both share
+    the same evaluator closures, so every per-pixel problem derived by
+    :func:`.discovery.retarget_problem` hits the same ``jax.jit`` caches.
+    ``prescan_table`` is the scene-level :class:`.prescan.PrescanTable` every
+    pixel queries (built once per scene, read-only afterwards).
     """
 
     incident_direction: np.ndarray
@@ -148,6 +111,14 @@ class StripScene:
     render: Mapping[str, Any]
     discovery_template: FiberProblem
     production_template: FiberProblem
+    prescan_table: PrescanTable
+
+    def __post_init__(self) -> None:
+        table = self.prescan_table
+        if not np.array_equal(table.incident_direction, np.asarray(self.incident_direction, dtype=np.float64)):
+            raise ValueError("prescan_table incident direction does not match the scene")
+        if table.refractive_index != float(self.refractive_index):
+            raise ValueError("prescan_table refractive index does not match the scene")
 
     @property
     def width(self) -> int:
@@ -158,11 +129,25 @@ class StripScene:
         return int(self.render["height"])
 
 
-def canonical_strip_scene() -> StripScene:
-    """The ch06 canonical scene (``docs/ch06-reference-fixture.md`` section 3.3)."""
+def canonical_strip_scene(
+    *,
+    prescan_table: PrescanTable | None = None,
+    prescan_sample_count: int = DEFAULT_SAMPLE_COUNT,
+    prescan_rng_seed: int = DEFAULT_RNG_SEED,
+) -> StripScene:
+    """The ch06 canonical scene (``docs/ch06-reference-fixture.md`` section 3.3).
+
+    ``prescan_table`` (a table the driver built or loaded once) is used as is;
+    otherwise one is built here from ``prescan_sample_count`` /
+    ``prescan_rng_seed`` (in-process rendering and tests).
+    """
     incident = canonical_incident_direction()
     crystal = canonical_crystal()
     pose_density = canonical_pose_density()
+    if prescan_table is None:
+        prescan_table = build_prescan_table(
+            incident, CANONICAL_REFRACTIVE_INDEX, sample_count=prescan_sample_count, rng_seed=prescan_rng_seed
+        )
     template = path_3_5_problem(
         jnp.asarray(np.eye(3)),
         jnp.asarray(incident),
@@ -183,6 +168,7 @@ def canonical_strip_scene() -> StripScene:
         render=dict(CANONICAL_RENDER),
         discovery_template=template,
         production_template=replace(template, weight_evaluators=evaluators),
+        prescan_table=prescan_table,
     )
 
 
@@ -209,79 +195,69 @@ def subpixel_targets(render: Mapping[str, Any], row: int, column: int, grid: int
 
 @dataclass(frozen=True)
 class PixelOptions:
-    """Every numerical policy of one pixel, in one place (exported to provenance)."""
+    """Every numerical policy of one pixel, in one place (exported to provenance).
 
-    rng_seed: int = 20260916
-    prescan_samples: int = 400_000
-    discovery_step_budget: int = 250
-    # Budget of the one retrace of every cold-discovery ``incomplete`` candidate
-    # and of every hot start; ``None`` means the production budget.
-    retry_step_budget: int | None = None
-    # An ``incomplete`` cold candidate whose last ``stall_floor_window``
-    # accepted discovery steps all sat at ``continuation.minimum_step`` is not
-    # retraced (:func:`.discovery.is_floor_locked`; the retrace would crawl the
-    # same floor).  Calibrated by task-discovery-stall-early-exit Step 0; a
-    # value above ``discovery_step_budget`` disables the skip.  Plain literal
-    # default on purpose: a checkpoint pickled before this field existed
-    # still compares equal to the default options (see
-    # :func:`.strip_driver.load_checkpoints`).
-    stall_floor_window: int = 100
+    The prescan sampling (sample count, seed) is a scene policy, not a pixel
+    one: it lives in :class:`.strip_driver.PrescanBuildOptions` and the
+    resulting :attr:`StripScene.prescan_table`.  There is one step budget:
+    ``continuation.maximum_accepted_steps`` (every trace is a production
+    trace).
+    """
+
     angle_tolerance_deg: float = 2.0
     cluster_radius_rad: float = 0.3
-    arclength_rtol: float = 1e-3
-    jump_relative_threshold: float = 0.2
+    # SO(3) geodesic distance below which a corrected candidate seed is the
+    # same component as an already accepted curve (``discovery.distance_to_curve``);
+    # the continuation's ``closure_distance`` by default (same scale).
+    distance_threshold: float = ContinuationOptions.closure_distance
     continuation: ContinuationOptions = field(default_factory=ContinuationOptions)
-    # Image default: 1e-6 (the float32 copy resolves ~1e-7 relative) and no
-    # order-estimate pass; the single-pixel fixture defaults (1e-8, levels 2)
-    # cost ~4x more per fiber for a diagnostic the image does not consume.
-    quadrature: QuadratureOptions = field(
-        default_factory=lambda: QuadratureOptions(
-            relative_tolerance=1e-6, convergence_order_levels=0
-        )
-    )
-
-    @property
-    def effective_retry_step_budget(self) -> int:
-        if self.retry_step_budget is None:
-            return self.continuation.maximum_accepted_steps
-        return self.retry_step_budget
+    # The resampled fixed-grid quadrature at its calibrated defaults
+    # (``relative_tolerance=1e-4``: within 1e-4 of the retired adaptive
+    # rtol=1e-8 integrator on the four Step 5 fixtures at 13-26 ms per fiber,
+    # task-resample-and-integrate).  The float32 image copy resolves ~1e-7
+    # relative, so the image is now quadrature-limited at 1e-4, visibly.
+    quadrature: ResampleOptions = field(default_factory=ResampleOptions)
 
     def discovery_kwargs(self) -> dict[str, Any]:
+        """Keyword arguments of :func:`.discovery.discover_components`."""
         return dict(
-            rng_seed=self.rng_seed,
-            prescan_samples=self.prescan_samples,
-            discovery_step_budget=self.discovery_step_budget,
+            continuation=self.continuation,
             angle_tolerance_deg=self.angle_tolerance_deg,
             cluster_radius_rad=self.cluster_radius_rad,
-            arclength_rtol=self.arclength_rtol,
+            distance_threshold=self.distance_threshold,
         )
-
-
-@dataclass(frozen=True)
-class HotSeed:
-    """A converged component of a neighbouring pixel: what a hot start needs."""
-
-    seed: np.ndarray
-    arclength: float
 
 
 @dataclass(frozen=True)
 class ComponentRecord:
-    """One integrated component (scalars only; picklable across worker processes)."""
+    """One integrated component (scalars only; picklable across worker processes).
+
+    ``kind`` is ``"closed"`` or ``"arc"``; ``reason`` the terminal event of the
+    curve and ``start_reason`` the backward end's for an arc (``""`` for a
+    closed loop — the picklable/CSV-safe encoding of the upstream
+    ``DiscoveredComponent.start_reason: TerminationReason | None``, not a
+    semantic downgrade from ``Optional``).  ``start_truncation_estimate``/``end_truncation_estimate``
+    are the Haar-converted open-arc truncation estimates of
+    :class:`.quadrature.ResampledQuadratureResult` (``nan`` when not
+    applicable; never added to ``value``).
+    """
 
     seed: np.ndarray
-    discovery_arclength: float
-    production_status: str
-    production_reason: str
-    production_arclength: float
-    production_pose_count: int
+    kind: str
+    arclength: float
+    pose_count: int
+    status: str
+    reason: str
+    start_reason: str
     quadrature_status: str
     value: float
     error_estimate: float
-    refinements: int
+    start_truncation_estimate: float
+    end_truncation_estimate: float
     node_count: int
-    maximum_depth_reached: int
-    depth_exhausted_edge_count: int
+    refinement_rounds: int
+    node_count_exhausted: bool
+    non_finite_node_count: int
 
     @property
     def integrated(self) -> bool:
@@ -298,10 +274,9 @@ class PixelResult:
     error_estimate: float
     components: tuple[ComponentRecord, ...]
     completeness: Completeness
-    discovery_completeness: str
-    seed_source: str
     incomplete_count: int
     pool_count: int
+    extra_seed_count: int
     raw_cluster_count: int
     admissible_count: int
     events: Mapping[str, int]
@@ -312,13 +287,13 @@ class PixelResult:
         return len(self.components)
 
     @property
-    def hot_seeds(self) -> tuple[HotSeed, ...]:
-        """Seeds a neighbouring pixel can hot-start from (integrated components only)."""
-        return tuple(
-            HotSeed(component.seed, component.discovery_arclength)
-            for component in self.components
-            if component.integrated
-        )
+    def arc_count(self) -> int:
+        return sum(component.kind == "arc" for component in self.components)
+
+    @property
+    def warm_seeds(self) -> tuple[np.ndarray, ...]:
+        """Converged poses a neighbouring pixel can warm its candidates with (integrated components only)."""
+        return tuple(component.seed for component in self.components if component.integrated)
 
     @property
     def status_bits(self) -> int:
@@ -327,141 +302,13 @@ class PixelResult:
             bits |= STATUS_UNKNOWN_COMPLETENESS
         if any(component.integrated for component in self.components):
             bits |= STATUS_HAS_COMPONENT
-        if self.seed_source != "hot" or self.events.get("cold_check", 0):
-            bits |= STATUS_COLD_DISCOVERY
-        if self.events.get("arclength_jump", 0):
-            bits |= STATUS_ARCLENGTH_JUMP
-        if self.events.get("production_not_closed", 0) or self.events.get("quadrature_unavailable", 0):
-            bits |= STATUS_PRODUCTION_FAILURE
-        if self.events.get("quadrature_depth_exhausted", 0):
-            bits |= STATUS_DEPTH_EXHAUSTED
-        if self.events.get("cold_check_mismatch", 0):
-            bits |= STATUS_COLD_CHECK_MISMATCH
+        if any(component.integrated and component.kind == "arc" for component in self.components):
+            bits |= STATUS_HAS_ARC
+        if self.events.get("quadrature_unavailable", 0):
+            bits |= STATUS_QUADRATURE_UNAVAILABLE
+        if self.events.get("quadrature_node_count_exhausted", 0):
+            bits |= STATUS_NODE_COUNT_EXHAUSTED
         return bits
-
-
-def _hot_start_all(
-    scene: StripScene,
-    target: np.ndarray,
-    previous: Sequence[HotSeed],
-    options: PixelOptions,
-    events: Counter,
-) -> ComponentDiscoveryResult | None:
-    """Hot-start every neighbour component; ``None`` means fall back to cold discovery.
-
-    Result component count is always ``len(previous)``: a genuinely new
-    component with no matching seed is never found here (module docstring
-    "known bounded blind spot").
-    """
-    records: list[DiscoveredComponent] = []
-    for seed in previous:
-        record = hot_start_component(
-            seed.seed,
-            target,
-            scene.incident_direction,
-            scene.refractive_index,
-            scene.crystal,
-            discovery_step_budget=options.effective_retry_step_budget,
-            template=scene.discovery_template,
-        )
-        if record is None:
-            events["hot_start_inadmissible"] += 1
-            return None
-        if isinstance(record, IncompleteCandidate):
-            events["hot_start_incomplete"] += 1
-            return None
-        if detect_arclength_jump(
-            [seed.arclength, record.arclength],
-            relative_threshold=options.jump_relative_threshold,
-        ):
-            events["arclength_jump"] += 1
-            return None
-        records.append(record)
-    result = dedup_components(records, options.arclength_rtol, pool_count=0, raw_cluster_count=0)
-    if result.component_count < len(records):
-        events["hot_start_merged"] += len(records) - result.component_count
-    return result
-
-
-def _cold_discovery(
-    scene: StripScene, target: np.ndarray, options: PixelOptions, events: Counter
-) -> ComponentDiscoveryResult:
-    """Cold prescan, then one production-budget retrace of each incomplete candidate.
-
-    A recovered candidate is folded into the components by the same
-    fingerprint dedup as the first pass; one that is still not closed stays
-    ``incomplete`` (so the pixel stays ``"unknown"``).  A ``step_budget``
-    candidate whose discovery trace is floor-locked
-    (:func:`.discovery.is_floor_locked` over ``options.stall_floor_window``)
-    is not retraced at all: it stays ``incomplete`` on the first-pass
-    evidence and is counted as ``incomplete_stall_skip``.  The classification
-    is the same either way; only the retrace cost is saved.
-    """
-    first = discover_components(
-        target,
-        scene.incident_direction,
-        scene.refractive_index,
-        scene.crystal,
-        template=scene.discovery_template,
-        **options.discovery_kwargs(),
-    )
-    if not first.incomplete:
-        return first
-    records: list[DiscoveredComponent | IncompleteCandidate] = list(first.components)
-    for candidate in first.incomplete:
-        if candidate.reason == TerminationReason.STEP_BUDGET and is_floor_locked(
-            candidate.result.step_diagnostics,
-            minimum_step=options.continuation.minimum_step,
-            window=options.stall_floor_window,
-        ):
-            # The retrace repeats these steps exactly (same seed, same
-            # numerics, larger budget) and would crawl the floor to its own
-            # budget; keep the first-pass evidence as the incomplete record.
-            events["incomplete_stall_skip"] += 1
-            records.append(candidate)
-            continue
-        events["incomplete_retry"] += 1
-        retraced = hot_start_component(
-            candidate.seed,
-            target,
-            scene.incident_direction,
-            scene.refractive_index,
-            scene.crystal,
-            discovery_step_budget=options.effective_retry_step_budget,
-            template=scene.discovery_template,
-        )
-        if isinstance(retraced, DiscoveredComponent):
-            events["incomplete_recovered"] += 1
-            records.append(retraced)
-        else:
-            # ``None`` cannot happen for a seed that already passed the gates
-            # with the same tolerances; keep the first-pass evidence if it does.
-            records.append(retraced if retraced is not None else candidate)
-    return dedup_components(
-        records,
-        options.arclength_rtol,
-        pool_count=first.pool_count,
-        raw_cluster_count=first.raw_cluster_count,
-    )
-
-
-def _same_components(
-    left: ComponentDiscoveryResult, right: ComponentDiscoveryResult, rtol: float
-) -> bool:
-    """Same component multiset by the discovery fingerprint (arclength within ``rtol``)."""
-    if left.component_count != right.component_count:
-        return False
-    remaining = [component.arclength for component in right.components]
-    for component in left.components:
-        match = next(
-            (index for index, arclength in enumerate(remaining)
-             if np.isclose(component.arclength, arclength, rtol=rtol, atol=1e-6)),
-            None,
-        )
-        if match is None:
-            return False
-        remaining.pop(match)
-    return True
 
 
 def _integrate_component(
@@ -474,34 +321,31 @@ def _integrate_component(
 ) -> ComponentRecord:
     problem = retarget_problem(scene.production_template, target, component.seed)
     start = time.perf_counter()
-    result = trace_fiber(problem, options.continuation)
-    timings["production_s"] += time.perf_counter() - start
-    production_arclength = float(np.sum(result.arclength_increments)) if len(result.poses) else 0.0
-    if result.status != FiberStatus.CLOSED:
-        events["production_not_closed"] += 1
-    elif not np.isclose(production_arclength, component.arclength, rtol=options.arclength_rtol, atol=1e-6):
-        events["production_arclength_mismatch"] += 1
-    start = time.perf_counter()
-    quadrature = integrate_fiber(problem, result, options.continuation, options.quadrature)
+    quadrature = integrate_fiber_resampled(problem, component.result, options.quadrature)
     timings["quadrature_s"] += time.perf_counter() - start
     if quadrature.status != "available":
         events["quadrature_unavailable"] += 1
-    if quadrature.depth_exhausted_edges:
-        events["quadrature_depth_exhausted"] += 1
+    if quadrature.node_count_exhausted:
+        events["quadrature_node_count_exhausted"] += 1
+    if quadrature.non_finite_node_count:
+        events["quadrature_non_finite_nodes"] += 1
     return ComponentRecord(
         seed=np.asarray(component.seed, dtype=np.float64),
-        discovery_arclength=float(component.arclength),
-        production_status=result.status.value,
-        production_reason=result.reason.value,
-        production_arclength=production_arclength,
-        production_pose_count=int(len(result.poses)),
+        kind=component.kind,
+        arclength=float(component.arclength),
+        pose_count=int(len(component.result.poses)),
+        status=component.status.value,
+        reason=component.reason.value,
+        start_reason=component.start_reason.value if component.start_reason is not None else "",
         quadrature_status=quadrature.status,
         value=float(quadrature.value) if quadrature.status == "available" else 0.0,
         error_estimate=float(quadrature.error_estimate) if quadrature.status == "available" else 0.0,
-        refinements=int(quadrature.refinements),
+        start_truncation_estimate=float(quadrature.start_endpoint_truncation_estimate),
+        end_truncation_estimate=float(quadrature.endpoint_truncation_estimate),
         node_count=int(quadrature.node_count),
-        maximum_depth_reached=int(quadrature.maximum_depth_reached),
-        depth_exhausted_edge_count=len(quadrature.depth_exhausted_edges),
+        refinement_rounds=int(quadrature.refinement_rounds),
+        node_count_exhausted=bool(quadrature.node_count_exhausted),
+        non_finite_node_count=int(quadrature.non_finite_node_count),
     )
 
 
@@ -512,45 +356,33 @@ def render_pixel(
     options: PixelOptions,
     *,
     target: np.ndarray | None = None,
-    previous: Sequence[HotSeed] | None = None,
-    cold_check: bool = False,
+    warm_seeds: Sequence[np.ndarray] | None = None,
 ) -> PixelResult:
     """Run the full pipeline for pixel ``(row, column)`` (module docstring).
 
     ``target`` overrides the pixel-centre direction (sub-pixel sampling);
-    ``previous`` are the neighbour's integrated components to hot-start from;
-    ``cold_check`` additionally runs the cold prescan after a successful hot
-    start and, if the component fingerprints differ, keeps the cold result and
-    counts ``cold_check_mismatch``.
+    ``warm_seeds`` are converged poses of any neighbouring pixels (typically
+    :attr:`PixelResult.warm_seeds` of the pixel above), added to the candidate
+    pool as Gauss-Newton starts.
     """
     target = pixel_target(scene.render, row, column) if target is None else np.asarray(target, dtype=np.float64)
     events: Counter = Counter()
     timings: Counter = Counter({name: 0.0 for name in STAGE_NAMES})
     total_start = time.perf_counter()
 
-    discovered: ComponentDiscoveryResult | None = None
-    seed_source = "cold"
     start = time.perf_counter()
-    if previous:
-        discovered = _hot_start_all(scene, target, previous, options, events)
-        seed_source = "hot" if discovered is not None else "cold-fallback"
-    timings["hot_start_s"] += time.perf_counter() - start
-    if discovered is not None and cold_check:
-        events["cold_check"] += 1
-        start = time.perf_counter()
-        cold = _cold_discovery(scene, target, options, events)
-        timings["cold_discovery_s"] += time.perf_counter() - start
-        if not _same_components(discovered, cold, options.arclength_rtol):
-            events["cold_check_mismatch"] += 1
-            discovered = cold
-            seed_source = "cold-check"
-    if discovered is None:
-        start = time.perf_counter()
-        discovered = _cold_discovery(scene, target, options, events)
-        timings["cold_discovery_s"] += time.perf_counter() - start
-    discovery_completeness = discovered.completeness if seed_source != "hot" else "not-run"
-    if discovered.incomplete_count:
-        events["incomplete_candidate"] += discovered.incomplete_count
+    discovered = discover_components(
+        target,
+        scene.crystal,
+        scene.prescan_table,
+        template=scene.discovery_template,
+        extra_seeds=tuple(warm_seeds) if warm_seeds else (),
+        **options.discovery_kwargs(),
+    )
+    timings["discovery_s"] += time.perf_counter() - start
+    timings["trace_s"] += discovered.trace_seconds
+    events.update(discovered.events)
+    events["incomplete_candidate"] += discovered.incomplete_count
 
     components = tuple(
         _integrate_component(scene, target, component, options, events, timings)
@@ -558,27 +390,17 @@ def render_pixel(
     )
     timings["total_s"] = time.perf_counter() - total_start
 
-    # A hot-start failure or jump that fell back to a successful cold prescan
-    # is not missing evidence (the cold result's own incomplete count is); it
-    # stays visible through ``seed_source`` and the status bits.
-    failure_events = (
-        "incomplete_candidate",
-        "production_not_closed",
-        "production_arclength_mismatch",
-        "quadrature_unavailable",
-    )
-    completeness = "complete" if not any(events[name] for name in failure_events) else "unknown"
+    complete = discovered.incomplete_count == 0 and not events["quadrature_unavailable"]
     return PixelResult(
         row=int(row),
         column=int(column),
         value=float(sum(component.value for component in components)),
         error_estimate=float(sum(component.error_estimate for component in components)),
         components=components,
-        completeness=completeness,
-        discovery_completeness=discovery_completeness,
-        seed_source=seed_source,
+        completeness="complete" if complete else "unknown",
         incomplete_count=discovered.incomplete_count,
         pool_count=discovered.pool_count,
+        extra_seed_count=discovered.extra_seed_count,
         raw_cluster_count=discovered.raw_cluster_count,
         admissible_count=discovered.admissible_count,
         events={name: int(events[name]) for name in EVENT_NAMES},
@@ -589,15 +411,12 @@ def render_pixel(
 __all__ = [
     "EVENT_NAMES",
     "ComponentRecord",
-    "HotSeed",
     "PixelOptions",
     "PixelResult",
-    "STATUS_ARCLENGTH_JUMP",
-    "STATUS_COLD_CHECK_MISMATCH",
-    "STATUS_COLD_DISCOVERY",
-    "STATUS_DEPTH_EXHAUSTED",
+    "STATUS_HAS_ARC",
     "STATUS_HAS_COMPONENT",
-    "STATUS_PRODUCTION_FAILURE",
+    "STATUS_NODE_COUNT_EXHAUSTED",
+    "STATUS_QUADRATURE_UNAVAILABLE",
     "STATUS_RENDERED",
     "STATUS_UNKNOWN_COMPLETENESS",
     "STAGE_NAMES",

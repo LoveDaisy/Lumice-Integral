@@ -140,6 +140,15 @@ class FiberProblem:
                 )
 
 
+# Closure extent gate (contract section 6.4 item 1): a trace may only close
+# after it has accumulated this many ``initial_step`` lengths of arclength.
+# The bound scales with the problem's own step, not with any particular
+# fiber length, so that loops shorter than an absolute threshold are not
+# traversed twice before the first return through the section is accepted
+# (task-continuation-gates-and-fixtures: rows 58-225 of the ch06 strip).
+_CLOSURE_ARCLENGTH_STEP_MULTIPLIER = 2.0
+
+
 @dataclass(frozen=True)
 class ContinuationOptions:
     """Observable numerical policy for the float64 reference solver."""
@@ -169,8 +178,13 @@ class ContinuationOptions:
     # corrector iterate; sub-operations cannot consume a partial unit.
     maximum_evaluations: int = 100_000
     maximum_arclength: float = 20.0
-    closure_minimum_steps: int = 40
-    closure_minimum_arclength: float = np.pi
+    # Closure extent gate: at least this many accepted steps, and accumulated
+    # arclength of at least ``max(closure_minimum_arclength,
+    # _CLOSURE_ARCLENGTH_STEP_MULTIPLIER * initial_step)``.  The built-in
+    # relative bound excludes an immediate return to the seed; the absolute
+    # field is an optional caller-side addition and is ``0.0`` by default.
+    closure_minimum_steps: int = 3
+    closure_minimum_arclength: float = 0.0
     closure_distance: float = 0.08
     closure_tangent_dot: float = 0.8
     closure_section_tolerance: float = 1e-11
@@ -196,6 +210,11 @@ class ContinuationOptions:
             raise ValueError("step and evaluation budgets must be positive")
         if self.maximum_arclength <= 0.0:
             raise ValueError("arclength budget must be positive")
+        if self.closure_minimum_steps < 1 or self.closure_minimum_arclength < 0.0:
+            raise ValueError(
+                "closure_minimum_steps must be positive and "
+                "closure_minimum_arclength nonnegative"
+            )
         if (
             self.corrector_phase_tolerance <= 0.0
             or self.corrector_update_tolerance <= 0.0
@@ -517,6 +536,62 @@ def _predictor_kernel(current: Array, tangent: Array, step: Array) -> Array:
 # Compiled alias of the SO(3) geodesic distance for the host control loop; the
 # semantics stay owned by ``so3.rotation_distance``.
 _rotation_distance_kernel = jax.jit(rotation_distance)
+
+
+@partial(jax.jit, static_argnums=(0,))
+def _batch_trial_newton_kernel(
+    direction_evaluator: DirectionEvaluator,
+    predicted: Array,
+    phase_tangents: Array,
+    chart_direction: Array,
+    chart_basis: Array,
+    deltas: Array,
+) -> _NewtonStep:
+    """``jax.vmap`` of the trial bordered Newton iterate over ``(N, ...)`` batches.
+
+    Same system as :func:`_trial_newton_step_kernel` (phase condition
+    ``phase_tangent . delta = 0`` as border); no host gate is applied.
+    """
+
+    def one(base: Array, phase_tangent: Array, delta: Array) -> _NewtonStep:
+        def border(_: Array, correction: Array) -> Array:
+            return jnp.dot(phase_tangent, correction)
+
+        return _bordered_newton_step(
+            direction_evaluator, base, chart_direction, chart_basis, delta, border
+        )
+
+    return jax.vmap(one)(predicted, phase_tangents, deltas)
+
+
+@partial(jax.jit, static_argnums=(0,))
+def _batch_state_kernel(
+    direction_evaluator: DirectionEvaluator,
+    rotations: Array,
+    chart_direction: Array,
+    chart_basis: Array,
+) -> tuple[Array, Array, Array]:
+    """Residual, singular values and null vector of the local Jacobian, batched.
+
+    The per-pose computation is the one :func:`_evaluate_regular_state` runs
+    on the host (residual via :func:`_smooth_output_kernel`, Jacobian via
+    :func:`_local_residual_jacobian_kernel`, then a full SVD whose last
+    right-singular vector is the fiber tangent and whose singular-value
+    product is ``J_perp``); only the batching differs.
+    """
+
+    def one(rotation: Array) -> tuple[Array, Array]:
+        def residual_after_update(delta: Array) -> Array:
+            direction = _traced_direction(direction_evaluator, rotation @ exp(delta))
+            return chart_basis.T @ (direction - chart_direction)
+
+        zero = jnp.zeros(3, dtype=rotation.dtype)
+        residual, jacobian = residual_after_update(zero), jax.jacfwd(residual_after_update)(zero)
+        return residual, jacobian
+
+    residuals, jacobians = jax.vmap(one)(rotations)
+    _, singular_values, vh = jnp.linalg.svd(jacobians, full_matrices=True)
+    return residuals, singular_values, vh[:, -1, :]
 
 
 def _default_domain_evaluation(_: Array) -> DomainEvaluation:
@@ -872,7 +947,22 @@ def _correct_trial(
         evaluations += 1
         if not domain.valid:
             event = domain.event
-            reason = event.kind if event is not None else TerminationReason.PATH_INFEASIBLE
+            correction_norm = float(np.linalg.norm(np.asarray(delta)))
+            advance = float(_rotation_distance_kernel(current, candidate))
+            if correction_norm > options.maximum_correction or advance > options.maximum_advance:
+                # A Newton iterate outside the trust region that acceptance
+                # itself requires is not evidence of a boundary: it could never
+                # have been accepted where it stands, so the invalid domain it
+                # reports is the corrector running away, not the fiber leaving
+                # the domain.  Reject the trial (the step shrinks) instead of
+                # terminating on a false event (task-pixel-pipeline-v2: pixel
+                # (50, 9), a 0.17 loop whose first 0.04 predictor sent the
+                # corrector 1.18 rad away into a TIR region).
+                reason = TerminationReason.CORRECTOR_FAILURE
+                message = "corrector left the trust region into an invalid domain"
+            else:
+                reason = event.kind if event is not None else TerminationReason.PATH_INFEASIBLE
+                message = event.message if event is not None else "invalid path domain"
             return _CorrectorOutcome(
                 False,
                 None,
@@ -881,13 +971,13 @@ def _correct_trial(
                 iteration,
                 last_residual,
                 last_update,
-                float(np.linalg.norm(np.asarray(delta))),
-                float(_rotation_distance_kernel(current, candidate)),
+                correction_norm,
+                advance,
                 float("nan"),
                 reason,
-                event,
+                event if reason != TerminationReason.CORRECTOR_FAILURE else None,
                 evaluations,
-                event.message if event is not None else "invalid path domain",
+                message,
             )
         try:
             newton = _trial_newton_step_kernel(
@@ -1139,6 +1229,97 @@ def retract_to_fiber(
     )
 
 
+@dataclass(frozen=True)
+class BatchRetraction:
+    """Outcome of :func:`retract_to_fiber_batch` for ``N`` predictor poses.
+
+    ``rotations`` are the corrected poses (``predicted @ exp(deltas)``),
+    ``tangents`` the unit fiber tangents there oriented along the phase
+    tangents, ``normal_jacobians`` the ``J_perp = sigma_1 sigma_2`` of the
+    local residual Jacobian.  ``residual_before`` is the target-chart residual
+    norm at the predictor (how far the spline sits off the fiber),
+    ``residual_after`` the norm after the fixed number of Newton iterations.
+    ``finite`` marks nodes whose whole computation stayed finite; a node that
+    did not keeps the predictor pose with ``delta = 0`` and non-finite
+    diagnostics so the caller can count and report it rather than lose it.
+    """
+
+    rotations: np.ndarray
+    tangents: np.ndarray
+    deltas: np.ndarray
+    residual_before: np.ndarray
+    residual_after: np.ndarray
+    singular_values: np.ndarray
+    normal_jacobians: np.ndarray
+    finite: np.ndarray
+    iterations: int
+
+
+def retract_to_fiber_batch(
+    problem: FiberProblem,
+    predicted: np.ndarray,
+    phase_tangents: np.ndarray,
+    *,
+    iterations: int = 2,
+) -> BatchRetraction:
+    """Project ``N`` predictor poses onto the fiber with a fixed number of Newton iterations.
+
+    The bordered system is the continuation corrector's
+    (:func:`_trial_newton_step_kernel`: target-chart residual plus the phase
+    condition ``phase_tangent . delta = 0`` in right-trivialized coordinates)
+    evaluated as one ``jax.vmap`` batch per iteration.  Unlike
+    :func:`retract_to_fiber` no residual/update/trust gate, domain check or
+    event handling is applied: the intended inputs are interior points of an
+    already traced smooth branch, close to the fiber, whose correctness is
+    judged by the reported residuals and by the external checks of the
+    quadrature that calls this (task-resample-and-integrate Step 2).
+    """
+    if iterations < 1:
+        raise ValueError("iterations must be positive")
+    predicted_array = jnp.asarray(np.asarray(predicted, dtype=np.float64))
+    phase_array = jnp.asarray(np.asarray(phase_tangents, dtype=np.float64))
+    if predicted_array.ndim != 3 or predicted_array.shape[1:] != (3, 3):
+        raise ValueError("predicted must have shape (N, 3, 3)")
+    if phase_array.shape != (predicted_array.shape[0], 3):
+        raise ValueError("phase_tangents must have shape (N, 3)")
+    chart = problem.target_chart
+    deltas = jnp.zeros((predicted_array.shape[0], 3), dtype=jnp.float64)
+    residual_before: Array | None = None
+    for _ in range(iterations):
+        step = _batch_trial_newton_kernel(
+            problem.direction_evaluator, predicted_array, phase_array,
+            chart.direction, chart.basis, deltas,
+        )
+        if residual_before is None:
+            residual_before = jnp.linalg.norm(step.residual, axis=1)
+        deltas = step.next_delta
+    assert residual_before is not None
+    finite = np.all(np.isfinite(np.asarray(deltas)), axis=1)
+    deltas = jnp.where(finite[:, None], deltas, 0.0)
+    rotations = jax.vmap(_apply_correction_kernel)(predicted_array, deltas)
+    residuals, singular_values, null_vectors = _batch_state_kernel(
+        problem.direction_evaluator, rotations, chart.direction, chart.basis
+    )
+    residual_after = np.asarray(jnp.linalg.norm(residuals, axis=1), dtype=np.float64)
+    singular_values = np.asarray(singular_values, dtype=np.float64)
+    tangents = np.asarray(null_vectors, dtype=np.float64)
+    finite &= np.isfinite(residual_after) & np.all(np.isfinite(singular_values), axis=1)
+    finite &= np.all(np.isfinite(tangents), axis=1)
+    orientation = np.where(np.sum(tangents * np.asarray(phase_array), axis=1) < 0.0, -1.0, 1.0)
+    tangents = tangents * orientation[:, None]
+    return BatchRetraction(
+        rotations=np.asarray(rotations, dtype=np.float64),
+        tangents=tangents,
+        deltas=np.asarray(deltas, dtype=np.float64),
+        residual_before=np.asarray(residual_before, dtype=np.float64),
+        residual_after=residual_after,
+        singular_values=singular_values,
+        normal_jacobians=singular_values[:, 0] * singular_values[:, 1],
+        finite=finite,
+        iterations=iterations,
+    )
+
+
 def _status_for_reason(reason: TerminationReason) -> FiberStatus:
     if reason == TerminationReason.CLOSED_LOOP:
         return FiberStatus.CLOSED
@@ -1308,17 +1489,85 @@ def _step_diagnostic(
     )
 
 
+# Event approach control (contract section 6.3, "event clearance"): a domain
+# margin at or below ``event_slowdown_margin`` restrains the step only while it
+# is shrinking, and then through the arclength it would need to reach zero at
+# the rate observed over the last accepted edge.  A fiber running parallel to
+# a boundary (ch06 strip rows 700/780: ``exit_snell_discriminant`` sitting near
+# 0.0175 and drifting by about -0.03 per radian of arclength, so more than half
+# a radian from the event) is therefore no longer pinned to ``minimum_step``
+# until the step budget runs out, while a fiber heading into a boundary is
+# still slowed so that the terminating pose lands close to it.
+_EVENT_APPROACH_STEP_FRACTION = 0.5
+
+
+def _event_step_limit(
+    margins: Mapping[str, float],
+    previous_margins: Mapping[str, float],
+    advance: float,
+    threshold: float,
+) -> float:
+    """Largest next step the event-approach rule allows after an accepted edge.
+
+    ``margins`` belong to the accepted state, ``previous_margins`` to the
+    state the edge started from, and ``advance`` is the edge's arclength.
+    Margins above ``threshold`` or not decreasing impose no limit (``inf``).
+    A margin at or below ``threshold`` whose previous value is unknown, or
+    reached without a measurable advance, has an unknown approach rate and
+    returns ``0.0``: the step is shrunk, as it was unconditionally before.
+    """
+    return _EVENT_APPROACH_STEP_FRACTION * arclength_to_event(
+        margins, previous_margins, advance, threshold=threshold
+    )
+
+
+def arclength_to_event(
+    margins: Mapping[str, float],
+    previous_margins: Mapping[str, float],
+    advance: float,
+    *,
+    threshold: float = np.inf,
+) -> float:
+    """Linear-rate estimate of the arclength from an accepted state to the nearest event.
+
+    For every margin at or below ``threshold`` that decreased over the edge
+    of arclength ``advance`` ending at the state, the event is extrapolated
+    at ``margin * advance / drop``; the smallest such distance is returned,
+    ``inf`` if no considered margin is decreasing, and ``0.0`` when a margin
+    at or below ``threshold`` has no measurable rate (unknown previous value
+    or no advance).  This is the one rate estimate behind the continuation
+    step limit (:func:`_event_step_limit`) and the open-arc endpoint
+    truncation estimate of the resampled quadrature.
+    """
+    distance = np.inf
+    for name, margin in margins.items():
+        if margin > threshold:
+            continue
+        previous = previous_margins.get(name)
+        if previous is None or advance <= 0.0:
+            return 0.0
+        drop = previous - margin
+        if drop <= 0.0:
+            continue
+        distance = min(distance, margin * advance / drop)
+    return float(distance)
+
+
 def _adapt_accepted_step(
     step: float,
     outcome: _CorrectorOutcome,
     options: ContinuationOptions,
+    previous_margins: Mapping[str, float] | None = None,
 ) -> float:
     state = outcome.state
     assert state is not None and state.jacobian_diagnostic is not None
-    clear_of_event = all(
-        margin > options.event_slowdown_margin
-        for margin in state.domain.margins.values()
+    event_limit = _event_step_limit(
+        state.domain.margins,
+        previous_margins or {},
+        outcome.advance,
+        options.event_slowdown_margin,
     )
+    clear_of_event = event_limit >= step
     residual_ratio = outcome.residual_norm / options.residual_tolerance
     easy = (
         outcome.iterations <= 2
@@ -1339,6 +1588,7 @@ def _adapt_accepted_step(
         step *= options.growth_factor
     elif difficult:
         step *= options.shrink_factor
+    step = min(step, event_limit)
     return min(options.maximum_step, max(options.minimum_step, step))
 
 
@@ -1657,6 +1907,10 @@ def trace_fiber(
     accepted_margins: list[Mapping[str, float]] = [dict(initial.domain.margins)]
     closure_diagnostic = _empty_closure_diagnostic()
     step = options.initial_step
+    closure_minimum_arclength = max(
+        options.closure_minimum_arclength,
+        _CLOSURE_ARCLENGTH_STEP_MULTIPLIER * options.initial_step,
+    )
     total_arclength = 0.0
     total_retries = 0
     previous_section = 0.0
@@ -1849,7 +2103,7 @@ def trace_fiber(
             )
             extent_gate = (
                 len(states) - 1 >= options.closure_minimum_steps
-                and total_arclength >= options.closure_minimum_arclength
+                and total_arclength >= closure_minimum_arclength
             )
             closure_diagnostic = ClosureDiagnostic(
                 accumulated_arclength=total_arclength,
@@ -2007,5 +2261,8 @@ def trace_fiber(
                     )
 
             previous_section = section
-            step = _adapt_accepted_step(step, outcome, options)
+            # ``accepted_margins`` already holds this step's margins at ``-1``
+            # and always holds the seed's at ``0``, so ``-2`` exists.
+            previous_step_margins = accepted_margins[-2]
+            step = _adapt_accepted_step(step, outcome, options, previous_step_margins)
             break

@@ -44,7 +44,7 @@ from .core import (
     rotation_from_frames,
     unit,
 )
-from .entry_measure import EntryMeasureResult, entry_measure
+from .entry_measure import EntryMeasureResult, entry_measure, entry_measure_batch
 from .enumerate import (
     EnumerationStats,
     RaypathRecord,
@@ -113,6 +113,7 @@ __all__ = [
     "corridor_mask",
     "corridor_polygons",
     "entry_measure",
+    "entry_measure_batch",
     "entry_ok",
     "entry_points",
     "enumerate_raypaths",

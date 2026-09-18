@@ -1,4 +1,4 @@
-"""Adaptive line quadrature of the partial physical integrand on one fiber.
+"""Line quadrature of the partial physical integrand on one fiber.
 
 This module is the single authority for the scalar
 
@@ -9,35 +9,46 @@ can evaluate today.  ``W_P`` is the product of the *explicitly named* factors
 :data:`INTEGRAND_FACTOR_NAMES`; ``rho_H`` (``rho_pose``) is the density of the
 pose law relative to Haar probability and is required, not optional.  The
 ``1 / (8 pi^2)`` Haar-to-``dVol_g`` conversion is applied exactly once, in
-:func:`integrate_fiber`, and reported next to the raw value.
+:func:`integrate_fiber_resampled`, and reported next to the raw value.
 
-Geometry of one panel.  Every edge between consecutive fiber nodes ``R_l`` and
-``R_r`` is parametrised by its chord ``xi = log(R_l^T R_r)``:
+Method (task-resample-and-integrate; the earlier adaptive chord-parametrised
+Simpson integrator with one host-side Newton retraction per refinement node
+was removed in the same task, its alignment values are frozen in
+``tests/test_resample_quadrature.py``).  The accepted samples of a
+:class:`.continuation.FiberResult` define a C^1 predictor curve ``P(t)``
+(:mod:`.resample`: a cubic Hermite quaternion spline with the trace's exact
+tangents, ``t`` the cumulative chord).  On a uniform grid ``t_k`` every
+predictor pose is retracted onto the fiber in one batch,
 
-    gamma(u) = R_l exp(u xi) exp(delta(u)),   u in [0, 1],   xi_hat . delta(u) = 0,
+    gamma(t) = P(t) exp(delta(t)),   nu(t) . delta(t) = 0,
 
-where ``exp(delta(u))`` is the continuation corrector's retraction onto the
-fiber (:func:`.continuation.retract_to_fiber` with phase tangent ``xi_hat``).
-The endpoints are exact (``delta(0) = delta(1) = 0``) and the arclength speed
-``ds/du = |gamma^{-1} gamma'|`` follows from the implicit function theorem:
+with ``nu`` the predictor's unit body velocity as phase tangent
+(:func:`.continuation.retract_to_fiber_batch`), and the arclength speed
+``ds/dt = |gamma^{-1} gamma'|`` follows from the implicit function theorem:
 
-    lambda t(gamma(u)) - dexp_delta(delta') = exp(delta)^T xi,   xi_hat . delta' = 0,
+    lambda tau - dexp_delta(delta') = exp(delta)^T vee(P^T P'),   nu . delta' = 0,
 
-a 4x4 linear system in ``(lambda, delta')`` whose ``dexp`` is taken from
-``jax.jacfwd`` of :func:`.so3.exp`.  Simpson's rule is then applied to
-``g(u) = f(gamma(u)) lambda(u)`` on ``u in [0, 1]``, so each (sub)panel is an
-exact parametrisation of the same ``dH^1_g`` integral and the classical
-Richardson error estimate ``|S_whole - S_half| / 15`` applies.  On a geodesic
-fiber (the analytic circle) ``delta = 0`` and ``lambda = |xi|`` identically.
+a 4x4 linear system in ``(lambda, delta')`` (:func:`_parametric_speed`) whose
+``dexp`` is taken from ``jax.jacfwd`` of :func:`.so3.exp`.  Composite Simpson
+is applied to ``g(t) = f(gamma(t)) lambda(t)`` on the grid, so the sum is an
+exact parametrisation of the ``dH^1_g`` integral up to the quadrature error;
+the error estimate compares the grid with its every-other-node subset and the
+node count doubles until the estimate meets the tolerance or a declared
+maximum.  ``t`` is never reported as arclength.
 
-Everything here is host-side numpy post-processing of a :class:`FiberResult`;
-nothing changes ``trace_fiber`` or its termination decisions.
+Everything here is host-side post-processing of a traced curve (a
+:class:`FiberResult`, or an :class:`.resample.OpenArc` stitched from a forward
+and a backward trace of one seed, task-pixel-pipeline-v2); nothing changes
+``trace_fiber`` or its termination decisions.  An ``OpenArc`` has an event at
+*both* ends, so it gets a start-side truncation estimate in addition to the
+terminal one (:func:`_endpoint_truncation`).
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import math
+from typing import Mapping
 
 import jax
 import jax.numpy as jnp
@@ -45,117 +56,23 @@ import numpy as np
 from jax import Array
 
 from .continuation import (
-    ContinuationOptions,
     FiberProblem,
     FiberResult,
-    retract_to_fiber,
+    FiberStatus,
+    TerminationReason,
+    arclength_to_event,
+    retract_to_fiber_batch,
 )
-from .so3 import exp, log
+from .resample import FiberSpline, OpenArc, TraceLike, fiber_spline, resample_spline, uniform_parameters
+from .so3 import exp, vee
+from .weights import evaluate_weights_batch
 
 HAAR_TO_DVOL_G_FACTOR = 1.0 / (8.0 * np.pi**2)
 DENSITY_FACTOR_NAME = "rho_pose"
 # Deliberately explicit: W_P changes only when this tuple changes.  Adding a
 # newly available factor (visibility, source_factor, ...) is a code change here.
 INTEGRAND_FACTOR_NAMES = ("entry_measure", "fresnel_transmission", "path_validity")
-QUADRATURE_METHOD = (
-    "adaptive composite Simpson with recursive bisection over chord-parametrised "
-    "SO(3) fiber edges; refinement nodes corrector-retracted onto the fiber; "
-    "arclength speed from the implicit function theorem; Richardson error "
-    "estimate |S_whole - S_half| / 15 with Richardson-extrapolated panel values"
-)
 COVERAGE_NOTE = "partial: one component reached from one seed; completeness unknown"
-_ORDER_ESTIMATE_LEVELS = 2
-_ORDER_ESTIMATE_FLOOR = 1e-14
-
-
-@dataclass(frozen=True)
-class QuadratureOptions:
-    """Observable numerical policy of the line quadrature."""
-
-    # Defaults calibrated on the canonical pixel fiber (see
-    # docs/ch06-reference-fixture.md section 4.1): relative_tolerance=1e-8 needs
-    # depth 16 and 1e-9 depth 20 at the slope jumps of entry_measure, so 24
-    # leaves headroom; the cost of depth is linear (only kink panels go deep).
-    epsilon: float = 1e-6
-    relative_tolerance: float = 1e-8
-    maximum_refinement_depth: int = 24
-    # Uniform bisection levels of the separate order-estimate pass (diagnostic
-    # only; it never changes ``value``).  ``0`` skips the pass and reports the
-    # order as not estimated: an image driver that integrates ~10^5 fibers
-    # cannot afford the ~50 % of quadrature wall clock it costs per fiber
-    # (task-strip-image-driver Step 0: 714 of 1377 nodes on the canonical pixel).
-    convergence_order_levels: int = _ORDER_ESTIMATE_LEVELS
-
-    def __post_init__(self) -> None:
-        if not (self.epsilon > 0.0 and math.isfinite(self.epsilon)):
-            raise ValueError("epsilon must be a positive finite number")
-        if not (self.relative_tolerance > 0.0 and math.isfinite(self.relative_tolerance)):
-            raise ValueError("relative_tolerance must be a positive finite number")
-        if self.maximum_refinement_depth < 1:
-            raise ValueError("maximum_refinement_depth must be positive")
-        if self.convergence_order_levels not in (0, _ORDER_ESTIMATE_LEVELS):
-            raise ValueError(
-                f"convergence_order_levels must be 0 or {_ORDER_ESTIMATE_LEVELS}"
-            )
-
-
-@dataclass(frozen=True)
-class ConvergenceOrderEstimate:
-    """Empirical Richardson orders from three uniform bisection levels.
-
-    ``order`` is the global estimate from the fiber totals; ``edge_orders`` the
-    same estimate per edge (``None`` where the differences sit at the
-    floating-point floor).  A piecewise-smooth integrand (e.g. a slope jump of
-    ``entry_measure`` inside an edge) drags the global order towards 2 while
-    the smooth edges still show Simpson's 4; ``median_edge_order`` and
-    ``low_order_edges`` (empirical order below 3) make that visible.
-    """
-
-    order: float | None
-    levels: tuple[float, ...]
-    note: str
-    edge_orders: tuple[float | None, ...] = ()
-    median_edge_order: float | None = None
-    low_order_edges: tuple[int, ...] = ()
-
-
-@dataclass(frozen=True)
-class QuadratureResult:
-    """Scalar partial integral of one fiber with explicit convergence evidence.
-
-    ``value``/``error_estimate`` carry the ``1 / (8 pi^2)`` Haar conversion;
-    ``raw_value``/``raw_error_estimate`` do not.  ``node_count`` counts the
-    distinct fiber poses used by the adaptive pass (accepted continuation
-    samples plus retracted midpoints); the order estimate's extra nodes are
-    reported separately.  Never claims component completeness.
-    """
-
-    status: str
-    method: str
-    fiber_status: str
-    factor_names: tuple[str, ...]
-    density_factor_name: str
-    epsilon: float
-    relative_tolerance: float
-    maximum_refinement_depth: int
-    refinements: int
-    node_count: int
-    value: float
-    raw_value: float
-    error_estimate: float
-    raw_error_estimate: float
-    haar_to_dvol_g_factor: float
-    convergence_order_estimate: float | None
-    convergence_order_note: str
-    raw_convergence_order_levels: tuple[float, ...]
-    convergence_order_node_count: int
-    median_edge_convergence_order: float | None
-    low_order_edges: tuple[int, ...]
-    maximum_depth_reached: int
-    refinement_failures: tuple[str, ...]
-    depth_exhausted_edges: tuple[int, ...]
-    coverage: str = COVERAGE_NOTE
-    component_completeness: str = "unknown"
 
 
 def integrand_availability(problem: FiberProblem) -> str:
@@ -166,7 +83,7 @@ def integrand_availability(problem: FiberProblem) -> str:
     return "available"
 
 
-def _integrand_expression(
+def integrand_expression(
     density: np.ndarray | float,
     factor_product: np.ndarray | float,
     normal_jacobian: np.ndarray | float,
@@ -204,488 +121,468 @@ def pointwise_integrand(result: FiberResult, *, epsilon: float) -> np.ndarray:
         [diagnostic.normal_jacobian for diagnostic in result.jacobian_diagnostics],
         dtype=np.float64,
     )
-    values = _integrand_expression(density, factor_product, normal_jacobian, epsilon)
+    values = integrand_expression(density, factor_product, normal_jacobian, epsilon)
     return np.asarray(values, dtype=np.float64).reshape(sample_count)
 
 
-def _evaluate_integrand(
-    problem: FiberProblem, rotation: np.ndarray, normal_jacobian: float, epsilon: float
-) -> float:
-    """Same expression as :func:`pointwise_integrand` for one retracted pose."""
-    evaluators = problem.weight_evaluators
-    density = float(evaluators[DENSITY_FACTOR_NAME].evaluate(rotation))
-    factor_product = 1.0
-    for name in INTEGRAND_FACTOR_NAMES:
-        factor_product *= float(evaluators[name].evaluate(rotation))
-    return float(_integrand_expression(density, factor_product, normal_jacobian, epsilon))
+def _parametric_speed(
+    tangent: Array, predictor_velocity: Array, phase_tangent: Array, delta: Array
+) -> Array:
+    """``ds/dt`` of ``gamma(t) = P(t) exp(delta(t))`` at one point.
 
-
-def _vee(matrix: Array) -> Array:
-    return jnp.array([matrix[2, 1], matrix[0, 2], matrix[1, 0]])
-
-
-@jax.jit
-def _chord_speed_kernel(tangent: Array, chord: Array, delta: Array) -> Array:
-    """``ds/du`` of ``gamma(u) = R_l exp(u chord) exp(delta(u))`` at one point.
-
-    ``tangent`` is the unit fiber tangent there (oriented along ``chord``) and
-    ``delta`` the current retraction offset, orthogonal to ``chord``.  Solves
-    ``lambda tangent - dexp_delta(delta') = exp(delta)^T chord`` together with
-    ``chord_hat . delta' = 0`` for ``(lambda, delta')`` and returns ``lambda``.
+    ``P`` is a predictor curve with body velocity ``predictor_velocity``
+    (``vee(P^T dP/dt)``), ``delta`` the retraction offset kept orthogonal to
+    ``phase_tangent``, and ``tangent`` the unit fiber tangent at ``gamma``
+    (oriented along ``phase_tangent``).  Differentiating
+    ``gamma^{-1} gamma' = lambda tangent`` gives the 4x4 linear system
+    ``lambda tangent - dexp_delta(delta') = exp(delta)^T predictor_velocity``,
+    ``phase_tangent . delta' = 0`` in ``(lambda, delta')``; returns ``lambda``.
+    On a geodesic fiber (the analytic circle) ``delta = 0`` and ``lambda`` is
+    the predictor's own speed.
     """
     rotation = exp(delta)
     # dexp in the body frame: column k is vee(exp(delta)^T d exp(delta) / d delta_k).
     derivative = jax.jacfwd(exp)(delta)
     body_derivative = jnp.einsum("ji,jlk->ilk", rotation, derivative)
-    dexp = jnp.stack([_vee(body_derivative[:, :, k]) for k in range(3)], axis=1)
-    chord_hat = chord / jnp.linalg.norm(chord)
-    system = jnp.zeros((4, 4), dtype=chord.dtype)
+    dexp = jnp.stack([vee(body_derivative[:, :, k]) for k in range(3)], axis=1)
+    system = jnp.zeros((4, 4), dtype=delta.dtype)
     system = system.at[:3, 0].set(tangent)
     system = system.at[:3, 1:].set(-dexp)
-    system = system.at[3, 1:].set(chord_hat)
-    right_hand_side = jnp.concatenate((rotation.T @ chord, jnp.zeros(1, dtype=chord.dtype)))
+    system = system.at[3, 1:].set(phase_tangent)
+    right_hand_side = jnp.concatenate(
+        (rotation.T @ predictor_velocity, jnp.zeros(1, dtype=delta.dtype))
+    )
     return jnp.linalg.solve(system, right_hand_side)[0]
 
 
-def _chord_speed(tangent: np.ndarray, chord: np.ndarray, delta: np.ndarray) -> float:
-    chord_hat = chord / np.linalg.norm(chord)
-    oriented = tangent if float(np.dot(tangent, chord_hat)) >= 0.0 else -tangent
-    return float(
-        _chord_speed_kernel(
-            jnp.asarray(oriented, dtype=jnp.float64),
-            jnp.asarray(chord, dtype=jnp.float64),
-            jnp.asarray(delta, dtype=jnp.float64),
-        )
-    )
+_parametric_speed_batch_kernel = jax.jit(jax.vmap(_parametric_speed))
+
+
+# --- Resampled fixed-grid quadrature ----------------------------------------
+
+
+RESAMPLED_QUADRATURE_METHOD = (
+    "composite Simpson on a uniform grid of the cumulative-chord parameter of a "
+    "C1 cubic Hermite quaternion spline through the accepted poses (exact fiber "
+    "tangents at the knots); every grid node retracted onto the fiber by a fixed "
+    "number of batched bordered Newton iterations; arclength speed ds/dt from "
+    "the implicit function theorem at the retracted node; error estimate "
+    "|I_N - I_(N+1)/2| with the node count doubled (N -> 2N-1) until it meets the "
+    "relative tolerance or maximum_node_count"
+)
+
+
+def _is_simpson_doubling_count(node_count: int) -> bool:
+    """``N = 4k + 1``: even panel count for Simpson at ``N`` and at ``(N + 1) / 2``."""
+    return node_count >= 5 and (node_count - 1) % 4 == 0
 
 
 @dataclass(frozen=True)
-class _Node:
-    rotation: np.ndarray
-    tangent: np.ndarray
-    integrand: float
+class ResampleOptions:
+    """Observable numerical policy of :func:`integrate_fiber_resampled`.
+
+    ``initial_node_count`` and every doubled count must be ``4k + 1`` so the
+    Simpson rule applies at ``N`` and at the every-other-node subset
+    ``(N + 1) / 2`` that provides the error estimate.  Defaults from the
+    task-resample-and-integrate Step 5 evidence on the canonical pixel and
+    rows 100/300/500 (col 126) of the ch06 strip: the slope jumps of
+    ``entry_measure`` make the uniform grid converge at order ~2, so
+    ``relative_tolerance = 1e-4`` (final grids 129-513 nodes, 13-26 ms) is
+    what keeps every fixture within 1e-4 of the rtol=1e-8 adaptive reference;
+    ``1e-3`` stops at 129 nodes and misses that on the longer loops (1e-4 and
+    2e-4).  Two Newton iterations take the spline predictor's ~1e-6 residual
+    to round-off (one leaves ~1e-11).
+    """
+
+    epsilon: float = 1e-6
+    relative_tolerance: float = 1e-4
+    initial_node_count: int = 129
+    maximum_node_count: int = 1025
+    retraction_iterations: int = 2
+
+    def __post_init__(self) -> None:
+        if not (self.epsilon > 0.0 and math.isfinite(self.epsilon)):
+            raise ValueError("epsilon must be a positive finite number")
+        if not (self.relative_tolerance > 0.0 and math.isfinite(self.relative_tolerance)):
+            raise ValueError("relative_tolerance must be a positive finite number")
+        if not _is_simpson_doubling_count(self.initial_node_count):
+            raise ValueError("initial_node_count must be 4k + 1 with k >= 1")
+        if self.maximum_node_count < self.initial_node_count:
+            raise ValueError("maximum_node_count must be at least initial_node_count")
+        if self.retraction_iterations < 1:
+            raise ValueError("retraction_iterations must be positive")
 
 
 @dataclass(frozen=True)
-class _PanelEstimate:
-    """One Simpson estimate of a panel; ``midpoint`` is ``None`` on failure."""
+class ResampledQuadratureResult:
+    """Scalar partial integral of one fiber by the resampled fixed-grid method.
 
+    ``value``/``error_estimate``/``endpoint_truncation_estimate`` carry the
+    ``1 / (8 pi^2)`` Haar conversion; the ``raw_*`` fields do not.
+    ``node_count`` is the final grid (``4k + 1`` nodes; on a closed loop the
+    last node repeats the first), ``node_count_history`` every
+    ``(N, raw I_N)`` pair of the doubling sequence including the coarsest
+    half grid.  ``node_count_exhausted`` is ``True`` when the last error
+    estimate still exceeded the tolerance but the next doubling would pass
+    ``maximum_node_count``: the value is reported as is, not as converged.
+    ``residual_before_*`` are target-chart residual norms of the spline
+    predictor (distance off the fiber), ``residual_after_*`` after the fixed
+    Newton iterations; ``non_finite_node_count`` nodes whose retraction or
+    factors were non-finite (their integrand is taken as ``0`` and counted,
+    never hidden).  ``endpoint_truncation_estimate`` (open arcs only) is the
+    terminal integrand value times the linear-rate arclength to the nearest
+    event (:func:`.continuation.arclength_to_event`) at the curve's *terminal*
+    end.  For a one-sided :class:`FiberResult` the start is the seed, not a
+    boundary, and ``start_endpoint_truncation_estimate`` is ``nan``; for a
+    stitched :class:`.resample.OpenArc` the start is the backward trace's
+    event and gets the mirrored estimate.  Naming note: ``endpoint_truncation_*``
+    keeps its task-resample-and-integrate name (it is read by ``figure_data``
+    and frozen in ``tests/test_resample_quadrature.py``) and still means the
+    terminal end; ``start_endpoint_truncation_*`` is the newer, prefixed name
+    for the other end.  They are a historical name plus a new one, not a
+    symmetric start/end pair.  ``factor_seconds`` is the wall clock of every
+    batch factor evaluation (``entry_measure`` is a host loop).  Never claims
+    component completeness.
+    """
+
+    status: str
+    method: str
+    fiber_status: str
+    factor_names: tuple[str, ...]
+    density_factor_name: str
+    epsilon: float
+    relative_tolerance: float
+    initial_node_count: int
+    maximum_node_count: int
+    retraction_iterations: int
+    node_count: int
+    refinement_rounds: int
+    node_count_exhausted: bool
+    node_count_history: tuple[tuple[int, float], ...]
     value: float
-    chord: float
-    midpoint: _Node | None
-    failure: str | None = None
+    raw_value: float
+    error_estimate: float
+    raw_error_estimate: float
+    haar_to_dvol_g_factor: float
+    residual_before_max: float
+    residual_before_median: float
+    residual_after_max: float
+    residual_after_median: float
+    non_finite_node_count: int
+    endpoint_truncation_estimate: float
+    endpoint_truncation_note: str
+    factor_seconds: Mapping[str, float]
+    start_endpoint_truncation_estimate: float = float("nan")
+    start_endpoint_truncation_note: str = "one-sided trace: the start is the seed, not a boundary"
+    coverage: str = COVERAGE_NOTE
+    component_completeness: str = "unknown"
 
 
-def _simpson_panel_estimate(
+@dataclass(frozen=True)
+class _GridNodes:
+    """Per-node quantities of one uniform grid (all arrays aligned, length ``N``)."""
+
+    parameters: np.ndarray
+    integrand: np.ndarray
+    speed: np.ndarray
+    residual_before: np.ndarray
+    residual_after: np.ndarray
+    finite: np.ndarray
+    factor_seconds: dict[str, float]
+
+    @property
+    def weighted(self) -> np.ndarray:
+        """``g = f * ds/dt``, the Simpson integrand on the parameter grid."""
+        return self.integrand * self.speed
+
+    def interleave(self, odd: "_GridNodes") -> "_GridNodes":
+        """Merge this grid (even nodes of the doubled grid) with the new odd nodes."""
+        assert len(odd.parameters) == len(self.parameters) - 1
+
+        def merge(even: np.ndarray, new: np.ndarray) -> np.ndarray:
+            merged = np.empty(len(even) + len(new), dtype=even.dtype)
+            merged[0::2] = even
+            merged[1::2] = new
+            return merged
+
+        seconds = {
+            name: self.factor_seconds.get(name, 0.0) + odd.factor_seconds.get(name, 0.0)
+            for name in set(self.factor_seconds) | set(odd.factor_seconds)
+        }
+        return _GridNodes(
+            merge(self.parameters, odd.parameters),
+            merge(self.integrand, odd.integrand),
+            merge(self.speed, odd.speed),
+            merge(self.residual_before, odd.residual_before),
+            merge(self.residual_after, odd.residual_after),
+            merge(self.finite, odd.finite),
+            seconds,
+        )
+
+
+def _evaluate_grid_nodes(
     problem: FiberProblem,
-    options: ContinuationOptions,
-    left: _Node,
-    right: _Node,
-    *,
-    epsilon: float,
-) -> _PanelEstimate:
-    """Single Simpson estimate of ``int f dH^1_g`` over one chord-parametrised panel.
+    spline: FiberSpline,
+    parameters: np.ndarray,
+    options: ResampleOptions,
+) -> _GridNodes:
+    """Predict, retract, evaluate factors and ``ds/dt`` at ``parameters`` in batch."""
+    predictors = resample_spline(spline, parameters)
+    retraction = retract_to_fiber_batch(
+        problem, predictors.rotations, predictors.phase_tangents,
+        iterations=options.retraction_iterations,
+    )
+    rotations = retraction.rotations
+    names = (DENSITY_FACTOR_NAME, *INTEGRAND_FACTOR_NAMES)
+    weights = evaluate_weights_batch(problem.weight_evaluators, rotations, names)
+    factor_product = np.ones(len(parameters), dtype=np.float64)
+    for name in INTEGRAND_FACTOR_NAMES:
+        factor_product = factor_product * weights.values[name]
+    speed = np.asarray(
+        _parametric_speed_batch_kernel(
+            jnp.asarray(retraction.tangents),
+            jnp.asarray(predictors.body_velocities),
+            jnp.asarray(predictors.phase_tangents),
+            jnp.asarray(retraction.deltas),
+        ),
+        dtype=np.float64,
+    )
+    integrand = np.asarray(
+        integrand_expression(
+            weights.values[DENSITY_FACTOR_NAME], factor_product,
+            retraction.normal_jacobians, options.epsilon,
+        ),
+        dtype=np.float64,
+    )
+    finite = retraction.finite & np.isfinite(integrand) & np.isfinite(speed)
+    integrand = np.where(finite, integrand, 0.0)
+    speed = np.where(finite, speed, 0.0)
+    return _GridNodes(
+        np.asarray(parameters, dtype=np.float64), integrand, speed,
+        retraction.residual_before, retraction.residual_after, finite, weights.seconds,
+    )
 
-    Shared by the adaptive pass and the uniform order-estimate pass; contains
-    no refinement decision.  A failed midpoint retraction falls back to the
-    trapezoid of the endpoint values and reports the corrector's reason.
+
+def _composite_simpson(values: np.ndarray, spacing: float) -> float:
+    """Composite Simpson sum of uniformly spaced ``values`` (odd length)."""
+    assert len(values) % 2 == 1 and len(values) >= 3
+    return float(
+        spacing / 3.0 * (values[0] + values[-1] + 4.0 * np.sum(values[1:-1:2]) + 2.0 * np.sum(values[2:-1:2]))
+    )
+
+
+_EVENT_REASONS = {
+    TerminationReason.TIR_BOUNDARY, TerminationReason.BRANCH_BOUNDARY,
+    TerminationReason.PATH_INFEASIBLE, TerminationReason.VISIBILITY_BOUNDARY,
+    TerminationReason.CHART_BOUNDARY, TerminationReason.RANK_LOSS,
+    TerminationReason.TOPOLOGY_AMBIGUITY,
+}
+
+
+def _event_truncation(
+    reason: TerminationReason,
+    margins: Mapping[str, float],
+    previous_margins: Mapping[str, float],
+    advance: float,
+    integrand: float,
+    end: str,
+) -> tuple[float, str]:
+    """Raw truncation estimate beyond one event-terminated end of a curve.
+
+    ``margins`` belong to the end pose, ``previous_margins`` to its neighbour
+    along the curve and ``advance`` to the edge between them; ``end`` names
+    the end in the note (``"terminal"`` or ``"start"``).
     """
-    chord = np.asarray(log(jnp.asarray(left.rotation.T @ right.rotation)), dtype=np.float64)
-    chord_length = float(np.linalg.norm(chord))
-    if chord_length == 0.0:
-        return _PanelEstimate(0.0, 0.0, None)
-    chord_hat = chord / chord_length
-    zero = np.zeros(3, dtype=np.float64)
-    g_left = left.integrand * _chord_speed(left.tangent, chord, zero)
-    g_right = right.integrand * _chord_speed(right.tangent, chord, zero)
-    predicted = np.asarray(left.rotation @ exp(jnp.asarray(0.5 * chord)), dtype=np.float64)
-    retracted = retract_to_fiber(problem, options, left.rotation, predicted, chord_hat)
-    if not retracted.accepted:
-        reason = retracted.reason.value if retracted.reason is not None else "unknown"
-        return _PanelEstimate(
-            0.5 * (g_left + g_right),
-            chord_length,
-            None,
-            f"midpoint retraction rejected ({reason}): {retracted.message}",
+    if reason not in _EVENT_REASONS:
+        return float("nan"), (
+            f"open arc ended by {reason.value}, not by an event: the missing "
+            f"arclength beyond the {end} pose is unbounded by any margin"
         )
-    assert retracted.rotation is not None
-    assert retracted.tangent is not None
-    assert retracted.jacobian_diagnostic is not None
-    midpoint = _Node(
-        retracted.rotation,
-        retracted.tangent,
-        _evaluate_integrand(
-            problem,
-            retracted.rotation,
-            retracted.jacobian_diagnostic.normal_jacobian,
-            epsilon,
-        ),
+    distance = arclength_to_event(margins, previous_margins, advance)
+    if not np.isfinite(distance):
+        return float("nan"), (
+            f"open arc ended by {reason.value} but no margin decreased over "
+            f"the last accepted edge at the {end} end: no linear-rate distance to the event"
+        )
+    return float(integrand * distance), (
+        f"{end} integrand value times the linear-rate arclength from the {end} "
+        f"accepted pose to the {reason.value} event "
+        f"(continuation.arclength_to_event: {distance:.3e})"
     )
-    delta = np.asarray(log(jnp.asarray(predicted.T @ midpoint.rotation)), dtype=np.float64)
-    g_middle = midpoint.integrand * _chord_speed(midpoint.tangent, chord, delta)
-    return _PanelEstimate((g_left + 4.0 * g_middle + g_right) / 6.0, chord_length, midpoint)
 
 
-@dataclass
-class _PassAccounting:
-    """Mutable bookkeeping of one quadrature pass (never part of the result)."""
+def _endpoint_truncation(result: TraceLike, terminal_integrand: float) -> tuple[float, str]:
+    """Raw open-arc truncation estimate at the terminal end, with its note.
 
-    midpoints: int = 0
-    refinements: int = 0
-    failures: list[str] = field(default_factory=list)
-    depth_exhausted: set[int] = field(default_factory=set)
-    maximum_depth: int = 0
-
-    def record(self, estimate: _PanelEstimate, label: str) -> _PanelEstimate:
-        if estimate.midpoint is not None:
-            self.midpoints += 1
-        if estimate.failure is not None:
-            self.failures.append(f"{label}: {estimate.failure}")
-        return estimate
-
-
-def _simpson_panel(
-    problem: FiberProblem,
-    options: ContinuationOptions,
-    quadrature_options: QuadratureOptions,
-    left: _Node,
-    right: _Node,
-    whole: _PanelEstimate,
-    *,
-    tolerance: float,
-    depth: int,
-    edge_index: int,
-    accounting: _PassAccounting,
-) -> tuple[float, float]:
-    """Adaptive recursion over one panel: returns ``(value, error_estimate)``.
-
-    ``whole`` is the panel's own single Simpson estimate (already computed so
-    the midpoint is reused).  Accepted panels return the Richardson
-    extrapolation ``S_half + (S_half - S_whole) / 15``.
+    The terminal end is the forward trace's end for a one-sided
+    :class:`FiberResult` and for a stitched :class:`.resample.OpenArc` alike;
+    the one-sided note states that the seed end is not a boundary, the
+    two-sided start is handled by :func:`_start_truncation`.
     """
-    if whole.midpoint is None:
-        return whole.value, 0.0
-    accounting.maximum_depth = max(accounting.maximum_depth, depth)
-    label = f"edge {edge_index} depth {depth + 1}"
-    left_half = accounting.record(
-        _simpson_panel_estimate(
-            problem, options, left, whole.midpoint, epsilon=quadrature_options.epsilon
-        ),
-        label,
+    if result.status == FiberStatus.CLOSED:
+        return float("nan"), "closed loop: no endpoints"
+    margins = result.branch_diagnostics.accepted_margins
+    if len(margins) < 2:
+        return float("nan"), "open arc with a single accepted pose: no margin rate"
+    estimate, note = _event_truncation(
+        result.reason, margins[-1], margins[-2], float(result.arclength_increments[-1]),
+        terminal_integrand, "terminal",
     )
-    right_half = accounting.record(
-        _simpson_panel_estimate(
-            problem, options, whole.midpoint, right, epsilon=quadrature_options.epsilon
-        ),
-        label,
-    )
-    half = left_half.value + right_half.value
-    error = abs(whole.value - half) / 15.0
-    if left_half.midpoint is None or right_half.midpoint is None:
-        # A rejected refinement node: keep the unrefined estimate as evidence
-        # instead of aborting the whole integral; the failure is reported.
-        return whole.value, error
-    if error <= tolerance:
-        return half + (half - whole.value) / 15.0, error
-    if depth >= quadrature_options.maximum_refinement_depth:
-        accounting.depth_exhausted.add(edge_index)
-        return half + (half - whole.value) / 15.0, error
-    accounting.refinements += 1
-    left_value, left_error = _simpson_panel(
-        problem,
-        options,
-        quadrature_options,
-        left,
-        whole.midpoint,
-        left_half,
-        tolerance=0.5 * tolerance,
-        depth=depth + 1,
-        edge_index=edge_index,
-        accounting=accounting,
-    )
-    right_value, right_error = _simpson_panel(
-        problem,
-        options,
-        quadrature_options,
-        whole.midpoint,
-        right,
-        right_half,
-        tolerance=0.5 * tolerance,
-        depth=depth + 1,
-        edge_index=edge_index,
-        accounting=accounting,
-    )
-    return left_value + right_value, left_error + right_error
+    if not isinstance(result, OpenArc):
+        note += "; the seed end is not a boundary"
+    return estimate, note
 
 
-def _uniform_levels(
-    problem: FiberProblem,
-    options: ContinuationOptions,
-    left: _Node,
-    right: _Node,
-    whole: _PanelEstimate,
-    *,
-    levels: int,
-    epsilon: float,
-    accounting: _PassAccounting,
-    label: str,
-) -> list[float]:
-    """Composite Simpson sums of one panel after ``0 .. levels`` uniform bisections."""
-    if levels == 0 or whole.midpoint is None:
-        return [whole.value] * (levels + 1)
-    left_half = accounting.record(
-        _simpson_panel_estimate(problem, options, left, whole.midpoint, epsilon=epsilon),
-        label,
-    )
-    right_half = accounting.record(
-        _simpson_panel_estimate(problem, options, whole.midpoint, right, epsilon=epsilon),
-        label,
-    )
-    left_levels = _uniform_levels(
-        problem, options, left, whole.midpoint, left_half,
-        levels=levels - 1, epsilon=epsilon, accounting=accounting, label=label,
-    )
-    right_levels = _uniform_levels(
-        problem, options, whole.midpoint, right, right_half,
-        levels=levels - 1, epsilon=epsilon, accounting=accounting, label=label,
-    )
-    return [whole.value] + [a + b for a, b in zip(left_levels, right_levels)]
-
-
-def _uniform_bisection_estimate(
-    problem: FiberProblem,
-    options: ContinuationOptions,
-    nodes: list[_Node],
-    wholes: list[_PanelEstimate],
-    *,
-    levels: int,
-    epsilon: float,
-    accounting: _PassAccounting,
-) -> tuple[tuple[float, ...], list[tuple[float, ...]]]:
-    """Raw composite Simpson values at bisection levels ``0..levels``: fiber totals and per edge."""
-    totals = np.zeros(levels + 1, dtype=np.float64)
-    per_edge: list[tuple[float, ...]] = []
-    for index, (left, right, whole) in enumerate(zip(nodes[:-1], nodes[1:], wholes)):
-        edge_levels = _uniform_levels(
-            problem, options, left, right, whole,
-            levels=levels, epsilon=epsilon, accounting=accounting,
-            label=f"order-estimate edge {index}",
+def _start_truncation(result: TraceLike, start_integrand: float) -> tuple[float, str]:
+    """Raw truncation estimate at the start end: only a stitched :class:`OpenArc` has one."""
+    if not isinstance(result, OpenArc):
+        return float("nan"), ResampledQuadratureResult.start_endpoint_truncation_note
+    margins = result.branch_diagnostics.accepted_margins
+    if result.seed_index < 1 or len(margins) < 2:
+        # The backward trace met its event at the seed: the start *is* the
+        # seed pose and the only edge is the forward one, whose margin rate
+        # describes the wrong end.
+        return float("nan"), (
+            f"open arc whose start end is the seed itself ({result.start_reason.value} "
+            "met before any backward step): no margin rate at the start"
         )
-        totals += edge_levels
-        per_edge.append(tuple(float(level) for level in edge_levels))
-    return tuple(float(total) for total in totals), per_edge
-
-
-def _richardson_order(levels: tuple[float, ...]) -> float | None:
-    """``log2(|I1-I0| / |I2-I1|)`` or ``None`` at the floating-point floor."""
-    first, second, third = levels[-3:]
-    coarse_difference = abs(second - first)
-    fine_difference = abs(third - second)
-    floor = _ORDER_ESTIMATE_FLOOR * max(abs(second), 1.0)
-    if fine_difference <= floor or coarse_difference <= floor:
-        return None
-    return math.log2(coarse_difference / fine_difference)
-
-
-def _order_from_levels(
-    levels: tuple[float, ...], per_edge: list[tuple[float, ...]]
-) -> ConvergenceOrderEstimate:
-    edge_orders = tuple(_richardson_order(edge_levels) for edge_levels in per_edge)
-    finite_orders = [order for order in edge_orders if order is not None]
-    median = float(np.median(finite_orders)) if finite_orders else None
-    low = tuple(
-        index for index, order in enumerate(edge_orders) if order is not None and order < 3.0
+    return _event_truncation(
+        result.start_reason, margins[0], margins[1], float(result.arclength_increments[0]),
+        start_integrand, "start",
     )
-    order = _richardson_order(levels)
-    if order is None:
-        first, second, third = levels[-3:]
-        note = (
-            "global order not estimable: successive uniform refinements differ at the "
-            f"floating-point floor (|I1-I0|={abs(second - first):.3e}, "
-            f"|I2-I1|={abs(third - second):.3e})"
-        )
-    else:
-        note = (
-            "empirical Richardson order log2(|I1-I0| / |I2-I1|) from uniform bisection "
-            "levels 0, 1, 2 of every edge (Simpson theory: 4); the global value is "
-            "dominated by edges whose integrand is only piecewise smooth, see "
-            "median_edge_order and low_order_edges"
-        )
-    return ConvergenceOrderEstimate(order, levels, note, edge_orders, median, low)
 
 
-def estimate_convergence_order(
-    problem: FiberProblem,
-    options: ContinuationOptions,
-    result: FiberResult,
-    *,
-    epsilon: float,
-) -> ConvergenceOrderEstimate:
-    """Standalone order estimate; :func:`integrate_fiber` reuses its first level."""
-    nodes = _fiber_nodes(result, epsilon=epsilon)
-    accounting = _PassAccounting()
-    wholes = [
-        accounting.record(
-            _simpson_panel_estimate(problem, options, left, right, epsilon=epsilon),
-            f"order-estimate edge {index}",
-        )
-        for index, (left, right) in enumerate(zip(nodes[:-1], nodes[1:]))
-    ]
-    levels, per_edge = _uniform_bisection_estimate(
-        problem, options, nodes, wholes,
-        levels=_ORDER_ESTIMATE_LEVELS, epsilon=epsilon, accounting=accounting,
-    )
-    return _order_from_levels(levels, per_edge)
-
-
-def _fiber_nodes(result: FiberResult, *, epsilon: float) -> list[_Node]:
-    integrand = pointwise_integrand(result, epsilon=epsilon)
-    poses = np.asarray(result.poses, dtype=np.float64)
-    tangents = np.asarray(result.tangents, dtype=np.float64)
-    return [
-        _Node(poses[index], tangents[index], float(integrand[index]))
-        for index in range(len(poses))
-    ]
-
-
-def _unavailable(
-    status: str, result: FiberResult, quadrature_options: QuadratureOptions
-) -> QuadratureResult:
-    return QuadratureResult(
+def _resampled_unavailable(
+    status: str, result: TraceLike, options: ResampleOptions
+) -> ResampledQuadratureResult:
+    return ResampledQuadratureResult(
         status=status,
-        method=QUADRATURE_METHOD,
+        method=RESAMPLED_QUADRATURE_METHOD,
         fiber_status=result.status.value,
         factor_names=INTEGRAND_FACTOR_NAMES,
         density_factor_name=DENSITY_FACTOR_NAME,
-        epsilon=quadrature_options.epsilon,
-        relative_tolerance=quadrature_options.relative_tolerance,
-        maximum_refinement_depth=quadrature_options.maximum_refinement_depth,
-        refinements=0,
+        epsilon=options.epsilon,
+        relative_tolerance=options.relative_tolerance,
+        initial_node_count=options.initial_node_count,
+        maximum_node_count=options.maximum_node_count,
+        retraction_iterations=options.retraction_iterations,
         node_count=0,
+        refinement_rounds=0,
+        node_count_exhausted=False,
+        node_count_history=(),
         value=float("nan"),
         raw_value=float("nan"),
         error_estimate=float("nan"),
         raw_error_estimate=float("nan"),
         haar_to_dvol_g_factor=HAAR_TO_DVOL_G_FACTOR,
-        convergence_order_estimate=None,
-        convergence_order_note=f"not computed: {status}",
-        raw_convergence_order_levels=(),
-        convergence_order_node_count=0,
-        median_edge_convergence_order=None,
-        low_order_edges=(),
-        maximum_depth_reached=0,
-        refinement_failures=(),
-        depth_exhausted_edges=(),
+        residual_before_max=float("nan"),
+        residual_before_median=float("nan"),
+        residual_after_max=float("nan"),
+        residual_after_median=float("nan"),
+        non_finite_node_count=0,
+        endpoint_truncation_estimate=float("nan"),
+        endpoint_truncation_note=f"not computed: {status}",
+        factor_seconds={},
+        start_endpoint_truncation_note=f"not computed: {status}",
     )
 
 
-def integrate_fiber(
+def integrate_fiber_resampled(
     problem: FiberProblem,
-    result: FiberResult,
-    options: ContinuationOptions | None = None,
-    quadrature_options: QuadratureOptions | None = None,
-) -> QuadratureResult:
-    """Integrate the partial physical integrand along ``result.poses``.
+    result: TraceLike,
+    options: ResampleOptions | None = None,
+) -> ResampledQuadratureResult:
+    """Integrate the partial physical integrand along ``result`` on a resampled grid.
 
-    The accepted continuation samples are the initial nodes; every edge is
-    refined adaptively with corrector-retracted midpoints until its Richardson
-    error estimate meets its arclength-proportional share of
-    ``relative_tolerance * |first-pass value|`` or ``maximum_refinement_depth``
-    is reached (reported in ``depth_exhausted_edges``).  A separate uniform
-    bisection pass yields the empirical convergence order.
+    ``result`` is a :class:`FiberResult` or a stitched :class:`.resample.OpenArc`
+    (any :class:`.resample.TraceLike`).
+    See :data:`RESAMPLED_QUADRATURE_METHOD`.  The accepted samples define the
+    predictor spline (:mod:`.resample`); every uniform grid node is retracted
+    onto the fiber in one batch (:func:`.continuation.retract_to_fiber_batch`),
+    the four named factors and ``J_perp`` are evaluated in batch, and the
+    composite Simpson sum of ``f * ds/dt`` over the parameter grid is compared
+    with the same sum over every other node.  Doubling reuses the previous
+    grid as the even nodes of the next.  The only correctness evidence is the
+    external alignment recorded in ``tests/test_resample_quadrature.py``; the
+    internal ``|I_N - I_(N+1)/2|`` estimate is self-consistency, not proof.
     """
-    options = options or ContinuationOptions()
-    quadrature_options = quadrature_options or QuadratureOptions()
+    options = options or ResampleOptions()
     status = integrand_availability(problem)
     if status != "available":
-        return _unavailable(status, result, quadrature_options)
-    if len(result.poses) < 2:
-        return _unavailable("unavailable_no_edges", result, quadrature_options)
-    epsilon = quadrature_options.epsilon
-    nodes = _fiber_nodes(result, epsilon=epsilon)
+        return _resampled_unavailable(status, result, options)
+    minimum_samples = 3 if result.status == FiberStatus.CLOSED else 2
+    if len(result.poses) < minimum_samples:
+        return _resampled_unavailable("unavailable_no_edges", result, options)
 
-    accounting = _PassAccounting()
-    wholes = [
-        accounting.record(
-            _simpson_panel_estimate(problem, options, left, right, epsilon=epsilon),
-            f"edge {index} depth 0",
-        )
-        for index, (left, right) in enumerate(zip(nodes[:-1], nodes[1:]))
-    ]
-    first_pass = sum(whole.value for whole in wholes)
-    total_chord = sum(whole.chord for whole in wholes)
-    absolute_tolerance = quadrature_options.relative_tolerance * abs(first_pass)
-    raw_value = 0.0
-    raw_error = 0.0
-    for index, (left, right, whole) in enumerate(zip(nodes[:-1], nodes[1:], wholes)):
-        share = whole.chord / total_chord if total_chord > 0.0 else 0.0
-        value, error = _simpson_panel(
-            problem,
-            options,
-            quadrature_options,
-            left,
-            right,
-            whole,
-            tolerance=absolute_tolerance * share,
-            depth=0,
-            edge_index=index,
-            accounting=accounting,
-        )
-        raw_value += value
-        raw_error += error
+    spline = fiber_spline(result)
+    node_count = options.initial_node_count
+    grid = _evaluate_grid_nodes(problem, spline, uniform_parameters(spline, node_count), options)
+    history: list[tuple[int, float]] = []
+    rounds = 0
+    while True:
+        spacing = spline.total / (node_count - 1)
+        fine = _composite_simpson(grid.weighted, spacing)
+        coarse = _composite_simpson(grid.weighted[0::2], 2.0 * spacing)
+        if not history:
+            history.append(((node_count + 1) // 2, coarse))
+        history.append((node_count, fine))
+        error = abs(fine - coarse)
+        if error <= options.relative_tolerance * abs(fine):
+            exhausted = False
+            break
+        if 2 * node_count - 1 > options.maximum_node_count:
+            exhausted = True
+            break
+        rounds += 1
+        odd_parameters = uniform_parameters(spline, 2 * node_count - 1)[1::2]
+        grid = grid.interleave(_evaluate_grid_nodes(problem, spline, odd_parameters, options))
+        node_count = 2 * node_count - 1
 
-    order_accounting = _PassAccounting()
-    if quadrature_options.convergence_order_levels == 0:
-        order = ConvergenceOrderEstimate(
-            None, (first_pass,), "order estimate skipped (convergence_order_levels=0)"
-        )
-    else:
-        levels, per_edge = _uniform_bisection_estimate(
-            problem, options, nodes, wholes,
-            levels=quadrature_options.convergence_order_levels,
-            epsilon=epsilon, accounting=order_accounting,
-        )
-        order = _order_from_levels(levels, per_edge)
-
-    return QuadratureResult(
+    truncation, truncation_note = _endpoint_truncation(result, float(grid.integrand[-1]))
+    start_truncation, start_truncation_note = _start_truncation(result, float(grid.integrand[0]))
+    return ResampledQuadratureResult(
         status="available",
-        method=QUADRATURE_METHOD,
+        method=RESAMPLED_QUADRATURE_METHOD,
         fiber_status=result.status.value,
         factor_names=INTEGRAND_FACTOR_NAMES,
         density_factor_name=DENSITY_FACTOR_NAME,
-        epsilon=epsilon,
-        relative_tolerance=quadrature_options.relative_tolerance,
-        maximum_refinement_depth=quadrature_options.maximum_refinement_depth,
-        refinements=accounting.refinements,
-        node_count=len(nodes) + accounting.midpoints,
-        value=raw_value * HAAR_TO_DVOL_G_FACTOR,
-        raw_value=raw_value,
-        error_estimate=raw_error * HAAR_TO_DVOL_G_FACTOR,
-        raw_error_estimate=raw_error,
+        epsilon=options.epsilon,
+        relative_tolerance=options.relative_tolerance,
+        initial_node_count=options.initial_node_count,
+        maximum_node_count=options.maximum_node_count,
+        retraction_iterations=options.retraction_iterations,
+        node_count=node_count,
+        refinement_rounds=rounds,
+        node_count_exhausted=exhausted,
+        node_count_history=tuple(history),
+        value=fine * HAAR_TO_DVOL_G_FACTOR,
+        raw_value=fine,
+        error_estimate=error * HAAR_TO_DVOL_G_FACTOR,
+        raw_error_estimate=error,
         haar_to_dvol_g_factor=HAAR_TO_DVOL_G_FACTOR,
-        convergence_order_estimate=order.order,
-        convergence_order_note=order.note,
-        raw_convergence_order_levels=order.levels,
-        convergence_order_node_count=order_accounting.midpoints,
-        median_edge_convergence_order=order.median_edge_order,
-        low_order_edges=order.low_order_edges,
-        maximum_depth_reached=accounting.maximum_depth,
-        refinement_failures=tuple(accounting.failures + order_accounting.failures),
-        depth_exhausted_edges=tuple(sorted(accounting.depth_exhausted)),
+        residual_before_max=float(np.nanmax(grid.residual_before)),
+        residual_before_median=float(np.nanmedian(grid.residual_before)),
+        residual_after_max=float(np.nanmax(grid.residual_after)),
+        residual_after_median=float(np.nanmedian(grid.residual_after)),
+        non_finite_node_count=int(np.count_nonzero(~grid.finite)),
+        endpoint_truncation_estimate=truncation * HAAR_TO_DVOL_G_FACTOR,
+        endpoint_truncation_note=truncation_note,
+        factor_seconds=dict(grid.factor_seconds),
+        start_endpoint_truncation_estimate=start_truncation * HAAR_TO_DVOL_G_FACTOR,
+        start_endpoint_truncation_note=start_truncation_note,
     )
 
 
 __all__ = [
     "COVERAGE_NOTE",
-    "ConvergenceOrderEstimate",
     "DENSITY_FACTOR_NAME",
     "HAAR_TO_DVOL_G_FACTOR",
     "INTEGRAND_FACTOR_NAMES",
-    "QUADRATURE_METHOD",
-    "QuadratureOptions",
-    "QuadratureResult",
-    "estimate_convergence_order",
+    "RESAMPLED_QUADRATURE_METHOD",
+    "ResampleOptions",
+    "ResampledQuadratureResult",
     "integrand_availability",
-    "integrate_fiber",
+    "integrand_expression",
+    "integrate_fiber_resampled",
     "pointwise_integrand",
 ]

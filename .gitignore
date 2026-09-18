@@ -11,3 +11,6 @@ __pycache__/
 
 # Claude Code scratchpad (local task management)
 scratchpad/
+
+# Rendered strip products (pulled back from home-wsl; tens of MB, never committed)
+artifacts/

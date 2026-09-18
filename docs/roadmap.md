@@ -154,18 +154,29 @@ The first image-level target is the historical local tangent-arc strip at
 `251 x 801` resolution. It should be compared with both the surviving direct
 integration data and an independently converged Lumice Monte Carlo render.
 Status: the strip driver exists (`lumice_integral.strip_pixel` /
-`strip_driver` / `strip_io`, `scripts/render_ch06_strip.py`): column-wise
-neighbouring-pixel hot start gated by arclength-jump detection with cold
-prescan fallback and periodic cold spot checks, a per-pixel procedural
-completeness status layer, and the point pixel model chosen by a caustic
-probe (the probe found `O(10-40 %)` point-vs-sub-pixel differences within
-about seven rows of the `22 deg` inner edge at the centre column, so the
-caustic band is a documented pixel-model limitation of the default render).
-A full-height every-ninth-column preview is rendered and compared: Spearman
-`0.99` against the historical raw on pixels lit in both, a consistent
-`10`-row inner-edge offset, and the lower quarter of the strip (rows
-`600-800`) `unknown` because no discovery candidate closes there; the full
-`251 x 801` render is in progress. The evidence is recorded in the
+`strip_driver` / `strip_io`, `scripts/render_ch06_strip.py`) on the v2
+per-pixel pipeline: one scene-level prescan table queried per pixel, the
+integrated components of the pixel above as warm Gauss-Newton starts, one
+production trace per distinct candidate, open arcs stitched from the two
+half-traces of an event-terminated seed, resampled fixed-grid quadrature; a
+per-pixel procedural completeness status layer; and the point pixel model
+chosen by a caustic probe (the probe found `O(10-40 %)` point-vs-sub-pixel
+differences within about seven rows of the `22 deg` inner edge at the centre
+column, so the caustic band is a documented pixel-model limitation of the
+default render). The full `251 x 801` image is rendered (`home-wsl`, `30`
+workers, `1.86 h` wall clock): every pixel `complete`, no `unknown` band,
+no open arc found on this scene. Compared with the historical raw on
+multiplicative-bias-sensitive metrics: the row-band ratio slides
+monotonically by `8.4x` from the inner edge to the bottom with no step (the
+`x2` closure-gate step of the v1 preview is gone), the `10`-row inner-edge
+offset is confirmed and lies on the historical side (the Lumice remake is
+`3` rows further in than ours), and the vertical decay along the centre
+column is `3-4x` steeper than the historical raw between rows `150` and
+`600` (defect 2): the pose density and the entry measure are verified
+against independent estimates, the decay is carried by the geometric
+factors, and the cause is not yet located (an independent `J_perp` check
+and a non-tone-mapped Lumice profile are the next probes). The evidence is
+recorded in the
 [chapter 6 reference fixture specification](ch06-reference-fixture.md)
 sections 5 and 7. Component completeness remains procedural, not certified;
 finite solar disk and finite pixel solid angle are still open (the sub-pixel

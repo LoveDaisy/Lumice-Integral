@@ -153,4 +153,47 @@ def entry_measure(rotation: np.ndarray, path: Sequence[int], incident_direction:
     return EntryMeasureResult(value, "ok", area_perp, d_in, cos_i, cos_t)
 
 
-__all__ = ["EntryMeasureResult", "entry_measure", "refract_into_crystal"]
+def entry_measure_batch(rotations: np.ndarray, path: Sequence[int], incident_direction: Sequence[float],
+                        crystal: Polyhedron, *, eps: float | None = None, n_ice: float = N_ICE) -> np.ndarray:
+    """``entry_measure(...).value`` of ``(N, 3, 3)`` poses at once (``(N,)`` values).
+
+    The same five steps as :func:`entry_measure` in the same gate order, on the
+    corridor primitives that are already batched over directions
+    (:func:`~.feasibility.corridor_intersection` and the gates take ``(N, 3)``
+    direction arrays); the corridor unfolding is pose independent and done
+    once.  Rows failing a gate get ``0.0`` exactly like the scalar form.
+    ``tests/test_geometry_entry_measure.py`` asserts elementwise agreement with
+    :func:`entry_measure`.
+    """
+    faces = [int(f) for f in path]
+    if len(faces) < 2:
+        raise ValueError("path must be (entry, *reflections, exit) with at least two faces")
+    R = np.asarray(rotations, dtype=float)
+    if R.ndim != 3 or R.shape[1:] != (3, 3):
+        raise ValueError("rotations must have shape (N, 3, 3)")
+    eps = area_eps(crystal) if eps is None else float(eps)
+    if R.shape[0] == 0:
+        return np.zeros(0, dtype=float)
+
+    s_body = np.einsum("nji,j->ni", R, unit(incident_direction))
+    n_a = crystal.normal(crystal.face(faces[0]))
+    cos_i = -(s_body @ n_a)
+    entered = entry_ok(n_a, s_body, cos_tc=0.0) & (cos_i > 0.0)
+
+    eta = 1.0 / n_ice
+    discriminant = 1.0 - eta * eta * (1.0 - cos_i * cos_i)
+    d_in = eta * s_body + (eta * cos_i - np.sqrt(discriminant))[:, None] * n_a
+    cos_t = -(d_in @ n_a)
+    polys, n_tilde_b = corridor_polygons(crystal, faces)
+    passed = entered & exit_ok(n_tilde_b, d_in)
+
+    values = np.zeros(R.shape[0], dtype=float)
+    rows = np.flatnonzero(passed)
+    if len(rows):
+        area_perp = corridor_intersection(polys, d_in[rows]).area()
+        ok = area_perp > eps
+        values[rows[ok]] = area_perp[ok] * cos_i[rows[ok]] / cos_t[rows[ok]]
+    return values
+
+
+__all__ = ["EntryMeasureResult", "entry_measure", "entry_measure_batch", "refract_into_crystal"]

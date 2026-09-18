@@ -285,9 +285,15 @@ Step reduction MUST be possible in response to corrector non-convergence,
 large correction, residual degradation, loss of rank or conditioning, excessive
 tangent rotation, an event bracket, or non-finite evaluation. Step growth MAY
 occur only after accepted steps with adequate corrector margin, residual,
-conditioning, tangent continuity, and event clearance. Options MUST bound step
-size above and below and bound retries, corrector iterations, accepted steps,
-and/or arclength.
+conditioning, tangent continuity, and event clearance. Event clearance is a
+statement about the *approach* to a domain boundary, not about the instantaneous
+value of a margin: a margin below the slowdown threshold that is stable or
+receding over the last accepted edge MUST NOT by itself prevent growth, while a
+margin that is shrinking MUST bound the next step by a fraction of the
+arclength at which it would reach zero at the observed rate, so that the
+terminating pose of a genuine event lands close to the boundary. Options MUST
+bound step size above and below and bound retries, corrector iterations,
+accepted steps, and/or arclength.
 
 No particular controller or threshold is a mathematical invariant. The result
 MUST expose enough accepted and rejected step diagnostics for conformance tests
@@ -297,8 +303,12 @@ to explain why the controller changed `h`.
 
 A trace is `closed` only when all of the following hold:
 
-1. a configured minimum accepted-step count and/or minimum accumulated
-   arclength excludes immediate return to the seed;
+1. a minimum accepted-step count and a minimum accumulated arclength exclude
+   an immediate return to the seed; both MUST be small relative to the
+   problem's own step scale (a few accepted steps, a few initial steps of
+   arclength) and MUST NOT encode an absolute loop length, because a loop
+   shorter than an absolute bound is otherwise traversed repeatedly until the
+   bound is met and its length and integral are multiplied accordingly;
 2. stable `SO(3)` distance to the seed is within the closure tolerance;
 3. the trace crosses a declared local transverse section through the seed,
    with crossing direction recorded;
@@ -353,6 +363,23 @@ partial until an external discovery layer establishes completeness. The
 formula is not applicable at `J_perp = 0` without a separately justified
 singular treatment.
 
+A regular component `C` need not be a closed loop. A single fixed-path
+solution set is often an *open arc*: a piece of the fiber cut at both ends by
+a named event of section 8 (the smooth branch ends where TIR, a face change,
+path infeasibility, visibility, or the chart ends it), and only the sum over
+symmetric paths closes into the full halo. The integral above applies to an
+arc verbatim over the traced extent; the integrand is continuous down to zero
+at a TIR boundary (`fresnel_transmission -> 0`) and simply stops at the other
+events, so an arc is a legitimate partial contribution, not a failure. What
+an arc does not include is the untraced tail between the last accepted pose
+and the event on each side; the quadrature reports that as a per-end
+truncation estimate (terminal integrand value times the linear-rate arclength
+to the event, `quadrature.ResampledQuadratureResult.endpoint_truncation_estimate`
+and `start_endpoint_truncation_estimate`), never added to the value. A
+consumer that sums components MUST keep the closed / arc kind and the two end
+events observable next to the value (`strip_pixel.ComponentRecord`,
+task-pixel-pipeline-v2).
+
 Every multiplicative factor MUST be independently observable before forming
 `W_P`. Missing or unimplemented factors MUST be marked unavailable; they MUST
 NOT be silently substituted by one in a result claiming physical completeness.
@@ -397,6 +424,29 @@ intersections is open. The reference solver MUST stop honestly at the supported
 boundary rather than extrapolate the smooth branch. Discovering other connected
 components, proving seed coverage, and deduplicating components are also open
 and external to a single `FiberResult`.
+
+An event is only evidence of a boundary when it is met by a corrector iterate
+inside the acceptance trust region (`maximum_correction`, `maximum_advance`
+of section 6.2). A Newton iterate outside it that lands in an invalid domain
+could never have been accepted where it stands, so `_correct_trial` reports
+it as a rejected trial (`corrector_failure`, the step shrinks) rather than an
+event (task-pixel-pipeline-v2: a `0.17` loop whose first `0.04` predictor
+sent the corrector `1.18 rad` away into a TIR region was reported as
+`tir_boundary` with no accepted step).
+
+Standard downstream use of an event-terminated result (`discovery`): a trace
+that ends on one of the five named boundary events (`tir_boundary`,
+`branch_boundary`, `path_infeasible`, `visibility_boundary`,
+`chart_boundary`) is traced once more from the same seed with
+`initial_tangent_sign = -1`; when that also ends on a named event the two
+traces are stitched (`resample.stitch_open_arc`) into one *open arc*
+component whose curve runs from the backward end through the seed to the
+forward end (reversed backward samples with negated tangents, the seed knot
+carrying the forward tangent). The event classification itself is unchanged;
+`rank_loss` and `topology_ambiguity` stay "open" and never form an arc, and
+a backward trace that fails, or that closes where the forward trace did not
+(a contradiction the data cannot resolve), leaves the candidate `incomplete`
+with both traces kept.
 
 ## 9. Backend-independent interface semantics
 
@@ -518,22 +568,56 @@ the root, regularity, path-validity, or closure definitions above.
 | Corrector and trust gates | `corrector_maximum_iterations=10`, phase/update tolerances `1e-12`, `maximum_correction=0.2`, `maximum_advance=0.2`, `minimum_tangent_dot=0.8` |
 | Seed orientation | `initial_tangent_sign=+1` (section 5.4 explicit choice; `-1` reverses the deterministic SVD sign of the seed tangent and hence the sample order) |
 | Work bounds | `maximum_accepted_steps=4000`, `maximum_evaluations=100000`, `maximum_arclength=20` |
-| Closure | minimum 40 steps and `pi` arclength, distance `0.08`, tangent dot `0.8`, section tolerance `1e-11`, at most 10 final-corrector iterations |
+| Event approach | `event_slowdown_margin=0.02`; a shrinking margin below it bounds the next step by `_EVENT_APPROACH_STEP_FRACTION` (code constant, `0.5`) of the linear arclength to zero; a stable or receding margin imposes no bound |
+| Closure | minimum `closure_minimum_steps=3` accepted steps and arclength `max(closure_minimum_arclength=0, _CLOSURE_ARCLENGTH_STEP_MULTIPLIER * initial_step)` with the code constant `_CLOSURE_ARCLENGTH_STEP_MULTIPLIER = 2.0` (the constant in `lumice_integral.continuation` is the single source of that value), distance `0.08`, tangent dot `0.8`, section tolerance `1e-11`, at most 10 final-corrector iterations |
 
 On the analytic circle, initial steps `0.04`, `0.08`, and `0.12` all terminate
 as `closed/closed_loop`, have maximum residual no greater than `1e-11`, and
 recover length `2 pi` within `1e-12`; the test separately verifies the
-Haar-to-sphere identity `(2 pi)/(8 pi^2) = 1/(4 pi)`. On the synthetic 3-5
-branch, initial steps `0.03`, `0.04`, and `0.08` all close with maximum residual
-below `1e-11` and closure gap below `2e-13`. Their discrete metric lengths lie
-between `3.857976632802349` and `3.859621360919519`, a span below `0.0017`.
-An additional 3-5 run holds `initial_step=0.04` fixed while changing
-`minimum_step` to `2e-5`, `maximum_step` to `0.10`, `shrink_factor` to `0.4`,
-`growth_factor` to `1.15`, and `maximum_retries` to `10`. It also closes with
-the declared residual and closure bounds; its length differs from the reference
-by less than `0.0015`, and the bidirectional sampled-pose set distance is below
-`0.008` rad. This exercises controller thresholds in addition to initial-step
-selection.
+Haar-to-sphere identity `(2 pi)/(8 pi^2) = 1/(4 pi)`. With `initial_step` and
+`maximum_step` both `0.2` the circle still closes on its first traversal with
+exactly one sign change of the seed-relative transverse coordinate. On the
+synthetic 3-5 branch, initial steps `0.03`, `0.04`, and `0.08` all close with
+maximum residual below `1e-11` and closure gap below `2e-13`. Their discrete
+metric lengths lie between `0.9643243178593905` and `0.9647199228642988`, a
+span below `0.0017`. (The `3.857976632802349` recorded before
+2026-09-17 was this same loop traversed four times: the absolute closure
+bound of `pi` arclength could only be met on the fourth return.) An additional
+3-5 run holds `initial_step=0.04` fixed while changing `minimum_step` to
+`2e-5`, `maximum_step` to `0.10`, `shrink_factor` to `0.4`, `growth_factor` to
+`1.15`, and `maximum_retries` to `10`. It also closes with the declared
+residual and closure bounds; its length differs from the reference by less than
+`0.0015`, and the bidirectional sampled-pose set distance is below `0.012` rad
+(`0.0093` observed on one traversal; the earlier `0.008` bound was measured on
+four interleaved traversals). This exercises controller thresholds in addition
+to initial-step selection.
+
+Short loops: the analytic conjugation circle `F(R) = normalize((cos phi,
+sin(phi) u . a, 1))`, whose fiber through `Rot(u0, pi/2)` has the closed-form
+length `4 pi sin(pi/4) sin(beta)`, closes on its first traversal at lengths
+`1.0` and `2.0` with capped steps `0.01`, `0.02`, `0.04`, and `0.2`; the
+chord-polygon length converges to the closed form at second order (error
+ratio between 3 and 5 per step halving, finest error below `2e-4` relative).
+Under the retired absolute gate (`closure_minimum_steps=40`,
+`closure_minimum_arclength=pi`, passed literally) the same fibers close at
+four and two times their length. On the ch06 strip, column 126 rows 100, 150,
+and 224 close at `1.645239`, `2.375620`, and `3.111244` (recorded to `1e-6`,
+Mac float64) and at twice those lengths under the retired gate; column 150
+rows 700 and 780, whose loops run parallel to the exit TIR boundary with
+`exit_snell_discriminant` near `0.0175` for half their length, close normally
+without an accepted step at `minimum_step` where the previous unconditional
+slowdown exhausted the 4000-step budget.
+
+Step-controller defaults explored on 2026-09-17 and not adopted:
+`maximum_step` `0.12 -> 0.2`, `growth_factor` `1.25 -> 1.5`, and the easy-gate
+tangent threshold `0.98 -> 0.95` leave every optical trace above bit-identical,
+because the easy gate's `corrector iterations <= 2` condition never holds on
+them (three iterations are typical), so the step never grows past
+`initial_step`; on the analytic circle `maximum_step=0.2` closes only on the
+third traversal, because a step larger than `closure_distance` can land the
+post-crossing pose outside the closure distance and skip the closure attempt.
+Both observations are recorded as open items in section 12.
+
 This is bounded configuration evidence, not a proof of global controller
 convergence. The accepted sample counts differ and are deliberately not a pass
 criterion; in particular, the historical observation of 145 steps is not
@@ -557,7 +641,9 @@ than a fabricated Git revision.
 
 The required 3-5 diagnostic run reported `closed/closed_loop`, 192 accepted
 steps, maximum residual `4.070836767583417e-16`, metric length
-`3.857976632802349`, and closure gap `1.054769277841672e-14`. These values are
+`3.857976632802349`, and closure gap `1.054769277841672e-14` (under the
+absolute closure gate of that date; the same seed now closes after 48 accepted
+steps at `0.9643243178593905`, one traversal). These values are
 observations, not additional pass criteria. The precision comparison measured
 direction maximum absolute error `4.4773031837586075e-08` and Jacobian relative
 error `1.885098415478209e-07` for its float32 probe, while the reference trace
@@ -576,7 +662,7 @@ failure: the named prerequisite is outside the current reference core.
 | C03 | Analytic and synthetic 3-5 roots with several `Q in O(2)` basis changes | Root poses, tangent line, rank, singular values, `J_perp`, and converged geometry agree; tangent order may reverse only with seed orientation. | Verified by `test_analytic_circle_is_invariant_under_orthogonal_target_basis` and `test_synthetic_3_5_is_invariant_under_orthogonal_target_basis`; basis changes are metamorphic evidence, not an independent optical oracle. |
 | C04 | Target antipode for the projected residual | Algebraic zero at `-d` is rejected by the target-neighborhood gate. | Verified by `test_antipode_algebraic_root_is_rejected_by_chart_gate` and the public termination conformance cases. |
 | C05 | Smooth synthetic 3-5 branch | Unit outgoing direction, positive branch margins, local rank two, and one seeded component closes under independently converged settings. Exact 145 steps is not asserted. | Verified by `test_synthetic_3_5_trace_matches_independent_direct_ray_oracle` and `test_synthetic_3_5_safe_step_sweep_converges_without_fixed_step_count`. The oracle independently derives incident direction, target, tangent basis, path gate, and per-pose ray constraints rather than reading them from `path_3_5_problem`; this is not historical ch06 validation. |
-| C06 | Initial step sizes and controller thresholds perturbed around reference defaults | Accepted traces converge to the same component geometry, length, quadrature-ready orientation, and terminal status within reported errors; integral comparison follows when C14 factors exist. | Partial: geometry is verified by the analytic/3-5 safe-step tests and `test_synthetic_3_5_controller_threshold_perturbation_converges_consistently` over the bounded configurations in section 10.1. An orientation-independent physical integral is now checked on the canonical pixel fiber: `test_canonical_pixel_integral_is_invariant_under_initial_step` (`0.03`, `0.08` against `0.04`), `..._under_refinement_tolerance` (`1e-6`, `1e-9` against `1e-8`) and `..._under_reversed_orientation` (`initial_tangent_sign = -1`) agree within the sum of the reported error estimates without comparing sample counts; `test_reversed_seed_orientation_keeps_arclength_and_integral` covers the analytic circle. A global controller-convergence claim is still not made. |
+| C06 | Initial step sizes and controller thresholds perturbed around reference defaults | Accepted traces converge to the same component geometry, length, quadrature-ready orientation, and terminal status within reported errors; integral comparison follows when C14 factors exist. | Partial: geometry is verified by the analytic/3-5 safe-step tests and `test_synthetic_3_5_controller_threshold_perturbation_converges_consistently` over the bounded configurations in section 10.1; first-traversal closure of loops shorter than `pi` and second-order length convergence on the analytic conjugation circle by `test_analytic_conjugation_loops_shorter_than_pi_close_on_the_first_traversal` and `test_analytic_circle_closes_on_the_first_traversal_with_a_large_step`, the strip short loops by `test_strip_short_loops_close_at_their_single_traversal_length`, and the retired absolute gate's repeated traversal as a counterexample by `test_legacy_absolute_closure_gate_traverses_the_analytic_short_loops_repeatedly` and `test_legacy_absolute_closure_gate_doubles_the_strip_short_loops`; the event-approach rule of section 6.3 by `test_strip_boundary_hugging_loops_no_longer_exhaust_the_step_budget` (rows 700/780) and the `_adapt_accepted_step` unit tests. An orientation-independent physical integral is now checked on the canonical pixel fiber (`tests/test_resample_quadrature.py`): `test_canonical_pixel_integral_is_invariant_under_initial_step` (`0.03`, `0.08` against `0.04`), `..._under_tolerance` (`1e-3`, `1e-5` against `1e-4`) and `..._under_reversed_orientation` (`initial_tangent_sign = -1`) agree within the sum of the reported error estimates without comparing sample counts; `test_reversed_seed_orientation_keeps_the_integral` covers the analytic circle. A global controller-convergence claim is still not made. |
 | C07 | Constructed rank-deficient map | Terminates as `event_terminated/rank_loss` with singular-value and `J_perp` diagnostics; no regular coarea value is emitted. | Verified by `test_rank_deficient_direction_map_has_typed_event_and_diagnostics` and the public termination conformance cases. |
 | C08 | TIR or explicit path-domain boundary | Terminates with the typed event and signed margin before unsafe evaluation; not merely NaN or corrector failure. | Verified by `test_known_event_precedes_unsafe_direction_evaluation`, `test_3_5_tir_is_reported_before_the_unsafe_exit_square_root`, and the public termination conformance cases. Event crossing/localization remains open. |
 | C09 | Corrector non-convergence and ill-conditioned linear solve without known physical event | Bounded retries end in the matching `numerical_failure` reason with trial history. | Partial: public conformance verifies bounded corrector non-convergence and rejected-trial history. Rank/conditioning rejection is covered by C07; a deterministic public `linear_solve_failure` fixture remains open. |
@@ -592,52 +678,83 @@ failure: the named prerequisite is outside the current reference core.
   controller sweeps and event localization tolerances remain open; the current
   solver terminates honestly at supported event boundaries rather than crossing
   or localizing them.
+- Step growth never triggers on the optical fixtures because the easy gate
+  requires at most two corrector iterations; the controller runs them at
+  `initial_step`. Relaxing that gate is coupled to the closure attempt
+  trigger: a step larger than `closure_distance` can carry the post-crossing
+  pose outside the closure distance and skip the attempt (observed on the
+  analytic circle with `maximum_step=0.2`, which then closes on its third
+  traversal), so the closure trigger must be made step-aware before growth is
+  enabled on optical fibers.
 - A deterministic consumer-level fixture for `linear_solve_failure` remains a
   conformance-infrastructure gap. Corrector non-convergence and rank/condition
   rejection are covered without private monkeypatching.
 - Seed search, component discovery, completeness certificates, and component
   deduplication are outside the single-component interface.
   `lumice_integral.discovery` provides them for one pixel of the 3-5 path as
-  a separate module with its own, weaker contract:
-  - `discover_components(target_direction, incident_direction,
-    refractive_index, crystal, *, rng_seed, prescan_samples=400000,
-    discovery_step_budget=250, angle_tolerance_deg=2.0,
-    cluster_radius_rad=0.3, arclength_rtol=1e-3)` returns
+  a separate module with its own, weaker contract (task-pixel-pipeline-v2):
+  - `discover_components(target_direction, crystal, table, *,
+    continuation=ContinuationOptions(), extra_seeds=(),
+    angle_tolerance_deg=2.0, cluster_radius_rad=0.3,
+    distance_threshold=continuation.closure_distance)` returns
     `ComponentDiscoveryResult(components, incomplete, completeness,
-    pool_count, raw_cluster_count, admissible_count)`.  It Haar-samples
-    `SO(3)`, keeps the pool within the angular tolerance that passes both
-    refraction discriminants, clusters the *whole* pool geodesically, Gauss-
-    Newton-corrects one representative per cluster, applies the
-    `path_3_5_domain` and `entry_measure > 0` gates, and traces each
-    admissible candidate with `trace_fiber` under
-    `maximum_accepted_steps = discovery_step_budget`.  `rng_seed` is
-    required; batch callers decide explicitly whether pixels share it.
-  - Two closed traces are the same component iff `(status, reason)` agree and
-    their arclengths agree within `arclength_rtol = 1e-3` (`atol = 1e-6`).
-    Accepted pose counts are not part of the fingerprint: the survey observed
-    one loop traced with `173 / 180 / 172` poses from different entry points.
-    Traces with `status != closed` never form or join a component; they are
-    returned as `incomplete` with their truncated `FiberResult`.
+    pool_count, extra_seed_count, raw_cluster_count, admissible_count,
+    events, trace_seconds)`.  `table` is a scene-level
+    `prescan.PrescanTable` (`build_prescan_table(incident_direction,
+    refractive_index, *, sample_count, rng_seed)`): the Haar samples of
+    `SO(3)` that pass all four smooth-branch gates of
+    `optics.path_3_5_domain_batch` (the single batch authority for the
+    per-pose `path_3_5_domain` gates), stored once per `(path, s, n)` with
+    their outgoing directions and indexed by direction; the table does not
+    depend on the crystal.  The candidate pool is `extra_seeds` (converged
+    poses of any neighbouring pixels, used only as Gauss-Newton starts of
+    their cluster, never traced on their own and never a source of
+    completeness) followed by `table.candidates(d, angle_tolerance_deg)` (a
+    kd-tree chord ball followed by the exact `direction . d >= cos(tol)`
+    test, so the pool equals the brute-force filter); the whole pool is
+    clustered geodesically, one representative per cluster is
+    Gauss-Newton-corrected and gated (`path_3_5_domain`, `entry_measure > 0`),
+    and every admissible candidate is traced *once* with the caller's
+    production `continuation` options.  The incident direction and
+    refractive index are read from `table`, so they have one source;
+    `sample_count`/`rng_seed` are table-build parameters that a batch caller
+    fixes once per run, not per pixel.
+  - Components are of two kinds: `closed` (the trace closed) and `arc` (a
+    forward and a backward trace of the same seed, each ended by a named
+    event, stitched per section 8).  Deduplication happens *before* tracing:
+    a corrected candidate whose SO(3) geodesic distance to any accepted pose
+    of an already accepted component's curve (`distance_to_curve`) is below
+    `distance_threshold` is the same component and is folded without a
+    trace (`dedup_merged`).  The threshold is the continuation's
+    `closure_distance` (`0.08`) by default: the same "is this pose on that
+    curve" scale, and above half the largest accepted chord (`maximum_step /
+    2 = 0.06`), so a pose on the curve is never farther than that from the
+    nearest sample.  Traces that neither close nor stitch are returned as
+    `incomplete` with their cause (`incomplete_not_converged`,
+    `incomplete_unnamed_event`, `arc_backward_failed`,
+    `arc_backward_closed_anomaly`) and both traces.
   - `completeness` is procedural, not a certificate: `"complete"` means every
-    admissible candidate of this pool closed and no `status != closed`
-    evidence was seen (a dark pixel with no admissible candidate is
-    `"complete"` with zero components); `"unknown"` means at least one
-    candidate did not close.  It does not prove that every connected
-    component of `X_(P,d)` was found, so the single-component result's
+    admissible candidate of this pool converged (closed or arc) and no
+    `incomplete` evidence was seen (a dark pixel with no admissible candidate
+    is `"complete"` with zero components); `"unknown"` means at least one
+    candidate did not.  It does not prove that every connected component of
+    `X_(P,d)` was found, so the single-component result's
     `component_completeness = "unknown"` stays authoritative for quadrature.
-  - The discovery budget is independent of the production
-    `ContinuationOptions` default (`4000`); the caller retraces a discovered
-    seed with production options for quadrature.
-  - `hot_start_component(converged_seed, target_direction, ...)` runs the
-    same correction, gates, trace, and classification on one caller-supplied
-    seed (no prescan), and `detect_arclength_jump(arclengths,
-    relative_threshold=0.2)` flags neighbouring-pixel arclength jumps as
-    topology-boundary evidence; the `0.2` default is calibrated on the single
-    observed boundary (canonical strip rows `225 -> 226`, about `50 %`).
+  - There is one step budget, `continuation.maximum_accepted_steps`; the
+    retired small discovery budget, the production retrace, the arclength
+    fingerprint dedup, the arclength-jump gate and the periodic cold check
+    of the strip driver no longer exist (every pixel always queries the
+    table, so a warm seed cannot hide a component).
   - Defaults and regression baselines come from
     `scratchpad/scrum-ch06-direct-integration/explore-component-discovery`
     (400k samples stable to 1.6M, 0.3 rad cluster radius, 34+ pixels) and are
-    locked by `tests/test_discovery.py`.
+    locked by `tests/test_discovery.py` with a 400k-sample table; the
+    production table size is `prescan.DEFAULT_SAMPLE_COUNT` (`4_000_000`), pinned by the
+    density survey in `docs/ch06-reference-fixture.md`.  No real open arc
+    exists in the current ch06 picture (task-pixel-pipeline-v2 Step 0: every
+    10th row and column, 2106 pixels, 1954 lit, all closed), so the arc path
+    is validated on the analytic two-sided circle fixture
+    (`tests/test_discovery.py`, `tests/test_resample_quadrature.py`).
 - Continuation through rank loss, bifurcation, singular intersections, TIR, or
   path-branch changes is unsupported pending dedicated exploration.
 - Absolute source radiometry, wavelength/polarization integration, pixel solid

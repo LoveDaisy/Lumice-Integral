@@ -120,6 +120,14 @@ class ZenithGaussianPoseDensity:
     def __call__(self, rotation: np.ndarray) -> float:
         return float(self.density_at_zenith(c_axis_zenith(rotation)))
 
+    def evaluate_batch(self, rotations: np.ndarray) -> np.ndarray:
+        """``rho_H`` of ``(N, 3, 3)`` rotations at once (same zenith formula as ``__call__``)."""
+        rotations = np.asarray(rotations, dtype=np.float64)
+        if rotations.ndim != 3 or rotations.shape[1:] != (3, 3):
+            raise ValueError("rotations must have shape (N, 3, 3)")
+        theta = np.arccos(np.clip(rotations[:, 2, 2], -1.0, 1.0))
+        return np.asarray(self.density_at_zenith(theta), dtype=np.float64)
+
 
 def column_zenith_pose_density(
     rotation: np.ndarray,

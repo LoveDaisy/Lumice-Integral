@@ -8,14 +8,17 @@ import pytest
 from lumice_integral.analytic import tangent_basis
 from lumice_integral.continuation import FiberStatus, TerminationReason, trace_fiber
 from lumice_integral.optics import (
+    DOMAIN_MARGIN_NAMES,
     ICE_REFRACTIVE_INDEX,
     fresnel_transmission_3_5,
     fresnel_unpolarized_transmittance,
     minimum_deviation_incident,
     path_3_5,
     path_3_5_domain,
+    path_3_5_domain_batch,
     path_3_5_problem,
 )
+from lumice_integral.prescan import haar_rotations
 from lumice_integral.so3 import exp
 from test_analytic_fiber import central_difference_jacobian
 
@@ -175,3 +178,74 @@ def test_fresnel_3_5_lies_in_the_unit_interval_and_drops_toward_the_critical_ang
     tir_pose = exp(jnp.array([0.5447316801391622, -1.506228738763967, -1.190186580432801], dtype=jnp.float64))
     assert path_3_5_domain(tir_pose, incident).event_kind == "tir_boundary"
     assert fresnel_transmission_3_5(tir_pose, incident) == 0.0
+
+
+# --- task-scene-prescan-table Step 1: batch domain check ----------------------
+
+
+def test_batch_domain_check_matches_the_scalar_gate_pose_by_pose():
+    """White-box equivalence of the batch and scalar forms of the four gates.
+
+    Haar samples cover every verdict (valid / ``path_infeasible`` at either
+    face / ``tir_boundary`` at either face); the symmetric pose and a known
+    exit-TIR pose are appended as fixed boundary cases.  Where the scalar
+    check returns early it reports only the entry margins, so only the
+    margins it did evaluate are compared; the batch always reports all four.
+    """
+    incident = np.asarray(minimum_deviation_incident())
+    rotations = np.concatenate(
+        [
+            haar_rotations(2000, np.random.default_rng(7)),
+            np.eye(3)[None],
+            np.asarray(exp(jnp.array([0.5447316801391622, -1.506228738763967, -1.190186580432801])))[None],
+        ]
+    )
+    batch = path_3_5_domain_batch(rotations, incident, 1.31)
+    assert batch.valid.shape == (rotations.shape[0],)
+    assert batch.direction.shape == (rotations.shape[0], 3)
+    assert set(batch.margins) == set(DOMAIN_MARGIN_NAMES)
+    verdicts = set()
+    for i, rotation in enumerate(rotations):
+        scalar = path_3_5_domain(rotation, incident, 1.31)
+        verdicts.add(scalar.event_kind)
+        assert bool(batch.valid[i]) == scalar.valid
+        for name, value in scalar.margins.items():
+            assert batch.margins[name][i] == pytest.approx(value, rel=1e-12, abs=1e-15)
+        if scalar.valid:
+            direction = np.asarray(path_3_5(jnp.asarray(rotation), jnp.asarray(incident), jnp.asarray(1.31)).direction)
+            # vmap lowers ``rotation @ normal`` to a batched contraction whose
+            # summation order differs from the scalar dot: ulp-level only.
+            assert np.allclose(batch.direction[i], direction, rtol=0, atol=1e-14)
+            assert np.linalg.norm(batch.direction[i]) == pytest.approx(1.0, abs=1e-12)
+    assert verdicts == {None, "path_infeasible", "tir_boundary"}
+    assert 0 < batch.valid.sum() < rotations.shape[0]
+
+
+def test_batch_domain_check_validates_its_inputs():
+    incident = np.asarray(minimum_deviation_incident())
+    with pytest.raises(ValueError, match="shape"):
+        path_3_5_domain_batch(np.eye(3), incident)
+    with pytest.raises(ValueError, match="refractive_index"):
+        path_3_5_domain_batch(np.eye(3)[None], incident, -1.0)
+    empty = path_3_5_domain_batch(np.zeros((0, 3, 3)), incident)
+    assert empty.valid.shape == (0,) and empty.direction.shape == (0, 3)
+
+
+def test_batch_fresnel_transmission_matches_the_scalar_form_pose_by_pose():
+    """``fresnel_transmission_3_5_batch`` vs ``fresnel_transmission_3_5`` on Haar samples
+    (every verdict) with no NaN or warning from the invalid rows."""
+    from lumice_integral.optics import fresnel_transmission_3_5_batch
+
+    incident = np.asarray(minimum_deviation_incident())
+    rotations = np.concatenate([haar_rotations(2000, np.random.default_rng(3)), np.eye(3)[None]])
+
+    with np.errstate(all="raise"):
+        batch = fresnel_transmission_3_5_batch(rotations, incident, ICE_REFRACTIVE_INDEX)
+    scalar = np.array([fresnel_transmission_3_5(r, incident, ICE_REFRACTIVE_INDEX) for r in rotations])
+
+    assert batch.shape == (len(rotations),) and batch.dtype == np.float64
+    assert np.all(np.isfinite(batch))
+    # The batch reads its cosines off the jitted ``path_3_5`` while the scalar
+    # form recomputes them in numpy: round-off only (observed 7e-15).
+    np.testing.assert_allclose(batch, scalar, rtol=0.0, atol=1e-13)
+    assert 0 < np.count_nonzero(batch) < len(batch)

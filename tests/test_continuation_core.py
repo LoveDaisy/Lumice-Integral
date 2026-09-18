@@ -20,6 +20,7 @@ from lumice_integral.continuation import (
     _correct_closure,
     _evaluate_regular_state,
     _adapt_accepted_step,
+    _event_step_limit,
     retract_to_fiber,
     trace_fiber,
 )
@@ -366,6 +367,119 @@ def test_residual_headroom_participates_in_step_adaptation():
     assert _adapt_accepted_step(0.04, near_residual_limit, options) < 0.04
 
 
+def _easy_accepted_outcome(margins: dict[str, float]):
+    """An accepted outcome that satisfies every non-event ``easy`` gate."""
+    problem = analytic_problem()
+    options = ContinuationOptions()
+    initial = _evaluate_regular_state(problem, options, problem.seed)
+    accepted = _correct_trial(
+        problem,
+        options,
+        problem.seed,
+        problem.seed @ exp(0.04 * initial.tangent),
+        initial.tangent,
+    )
+    assert accepted.accepted and accepted.state is not None
+    state = replace(accepted.state, domain=DomainEvaluation(True, margins))
+    return (
+        replace(
+            accepted,
+            state=state,
+            iterations=1,
+            correction_norm=0.0,
+            tangent_dot=1.0,
+            residual_norm=0.0,
+            advance=0.04,
+        ),
+        options,
+    )
+
+
+def test_event_step_limit_only_restrains_margins_that_are_shrinking():
+    threshold = 0.02
+    # Above the threshold: never a limit, whatever the trend.
+    assert _event_step_limit({"m": 0.5}, {"m": 0.9}, 0.04, threshold) == np.inf
+    # Below the threshold but receding or flat (task-continuation-gates-and-
+    # fixtures Step 0: a fiber running parallel to a boundary): no limit.
+    assert _event_step_limit({"m": 0.015}, {"m": 0.014}, 0.04, threshold) == np.inf
+    assert _event_step_limit({"m": 0.015}, {"m": 0.015}, 0.04, threshold) == np.inf
+    # Below the threshold and shrinking: half of the linear arclength to zero.
+    limit = _event_step_limit({"m": 0.015}, {"m": 0.019}, 0.04, threshold)
+    assert limit == pytest.approx(0.5 * 0.015 * 0.04 / 0.004)
+    # The tightest margin wins.
+    assert _event_step_limit(
+        {"m": 0.015, "n": 0.005}, {"m": 0.019, "n": 0.01}, 0.04, threshold
+    ) == pytest.approx(0.5 * 0.005 * 0.04 / 0.005)
+    # Unknown history or no advance: unknown rate, shrink as before.
+    assert _event_step_limit({"m": 0.015}, {}, 0.04, threshold) == 0.0
+    assert _event_step_limit({"m": 0.015}, {"m": 0.019}, 0.0, threshold) == 0.0
+    # No margins at all (the analytic fixture): nothing to restrain.
+    assert _event_step_limit({}, {}, 0.04, threshold) == np.inf
+
+
+def test_step_adaptation_grows_past_a_receding_margin_and_shrinks_into_one():
+    threshold = ContinuationOptions().event_slowdown_margin
+    low = 0.5 * threshold
+    receding, options = _easy_accepted_outcome({"exit_snell_discriminant": low})
+    # Margin below the threshold but not decreasing: the easy gate may grow.
+    grown = _adapt_accepted_step(
+        0.04, receding, options, {"exit_snell_discriminant": low - 1e-4}
+    )
+    assert grown == pytest.approx(0.04 * options.growth_factor)
+    # Same margin, now decreasing fast enough that half the linear distance to
+    # the event is below the current step: shrink, clamped to that distance.
+    approaching = {"exit_snell_discriminant": low + 0.02}
+    shrunk = _adapt_accepted_step(0.04, receding, options, approaching)
+    assert shrunk == pytest.approx(0.5 * low * 0.04 / 0.02)
+    assert shrunk < 0.04 * options.shrink_factor
+    # Decreasing with the limit between the shrunk and the current step: the
+    # ordinary shrink factor applies and the limit does not bite.
+    gently = {"exit_snell_discriminant": low + 0.0065}
+    assert _adapt_accepted_step(0.04, receding, options, gently) == pytest.approx(
+        0.04 * options.shrink_factor
+    )
+    # Decreasing slowly (the strip's edge pixels drift by about -0.03 per
+    # radian): the distance to the event is large and growth is allowed.
+    slow = {"exit_snell_discriminant": low + 0.03 * 0.04}
+    assert _adapt_accepted_step(0.04, receding, options, slow) == pytest.approx(
+        0.04 * options.growth_factor
+    )
+    # No history for a low margin keeps the previous unconditional shrink.
+    assert _adapt_accepted_step(0.04, receding, options, None) == pytest.approx(
+        max(options.minimum_step, 0.0)
+    )
+    assert _adapt_accepted_step(0.04, receding, options) == options.minimum_step
+
+
+def test_first_accepted_step_sees_the_seed_margins_as_its_history():
+    """``accepted_margins[-2]`` exists on the very first accepted step and is
+    the seed's margin set, so a margin already low at the seed is judged by
+    its trend rather than shrunk unconditionally."""
+    calls: list[tuple[dict[str, float], dict[str, float] | None]] = []
+    original = continuation._adapt_accepted_step
+
+    def recording(step, outcome, options, previous_margins=None):
+        calls.append((dict(outcome.state.domain.margins), previous_margins))
+        return original(step, outcome, options, previous_margins)
+
+    def evaluator(rotation):
+        # A constant low margin: never an event, never shrinking.
+        return DomainEvaluation(True, {"m": 0.01})
+
+    problem = analytic_problem(domain_evaluator=evaluator)
+    continuation._adapt_accepted_step = recording
+    try:
+        result = trace_fiber(problem, ContinuationOptions(maximum_accepted_steps=3))
+    finally:
+        continuation._adapt_accepted_step = original
+    assert result.reason == TerminationReason.STEP_BUDGET
+    assert calls[0] == ({"m": 0.01}, {"m": 0.01})
+    assert len(calls) == 3
+    # Flat margin below the threshold: the step was allowed to grow.
+    proposed = [d.proposed_step for d in result.step_diagnostics if d.accepted]
+    assert proposed == pytest.approx([0.04, 0.05, 0.0625])
+
+
 def test_adaptive_analytic_trace_closes_with_quadrature_ready_geometry():
     result = trace_fiber(analytic_problem())
 
@@ -679,3 +793,117 @@ def test_nonfinite_trial_remains_nonfinite_after_retry_exhaustion():
     assert result.status == FiberStatus.NUMERICAL_FAILURE
     assert result.reason == TerminationReason.NON_FINITE
     assert len(result.step_diagnostics) == 3
+
+
+# --- batch retraction (task-resample-and-integrate Step 2) ---------------------
+
+
+def test_batch_retraction_matches_the_scalar_corrector_and_reports_both_residuals():
+    from lumice_integral.canonical_scene import canonical_pixel_problem
+    from lumice_integral.continuation import retract_to_fiber_batch
+    from lumice_integral.resample import resample_fiber
+    from lumice_integral.so3 import rotation_distance
+
+    problem = canonical_pixel_problem()
+    result = trace_fiber(problem)
+    predictors = resample_fiber(result, 65)
+
+    one = retract_to_fiber_batch(problem, predictors.rotations, predictors.phase_tangents, iterations=1)
+    two = retract_to_fiber_batch(problem, predictors.rotations, predictors.phase_tangents, iterations=2)
+
+    assert two.rotations.shape == (65, 3, 3) and two.tangents.shape == (65, 3)
+    assert np.all(one.finite) and np.all(two.finite)
+    # The spline predictor sits ~1e-6 off the fiber; one Newton iteration
+    # leaves ~1e-11, two reach round-off (evidence for the default of 2).
+    assert 1e-8 < one.residual_before.max() < 1e-5
+    np.testing.assert_array_equal(one.residual_before, two.residual_before)
+    assert one.residual_after.max() < 1e-9
+    assert two.residual_after.max() < 1e-14
+    assert two.residual_after.max() < 1e-3 * one.residual_after.max()
+    np.testing.assert_allclose(np.linalg.norm(two.tangents, axis=1), 1.0, atol=1e-14)
+    assert np.all(np.sum(two.tangents * predictors.phase_tangents, axis=1) > 0.99)
+    for index in (0, 7, 40, 64):
+        scalar = retract_to_fiber(
+            problem, ContinuationOptions(), predictors.rotations[index],
+            predictors.rotations[index], predictors.phase_tangents[index],
+        )
+        assert scalar.accepted
+        assert float(rotation_distance(scalar.rotation, two.rotations[index])) < 1e-13
+        assert scalar.jacobian_diagnostic.normal_jacobian == pytest.approx(two.normal_jacobians[index], abs=1e-13)
+        assert float(np.dot(scalar.tangent, two.tangents[index])) > 1.0 - 1e-12
+
+
+def test_batch_retraction_of_far_predictors_reports_large_residuals_instead_of_crashing():
+    from lumice_integral.continuation import retract_to_fiber_batch
+
+    problem = analytic_problem()
+    result = trace_fiber(problem)
+    poses = np.asarray(result.poses[:8])
+    far = np.asarray([pose @ np.asarray(exp(jnp.array([0.4, 0.0, 0.0]))) for pose in poses])
+    phase = np.asarray(result.tangents[:8])
+
+    retraction = retract_to_fiber_batch(problem, far, phase, iterations=1)
+
+    assert retraction.residual_before.min() > 0.1
+    assert np.all(np.isfinite(retraction.residual_after))
+    assert retraction.residual_after.max() > retraction.residual_before.max() * 1e-3
+    with pytest.raises(ValueError):
+        retract_to_fiber_batch(problem, far, phase, iterations=0)
+    with pytest.raises(ValueError):
+        retract_to_fiber_batch(problem, far[:, 0], phase)
+
+
+def test_arclength_to_event_is_the_rate_estimate_behind_the_step_limit():
+    from lumice_integral.continuation import _EVENT_APPROACH_STEP_FRACTION, arclength_to_event
+
+    margins = {"a": 0.01, "b": 0.5}
+    previous = {"a": 0.03, "b": 0.4}
+    assert arclength_to_event(margins, previous, 0.1) == pytest.approx(0.01 * 0.1 / 0.02)
+    assert _event_step_limit(margins, previous, 0.1, 0.02) == pytest.approx(
+        _EVENT_APPROACH_STEP_FRACTION * arclength_to_event(margins, previous, 0.1, threshold=0.02)
+    )
+    assert arclength_to_event({"a": 0.5}, {"a": 0.4}, 0.1) == np.inf
+    assert arclength_to_event({"a": 0.01}, {}, 0.1) == 0.0
+    assert arclength_to_event({"a": 0.01}, {"a": 0.03}, 0.0) == 0.0
+
+
+def test_domain_event_is_only_believed_inside_the_corrector_trust_region():
+    """task-pixel-pipeline-v2 (DECISION 2026-09-17 18:22): a Newton iterate
+    that lands in an invalid domain *outside* the trust region acceptance
+    itself requires (``maximum_correction`` / ``maximum_advance``) is a
+    rejected trial (``corrector_failure``, the step shrinks), not an event;
+    the same invalid domain reached inside the trust region is the event.
+    Pixel (50, 9) of the ch06 strip: a 0.17 loop whose first 0.04 predictor
+    sent the corrector 1.18 rad away into a TIR region and was reported as
+    ``tir_boundary`` with no accepted step."""
+    theta_max = 0.1
+
+    def cap(rotation):
+        margin = theta_max - float(jnp.arctan2(rotation[1, 0], rotation[0, 0]))
+        if margin < 0.0:
+            return DomainEvaluation(False, {"cap": margin}, EventCandidate(TerminationReason.TIR_BOUNDARY, margin))
+        return DomainEvaluation(True, {"cap": margin})
+
+    problem = analytic_problem(domain_evaluator=cap)
+    options = ContinuationOptions()
+    current = jnp.eye(3, dtype=jnp.float64)
+    tangent = jnp.array([0.0, 0.0, 1.0])
+    # A predictor 0.4 rad past the cap along the circle: an invalid domain reached
+    # with zero correction but an advance beyond ``maximum_advance = 0.2``.
+    runaway = jnp.asarray(exp(jnp.array([0.0, 0.0, 0.5])))
+    outcome = _correct_trial(problem, options, current, runaway, tangent)
+    assert not outcome.accepted
+    assert outcome.reason == TerminationReason.CORRECTOR_FAILURE
+    assert outcome.event is None and "trust region" in outcome.message
+    assert outcome.advance == pytest.approx(0.5, abs=1e-9)
+    # The same cap crossed by a predictor inside the trust region is an event.
+    near = jnp.asarray(exp(jnp.array([0.0, 0.0, 0.15])))
+    outcome = _correct_trial(problem, options, current, near, tangent)
+    assert not outcome.accepted
+    assert outcome.reason == TerminationReason.TIR_BOUNDARY
+    assert outcome.event is not None and outcome.event.kind == TerminationReason.TIR_BOUNDARY
+    # End to end the trace still stops at the cap as an event.
+    result = trace_fiber(problem)
+    assert result.status == FiberStatus.EVENT_TERMINATED
+    assert result.reason == TerminationReason.TIR_BOUNDARY
+    assert len(result.poses) > 1
