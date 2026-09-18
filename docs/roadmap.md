@@ -193,6 +193,65 @@ on lower-dimensional subsets of SO(3). Supporting them requires a generalized
 domain and a different dimension count; this is explicitly outside the first
 reconstruction milestone.
 
+### 3.5 Near-term plan (2026-09-18, after scrum `strip-pipeline-v2`)
+
+The writing series' chapters 6-11 fix what the solver must deliver next; the
+order below follows their dependencies, not the solver's own curiosity.
+
+1. **Per-pixel cost** (task `pixel-cost-shape-stable-kernels`): the strip's
+   real single-process cost is `0.29 s` per pixel, not the `0.067 s` of the
+   warm single-pixel benchmark, because candidate-pool and curve sizes change
+   from pixel to pixel and every change recompiles the XLA kernels behind
+   `discovery` (`1112` compilations for `60` pixels); thirty workers each
+   recompiling oversubscribe the cores. Shape-stable kernels (bucketed sizes,
+   or plain numpy for the small SO(3)-distance work) come first because every
+   later item rerenders the full image; target `<= 15 min` for `251 x 801`.
+2. **Defect 2** (rows `300-650` decay; section 3.3) in two halves. (a) The
+   canonical crystal is half as tall as the Lumice remake's: Lumice's
+   `height: 1.0` is `h / diameter` (side planes at inradius `√3/4`, basal at
+   `±h/2`), i.e. `h = 2 x edge`, while `CANONICAL_HEIGHT_RATIO = 1.0` is
+   `h / edge`; the `column1.0` filename was read as `historical-direct` but
+   is convention-dependent. Rendering column `126` with `h / edge = 2`
+   reproduces the historical plateau of rows `175-400` within `+-6 %`
+   (`0.55-0.84` before), taller crystals overshoot. (b) The tail, rows
+   `475-650`, is independent of crystal height (identical values from
+   `h / edge = 1` to `20`) and stays `4x` below the historical raw; its cause
+   is open and a non-tone-mapped Lumice profile
+   (`lumice-raw-profile-oracle`) is the evidence that decides it. Path-class
+   accounting is *not* a suspect here: the `PBD` orbit of `3-5` adds only
+   `3-7`, whose image is identical under the zenith-symmetric density (the
+   prism's `C2'` rotation maps one to the other), a uniform `x2`; all three
+   images are left-right symmetric to `1e-3`.
+3. **Path classes as the rendering unit** (writing chapters 7-9): a halo is a
+   conjugacy class of paths, not one representative path (a single
+   representative can carry `0.4 %` of its class), and comparisons with
+   Lumice under `PBD` or with the notes' 34-class table are class-level. The
+   driver should take a signature class, enumerate its `PBD` orbit with
+   `lumice_integral.geometry`, trace each member and sum. Rank-0 classes
+   (`W = 0`: a point mass in the sun direction, estimated from the prescan
+   table's Haar samples, never traced) come with it. Independent of defect 2.
+4. **Phase II as the chapter-10 tool**: `D_P(u)`, its Jacobian and rank, the
+   fold caustic and the `I ~ 1 / sqrt(D - D_min)` radial profile are the
+   objects chapter 10 needs; section 4's cross-checks against the SO(3) fiber
+   are the acceptance. The renderer-backend question stays deferred.
+5. **Pose-density families** (chapter 11): plate / column / Parry / Lowitz /
+   random with a width parameter, replacing the single zenith-Gaussian column
+   model; the fiber is unchanged, only the integrand. This also turns the
+   `0.5 deg` guess of section 3.3 into a swept parameter.
+
+Deferred unchanged: pixel-space adaptive sampling, GPU kernels, finite solar
+disk (chapter 10's singularity is the point-source one).
+
+### 3.6 Writing-project coupling
+
+- W1 `geometry-depend-on-lumice-integral` (writing repo task 16): the notes
+  depend on this package (path dependency, Python `3.12`), delete their
+  `halo_notes.geometry` copy, and pass `pbd_orbit` as the `symmetry_orbit`
+  callback. Prerequisite here: `lumice_integral/__init__.py` must not import
+  JAX eagerly, so that `import lumice_integral.geometry` stays numpy-only.
+- W2: the notes consume figure-data v3 for the chapter-6 state-space figure;
+  the chapter-6 strip remake waits for defect 2 and the rerender.
+
 ## 4. Phase II: Fiber Reduction
 
 The modern halo-theory framework supplies a second formulation. Let
@@ -239,8 +298,9 @@ that each must become a package immediately:
    entry cross-section `entry_measure`) is owned by `lumice_integral.geometry`.
    That subpackage is pure numpy and sits outside the differentiable graph; it
    supplies the geometric factor $A_P(R)$ that the named physical weights
-   multiply, and is the authoritative implementation that the writing project
-   now calls instead of maintaining its own copy.
+   multiply, and is the designated authoritative implementation; the writing
+   project still carries its own copy until its task
+   `geometry-depend-on-lumice-integral` (W1) switches it over (section 3.6).
 2. **Differential evaluator**: derivatives with respect to local SO(3)
    coordinates, preferably from the same equations as the value evaluator.
 3. **Fiber solver**: seed search, predictor-corrector continuation, component
@@ -346,3 +406,11 @@ produce plausible but systematically wrong radiance.
   geometry implementation. The subpackage stays pure numpy; splitting it into a
   separately installable unit (to avoid the parent package's JAX import) is
   recorded as a follow-up, not done here.
+- **2026-09-18**: the writing project depends on this package directly (no
+  separate geometry package): chapter 10 needs the halo map and Jacobian from
+  here anyway, so the dependency is unavoidable and a third package would only
+  add a repository. The parent package drops its eager JAX import instead.
+- **2026-09-18**: near-term order per section 3.5 — per-pixel cost, defect 2
+  (crystal height convention, then the height-independent tail), path classes
+  as the rendering unit, Phase II as the chapter-10 tool, pose-density
+  families. Path-class accounting is decoupled from defect 2.
