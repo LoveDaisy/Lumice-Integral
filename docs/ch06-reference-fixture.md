@@ -295,7 +295,7 @@ factors are not in the product.
 | ch06 named physical-factor curves | Lumice Integral | Supported for `rho_pose`, `entry_measure`, `fresnel_transmission`, `path_validity` on the canonical pixel fiber (section 4.1, figure-data `weight_<name>` arrays); the pointwise final `integrand` curve (product over `J_perp + epsilon`) is exported alongside | `visibility` (finite-face obstruction) and the radiometric factors remain unavailable. |
 | ch06 one-pixel integrand/integral | Lumice Integral | Supported as a `partial` value: resampled fixed-grid line quadrature over the closed canonical fiber with error estimate and grid/retraction evidence (sections 4.1 and 6, `result.quadrature`); single-pixel component discovery is available as a separate primitive (`lumice_integral.discovery`, procedural `completeness` only) | A completeness certificate; pixel averaging (point value only); the missing factors above. |
 | ch06 single-pixel pipeline (`strip_pixel.render_pixel`) | Lumice Integral | Supported (task-pixel-pipeline-v2, section 7 stage 4): one discovery pass per pixel over the scene prescan table plus the warm seeds of any neighbouring pixels, SO(3)-distance dedup before tracing, one production trace per distinct candidate, closed loops *and* open arcs (forward + backward trace stitched, `resample.OpenArc`) integrated by the resampled quadrature with per-end truncation estimates, linear component sum; `0.07 s` per lit pixel and `0.13 s` per lower-band pixel on the M2 Max | A completeness certificate (`completeness` is procedural); no real open arc exists in the current picture, so the arc path is validated on the analytic two-sided fixture only; the missing factors of the one-pixel row. |
-| ch06 `251 x 801` direct strip | Lumice Integral | Supported as a `partial` physical rerender: `scripts/render_ch06_strip.py` (`lumice_integral.strip_pixel` / `strip_driver` / `strip_io`, format `lumice-integral.strip/v2`) renders any window of the canonical `251 x 801` grid column-wise, each pixel warmed by the one above, and writes float64/float32 raw in the historical layout plus a per-pixel status layer (`has_arc`, `quadrature_unavailable`, ...) and `provenance.json`; pixel model: pixel-centre point value with `epsilon` regularisation (section 7, stage 4); `--workers` is capped at `4` on macOS | A completeness certificate (the status layer is procedural); the missing factors of the one-pixel row; sub-pixel averaging is implemented but off by default (6-10x cost; `O(10-40 %)` effect in the centre-column caustic band, section 7 stage 4); finite-sun averaging. Known limitation on the delivered full image (section 7, stage 4, full rerender): the vertical decay along the centre column is steeper than the historical raw by `3-4x` between rows `150` and `600` (defect 2), located to the geometric factors but not to an implementation error, see `scratchpad/scrum-strip-pipeline-v2/task-strip-rerender-and-compare/artifacts/defect2_findings.md`. |
+| ch06 `251 x 801` direct strip | Lumice Integral | Supported as a `partial` physical rerender: `scripts/render_ch06_strip.py` (`lumice_integral.strip_pixel` / `strip_driver` / `strip_io`, format `lumice-integral.strip/v2`) renders any window of the canonical `251 x 801` grid column-wise, each pixel warmed by the one above, and writes float64/float32 raw in the historical layout plus a per-pixel status layer (`has_arc`, `quadrature_unavailable`, ...) and `provenance.json`; pixel model: pixel-centre point value with `epsilon` regularisation (section 7, stage 4); `--workers` is capped at `4` on macOS | A completeness certificate (the status layer is procedural); the missing factors of the one-pixel row; sub-pixel averaging is implemented but off by default (6-10x cost; `O(10-40 %)` effect in the centre-column caustic band, section 7 stage 4); finite-sun averaging. Known limitation on the delivered full image (section 7, stage 4, full rerender): the vertical decay along the centre column was steeper than the historical raw by `3-4x` between rows `150` and `600` (defect 2); with the `h/a = 2` crystal (2026-09-20) the centre column reproduces the historical plateau on rows `150-400` (`0.89-1.06` relative to row `150`), while the height-independent tail below row `400` (`x4` dark by row `600`) and the horizontal narrowness off the centre column (`0.5-0.7x` at `+-20` columns on rows `300-400`) remain, located to the geometric factors but not to an implementation error, see `scratchpad/scrum-strip-pipeline-v2/task-strip-rerender-and-compare/artifacts/defect2_findings.md` sections 8-9. |
 | ch10 halo-map/Jacobian/fold figures | Lumice Integral numerical data; Writing-Lab presentation | Partially supported | Target sweeps and singular/fold localization beyond one regular fiber. |
 | ch11 orientation-family comparison | Lumice Integral and/or independent Lumice validation | Not supported by the current ordinary-density slice | Pose-density models, physical weights, image driver; exactly constrained families require a separate measure/domain contract. |
 
@@ -678,8 +678,10 @@ color-to-factor mapping.
      `scratchpad/scrum-strip-pipeline-v2/task-strip-rerender-and-compare/artifacts/`
      (`compare_metrics.json`, `strip_images_v2.png`, `strip_profiles_v2.png`,
      `defect2_probe.json`, `defect2_findings.md`); the render itself is
-     `artifacts/strip-full/` (git-ignored, `provenance.json` format
-     `lumice-integral.strip/v2`, `columns_resumed = 0`).
+     `artifacts/strip-full-h1/` since 2026-09-20 (git-ignored,
+     `provenance.json` format `lumice-integral.strip/v2`,
+     `columns_resumed = 0`; `artifacts/strip-full/` now holds the
+     `h/a = 2` render, see the crystal height item below).
    - Morphology of the v1 every-ninth-column preview against the historical
      raw (native orientation, Spearman rank correlation; superseded by the
      full-rerender comparison above): `0.990` on the `16876` pixels lit in both, `0.970` on
@@ -748,7 +750,8 @@ color-to-factor mapping.
      quadrature work times `251 x 801 / (16 physical cores x SMT)`.
      Evidence: `scratchpad/task-pixel-cost-shape-stable-kernels/evidence/`
      (`mac_col126_*.json`, `wsl_col126_rows0-801.json`, `probes/*/`,
-     `full-w30/`); the render is `artifacts/strip-full-v3/`.
+     `full-w30/`); the render is `artifacts/strip-full-v3-h1/` (renamed
+     from `strip-full-v3` on 2026-09-20, `h/a = 1`).
    - Mac versus `home-wsl` cross-check on the 20 pixels both rendered
      (column 153, rows 140-159): maximum relative difference `3.1e-7` (below
      the `1e-6` quadrature tolerance), component counts identical, status
@@ -785,7 +788,47 @@ color-to-factor mapping.
      from `0.082-0.149` at row `150` to `0.477-2.09` at row `650`; the AD
      value is confirmed, so the `x4` denominator growth of the defect 2
      localisation is real geometry, not a differentiation error (this
-     check is crystal-independent).
+     check is crystal-independent). Full rerender on the `h/a = 2`
+     crystal (`home-wsl`, `30` workers, `2030 s` wall clock, `201051`
+     pixels all `complete`, `0` `has_arc`, `187406` lit, `15`
+     `node_count_exhausted` against `845` before): along column `126`
+     the ratio ours/historical relative to row `150` (the section 8
+     probe's definition, `column_plateau.py`) is `0.886-1.058` on rows
+     `150-400`, `248` of `251` rows inside `0.9-1.1` and the three
+     outside are rows `398-400` (`0.896 / 0.891 / 0.886`) where the tail
+     decay begins (`0.777` by row `420`); with `h/a = 1` the same rows
+     read `0.549-1.0` (`39 %` inside). Per-50-row max-normalised ratios
+     (`compare_strip_v2.py::column_decay_ratio`): `1.03 / 1.02 / 1.06 /
+     1.10 / 1.04` on rows `150-400` (`0.93 / 0.88 / 0.83 / 0.75 / 0.61`
+     before), then `0.78 / 0.49 / 0.33 / 0.28 / 0.26 / 0.22` on rows
+     `400-700` (`0.44 / 0.31 / 0.26 / 0.24 / 0.23 / 0.20` before): the
+     plateau is reproduced, the height-independent tail is not moved
+     (second half of defect 2, `lumice-raw-profile-oracle`). The plateau
+     is a centre-column result: `+-5` columns `93-96 %` of rows `150-400`
+     inside `0.9-1.1`, `+-10` columns `68-82 %`, `+-20` columns `37-39 %`
+     with rows `350-400` at `0.52-0.57` (the old centre-column
+     signature); the horizontal profile at row `150` now matches the
+     historical raw to `+-7 %` over `+-20` columns (`0.69-0.87` before)
+     while row `300` is still `0.6-0.8x` at `+-20` columns (`0.37-0.61`
+     before), and the lit width above `1e-3` is `121 / 129 / 139` columns
+     at rows `150 / 300 / 450` against the historical `143 / 157 / 129`
+     (`119 / 121 / 127` before). Log-RMS along column `126` versus
+     historical `0.443 -> 0.389`, row `150` `0.487 -> 0.447`, row `300`
+     `0.688 -> 0.542`, row `450` `0.124 -> 0.224` (the turnover row);
+     whole-image Spearman versus historical `0.985 -> 0.949` (lit in
+     both), versus the Lumice PNG `0.947 -> 0.967`; inner-edge rows
+     unchanged (`47 / 57 / 60`). The row-band ratio relative to the
+     whole-image median now reads `1.79` (rows `50-100`) `.. 1.28` (rows
+     `350-400`) `.. 0.21` (rows `750-800`), a `8.7x` slide against `8.4x`
+     before, because the plateau rows rose while the tail did not.
+     Evidence: `scratchpad/task-defect2-crystal-height-convention/artifacts/`
+     (`column_plateau.{py,json,log}`, `compare_metrics.json`,
+     `compare_strip_v2.log`, `strip_images_v2.png`,
+     `strip_profiles_v2.png`, `jperp_fd.json`, `figure-data/`); the
+     render is `artifacts/strip-full/` (git-ignored, `columns_resumed =
+     0`, fresh directory, so `--resume` could not have mixed `h/a = 1`
+     checkpoints in: the driver's options fingerprint does not cover the
+     crystal).
    Radiometric normalisation is not aligned in either comparison (the strip
    is the partial integrand, the historical raw has unknown units, the
    Lumice PNG is tone-mapped 8-bit): the v1 preview comparison was
