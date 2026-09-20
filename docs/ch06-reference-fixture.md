@@ -89,7 +89,7 @@ Horizontal sign remains ambiguous from this near-symmetric image alone.
 
 | Property | Value | Provenance |
 |----------|-------|------------|
-| Crystal | hexagonal column, height/radius ratio `1.0` | `historical-direct`: `column1.0` filenames |
+| Crystal | hexagonal column, height/edge ratio `h/a = 2.0` | `canonical-new`: the `column1.0` filenames carry a convention-dependent number, not the crystal itself; see the height note below |
 | Ray path | side faces `3-5` | `historical-direct`: `rp35` filename and chapter text |
 | Solar altitude | `15 deg` | `historical-inferred`: `180+15` filename plus the old all-sky annotation |
 | Image size | `251 x 801` | `historical-direct` |
@@ -106,6 +106,23 @@ elevation=-15 deg)`, and resolution `251 x 801`. After a small integer
 registration its `10^9`-ray image correlates with the old `10^9`-ray image at
 approximately `0.963`. This supports it as the canonical validation scene, not
 as proof of exact historical settings.
+
+Crystal height note (2026-09-20). The `column1.0` filenames and the Lumice
+remake's `"height": 1.0` are the same number under the Lumice convention,
+`h / (base circumscribed diameter)`: in Lumice `src/core/geo3d_closedform.cpp`
+(read as evidence, never linked) the six side faces sit at inradius
+`sqrt(3)/4 * dist` and the bases at `z = +-h/2`, so `dist` is the circumscribed
+diameter and the hexagon edge is `a = dist / 2`. Lumice Integral's
+`HexPrism.from_ratio` takes `h / a` with `a` the hexagon edge, so the same
+crystal is `h / a = 2 * 1.0 = 2.0` (`canonical_scene.LUMICE_HEIGHT_OVER_DIAMETER`
+and `CANONICAL_HEIGHT_RATIO`). Until 2026-09-20 the canonical scene used
+`h / a = 1.0`, half the Lumice height; a single-column probe (column `126`,
+rows `100-650`, `scrum-strip-pipeline-v2/task-strip-rerender-and-compare`,
+`defect2_findings.md` section 8) showed that the `h / a = 1` crystal loses the
+historical plateau at rows `175-400` (ratio to row `150` falling `0.97 -> 0.55`)
+while `h / a = 2` reproduces it (`0.98-1.06`). The ratio is therefore
+`canonical-new` evidence tied to the Lumice convention, not a historically
+recorded crystal dimension.
 
 ### 3.4 Historical convergence evidence
 
@@ -202,7 +219,7 @@ assembly) and `lumice_integral.camera` (pixel-to-direction adapter).
 | Pixel | row `150`, column `150` (pixel centre `u = 150.5`, `v = 150.5`); sky elevation `-9.0395 deg`, azimuth `+0.6024 deg`; deviation from the sun `24.047 deg` | `canonical-new` |
 | Pixel rationale | on the lit `3-5` band of the historical strip (raw value about `0.23`), about `2.2 deg` below the inner-edge caustic, right of the sun azimuth (`3-5` chirality) | historical raw array plus screen handedness |
 | Target `d` | `[-0.9875255807607193, -0.010382806499944452, 0.1571159593179154]` (crystal to observer; the sky direction negated at the adapter boundary) | derived |
-| Crystal | hexagonal column `h/a = 1.0` (`HexPrism.from_ratio(1.0)`, `a = 1`) | `historical-direct` ratio |
+| Crystal | hexagonal column `h/a = 2.0` (`HexPrism.from_ratio(2.0)`, `a = 1`; equals Lumice `height 1.0` = h / diameter) | `canonical-new`, section 3.3 height note |
 | Pose density | c-axis zenith Gaussian, mean `90 deg`, std `0.5 deg`, uniform azimuth and spin, relative to Haar probability | `canonical-new` |
 | Seed | `Exp([-1.6021189246370302, -0.06647507226372225, 0.614105700979059])` | one recorded prescan, below |
 

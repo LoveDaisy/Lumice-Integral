@@ -273,7 +273,7 @@ def scene_block() -> dict[str, Any]:
         "path": {"value": [3, 5], "provenance": "historical-direct"},
         "crystal": {
             "value": {"type": "hexagonal_column", "height_ratio": CANONICAL_HEIGHT_RATIO},
-            "provenance": "historical-direct",
+            "provenance": "canonical-new",
         },
         "sun": {
             "value": {"altitude_deg": CANONICAL_SUN_ALTITUDE_DEG, "azimuth_deg": CANONICAL_SUN_AZIMUTH_DEG, "diameter_deg": 0.0},

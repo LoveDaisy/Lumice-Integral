@@ -26,7 +26,13 @@ from .pose_density_provenance import pose_density_provenance
 from .so3 import exp
 from .weights import build_3_5_weight_evaluators
 
-CANONICAL_HEIGHT_RATIO = 1.0  # hexagonal column, h / a with a = hexagon edge length
+# Lumice's crystal ``"height": 1.0`` means h / (base circumscribed diameter): its
+# side faces sit at inradius sqrt(3)/4 * dist and its bases at z = +-h/2
+# (``src/core/geo3d_closedform.cpp``, read as evidence, never linked), so the base
+# circumscribed diameter is 1 and the hexagon edge is a = 1/2.  ``HexPrism.from_ratio``
+# takes h / a with a = hexagon edge length, so the same crystal is 2 x the Lumice number.
+LUMICE_HEIGHT_OVER_DIAMETER = 1.0  # the Lumice remake and the ``column1.0`` filenames
+CANONICAL_HEIGHT_RATIO = 2.0 * LUMICE_HEIGHT_OVER_DIAMETER  # h / a, hexagonal column
 CANONICAL_REFRACTIVE_INDEX = 1.31
 CANONICAL_WAVELENGTH_NM = 550.0
 CANONICAL_SUN_ALTITUDE_DEG = 15.0

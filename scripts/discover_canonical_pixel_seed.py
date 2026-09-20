@@ -55,7 +55,7 @@ CANONICAL_RENDER = {
 }
 SUN_ALTITUDE_DEG = 15.0
 REFRACTIVE_INDEX = 1.31
-HEIGHT_RATIO = 1.0
+HEIGHT_RATIO = 2.0  # h / edge; keep in step with canonical_scene.CANONICAL_HEIGHT_RATIO
 
 
 def haar_rotations(count: int, rng: np.random.Generator) -> np.ndarray:
