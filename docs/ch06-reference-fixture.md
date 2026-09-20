@@ -571,7 +571,10 @@ color-to-factor mapping.
      `tests/test_resample_quadrature.py`).  Baselines: canonical `2.364412980`
      unchanged, `(700,150)` `5.408495`, `(780,150)` `5.635867`, `(60,126)`
      `0.466397` / `19.038`, `(50,9)` one loop `0.165603` (the dedup pair of
-     the survey is folded).  Cost on the M2 Max (warm process, medians):
+     the survey is folded).  Cost on the M2 Max (warm process, medians,
+     `probe_step7_timing.py`: the same pixel rerun with every kernel shape
+     already cached, i.e. a hot-cache lower bound, not the strip's cost;
+     see the per-pixel cost item below for the column ruler):
      canonical `0.067 s` (trace `0.040`, quadrature `0.021`), lit warm
      `0.075 s`, lower band `0.12-0.13 s`, dark `0.005 s`, against `5.8 s`
      for the canonical pixel before; the trace is now ~60 % of a lit pixel.
@@ -592,9 +595,9 @@ color-to-factor mapping.
      `30 min` target was missed by `3.7x`, the `2 h` hard stop was not
      reached), `618-894 s` per column (median `750 s`), i.e. `0.8-1.1 s`
      per pixel per worker against `0.07-0.13 s` measured single-process on
-     the M2 Max: the per-pixel cost under `30` workers is about `10x` the
-     warm single-process figure and is not diagnosed (load average `48` on
-     `32` cores, `56 GB` resident; oversubscription is the suspect).
+     the M2 Max: the per-pixel cost under `30` workers was about `10x` the
+     warm single-process figure (load average `48` on `32` cores, `56 GB`
+     resident); diagnosed and reduced by the per-pixel cost item below.
      Result: `201051` pixels rendered, all `complete`, `0`
      `unknown_completeness`, `0` `has_arc`, `187406` lit, `845`
      `node_count_exhausted`; the lower quarter that was `43-100 %` unknown
@@ -670,6 +673,62 @@ color-to-factor mapping.
      the `3-5` = right-parhelion chirality is consistent with the historical
      raw. Left-right flip changes the whole-mask correlation by only `2e-5`,
      so correlation alone does not pin chirality; the side agreement above does.
+   - Per-pixel cost (task-pixel-cost-shape-stable-kernels, 2026-09-20).
+     Ruler: `benchmarks/benchmark_column_steady_state.py` renders one
+     column single-process through `strip_driver.render_column` (warm
+     seeds from the pixel above, production options), times every pixel
+     and counts XLA compilations (`jax.log_compiles`); steady state =
+     median after the first `10` pixels. Before: column `126` rows
+     `100-160` on the M2 Max, `1065` compilations for `60` pixels, steady
+     mean `0.273 s` per pixel (median `0.137`), pixels alternating between
+     `0.13 s` / `3` compilations and `0.55 s` / `35` compilations, i.e. the
+     hot single-pixel `0.067 s` above is a lower bound the strip did not
+     reach. Cause: `jax.jit(vmap(rotation_distance))` in `discovery`
+     recompiled for every distinct candidate-pool size and curve length,
+     and the eager `jax.vmap` quaternion batches in `resample.py`
+     recompiled ~`30` primitives for every new accepted-pose count. Fix:
+     `so3.rotation_distances` (numpy batch of the same formula, ulp-locked
+     to `rotation_distance` by `tests/test_so3.py`) for pool clustering and
+     curve dedup; the quaternion batches compiled once per power-of-two
+     bucket (padding is elementwise-isolated, bit-identical to the unpadded
+     kernel, `tests/test_resample.py`). After: `101` compilations for the
+     same `60` pixels (`5` past the first pixel), steady mean `0.066 s`
+     (median `0.064`); the full column `0-801`: `85.7 s`, steady median
+     `0.109 s` per pixel, `143` compilations with only `6` pixels compiling
+     (the first, the first lit one, and new resample grid sizes); on
+     `home-wsl` single-process `138 s`, median `0.181 s` per pixel. Column
+     `126` against `artifacts/strip-full`: values within `7.3e-14`
+     relative, status bits and component counts identical. Worker probe on
+     `home-wsl` (Ryzen 9 9950X, `16` cores / `32` threads, `94 GB`;
+     `JAX_PLATFORMS=cpu`, `--xla_cpu_multi_thread_eigen=false`,
+     `OMP_NUM_THREADS=1`, no persistent compile cache, one output directory
+     per worker count): per-column seconds (min/median/max) `138` at `1`
+     worker, `168/169/172` at `4`, `204-208` at `8`, `247/256/263` at `16`,
+     `213/228/249` at `30`, `217/239/250` at `32`; total throughput
+     `5.8 / 19 / 31 / 48 / 100 / 95` px/s; load average `1.06-1.5x` the
+     worker count in steady state (`1.7x` for the first minute while every
+     worker compiles its first pixel), `530-560 MB` resident per worker,
+     flat. A worker is one busy main thread plus three JAX execution
+     helpers (`1.06` cores in total); `llvm-worker` compile threads are
+     idle after the first pixel, so compile-thread oversubscription is gone
+     and neither `jax_compilation_cache_dir` nor a compile-thread cap is
+     needed. The per-worker rate falls from `5.8` to `3.1-3.5` px/s with
+     SMT sharing beyond `16` workers; throughput is flat between `30` and
+     `32`, so `30` workers (the logical CPU count minus two) is the
+     recommendation. Full `251 x 801` rerender (`30` workers, 14:15-14:49
+     UTC+8): `2085 s` wall clock (`35 min`, `3.2x` faster than `6699 s`),
+     `204-257 s` per column (median `230`), `201051` pixels, `187406` lit,
+     `0` `unknown_completeness`, `0` `has_arc`; against
+     `artifacts/strip-full` every status byte and component count is
+     identical, the `float32` layer is byte-identical, `strip_float64.bin`
+     differs by at most `8.1e-13` relative (`24476` pixels bit-identical;
+     the rest at the last-bit level, consistent with XLA fusion in the now-jitted quaternion batches).
+     The `<= 15 min` target is missed by `2.3x`: the strip now runs at the
+     hot-cache per-pixel floor, so the remaining wall clock is trace and
+     quadrature work times `251 x 801 / (16 physical cores x SMT)`.
+     Evidence: `scratchpad/task-pixel-cost-shape-stable-kernels/evidence/`
+     (`mac_col126_*.json`, `wsl_col126_rows0-801.json`, `probes/*/`,
+     `full-w30/`); the render is `artifacts/strip-full-v3/`.
    - Mac versus `home-wsl` cross-check on the 20 pixels both rendered
      (column 153, rows 140-159): maximum relative difference `3.1e-7` (below
      the `1e-6` quadrature tolerance), component counts identical, status
