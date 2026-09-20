@@ -266,9 +266,21 @@ order below follows their dependencies, not the solver's own curiosity.
    row). Not tuned further here: the residual is the tail plus the
    off-centre narrowness, both for (b). (b) The tail, rows
    `475-650`, is independent of crystal height (identical values from
-   `h / edge = 1` to `20`) and stays `4x` below the historical raw; its cause
-   is open and a non-tone-mapped Lumice profile
-   (`lumice-raw-profile-oracle`) is the evidence that decides it. Path-class
+   `h / edge = 1` to `20`) and stays `4x` below the historical raw. Closed
+   2026-09-20 (task `lumice-raw-profile-oracle`): the non-tone-mapped
+   `1e9`-ray Lumice float export agrees with this renderer at the Monte
+   Carlo noise floor on columns `106 / 126 / 146` and rows `150-600`
+   (lit-band log-RMS `0.03` against a `0.04-0.06` run-to-run floor), and
+   the historical raw is the outlier of the three (`0.39-0.41`): the tail,
+   the off-centre narrowness and the inner-edge offset are all properties
+   of the historical raw. **Ruling (author, 2026-09-20): the historical
+   raw is no longer a correctness reference for this renderer, and its
+   remaining discrepancies are not traced further; agreement with the
+   Lumice Monte Carlo result is the criterion.** The historical raw stays
+   in the fixture only as a morphology / provenance record (section 3.3).
+   Still unchecked: the absolute radiometric scale between the two (every
+   profile above is max-normalised; `emitted_energy` bookkeeping, `P x6` /
+   `PBD x12`), recorded in the backlog. Path-class
    accounting is *not* a suspect here: the `PBD` orbit of `3-5` adds only
    `3-7`, whose image is identical under the zenith-symmetric density (the
    prism's `C2'` rotation maps one to the other), a uniform `x2`; all three
@@ -490,3 +502,7 @@ produce plausible but systematically wrong radiance.
   plane through the c axis (this renderer's own reference, not Lumice's mesh
   numbering). Provenance grows a trailing `family` key; the column block is
   otherwise unchanged.
+- **2026-09-20**: defect 2 closed by the Lumice float oracle (section 3.5
+  item 2b): this renderer and Lumice agree at the noise floor, the
+  historical raw is the outlier. Author's ruling: the historical raw is no
+  longer a correctness reference and is not traced further.
