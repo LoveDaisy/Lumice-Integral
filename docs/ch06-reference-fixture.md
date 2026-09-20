@@ -246,12 +246,12 @@ Current expected evidence (Mac reference environment):
 | Fiber length | `2.379121` rad |
 | c-axis zenith along the loop | about `87.39 .. 90.09 deg` |
 | `rho_pose` | `1.1e-4 .. 91.43` (dimensionless, Haar-relative) |
-| `entry_measure` | `0.278 .. 0.559` (`length^2`, `a = 1`) |
+| `entry_measure` | `0.763 .. 1.111` (`length^2`, `a = 1`, `h = 2`; `0.278 .. 0.559` on the `h/a = 1` crystal used until 2026-09-20) |
 | `fresnel_transmission` | `0.9354 .. 0.9416` |
 | `path_validity` | `1` at every accepted pose |
 | Normal Jacobian range | about `0.0822 .. 0.1497` |
 | `visibility`, `source_factor`, `pixel_factor`, `other_radiometric` | `unavailable` |
-| Line integral `value` (Haar-converted, `partial`) | `2.364400114` with `error_estimate` about `5.7e-5` (`raw_value` about `186.6855`, before the `1/(8 pi^2)` factor); `1.0e-5` below the retired adaptive integrator's `2.364423815 +- 6.0e-9` (rtol `1e-8`), which stays the frozen alignment reference (`tests/test_resample_quadrature.py::ADAPTIVE_REFERENCE`) |
+| Line integral `value` (Haar-converted, `partial`) | `6.581373260` with `error_estimate` about `1.4e-4` (`raw_value` about `519.6444`, before the `1/(8 pi^2)` factor) on the `h/a = 2` crystal (2026-09-20, task `defect2-crystal-height-convention`; the pipeline's discovered-seed value is `6.581419934`, `tests/test_strip_pixel.py`). On the `h/a = 1` crystal used until then the same fiber gave `2.364400114` (`raw_value` about `186.6855`), `1.0e-5` below the retired adaptive integrator's `2.364423815 +- 6.0e-9` (rtol `1e-8`); that value stays the frozen alignment reference and its test binds the `h/a = 1` crystal explicitly (`tests/test_resample_quadrature.py::ADAPTIVE_REFERENCE`, `REFERENCE_CRYSTAL`), because the retired integrator cannot re-record on the new crystal. The crystal only enters through `entry_measure`; poses, length, `J_perp` and the node count are unchanged |
 | Quadrature method | resampled fixed grid (`task-resample-and-integrate`): C1 cubic Hermite quaternion spline through the accepted poses with the trace's exact tangents, uniform grid of the cumulative-chord parameter, every node retracted onto the fiber by `2` batched bordered Newton iterations, exact `ds/dt` from the implicit function theorem at the retracted node, composite Simpson, error estimate `\|I_N - I_(N+1)/2\|`, node count doubled (`N -> 2N - 1`) until the estimate meets `relative_tolerance`; `epsilon = 1e-6`, `relative_tolerance = 1e-4`, `initial_node_count = 129`, `maximum_node_count = 1025` |
 | Quadrature work | `257` grid nodes after one doubling (`129 -> 257`), predictor residual before retraction at most `1.2e-6`, after retraction at most `3.6e-16`, no non-finite node; about `19 ms` per fiber (Mac reference environment, warm), against `2.4 s` for the retired adaptive integrator at rtol `1e-8` (`713` nodes) and `0.92 s` at its production rtol `1e-6` |
 | Convergence | the uniform grid converges at order about `2` because `entry_measure` has slope jumps (footprint-clipping vertex events) that fall between grid nodes: deviation from the adaptive reference `7.0e-5 / 3.4e-5 / 1.0e-5 / 3.4e-6` at `65 / 129 / 257 / 513` nodes; the `\|I_N - I_(N+1)/2\|` estimate bounded the actual deviation on every fixture checked |
@@ -585,10 +585,13 @@ color-to-factor mapping.
      `4` workers, `671 s`): `1954` lit, all closed, no multi-pose
      event-terminated candidate, so the arc path is validated on the
      analytic two-sided circle only (`tests/test_discovery.py`,
-     `tests/test_resample_quadrature.py`).  Baselines: canonical `2.364412980`
-     unchanged, `(700,150)` `5.408495`, `(780,150)` `5.635867`, `(60,126)`
-     `0.466397` / `19.038`, `(50,9)` one loop `0.165603` (the dedup pair of
-     the survey is folded).  Cost on the M2 Max (warm process, medians,
+     `tests/test_resample_quadrature.py`).  Baselines (on the `h/a = 1`
+     crystal of that date): canonical `2.364412980` unchanged, `(700,150)`
+     `5.408495`, `(780,150)` `5.635867`, `(60,126)` `0.466397` / `19.038`,
+     `(50,9)` one loop `0.165603` (the dedup pair of the survey is folded).
+     Since 2026-09-20 (`h/a = 2`, task `defect2-crystal-height-convention`)
+     the lengths and counts are unchanged and the values are canonical
+     `6.581419934`, `(60,126)` `39.366`.  Cost on the M2 Max (warm process, medians,
      `probe_step7_timing.py`: the same pixel rerun with every kernel shape
      already cached, i.e. a hot-cache lower bound, not the strip's cost;
      see the per-pixel cost item below for the column ruler):
@@ -750,6 +753,39 @@ color-to-factor mapping.
      (column 153, rows 140-159): maximum relative difference `3.1e-7` (below
      the `1e-6` quadrature tolerance), component counts identical, status
      bits identical except the window-relative `cold_discovery` spot-check phase.
+   - Crystal height convention and the independent `J_perp` check
+     (task-defect2-crystal-height-convention, 2026-09-20). Defect 2, first
+     half: the canonical crystal was `h/a = 1` while the Lumice remake's
+     `height 1.0` is `h / diameter = 2` in that ratio (section 3.3 height
+     note); the canonical scene now uses `h/a = 2`. The crystal enters the
+     integrand only through `entry_measure`, so every fiber, length, pose
+     count, `J_perp` and discovery count baseline is unchanged
+     (`tests/test_discovery.py`, `tests/test_reference_core_conformance.py`
+     pass untouched) and only the pixel values move (canonical
+     `2.364412980 -> 6.581419934`, `(60,126)` `19.038 -> 39.366`); the
+     baselines recorded on the old crystal by tools that cannot re-record
+     (the retired adaptive integrator, the independent `scipy.integrate.quad`
+     zenith-width probe) keep that crystal explicitly in their tests. The
+     `h/a = 1` full render is kept as `artifacts/strip-full-h1/` (and the
+     bit-identical `strip-full-v3-h1/`). `J_perp` independent check
+     (`scratchpad/task-defect2-crystal-height-convention/artifacts/probe_jperp_fd.py`,
+     column `126`, rows `150-650` step `50`, `1140` accepted poses of the
+     `11` production traces): the `(2, 3)` target-chart residual Jacobian
+     that `continuation._local_residual_jacobian_kernel` differentiates
+     with `jax.jacfwd` (`delta -> chart_basis.T @ (direction(R exp(delta))
+     - chart_direction)`, right-trivialized coordinates) was rebuilt by
+     central differences of the same map and its two singular values
+     multiplied. Step sweep `1e-4 / 1e-5 / 1e-6 / 1e-7`: the worst relative
+     difference per row scales as `h^2` from `1e-4` to `1e-5`
+     (`7.5e-8 .. 5.5e-6` to `7.6e-10 .. 5.5e-8`), plateaus at `1e-6`
+     (`2.8e-10 .. 7.5e-10`) and rises again at `1e-7` (round-off,
+     `1.9e-9 .. 5.9e-9`); at the plateau step the worst relative
+     difference over all `1140` poses is `7.5e-10` against the `1e-4`
+     acceptance (`jperp_fd.json`). `J_perp` along column `126` grows
+     from `0.082-0.149` at row `150` to `0.477-2.09` at row `650`; the AD
+     value is confirmed, so the `x4` denominator growth of the defect 2
+     localisation is real geometry, not a differentiation error (this
+     check is crystal-independent).
    Radiometric normalisation is not aligned in either comparison (the strip
    is the partial integrand, the historical raw has unknown units, the
    Lumice PNG is tone-mapped 8-bit): the v1 preview comparison was
