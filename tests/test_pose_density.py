@@ -5,6 +5,7 @@ import pytest
 
 from lumice_integral.pose_density import (
     ZenithGaussianPoseDensity,
+    c_axis_roll,
     c_axis_zenith,
     column_zenith_pose_density,
     zenith_marginal_integral,
@@ -96,3 +97,47 @@ def test_batch_density_matches_the_scalar_call_pose_by_pose():
     np.testing.assert_allclose(batch, scalar, rtol=0.0, atol=1e-12)
     with pytest.raises(ValueError):
         density.evaluate_batch(np.eye(3))
+
+
+def chain_rotation(az_rad: float, zenith_rad: float, roll_rad: float) -> np.ndarray:
+    """``R = Rz(az - pi) . Ry(-zenith) . Rz(roll)`` written out (independent of the module)."""
+
+    def rz(angle: float) -> np.ndarray:
+        c, s = np.cos(angle), np.sin(angle)
+        return np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
+
+    def ry(angle: float) -> np.ndarray:
+        c, s = np.cos(angle), np.sin(angle)
+        return np.array([[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]])
+
+    return rz(az_rad - np.pi) @ ry(-zenith_rad) @ rz(roll_rad)
+
+
+def wrapped_difference(a: float, b: float) -> float:
+    return float((a - b + np.pi) % (2.0 * np.pi) - np.pi)
+
+
+def test_c_axis_roll_round_trips_the_chain_rotation_off_the_poles():
+    """Construct (az, zenith, roll) -> R -> c_axis_roll(R) recovers roll mod 2 pi; zenith 10..170 deg."""
+    for az_deg in (0.0, 37.0, 90.0, 181.0, 359.0):
+        for zenith_deg in (10.0, 45.0, 90.0, 135.0, 170.0):
+            for roll_deg in (-179.0, -90.0, -1.0, 0.0, 1.0, 60.0, 120.0, 179.0):
+                rotation = chain_rotation(np.radians(az_deg), np.radians(zenith_deg), np.radians(roll_deg))
+                assert c_axis_zenith(rotation) == pytest.approx(np.radians(zenith_deg), abs=1e-12)
+                assert wrapped_difference(c_axis_roll(rotation), np.radians(roll_deg)) == pytest.approx(0.0, abs=1e-12)
+
+
+def test_c_axis_roll_is_the_body_e1_elevation_reference():
+    # roll = 0 with a horizontal c axis: body e1 (face-3 normal) points straight up.
+    rotation = chain_rotation(np.radians(123.0), np.pi / 2.0, 0.0)
+    np.testing.assert_allclose(rotation @ np.array([1.0, 0.0, 0.0]), [0.0, 0.0, 1.0], atol=1e-12)
+    # A spin about the c axis by delta changes the extracted roll by delta and nothing else.
+    base = chain_rotation(np.radians(20.0), np.radians(70.0), np.radians(15.0))
+    axis = base @ np.array([0.0, 0.0, 1.0])
+    delta = np.radians(33.0)
+    k = np.array([[0.0, -axis[2], axis[1]], [axis[2], 0.0, -axis[0]], [-axis[1], axis[0], 0.0]])
+    spun = (np.eye(3) + np.sin(delta) * k + (1.0 - np.cos(delta)) * k @ k) @ base
+    assert c_axis_zenith(spun) == pytest.approx(c_axis_zenith(base), abs=1e-12)
+    assert wrapped_difference(c_axis_roll(spun), c_axis_roll(base) + delta) == pytest.approx(0.0, abs=1e-12)
+    with pytest.raises(ValueError):
+        c_axis_roll(np.eye(2))

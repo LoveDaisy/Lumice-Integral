@@ -52,6 +52,30 @@ def c_axis_zenith(rotation: np.ndarray) -> float:
     return float(np.arccos(np.clip(rotation[2, 2], -1.0, 1.0)))
 
 
+def c_axis_roll(rotation: np.ndarray) -> float:
+    """Spin angle ``psi`` (radians, in ``(-pi, pi]``) about the crystal c axis.
+
+    ``psi`` is the ``roll`` of the ZYZ chain ``R = Rz(az - pi) . Ry(-zenith) .
+    Rz(roll)`` (Lumice ``simulator.cpp::BuildCrystalRotation``, read as
+    evidence only): the third row of ``Ry(-zenith) . Rz(roll)`` is
+    ``(sin(zenith) cos(roll), -sin(zenith) sin(roll), cos(zenith))`` and the
+    outer ``Rz`` leaves it unchanged, so ``roll = atan2(-R[2, 1], R[2, 0])``
+    whenever ``sin(zenith) > 0``.  ``roll = 0`` puts the body ``e1`` (the face-3
+    outward normal of ``geometry.core.HexPrism``) in the vertical plane through
+    the c axis, on the upper side; for a horizontal c axis face 3 is then the
+    horizontal top face.  This reference is this renderer's own convention and
+    is not tied to Lumice's mesh face numbering.
+
+    At the gimbal-lock poles (``zenith = 0`` or ``pi``) only ``az +- roll`` is
+    defined and the value returned is arbitrary; callers must not rely on it
+    there (Parry/Lowitz zenith windows stay away from the poles).
+    """
+    rotation = np.asarray(rotation, dtype=np.float64)
+    if rotation.shape != (3, 3):
+        raise ValueError("rotation must be a (3, 3) matrix")
+    return float(np.arctan2(-rotation[2, 1], rotation[2, 0]))
+
+
 def zenith_gaussian(theta: np.ndarray, *, zenith_mean_rad: float, zenith_std_rad: float) -> np.ndarray:
     """Unnormalized sphere-density profile ``g(theta)``; zero outside ``[0, pi]``."""
     theta = np.asarray(theta, dtype=np.float64)
