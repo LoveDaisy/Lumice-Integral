@@ -439,14 +439,17 @@ def canonical_class_scene(
     pose_density: PoseDensity | None = None,
     render: Mapping[str, Any] | None = None,
     prescan_tables: Mapping[Faces, PrescanTable] | None = None,
+    crystal: HexPrism | None = None,
 ) -> ClassScene:
     """The ch06 canonical scene for the class of ``representative`` (``canonical_strip_scene`` per member).
 
     ``pose_density`` / ``render`` override the canonical column density and
     the canonical strip window (the latter to put the sun inside the window
-    for a rank-0 class).
+    for a rank-0 class); ``crystal`` overrides ``canonical_crystal()`` the way
+    :func:`.strip_pixel.canonical_strip_scene` does (tests keep fixtures
+    recorded on the pre-2026-09-20 ``h/a = 1`` crystal).
     """
-    crystal = canonical_crystal()
+    crystal = canonical_crystal() if crystal is None else crystal
     return build_class_scene(
         build_path_class(crystal, representative),
         incident_direction=canonical_incident_direction(),

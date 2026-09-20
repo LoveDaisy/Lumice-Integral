@@ -26,6 +26,7 @@ from lumice_integral.continuation import (
     trace_fiber,
 )
 from lumice_integral.discovery import discover_components, retarget_problem
+from lumice_integral.geometry import HexPrism
 from lumice_integral.quadrature import (
     HAAR_TO_DVOL_G_FACTOR,
     INTEGRAND_FACTOR_NAMES,
@@ -44,8 +45,15 @@ EPSILON = 1e-6
 # (``integrate_fiber``, ``relative_tolerance=1e-8``, error estimates 2.5e-9 to
 # 4.1e-9 relative, 693-941 nodes) recorded by task-resample-and-integrate
 # Step 5 (progress.md, 2026-09-17) before that integrator was removed; the
-# canonical value is also docs/ch06-reference-fixture.md section 4.1.  Frozen
-# here so the alignment no longer needs the old integrator at run time.
+# canonical value was docs/ch06-reference-fixture.md section 4.1 until
+# 2026-09-20.  Frozen here so the alignment no longer needs the old
+# integrator at run time.  They were recorded on the ``h/a = 1`` crystal of
+# that date (task defect2-crystal-height-convention moved the canonical
+# scene to ``h/a = 2``, which changes the ``entry_measure`` weight and hence
+# these integrals); the alignment cases therefore bind that crystal
+# explicitly (``REFERENCE_CRYSTAL``) -- the integrator check does not depend
+# on which crystal it runs on, and the retired integrator cannot re-record.
+REFERENCE_CRYSTAL = HexPrism.from_ratio(1.0)
 ADAPTIVE_REFERENCE = {
     "canonical (150,150)": 2.36442381498,
     "row 100 col 126": 5.71594639898,
@@ -82,14 +90,14 @@ def _circle_problem(density, domain=None) -> FiberProblem:
 
 @pytest.fixture(scope="module")
 def canonical():
-    problem = canonical_pixel_problem()
+    problem = canonical_pixel_problem(crystal=REFERENCE_CRYSTAL)
     return problem, trace_fiber(problem)
 
 
 @pytest.fixture(scope="module")
 def strip_pixels():
-    """Production traces of rows 100/300/500 (col 126) of the ch06 strip."""
-    scene = canonical_strip_scene(prescan_sample_count=TEST_PRESCAN_SAMPLES)
+    """Production traces of rows 100/300/500 (col 126) of the ch06 strip, on ``REFERENCE_CRYSTAL``."""
+    scene = canonical_strip_scene(prescan_sample_count=TEST_PRESCAN_SAMPLES, crystal=REFERENCE_CRYSTAL)
     options = PixelOptions()
     traces = {}
     for row in (100, 300, 500):

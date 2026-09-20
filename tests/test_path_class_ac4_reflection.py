@@ -23,19 +23,24 @@ import pytest
 from lumice_integral.canonical_scene import (
     CANONICAL_REFRACTIVE_INDEX,
     CANONICAL_RENDER,
-    canonical_crystal,
     canonical_incident_direction,
     canonical_pose_density,
 )
 from lumice_integral.continuation import FiberStatus, TerminationReason, trace_fiber
 from lumice_integral.discovery import discover_components
-from lumice_integral.geometry import entry_measure, fold_matrix, halo_map_rank, wedge_angle_deg
+from lumice_integral.geometry import HexPrism, entry_measure, fold_matrix, halo_map_rank, wedge_angle_deg
 from lumice_integral.optics import PATH_3_5_FACES, path_3_5, path_domain, path_problem
 from lumice_integral.path_class import build_path_class
 from lumice_integral.so3 import exp
 from lumice_integral.strip_pixel import PixelOptions, StripScene, build_strip_scene, pixel_target, render_pixel
 
 REFLECTING = (3, 1, 2, 5)
+# The frozen seed and values below were recorded on 2026-09-20 on the ``h/a = 1``
+# crystal; task defect2-crystal-height-convention then moved the canonical scene
+# to ``h/a = 2`` (the seed's corridor and ``entry_measure`` change with h), so
+# this module binds that crystal explicitly -- the same-map/different-weight
+# property under test does not depend on which crystal it runs on.
+RECORDED_CRYSTAL = HexPrism.from_ratio(1.0)
 # Frozen output of one recorded run of scripts/discover_3_1_2_5_seed.py (2026-09-20).
 REFLECTION_DISCOVERY = {
     "script": "scripts/discover_3_1_2_5_seed.py",
@@ -64,7 +69,7 @@ def _scene(faces: tuple[int, ...]) -> StripScene:
         faces,
         incident_direction=canonical_incident_direction(),
         refractive_index=CANONICAL_REFRACTIVE_INDEX,
-        crystal=canonical_crystal(),
+        crystal=RECORDED_CRYSTAL,
         pose_density=canonical_pose_density(),
         render=CANONICAL_RENDER,
         prescan_sample_count=REFLECTION_DISCOVERY["prescan"]["sample_count"],
@@ -83,7 +88,7 @@ def options() -> PixelOptions:
 
 
 def test_3_1_2_5_shares_the_phi_invariants_of_3_5():
-    crystal = canonical_crystal()
+    crystal = RECORDED_CRYSTAL
     assert np.allclose(fold_matrix(crystal, REFLECTING), np.eye(3), atol=1e-15)
     assert wedge_angle_deg(crystal, REFLECTING) == pytest.approx(wedge_angle_deg(crystal, PATH_3_5_FACES), abs=1e-9)
     assert halo_map_rank(crystal, REFLECTING) == halo_map_rank(crystal, PATH_3_5_FACES) == 2
@@ -99,7 +104,7 @@ def test_frozen_seed_is_inside_the_reflecting_domain_and_traces_an_arc():
     assert check.valid
     assert check.margins["internal_1_incidence_cosine"] > 0 and check.margins["internal_1_tir_discriminant"] > 0
     assert check.margins["internal_2_incidence_cosine"] > 0 and check.margins["internal_2_tir_discriminant"] > 0
-    footprint = entry_measure(seed, REFLECTING, incident, canonical_crystal(), n_ice=CANONICAL_REFRACTIVE_INDEX)
+    footprint = entry_measure(seed, REFLECTING, incident, RECORDED_CRYSTAL, n_ice=CANONICAL_REFRACTIVE_INDEX)
     assert footprint.status == "ok" and footprint.value > 0.0
     problem = path_problem(
         jnp.asarray(seed), REFLECTING, jnp.asarray(incident),

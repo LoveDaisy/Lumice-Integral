@@ -172,12 +172,17 @@ monotonically by `8.4x` from the inner edge to the bottom with no step (the
 `x2` closure-gate step of the v1 preview is gone), the `10`-row inner-edge
 offset is confirmed and lies on the historical side (the Lumice remake is
 `3` rows further in than ours), and the vertical decay along the centre
-column is `3-4x` steeper than the historical raw between rows `150` and
-`600` (defect 2): the pose density and the entry measure are verified
-against independent estimates, the decay is carried by the geometric
-factors, and the cause is not yet located (an independent `J_perp` check
-and a non-tone-mapped Lumice profile are the next probes). The evidence is
-recorded in the
+column was `3-4x` steeper than the historical raw between rows `150` and
+`600` (defect 2). Its first half is closed (2026-09-20, section 3.5 item
+2a): the canonical crystal was half the height of the Lumice remake's, and
+with `h / edge = 2` the centre column reproduces the historical plateau
+(ours/historical relative to row `150` within `0.89-1.06` on rows
+`150-400`, `0.55-1.0` before); the tail below row `400` is unchanged
+(`x4` dark by row `600`, height-independent, `J_perp` confirmed by finite
+differences to `1e-9`) and stays open together with the horizontal
+narrowness off the centre column (rows `300-400` are still `0.5-0.7x` at
+`+-20` columns; the non-tone-mapped Lumice profile is the next probe). The
+evidence is recorded in the
 [chapter 6 reference fixture specification](ch06-reference-fixture.md)
 sections 5 and 7. Component completeness remains procedural, not certified;
 finite solar disk and finite pixel solid angle are still open (the sub-pixel
@@ -234,7 +239,32 @@ order below follows their dependencies, not the solver's own curiosity.
    `h / edge`; the `column1.0` filename was read as `historical-direct` but
    is convention-dependent. Rendering column `126` with `h / edge = 2`
    reproduces the historical plateau of rows `175-400` within `+-6 %`
-   (`0.55-0.84` before), taller crystals overshoot. (b) The tail, rows
+   (`0.55-0.84` before), taller crystals overshoot. Done 2026-09-20
+   (task `defect2-crystal-height-convention`): `CANONICAL_HEIGHT_RATIO =
+   2.0`, baselines re-pinned (the fiber, `J_perp` and every discovery count
+   are crystal-independent; only `entry_measure` and the pixel values moved,
+   canonical `2.364 -> 6.581`), full `251 x 801` rerender on `home-wsl`
+   (`30` workers, `2030 s`): column `126` ours/historical relative to row
+   `150` is `0.89-1.06` on rows `150-400` (`248` of `251` rows inside
+   `0.9-1.1`, the three below are rows `398-400` at `0.886-0.896` where the
+   tail decay starts; `0.55-1.0` with `h / edge = 1`), per-50-row
+   max-normalised ratios `1.03 / 1.02 / 1.06 / 1.10 / 1.04` (rows
+   `150-400`; `0.93 / 0.88 / 0.83 / 0.75 / 0.61` before), the tail
+   `400-650` `0.78 / 0.49 / 0.33 / 0.28 / 0.26` is essentially the old
+   `0.44 / 0.31 / 0.26 / 0.24 / 0.23` from row `500` on. The plateau is a
+   centre-column result: at `+-5` columns `93-96 %` of rows `150-400` are
+   inside `0.9-1.1`, at `+-10` columns `68-82 %`, at `+-20` columns
+   `37-39 %` (rows `350-400` at `0.52-0.57`, the old centre-column
+   signature), i.e. the horizontal narrowness of rows `150-400` is only
+   partly closed (row `150` now matches to `+-7 %` over `+-20` columns,
+   row `300` is still `0.6-0.8x` there; lit width above `1e-3` at row
+   `300` `129` columns against the historical `157`, `121` before).
+   Whole-image Spearman against the historical raw fell from `0.985` to
+   `0.949` while the Lumice-remake figure rose from `0.947` to `0.967`;
+   log-RMS along column `126` `0.443 -> 0.389`, row `150` `0.487 -> 0.447`,
+   row `300` `0.688 -> 0.542`, row `450` `0.124 -> 0.224` (the turnover
+   row). Not tuned further here: the residual is the tail plus the
+   off-centre narrowness, both for (b). (b) The tail, rows
    `475-650`, is independent of crystal height (identical values from
    `h / edge = 1` to `20`) and stays `4x` below the historical raw; its cause
    is open and a non-tone-mapped Lumice profile
@@ -447,6 +477,13 @@ produce plausible but systematically wrong radiance.
   (crystal height convention, then the height-independent tail), path classes
   as the rendering unit, Phase II as the chapter-10 tool, pose-density
   families. Path-class accounting is decoupled from defect 2.
+- **2026-09-20**: canonical crystal `h / edge = 2` (Lumice `height 1.0` is
+  `h / diameter`; section 3.5 item 2a); the `column1.0` filename is
+  convention-dependent, so the ratio is `canonical-new`, not historical
+  evidence. Baselines recorded on the `h / edge = 1` crystal by tools that
+  cannot re-record (the retired adaptive integrator, the independent zenith
+  width probe) keep that crystal explicitly in their tests; the `h / edge =
+  1` full render is kept as `artifacts/strip-full-h1`.
 - **2026-09-20**: pose-density families (section 3.5 item 5) implemented;
   the roll-locked families need the crystal's spin about its c axis, taken
   from the Lumice ZYZ chain with `roll = 0` = face-3 normal in the vertical

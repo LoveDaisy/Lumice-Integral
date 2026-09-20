@@ -204,6 +204,7 @@ def canonical_strip_scene(
     prescan_sample_count: int = DEFAULT_SAMPLE_COUNT,
     prescan_rng_seed: int = DEFAULT_RNG_SEED,
     pose_density: PoseDensity | None = None,
+    crystal: HexPrism | None = None,
 ) -> StripScene:
     """The ch06 canonical scene (``docs/ch06-reference-fixture.md`` section 3.3), path 3-5.
 
@@ -213,13 +214,16 @@ def canonical_strip_scene(
     replaces the canonical column density (``canonical_pose_density()``) by
     another :mod:`.pose_density` family for diagnostics; discovery, tracing and
     the prescan table do not depend on it (only the ``rho_pose`` weight does),
-    so the same prescan table serves every family.
+    so the same prescan table serves every family.  ``crystal`` likewise
+    replaces ``canonical_crystal()`` (only the ``entry_measure`` weight and the
+    admissibility gate of discovery depend on it); tests use it to keep
+    baselines recorded on the pre-2026-09-20 ``h/a = 1`` crystal.
     """
     return build_strip_scene(
         PATH_3_5_FACES,
         incident_direction=canonical_incident_direction(),
         refractive_index=CANONICAL_REFRACTIVE_INDEX,
-        crystal=canonical_crystal(),
+        crystal=canonical_crystal() if crystal is None else crystal,
         pose_density=canonical_pose_density() if pose_density is None else pose_density,
         render=CANONICAL_RENDER,
         prescan_table=prescan_table,

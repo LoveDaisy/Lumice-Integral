@@ -26,7 +26,13 @@ from .pose_density_provenance import pose_density_provenance
 from .so3 import exp
 from .weights import build_3_5_weight_evaluators
 
-CANONICAL_HEIGHT_RATIO = 1.0  # hexagonal column, h / a with a = hexagon edge length
+# Lumice's crystal ``"height": 1.0`` means h / (base circumscribed diameter): its
+# side faces sit at inradius sqrt(3)/4 * dist and its bases at z = +-h/2
+# (``src/core/geo3d_closedform.cpp``, read as evidence, never linked), so the base
+# circumscribed diameter is 1 and the hexagon edge is a = 1/2.  ``HexPrism.from_ratio``
+# takes h / a with a = hexagon edge length, so the same crystal is 2 x the Lumice number.
+LUMICE_HEIGHT_OVER_DIAMETER = 1.0  # the Lumice remake and the ``column1.0`` filenames
+CANONICAL_HEIGHT_RATIO = 2.0 * LUMICE_HEIGHT_OVER_DIAMETER  # h / a, hexagonal column
 CANONICAL_REFRACTIVE_INDEX = 1.31
 CANONICAL_WAVELENGTH_NM = 550.0
 CANONICAL_SUN_ALTITUDE_DEG = 15.0
@@ -89,8 +95,13 @@ def canonical_pose_density() -> PoseDensity:
     )
 
 
-def canonical_pixel_problem(*, with_weights: bool = True) -> FiberProblem:
-    """The canonical pixel's 3-5 continuation problem, optionally with the four weights."""
+def canonical_pixel_problem(*, with_weights: bool = True, crystal: HexPrism | None = None) -> FiberProblem:
+    """The canonical pixel's 3-5 continuation problem, optionally with the four weights.
+
+    ``crystal`` replaces :func:`canonical_crystal` for diagnostics and for
+    baselines recorded on another crystal; the fiber itself does not depend on
+    it (only the ``entry_measure`` weight does).
+    """
     incident = canonical_incident_direction()
     problem = path_3_5_problem(
         jnp.asarray(canonical_seed()),
@@ -103,7 +114,7 @@ def canonical_pixel_problem(*, with_weights: bool = True) -> FiberProblem:
     evaluators = build_3_5_weight_evaluators(
         incident_direction=incident,
         refractive_index=CANONICAL_REFRACTIVE_INDEX,
-        crystal=canonical_crystal(),
+        crystal=canonical_crystal() if crystal is None else crystal,
         pose_density=canonical_pose_density(),
     )
     return replace(problem, weight_evaluators=evaluators)

@@ -32,10 +32,17 @@ import numpy as np
 import pytest
 
 from lumice_integral.canonical_scene import CANONICAL_PIXEL_COLUMN, CANONICAL_PIXEL_ROW
+from lumice_integral.geometry import HexPrism
 from lumice_integral.path_class import ClassPixelResult, canonical_class_scene, render_class_pixel
 from lumice_integral.pose_density import build_pose_density
 from lumice_integral.strip_pixel import PixelOptions
 
+# The recorded values below (twelve-fold identity, tilted-Parry separation) were
+# taken on 2026-09-20 on the ``h/a = 1`` crystal; task defect2-crystal-height-convention
+# then moved the canonical scene to ``h/a = 2`` (``entry_measure`` changes with h),
+# so these fixtures bind that crystal explicitly -- the class mechanism under test
+# does not depend on which crystal it runs on.
+RECORDED_CRYSTAL = HexPrism.from_ratio(1.0)
 TEST_PRESCAN_SAMPLES = 400_000  # the tests/test_strip_pixel.py table; the canonical value 2.364412980 is pinned to it
 # The quadrature's relative tolerance is 1e-4 (PixelOptions.quadrature); the
 # members are integrated on independently discovered fibers of the same curve
@@ -68,7 +75,7 @@ def options() -> PixelOptions:
 
 @pytest.fixture(scope="module")
 def column_class_pixel(options) -> ClassPixelResult:
-    scene = canonical_class_scene((3, 5), prescan_sample_count=TEST_PRESCAN_SAMPLES)
+    scene = canonical_class_scene((3, 5), prescan_sample_count=TEST_PRESCAN_SAMPLES, crystal=RECORDED_CRYSTAL)
     return render_class_pixel(scene, CANONICAL_PIXEL_ROW, CANONICAL_PIXEL_COLUMN, options)
 
 
@@ -107,6 +114,7 @@ def _parry_pixel(options, **overrides) -> ClassPixelResult:
         prescan_rng_seed=PARRY_DISCOVERY["prescan"]["rng_seed"],
         pose_density=build_pose_density(family, **parameters),
         render=PARRY_DISCOVERY["render"],
+        crystal=RECORDED_CRYSTAL,
     )
     return render_class_pixel(scene, PARRY_DISCOVERY["pixel"]["row"], PARRY_DISCOVERY["pixel"]["column"], options)
 
