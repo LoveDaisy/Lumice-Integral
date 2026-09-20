@@ -14,7 +14,8 @@ code migrates by rewriting ``halo_notes.geometry`` to
 
 - ``core``: ``Polyhedron`` / ``Face`` / ``HexPrism``, rigid transforms, ray
   intersection, ``N_ICE``, face-number constants.
-- ``unfold``: ``unfold_faces`` / ``fold_matrix``.
+- ``unfold``: ``unfold_faces`` / ``fold_matrix``, plus the path-level invariants
+  ``wedge_angle_deg`` / ``halo_map_rank`` (original to this repository).
 - ``pyramid``: ``Pyramid`` and its face-number constants.
 - ``feasibility``: ``LatLonGrid``, corridor clipping, ``admissible_directions``,
   ``entry_points``, ``external_directions`` and the optical gates.
@@ -79,7 +80,7 @@ from .pyramid import (
     Pyramid,
     pyramid_face_angle,
 )
-from .unfold import fold_matrix, unfold_faces
+from .unfold import WEDGE_ZERO_TOLERANCE_DEG, fold_matrix, halo_map_rank, unfold_faces, wedge_angle_deg
 
 __all__ = [
     "AdmissibleMask",
@@ -103,6 +104,7 @@ __all__ = [
     "RaypathRecord",
     "SymmetryOrbit",
     "UPPER_PYRAMID_FACES",
+    "WEDGE_ZERO_TOLERANCE_DEG",
     "admissible_directions",
     "area_eps",
     "corridor_index_for_path",
@@ -119,6 +121,7 @@ __all__ = [
     "external_directions",
     "fold_matrix",
     "geometric_ok",
+    "halo_map_rank",
     "incidence_objective_deg",
     "is_feasible",
     "min_edge_length",
@@ -130,4 +133,5 @@ __all__ = [
     "rotation_from_frames",
     "unfold_faces",
     "unit",
+    "wedge_angle_deg",
 ]

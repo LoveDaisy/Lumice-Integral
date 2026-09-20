@@ -39,7 +39,7 @@ def test_entry_measure_weight_is_the_geometry_value_unchanged():
     crystal = canonical_crystal()
     direct = entry_measure(rotation, (3, 5), incident, crystal, n_ice=1.31)
     adapted = entry_measure_weight(
-        jnp.asarray(rotation), incident_direction=incident, crystal=crystal, refractive_index=1.31
+        jnp.asarray(rotation), faces=(3, 5), incident_direction=incident, crystal=crystal, refractive_index=1.31
     )
     assert direct.status == "ok" and direct.value > 0.0
     assert adapted == direct.value
@@ -57,12 +57,12 @@ def test_path_validity_gate_and_fresnel_on_feasible_and_infeasible_poses():
     assert path_3_5_domain(feasible, incident).valid
     assert path_3_5_domain(tir, incident).event_kind == "tir_boundary"
     assert path_3_5_domain(backface, incident).event_kind == "path_infeasible"
-    common = dict(incident_direction=incident, crystal=crystal, refractive_index=1.31)
+    common = dict(faces=(3, 5), incident_direction=incident, crystal=crystal, refractive_index=1.31)
     assert path_validity_weight(feasible, **common) == 1.0
     assert path_validity_weight(tir, **common) == 0.0
     assert path_validity_weight(backface, **common) == 0.0
-    assert 0.0 < fresnel_transmission_weight(feasible, incident_direction=incident, refractive_index=1.31) < 1.0
-    assert fresnel_transmission_weight(tir, incident_direction=incident, refractive_index=1.31) == 0.0
+    assert 0.0 < fresnel_transmission_weight(feasible, faces=(3, 5), incident_direction=incident, refractive_index=1.31) < 1.0
+    assert fresnel_transmission_weight(tir, faces=(3, 5), incident_direction=incident, refractive_index=1.31) == 0.0
 
 
 def test_weight_schema_rejects_inconsistent_observables_and_evaluators():

@@ -1,9 +1,21 @@
-"""Independent differentiable optics for fixed smooth ray paths."""
+"""Independent differentiable optics for fixed smooth ray paths of the hexagonal prism.
+
+A ray path is a face sequence ``(entry, *internal_reflections, exit)``.  The
+smooth branch refracts in through the entry face, reflects off each internal
+face under total internal reflection (no partial transmission: the branch
+where an internal reflection stops being total is an event, not a weight),
+and refracts out through the exit face.  ``path_direction`` /
+``path_domain`` / ``path_domain_batch`` / ``fresnel_transmission_path`` /
+``path_problem`` take the face sequence explicitly; the ``path_3_5*`` names
+are the same functions at ``faces == PATH_3_5_FACES`` (thin wrappers, not a
+second implementation), kept because the ch06 fixtures and the strip
+pipeline are pinned to them bit for bit.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Mapping, NamedTuple
+from typing import TYPE_CHECKING, Mapping, NamedTuple, Sequence
 
 import jax
 import jax.numpy as jnp
@@ -14,11 +26,57 @@ if TYPE_CHECKING:
     from .continuation import FiberProblem
 
 
-FACE_3_NORMAL = jnp.array([1.0, 0.0, 0.0], dtype=jnp.float64)
-FACE_5_NORMAL = jnp.array(
-    [-0.5, jnp.sqrt(jnp.asarray(3.0, dtype=jnp.float64)) / 2.0, 0.0]
-)
+_HALF_SQRT_3 = jnp.sqrt(jnp.asarray(3.0, dtype=jnp.float64)) / 2.0
+# Body-frame outward normals of the hexagonal prism, face numbering of
+# ``geometry.core`` (basal 1 = +c, 2 = -c; side face 3+i at azimuth i*60 deg).
+# Written with the exact rationals +-1/2 and +-sqrt(3)/2 rather than cos/sin so
+# that the 3-5 evaluations stay bit-identical to the pre-generalisation
+# constants; ``tests/test_geometry_core.py`` pins every entry against
+# ``HexPrism().normal`` (the geometry package's Newell normals) to 1e-15.
+HEXPRISM_BODY_NORMALS: Mapping[int, Array] = {
+    1: jnp.array([0.0, 0.0, 1.0], dtype=jnp.float64),
+    2: jnp.array([0.0, 0.0, -1.0], dtype=jnp.float64),
+    3: jnp.array([1.0, 0.0, 0.0], dtype=jnp.float64),
+    4: jnp.array([0.5, _HALF_SQRT_3, 0.0]),
+    5: jnp.array([-0.5, _HALF_SQRT_3, 0.0]),
+    6: jnp.array([-1.0, 0.0, 0.0], dtype=jnp.float64),
+    7: jnp.array([-0.5, -_HALF_SQRT_3, 0.0]),
+    8: jnp.array([0.5, -_HALF_SQRT_3, 0.0]),
+}
+FACE_3_NORMAL = HEXPRISM_BODY_NORMALS[3]
+FACE_5_NORMAL = HEXPRISM_BODY_NORMALS[5]
 ICE_REFRACTIVE_INDEX = jnp.asarray(1.31, dtype=jnp.float64)
+PATH_3_5_FACES = (3, 5)
+
+
+def normalize_faces(faces: Sequence[int]) -> tuple[int, ...]:
+    """``(entry, *internal_reflections, exit)`` as a tuple of known hexagonal-prism face numbers."""
+    normalized = tuple(int(face) for face in faces)
+    if len(normalized) < 2:
+        raise ValueError("faces must be (entry, *reflections, exit) with at least two faces")
+    unknown = [face for face in normalized if face not in HEXPRISM_BODY_NORMALS]
+    if unknown:
+        raise ValueError(f"unknown hexagonal-prism face numbers {unknown}; expected 1-8")
+    return normalized
+
+
+def path_id_of(faces: Sequence[int]) -> str:
+    """Face sequence -> path id (``(3, 1, 2, 5) -> "3-1-2-5"``); inverse of :func:`faces_of_path_id`."""
+    return "-".join(str(face) for face in normalize_faces(faces))
+
+
+def faces_of_path_id(path_id: str) -> tuple[int, ...]:
+    """Path id -> face sequence (``"3-1-2-5" -> (3, 1, 2, 5)``); the single parser of the id format."""
+    try:
+        parts = tuple(int(part) for part in str(path_id).split("-"))
+    except ValueError as error:
+        raise ValueError(f"malformed path_id {path_id!r}; expected dash-joined face numbers like '3-5'") from error
+    return normalize_faces(parts)
+
+
+def problem_path_label(faces: Sequence[int], refractive_index: float) -> str:
+    """``FiberProblem.path`` of a fixed face sequence at one index (``"3-5:n=1.31"``)."""
+    return f"{path_id_of(faces)}:n={float(refractive_index):.8g}"
 
 
 def _require_float64_reference_input(name: str, value: Array) -> None:
@@ -46,15 +104,30 @@ class Refraction(NamedTuple):
     incidence_cosine: Array
 
 
+class InternalReflection(NamedTuple):
+    """One internal face under total internal reflection.
+
+    ``incidence_cosine = d . N`` (``N`` the world outward normal, ``d`` the
+    internal ray) must be positive for the ray to reach the face from inside;
+    ``tir_discriminant = n^2 (1 - cos^2) - 1`` must be positive for the
+    reflection to be total.
+    """
+
+    direction: Array
+    tir_discriminant: Array
+    incidence_cosine: Array
+
+
 class PathEvaluation(NamedTuple):
     direction: Array
     entry: Refraction
     exit: Refraction
+    internal: tuple[InternalReflection, ...] = ()
 
 
 @dataclass(frozen=True)
 class PathDomainCheck:
-    """Host-side feasibility and event evidence for the fixed 3-5 branch."""
+    """Host-side feasibility and event evidence for one fixed smooth branch."""
 
     valid: bool
     margins: Mapping[str, float] = field(default_factory=dict)
@@ -75,33 +148,99 @@ def refract_smooth(
     return Refraction(transmitted, discriminant, incidence_cosine)
 
 
+def reflect_internal(
+    direction: Array, outward_normal: Array, refractive_index: Array
+) -> InternalReflection:
+    """Mirror ``direction`` off an internal face (caller-validated TIR branch)."""
+    incidence_cosine = jnp.dot(outward_normal, direction)
+    tir_discriminant = refractive_index**2 * (1.0 - incidence_cosine**2) - 1.0
+    reflected = direction - 2.0 * incidence_cosine * outward_normal
+    return InternalReflection(reflected, tir_discriminant, incidence_cosine)
+
+
+def path_direction(
+    rotation: Array,
+    faces: Sequence[int],
+    incident_direction: Array,
+    refractive_index: Array = ICE_REFRACTIVE_INDEX,
+) -> PathEvaluation:
+    """Trace the smooth branch of ``faces`` through the rotated prism (module docstring).
+
+    World face normals are ``rotation @ body_normal``; the entry refraction
+    uses the outward normal (it points toward the incident medium), the exit
+    refraction its negative, and each internal reflection the outward normal
+    with the internal ray hitting it from inside.  ``faces`` is static (a
+    Python tuple); the JAX trace unrolls one step per face.
+    """
+    faces = normalize_faces(faces)
+    dtype = rotation.dtype
+    refractive_index = jnp.asarray(refractive_index, dtype=dtype)
+    entry_normal = rotation @ HEXPRISM_BODY_NORMALS[faces[0]].astype(dtype)
+    entry = refract_smooth(incident_direction, entry_normal, 1.0 / refractive_index)
+    direction = entry.direction
+    internal: list[InternalReflection] = []
+    for face in faces[1:-1]:
+        reflection = reflect_internal(
+            direction, rotation @ HEXPRISM_BODY_NORMALS[face].astype(dtype), refractive_index
+        )
+        internal.append(reflection)
+        direction = reflection.direction
+    exit_normal = rotation @ HEXPRISM_BODY_NORMALS[faces[-1]].astype(dtype)
+    exit = refract_smooth(direction, -exit_normal, refractive_index)
+    return PathEvaluation(exit.direction, entry, exit, tuple(internal))
+
+
 def path_3_5(
     rotation: Array,
     incident_direction: Array,
     refractive_index: Array = ICE_REFRACTIVE_INDEX,
 ) -> PathEvaluation:
-    """Trace refraction through hexagonal-prism side faces 3 then 5."""
-    entry_normal = rotation @ FACE_3_NORMAL.astype(rotation.dtype)
-    exit_normal = rotation @ FACE_5_NORMAL.astype(rotation.dtype)
-    refractive_index = jnp.asarray(refractive_index, dtype=rotation.dtype)
-    entry = refract_smooth(
-        incident_direction, entry_normal, 1.0 / refractive_index
-    )
-    exit = refract_smooth(entry.direction, -exit_normal, refractive_index)
-    return PathEvaluation(exit.direction, entry, exit)
+    """Trace refraction through hexagonal-prism side faces 3 then 5 (:func:`path_direction`)."""
+    return path_direction(rotation, PATH_3_5_FACES, incident_direction, refractive_index)
 
 
-def path_3_5_domain(
+def _internal_margin_names(step: int) -> tuple[str, str]:
+    return (f"internal_{step}_incidence_cosine", f"internal_{step}_tir_discriminant")
+
+
+def domain_margin_names(faces: Sequence[int]) -> tuple[str, ...]:
+    """Margin names of :func:`path_domain` for ``faces``, in evaluation order.
+
+    ``entry_*`` (incidence cosine, Snell discriminant), then
+    ``internal_{k}_*`` (incidence cosine, TIR discriminant) for the k-th
+    internal reflection, then ``exit_*``; every margin must be positive on
+    the smooth branch.  For ``PATH_3_5_FACES`` this is :data:`DOMAIN_MARGIN_NAMES`.
+    """
+    faces = normalize_faces(faces)
+    names: list[str] = ["entry_incidence_cosine", "entry_snell_discriminant"]
+    for step in range(1, len(faces) - 1):
+        names.extend(_internal_margin_names(step))
+    names.extend(("exit_incidence_cosine", "exit_snell_discriminant"))
+    return tuple(names)
+
+
+def path_domain(
     rotation: Array,
+    faces: Sequence[int],
     incident_direction: Array,
     refractive_index: Array = ICE_REFRACTIVE_INDEX,
 ) -> PathDomainCheck:
-    """Check the 3-5 branch on the host before either square root is taken."""
+    """Check the smooth branch of ``faces`` on the host before any square root is taken.
+
+    Gates in ray order, stopping at the first failure with the margins
+    evaluated so far: the entry incidence cosine and Snell discriminant, each
+    internal reflection's incidence cosine (``path_infeasible`` when the
+    internal ray does not reach the face) and TIR discriminant
+    (``tir_boundary`` when the reflection is not total), then the exit
+    incidence cosine and Snell discriminant.  Event kinds are the two
+    existing :class:`.continuation.TerminationReason` values; which face the
+    event belongs to is in the margin name and the message.
+    """
+    faces = normalize_faces(faces)
     rotation_array = np.asarray(rotation, dtype=np.float64)
     incident = np.asarray(incident_direction, dtype=np.float64)
     index = _require_positive_finite_scalar("refractive_index", refractive_index)
-    entry_normal = rotation_array @ np.asarray(FACE_3_NORMAL)
-    exit_normal = rotation_array @ np.asarray(FACE_5_NORMAL)
+    entry_normal = rotation_array @ np.asarray(HEXPRISM_BODY_NORMALS[faces[0]])
     entry_index = 1.0 / index
     entry_cosine = -float(np.dot(entry_normal, incident))
     entry_discriminant = 1.0 - entry_index**2 * (1.0 - entry_cosine**2)
@@ -123,7 +262,7 @@ def path_3_5_domain(
             margins,
             "path_infeasible",
             entry_cosine,
-            "incident ray does not enter through face 3",
+            f"incident ray does not enter through face {faces[0]}",
         )
     if entry_discriminant <= 0.0:
         return PathDomainCheck(
@@ -134,10 +273,43 @@ def path_3_5_domain(
             "entry Snell discriminant is non-positive",
         )
 
-    entry_direction = entry_index * incident + (
+    direction = entry_index * incident + (
         entry_index * entry_cosine - np.sqrt(entry_discriminant)
     ) * entry_normal
-    exit_cosine = float(np.dot(exit_normal, entry_direction))
+    for step, face in enumerate(faces[1:-1], start=1):
+        normal = rotation_array @ np.asarray(HEXPRISM_BODY_NORMALS[face])
+        cosine = float(np.dot(normal, direction))
+        discriminant = index**2 * (1.0 - cosine**2) - 1.0
+        cosine_name, discriminant_name = _internal_margin_names(step)
+        margins = {**margins, cosine_name: cosine, discriminant_name: discriminant}
+        if not (np.isfinite(cosine) and np.isfinite(discriminant)):
+            return PathDomainCheck(
+                False,
+                margins,
+                "non_finite",
+                float("nan"),
+                f"internal reflection {step} feasibility calculation is non-finite",
+            )
+        if cosine <= 0.0:
+            return PathDomainCheck(
+                False,
+                margins,
+                "path_infeasible",
+                cosine,
+                f"internal ray does not reach face {face} from inside (reflection {step})",
+            )
+        if discriminant <= 0.0:
+            return PathDomainCheck(
+                False,
+                margins,
+                "tir_boundary",
+                discriminant,
+                f"internal reflection {step} at face {face} is not total",
+            )
+        direction = direction - 2.0 * cosine * normal
+
+    exit_normal = rotation_array @ np.asarray(HEXPRISM_BODY_NORMALS[faces[-1]])
+    exit_cosine = float(np.dot(exit_normal, direction))
     exit_discriminant = 1.0 - index**2 * (1.0 - exit_cosine**2)
     margins = {
         **margins,
@@ -158,7 +330,7 @@ def path_3_5_domain(
             margins,
             "path_infeasible",
             exit_cosine,
-            "internal ray does not leave through face 5",
+            f"internal ray does not leave through face {faces[-1]}",
         )
     if exit_discriminant <= 0.0:
         return PathDomainCheck(
@@ -171,20 +343,68 @@ def path_3_5_domain(
     return PathDomainCheck(True, margins)
 
 
-DOMAIN_MARGIN_NAMES = (
-    "entry_incidence_cosine",
-    "entry_snell_discriminant",
-    "exit_incidence_cosine",
-    "exit_snell_discriminant",
-)
+def path_3_5_domain(
+    rotation: Array,
+    incident_direction: Array,
+    refractive_index: Array = ICE_REFRACTIVE_INDEX,
+) -> PathDomainCheck:
+    """Check the 3-5 branch on the host before either square root is taken (:func:`path_domain`)."""
+    return path_domain(rotation, PATH_3_5_FACES, incident_direction, refractive_index)
+
+
+# The four margins of the 3-5 branch (``domain_margin_names(PATH_3_5_FACES)``).
+DOMAIN_MARGIN_NAMES = domain_margin_names(PATH_3_5_FACES)
 
 
 class BatchDomainCheck(NamedTuple):
-    """Host-side 3-5 feasibility of many rotations at once (see :func:`path_3_5_domain_batch`)."""
+    """Host-side feasibility of many rotations at once (see :func:`path_domain_batch`)."""
 
     valid: np.ndarray
     margins: Mapping[str, np.ndarray]
     direction: np.ndarray
+
+
+def path_domain_batch(
+    rotations: Array,
+    faces: Sequence[int],
+    incident_direction: Array,
+    refractive_index: Array = ICE_REFRACTIVE_INDEX,
+) -> BatchDomainCheck:
+    """Vectorised feasibility of ``faces``: ``valid`` iff every margin is positive.
+
+    The single authority for the batch form of the smooth-branch gates that
+    :func:`path_domain` applies one pose at a time (names and order from
+    :func:`domain_margin_names`); the prescan table and component discovery
+    both go through here so the two forms cannot drift apart.  Margins are
+    the cosines and discriminants :func:`path_direction` evaluates on its way
+    through the faces, read straight off its :class:`PathEvaluation` (no
+    second derivation); a non-finite margin compares ``False`` and therefore
+    invalidates the pose, matching the scalar ``non_finite`` verdict.
+    ``direction`` is the outgoing direction of every pose, meaningful only
+    where ``valid`` holds.  Runs as one eager ``jax.vmap`` over ``rotations``
+    of shape ``(N, 3, 3)``.
+    """
+    faces = normalize_faces(faces)
+    rotation_array = jnp.asarray(rotations, dtype=jnp.float64)
+    if rotation_array.ndim != 3 or rotation_array.shape[1:] != (3, 3):
+        raise ValueError("rotations must have shape (N, 3, 3)")
+    incident = jnp.asarray(np.asarray(incident_direction, dtype=np.float64))
+    index = jnp.asarray(_require_positive_finite_scalar("refractive_index", refractive_index))
+    evaluation = jax.vmap(lambda r: path_direction(r, faces, incident, index))(rotation_array)
+    margins = {
+        "entry_incidence_cosine": np.asarray(evaluation.entry.incidence_cosine),
+        "entry_snell_discriminant": np.asarray(evaluation.entry.discriminant),
+    }
+    for step, reflection in enumerate(evaluation.internal, start=1):
+        cosine_name, discriminant_name = _internal_margin_names(step)
+        margins[cosine_name] = np.asarray(reflection.incidence_cosine)
+        margins[discriminant_name] = np.asarray(reflection.tir_discriminant)
+    margins["exit_incidence_cosine"] = np.asarray(evaluation.exit.incidence_cosine)
+    margins["exit_snell_discriminant"] = np.asarray(evaluation.exit.discriminant)
+    valid = np.ones(rotation_array.shape[0], dtype=bool)
+    for name in domain_margin_names(faces):
+        valid &= margins[name] > 0
+    return BatchDomainCheck(valid, margins, np.asarray(evaluation.direction))
 
 
 def path_3_5_domain_batch(
@@ -192,37 +412,8 @@ def path_3_5_domain_batch(
     incident_direction: Array,
     refractive_index: Array = ICE_REFRACTIVE_INDEX,
 ) -> BatchDomainCheck:
-    """Vectorised 3-5 feasibility: ``valid`` iff all four margins are positive.
-
-    The single authority for the batch form of the four smooth-branch gates
-    that :func:`path_3_5_domain` applies one pose at a time
-    (``entry_incidence_cosine > 0``, ``entry_snell_discriminant > 0``,
-    ``exit_incidence_cosine > 0``, ``exit_snell_discriminant > 0``); the
-    prescan table and component discovery both go through here so the two
-    forms cannot drift apart.  Margins are the cosines and Snell
-    discriminants :func:`path_3_5` evaluates on its way through both faces,
-    read straight off its :class:`PathEvaluation` (no second derivation); a
-    non-finite margin compares ``False`` and therefore invalidates the pose,
-    matching the scalar ``non_finite`` verdict.  ``direction`` is the outgoing
-    direction of every pose, meaningful only where ``valid`` holds.  Runs as
-    one eager ``jax.vmap`` over ``rotations`` of shape ``(N, 3, 3)``.
-    """
-    rotation_array = jnp.asarray(rotations, dtype=jnp.float64)
-    if rotation_array.ndim != 3 or rotation_array.shape[1:] != (3, 3):
-        raise ValueError("rotations must have shape (N, 3, 3)")
-    incident = jnp.asarray(np.asarray(incident_direction, dtype=np.float64))
-    index = jnp.asarray(_require_positive_finite_scalar("refractive_index", refractive_index))
-    evaluation = jax.vmap(lambda r: path_3_5(r, incident, index))(rotation_array)
-    margins = {
-        "entry_incidence_cosine": np.asarray(evaluation.entry.incidence_cosine),
-        "entry_snell_discriminant": np.asarray(evaluation.entry.discriminant),
-        "exit_incidence_cosine": np.asarray(evaluation.exit.incidence_cosine),
-        "exit_snell_discriminant": np.asarray(evaluation.exit.discriminant),
-    }
-    valid = np.ones(rotation_array.shape[0], dtype=bool)
-    for name in DOMAIN_MARGIN_NAMES:
-        valid &= margins[name] > 0
-    return BatchDomainCheck(valid, margins, np.asarray(evaluation.direction))
+    """Vectorised 3-5 feasibility: ``valid`` iff all four margins are positive (:func:`path_domain_batch`)."""
+    return path_domain_batch(rotations, PATH_3_5_FACES, incident_direction, refractive_index)
 
 
 def fresnel_unpolarized_transmittance(
@@ -241,20 +432,24 @@ def fresnel_unpolarized_transmittance(
     return 1.0 - 0.5 * (r_s * r_s + r_p * r_p)
 
 
-def fresnel_transmission_3_5(
+def fresnel_transmission_path(
     rotation: Array,
+    faces: Sequence[int],
     incident_direction: Array,
     refractive_index: Array = ICE_REFRACTIVE_INDEX,
 ) -> float:
-    """Product of the face-3 entry and face-5 exit unpolarized transmittances.
+    """Product of the entry and exit unpolarized transmittances of ``faces``.
 
+    Internal reflections are total on the smooth branch and transmit no
+    power away, so only the two refracting interfaces enter the product.
     Reuses the host-side cosines and Snell discriminants that
-    :func:`path_3_5_domain` already evaluates (``cos_t = sqrt(discriminant)``)
-    instead of re-deriving the refraction.  Outside the smooth 3-5 domain
-    (TIR, back-face entry or exit) the path transmits no power and ``0.0`` is
-    returned; :func:`path_3_5_domain` remains the place to read *why*.
+    :func:`path_domain` already evaluates (``cos_t = sqrt(discriminant)``)
+    instead of re-deriving the refraction.  Outside the smooth domain (TIR,
+    back-face entry or exit, a non-total internal reflection) the path
+    transmits no power and ``0.0`` is returned; :func:`path_domain` remains
+    the place to read *why*.
     """
-    check = path_3_5_domain(rotation, incident_direction, refractive_index)
+    check = path_domain(rotation, faces, incident_direction, refractive_index)
     if not check.valid:
         return 0.0
     index = float(np.asarray(refractive_index))
@@ -274,20 +469,30 @@ def fresnel_transmission_3_5(
     return float(entry * exit)
 
 
-def fresnel_transmission_3_5_batch(
+def fresnel_transmission_3_5(
+    rotation: Array,
+    incident_direction: Array,
+    refractive_index: Array = ICE_REFRACTIVE_INDEX,
+) -> float:
+    """Face-3 entry times face-5 exit unpolarized transmittance (:func:`fresnel_transmission_path`)."""
+    return fresnel_transmission_path(rotation, PATH_3_5_FACES, incident_direction, refractive_index)
+
+
+def fresnel_transmission_path_batch(
     rotations: Array,
+    faces: Sequence[int],
     incident_direction: Array,
     refractive_index: Array = ICE_REFRACTIVE_INDEX,
 ) -> np.ndarray:
-    """Batch form of :func:`fresnel_transmission_3_5` over ``(N, 3, 3)`` rotations.
+    """Batch form of :func:`fresnel_transmission_path` over ``(N, 3, 3)`` rotations.
 
-    Reads the cosines and Snell discriminants off :func:`path_3_5_domain_batch`
+    Reads the cosines and Snell discriminants off :func:`path_domain_batch`
     (the batch authority of the smooth-domain gates) and applies the same
     :func:`fresnel_unpolarized_transmittance` arithmetic elementwise; invalid
     poses get ``0.0`` and their (possibly negative) discriminants are never
     square-rooted, so no ``RuntimeWarning``/NaN leaks into valid entries.
     """
-    check = path_3_5_domain_batch(rotations, incident_direction, refractive_index)
+    check = path_domain_batch(rotations, faces, incident_direction, refractive_index)
     index = float(np.asarray(refractive_index))
     valid = check.valid
     margins = check.margins
@@ -300,15 +505,30 @@ def fresnel_transmission_3_5_batch(
     return np.where(valid, entry * exit, 0.0).astype(np.float64)
 
 
-def path_3_5_problem(
+def fresnel_transmission_3_5_batch(
+    rotations: Array,
+    incident_direction: Array,
+    refractive_index: Array = ICE_REFRACTIVE_INDEX,
+) -> np.ndarray:
+    """Batch form of :func:`fresnel_transmission_3_5` (:func:`fresnel_transmission_path_batch`)."""
+    return fresnel_transmission_path_batch(rotations, PATH_3_5_FACES, incident_direction, refractive_index)
+
+
+def path_problem(
     seed: Array,
+    faces: Sequence[int],
     incident_direction: Array,
     *,
     target_direction: Array | None = None,
     refractive_index: Array = ICE_REFRACTIVE_INDEX,
     target_minimum_dot: float = 0.0,
 ) -> FiberProblem:
-    """Adapt the smooth 3-5 branch and its host event gate to continuation."""
+    """Adapt the smooth branch of ``faces`` and its host event gate to continuation.
+
+    ``FiberProblem.path`` is :func:`problem_path_label` (``"3-1-2-5:n=1.31"``);
+    the evaluator closures are fresh per call, so batch callers share one
+    problem per face sequence through :func:`.discovery.retarget_problem`.
+    """
     from .analytic import tangent_basis
     from .continuation import (
         DomainEvaluation,
@@ -318,6 +538,7 @@ def path_3_5_problem(
         TerminationReason,
     )
 
+    faces = normalize_faces(faces)
     _require_float64_reference_input("seed", seed)
     _require_float64_reference_input("incident_direction", incident_direction)
     _require_float64_reference_input("refractive_index", refractive_index)
@@ -329,10 +550,10 @@ def path_3_5_problem(
     refractive_index = jnp.asarray(refractive_index)
 
     def direction_evaluator(rotation: Array) -> Array:
-        return path_3_5(rotation, incident_direction, refractive_index).direction
+        return path_direction(rotation, faces, incident_direction, refractive_index).direction
 
     def domain_evaluator(rotation: Array) -> DomainEvaluation:
-        check = path_3_5_domain(rotation, incident_direction, refractive_index)
+        check = path_domain(rotation, faces, incident_direction, refractive_index)
         event = (
             EventCandidate(
                 TerminationReason(check.event_kind),
@@ -345,17 +566,17 @@ def path_3_5_problem(
         )
         return DomainEvaluation(check.valid, check.margins, event)
 
-    seed_domain = path_3_5_domain(seed, incident_direction, refractive_index)
+    seed_domain = path_domain(seed, faces, incident_direction, refractive_index)
     if target_direction is None:
         if not seed_domain.valid:
             raise ValueError(
-                "target_direction is required when the 3-5 seed is outside "
+                f"target_direction is required when the {path_id_of(faces)} seed is outside "
                 f"the smooth domain: {seed_domain.event_kind}"
             )
         target_direction = direction_evaluator(seed)
     target_direction = jnp.asarray(target_direction)
     return FiberProblem(
-        path=f"3-5:n={float(refractive_index):.8g}",
+        path=problem_path_label(faces, float(refractive_index)),
         incident_direction=incident_direction,
         target_chart=TargetChart(
             target_direction,
@@ -365,6 +586,25 @@ def path_3_5_problem(
         direction_evaluator=direction_evaluator,
         domain_and_event_evaluator=domain_evaluator,
         seed=seed,
+    )
+
+
+def path_3_5_problem(
+    seed: Array,
+    incident_direction: Array,
+    *,
+    target_direction: Array | None = None,
+    refractive_index: Array = ICE_REFRACTIVE_INDEX,
+    target_minimum_dot: float = 0.0,
+) -> FiberProblem:
+    """Adapt the smooth 3-5 branch and its host event gate to continuation (:func:`path_problem`)."""
+    return path_problem(
+        seed,
+        PATH_3_5_FACES,
+        incident_direction,
+        target_direction=target_direction,
+        refractive_index=refractive_index,
+        target_minimum_dot=target_minimum_dot,
     )
 
 

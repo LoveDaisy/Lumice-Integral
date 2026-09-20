@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from lumice_integral.geometry import BASAL_BOTTOM, BASAL_TOP, HexPrism, N_ICE, PRISM_FACES, rotation
-from lumice_integral.optics import FACE_3_NORMAL, FACE_5_NORMAL, ICE_REFRACTIVE_INDEX
+from lumice_integral.optics import FACE_3_NORMAL, FACE_5_NORMAL, HEXPRISM_BODY_NORMALS, ICE_REFRACTIVE_INDEX
 
 from _geometry_oracles import NORMALS
 
@@ -21,6 +21,15 @@ def test_face_3_and_5_normals_match_optics_constants():
     c = HexPrism()
     np.testing.assert_allclose(c.normal(c.face(3)), np.asarray(FACE_3_NORMAL), atol=1e-15)
     np.testing.assert_allclose(c.normal(c.face(5)), np.asarray(FACE_5_NORMAL), atol=1e-15)
+
+
+@pytest.mark.parametrize("number", [BASAL_TOP, BASAL_BOTTOM, *PRISM_FACES])
+def test_all_hexprism_normals_match_optics_table(number):
+    """``optics.HEXPRISM_BODY_NORMALS`` (exact rationals, the body normals of every generic path)
+    must be the geometry package's Newell normals face by face, not only faces 3 and 5."""
+    c = HexPrism()
+    assert set(HEXPRISM_BODY_NORMALS) == {BASAL_TOP, BASAL_BOTTOM, *PRISM_FACES}
+    np.testing.assert_allclose(c.normal(c.face(number)), np.asarray(HEXPRISM_BODY_NORMALS[number]), atol=1e-15)
 
 
 @pytest.mark.parametrize("number", [BASAL_TOP, BASAL_BOTTOM, *PRISM_FACES])
