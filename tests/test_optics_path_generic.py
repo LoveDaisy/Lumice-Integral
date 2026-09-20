@@ -40,7 +40,6 @@ from lumice_integral.optics import (
     problem_path_label,
 )
 from lumice_integral.prescan import haar_rotations
-from lumice_integral.so3 import exp
 
 from _geometry_oracles import NORMALS, reflect, refract
 

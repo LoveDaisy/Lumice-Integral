@@ -78,7 +78,6 @@ from .strip_pixel import (
     PixelResult,
     StripScene,
     build_strip_scene,
-    pixel_target,
     render_pixel,
 )
 

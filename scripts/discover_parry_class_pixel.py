@@ -89,7 +89,6 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--selection-widening", type=float, default=5.0, help="zenith/roll width multiplier of the landing map density")
     parser.add_argument("--window", type=int, default=21)
     parser.add_argument("--fov-deg", type=float, default=6.0)
-    parser.add_argument("--json", action="store_true", help="print the frozen constants as JSON only")
     args = parser.parse_args(argv)
 
     incident = canonical_incident_direction()
