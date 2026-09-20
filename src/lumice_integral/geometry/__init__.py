@@ -4,7 +4,8 @@ and the single-pose effective entry cross-section ``entry_measure``.
 
 This subpackage is pure numpy and never imports JAX. It is the authoritative
 implementation of the crystal geometry that the writing repository's
-``halo_notes.geometry`` used to own; that repository now calls this package.
+``halo_notes.geometry`` used to own, and is designed to be consumed by that
+repository in its place.
 
 Migrated from the blueprint (2026-09-16): every public name below is kept 1:1
 with ``halo_notes.geometry`` -- only the import path changed, so downstream
@@ -24,10 +25,6 @@ Original to this repository (not in the blueprint):
 - ``entry_measure`` / ``EntryMeasureResult``: effective entry cross-section of
   a fixed face sequence at one pose, measured perpendicular to the world-frame
   incident direction (see ``entry_measure.py`` for the normalisation contract).
-
-Known coupling: ``lumice_integral/__init__.py`` enables JAX float64 at import
-time, so importing this subpackage still imports JAX through the parent
-package even though no module here uses it.
 """
 
 from .core import (

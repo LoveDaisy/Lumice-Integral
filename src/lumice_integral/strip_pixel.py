@@ -61,7 +61,7 @@ from .continuation import ContinuationOptions, FiberProblem
 from .discovery import DISCOVERY_EVENT_NAMES, DiscoveredComponent, discover_components, retarget_problem
 from .geometry import HexPrism
 from .optics import path_3_5_problem
-from .pose_density import ZenithGaussianPoseDensity
+from .pose_density import PoseDensity
 from .prescan import DEFAULT_RNG_SEED, DEFAULT_SAMPLE_COUNT, PrescanTable, build_prescan_table
 from .quadrature import ResampleOptions, integrate_fiber_resampled
 from .weights import build_3_5_weight_evaluators
@@ -107,7 +107,7 @@ class StripScene:
     incident_direction: np.ndarray
     refractive_index: float
     crystal: HexPrism
-    pose_density: ZenithGaussianPoseDensity
+    pose_density: PoseDensity
     render: Mapping[str, Any]
     discovery_template: FiberProblem
     production_template: FiberProblem
@@ -134,16 +134,22 @@ def canonical_strip_scene(
     prescan_table: PrescanTable | None = None,
     prescan_sample_count: int = DEFAULT_SAMPLE_COUNT,
     prescan_rng_seed: int = DEFAULT_RNG_SEED,
+    pose_density: PoseDensity | None = None,
 ) -> StripScene:
     """The ch06 canonical scene (``docs/ch06-reference-fixture.md`` section 3.3).
 
     ``prescan_table`` (a table the driver built or loaded once) is used as is;
     otherwise one is built here from ``prescan_sample_count`` /
-    ``prescan_rng_seed`` (in-process rendering and tests).
+    ``prescan_rng_seed`` (in-process rendering and tests).  ``pose_density``
+    replaces the canonical column density (``canonical_pose_density()``) by
+    another :mod:`.pose_density` family for diagnostics; discovery, tracing and
+    the prescan table do not depend on it (only the ``rho_pose`` weight does),
+    so the same prescan table serves every family.
     """
     incident = canonical_incident_direction()
     crystal = canonical_crystal()
-    pose_density = canonical_pose_density()
+    if pose_density is None:
+        pose_density = canonical_pose_density()
     if prescan_table is None:
         prescan_table = build_prescan_table(
             incident, CANONICAL_REFRACTIVE_INDEX, sample_count=prescan_sample_count, rng_seed=prescan_rng_seed

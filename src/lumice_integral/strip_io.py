@@ -37,6 +37,7 @@ import numpy as np
 
 from .canonical_scene import (
     CANONICAL_HEIGHT_RATIO,
+    CANONICAL_POSE_DENSITY_FAMILY,
     CANONICAL_REFRACTIVE_INDEX,
     CANONICAL_RENDER,
     CANONICAL_SUN_ALTITUDE_DEG,
@@ -45,6 +46,7 @@ from .canonical_scene import (
     CANONICAL_ZENITH_MEAN_DEG,
     CANONICAL_ZENITH_STD_DEG,
 )
+from .pose_density_provenance import pose_density_provenance
 from .provenance import git_commit as _git_commit, sha256_of
 from .quadrature import INTEGRAND_FACTOR_NAMES, RESAMPLED_QUADRATURE_METHOD
 from .strip_pixel import (
@@ -280,11 +282,11 @@ def scene_block() -> dict[str, Any]:
         "refractive_index": {"value": CANONICAL_REFRACTIVE_INDEX, "provenance": "canonical-new"},
         "wavelength_nm": {"value": CANONICAL_WAVELENGTH_NM, "provenance": "canonical-new"},
         "pose_density": {
-            "value": {
-                "model": "zenith-gaussian column",
-                "zenith_mean_deg": CANONICAL_ZENITH_MEAN_DEG,
-                "zenith_std_deg": CANONICAL_ZENITH_STD_DEG,
-            },
+            "value": pose_density_provenance(
+                CANONICAL_POSE_DENSITY_FAMILY,
+                zenith_mean_deg=CANONICAL_ZENITH_MEAN_DEG,
+                zenith_std_deg=CANONICAL_ZENITH_STD_DEG,
+            ),
             "provenance": "canonical-new",
         },
         "camera": {"value": {"lens": "linear", **CANONICAL_RENDER}, "provenance": "canonical-new"},
