@@ -1,4 +1,18 @@
-"""Column-crystal pose density relative to Haar probability measure on SO(3).
+"""Crystal pose densities relative to Haar probability measure on SO(3).
+
+Three classes cover the five ch11 families (``docs/ch11-pose-density-families.md``,
+Lumice ``src/gui/axis_presets.hpp::kAxisPresets`` read as evidence only):
+
+- :class:`HaarUniformPoseDensity` -- ``random`` (``rho_H = 1``);
+- :class:`ZenithGaussianPoseDensity` -- ``column`` (zenith mean 90 deg) and
+  ``plate`` (zenith mean 0 deg), uniform azimuth and spin;
+- :class:`ZenithRollGaussianPoseDensity` -- ``parry`` (zenith mean 90 deg) and
+  ``lowitz`` (zenith mean 0 deg), spin about the c axis locked by a narrow
+  Gaussian (Lumice ``kRollLockedGauss``).
+
+All three share one duck-typed contract consumed by ``weights.py``: ``unit``,
+``normalization``, ``__call__(rotation)`` and ``evaluate_batch(rotations)``.
+:data:`PoseDensity` is the type alias naming that contract.
 
 Model (canonical ch06 scene, ``docs/ch06-reference-fixture.md`` section 3.3):
 the crystal c axis (body ``+z``, see ``geometry.core.HexPrism``) has world
@@ -32,6 +46,18 @@ Derivation of the Haar density (kept here so the reduction is reviewable):
 contract's ``1 / (8 pi^2)`` conversion from Haar probability to ``dVol_g``
 (``docs/phase1-math-contract.md`` section 5.1) is *not* applied here; it stays
 an explicit separate convention entry in ``FiberResult.conventions``.
+
+Roll-locked families (Parry, Lowitz) multiply the same zenith factor by a spin
+factor: with ``psi = c_axis_roll(R)`` the model is ``dP = p(n) dA(n) . q(psi)
+d psi``, ``q = h / Q``, ``h(psi) = exp(-(psi - roll_mean)^2 / (2 roll_std^2))``
+on the single period ``[roll_mean - pi, roll_mean + pi]`` and ``Q = int h d
+psi`` over that period, so ``rho_H(R) = (2 g(theta) / I) . (2 pi h(psi) / Q)``.
+Step 1 above already gives the spin measure ``d psi / (2 pi)`` on every fiber;
+the zenith and spin factors are the two marginals of the ZYZ chain
+``R = Rz(az - pi) . Ry(-zenith) . Rz(roll)`` whose Haar density is
+``sin(zenith) d az d zenith d roll / (8 pi^2)``.  A wrapped (rather than
+single-period truncated) Gaussian would differ only for ``roll_std``
+approaching the period; the locked widths (about 1 deg) are far from that.
 """
 
 from __future__ import annotations
@@ -42,6 +68,15 @@ import numpy as np
 
 _GAUSS_LEGENDRE_NODES = 400
 _WINDOW_HALF_WIDTH_SIGMAS = 12.0
+
+# Family-level zenith means (degrees), Lumice ``kAxisPresets``: the c axis is
+# horizontal for column/parry and vertical for plate/lowitz.
+COLUMN_ZENITH_MEAN_DEG = 90.0
+PLATE_ZENITH_MEAN_DEG = 0.0
+PARRY_ZENITH_MEAN_DEG = 90.0
+LOWITZ_ZENITH_MEAN_DEG = 0.0
+# Roll lock centre (degrees) shared by parry/lowitz (Lumice ``kRollLockedGauss`` mean).
+LOCKED_ROLL_MEAN_DEG = 0.0
 
 
 def c_axis_zenith(rotation: np.ndarray) -> float:
@@ -151,6 +186,136 @@ class ZenithGaussianPoseDensity:
             raise ValueError("rotations must have shape (N, 3, 3)")
         theta = np.arccos(np.clip(rotations[:, 2, 2], -1.0, 1.0))
         return np.asarray(self.density_at_zenith(theta), dtype=np.float64)
+
+
+@dataclass(frozen=True)
+class HaarUniformPoseDensity:
+    """``rho_H(R) = 1``: the ``random`` family (Haar-uniform orientations).
+
+    Lumice's ``Random`` preset (zenith, azimuth and roll all uniform over
+    360 deg) takes its exact ``kFullSphere`` sampling path, i.e. the uniform
+    area measure on the sphere times a uniform spin -- Haar itself.
+    """
+
+    @property
+    def unit(self) -> str:
+        return "dimensionless"
+
+    @property
+    def normalization(self) -> str:
+        return (
+            "density relative to Haar probability measure d mu_Haar on SO(3); "
+            "integrates to 1; Haar-uniform (random) orientations, rho_H = 1 everywhere; "
+            "the 1/(8 pi^2) Haar-to-dVol_g factor is not applied"
+        )
+
+    def __call__(self, rotation: np.ndarray) -> float:
+        rotation = np.asarray(rotation, dtype=np.float64)
+        if rotation.shape != (3, 3):
+            raise ValueError("rotation must be a (3, 3) matrix")
+        return 1.0
+
+    def evaluate_batch(self, rotations: np.ndarray) -> np.ndarray:
+        rotations = np.asarray(rotations, dtype=np.float64)
+        if rotations.ndim != 3 or rotations.shape[1:] != (3, 3):
+            raise ValueError("rotations must have shape (N, 3, 3)")
+        return np.ones(rotations.shape[0], dtype=np.float64)
+
+
+def roll_gaussian(psi: np.ndarray, *, roll_mean_rad: float, roll_std_rad: float) -> np.ndarray:
+    """Unnormalized spin profile ``h(psi)`` on the period ``[mean - pi, mean + pi]``.
+
+    ``psi`` is reduced into that period first, so any representative of the
+    angle (``c_axis_roll`` returns ``(-pi, pi]``) evaluates the same value.
+    """
+    psi = np.asarray(psi, dtype=np.float64)
+    offset = (psi - roll_mean_rad + np.pi) % (2.0 * np.pi) - np.pi
+    return np.exp(-(offset**2) / (2.0 * roll_std_rad**2))
+
+
+def roll_marginal_integral(*, roll_mean_rad: float, roll_std_rad: float) -> float:
+    """``Q = int_{mean - pi}^{mean + pi} h(psi) d psi`` by Gauss-Legendre quadrature.
+
+    Same ``+-12 sigma`` window as :func:`zenith_marginal_integral`, clipped to
+    the single period (no ``sin`` weight: the spin measure is flat).
+    """
+    lower = max(roll_mean_rad - np.pi, roll_mean_rad - _WINDOW_HALF_WIDTH_SIGMAS * roll_std_rad)
+    upper = min(roll_mean_rad + np.pi, roll_mean_rad + _WINDOW_HALF_WIDTH_SIGMAS * roll_std_rad)
+    nodes, weights = np.polynomial.legendre.leggauss(_GAUSS_LEGENDRE_NODES)
+    psi = 0.5 * (upper - lower) * nodes + 0.5 * (upper + lower)
+    values = roll_gaussian(psi, roll_mean_rad=roll_mean_rad, roll_std_rad=roll_std_rad)
+    return float(0.5 * (upper - lower) * np.sum(weights * values))
+
+
+@dataclass(frozen=True)
+class ZenithRollGaussianPoseDensity:
+    """``rho_H(R) = (2 g(theta) / I) . (2 pi h(psi) / Q)``: parry / lowitz.
+
+    The zenith factor is exactly :class:`ZenithGaussianPoseDensity`'s; the
+    spin factor locks ``psi = c_axis_roll(R)`` to a narrow Gaussian about
+    ``roll_mean_rad`` (module docstring, last paragraph).
+    """
+
+    zenith_mean_rad: float
+    zenith_std_rad: float
+    roll_mean_rad: float
+    roll_std_rad: float
+    zenith: ZenithGaussianPoseDensity = field(init=False, repr=False, compare=False)
+    roll_integral: float = field(init=False, default=0.0)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "zenith", ZenithGaussianPoseDensity(self.zenith_mean_rad, self.zenith_std_rad))
+        if not np.isfinite(self.roll_mean_rad):
+            raise ValueError("roll_mean_rad must be finite")
+        if not np.isfinite(self.roll_std_rad) or self.roll_std_rad <= 0.0:
+            raise ValueError("roll_std_rad must be a positive finite width")
+        object.__setattr__(
+            self,
+            "roll_integral",
+            roll_marginal_integral(roll_mean_rad=self.roll_mean_rad, roll_std_rad=self.roll_std_rad),
+        )
+
+    @property
+    def unit(self) -> str:
+        return "dimensionless"
+
+    @property
+    def normalization(self) -> str:
+        return (
+            "density relative to Haar probability measure d mu_Haar on SO(3); "
+            "integrates to 1; zenith-Gaussian sphere density of the c axis "
+            f"(mean {np.degrees(self.zenith_mean_rad):.6g} deg, std "
+            f"{np.degrees(self.zenith_std_rad):.6g} deg), uniform azimuth, spin about "
+            f"the c axis Gaussian (mean {np.degrees(self.roll_mean_rad):.6g} deg, std "
+            f"{np.degrees(self.roll_std_rad):.6g} deg, roll = 0 puts the body e1 axis "
+            "in the vertical plane through the c axis); "
+            "the 1/(8 pi^2) Haar-to-dVol_g factor is not applied"
+        )
+
+    def density_at_roll(self, psi: np.ndarray) -> np.ndarray:
+        """Spin factor ``2 pi h(psi) / Q``.
+
+        Placeholder stage (plan Step 4): held at ``1`` so that the class reduces
+        to :class:`ZenithGaussianPoseDensity` while the wiring is validated.
+        """
+        return np.ones_like(np.asarray(psi, dtype=np.float64))
+
+    def __call__(self, rotation: np.ndarray) -> float:
+        return float(self.zenith.density_at_zenith(c_axis_zenith(rotation)) * self.density_at_roll(c_axis_roll(rotation)))
+
+    def evaluate_batch(self, rotations: np.ndarray) -> np.ndarray:
+        """``rho_H`` of ``(N, 3, 3)`` rotations (same zenith and roll formulas as ``__call__``)."""
+        rotations = np.asarray(rotations, dtype=np.float64)
+        if rotations.ndim != 3 or rotations.shape[1:] != (3, 3):
+            raise ValueError("rotations must have shape (N, 3, 3)")
+        theta = np.arccos(np.clip(rotations[:, 2, 2], -1.0, 1.0))
+        psi = np.arctan2(-rotations[:, 2, 1], rotations[:, 2, 0])
+        return np.asarray(self.zenith.density_at_zenith(theta) * self.density_at_roll(psi), dtype=np.float64)
+
+
+# The duck-typed contract ``weights.py`` consumes (``unit``, ``normalization``,
+# ``__call__``, ``evaluate_batch``); a type alias only, no runtime behaviour.
+PoseDensity = HaarUniformPoseDensity | ZenithGaussianPoseDensity | ZenithRollGaussianPoseDensity
 
 
 def column_zenith_pose_density(

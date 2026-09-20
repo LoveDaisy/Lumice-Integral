@@ -4,7 +4,9 @@ import numpy as np
 import pytest
 
 from lumice_integral.pose_density import (
+    HaarUniformPoseDensity,
     ZenithGaussianPoseDensity,
+    ZenithRollGaussianPoseDensity,
     c_axis_roll,
     c_axis_zenith,
     column_zenith_pose_density,
@@ -37,7 +39,14 @@ def test_c_axis_zenith_reads_the_world_z_component_of_the_body_axis():
 
 @pytest.mark.parametrize(
     "mean_deg, std_deg, samples, tolerance_sigmas",
-    [(90.0, 0.5, 2_000_000, 4.0), (90.0, 5.0, 1_000_000, 4.0), (90.0, 30.0, 500_000, 4.0), (10.0, 5.0, 1_000_000, 4.0)],
+    [
+        (90.0, 0.5, 2_000_000, 4.0),
+        (90.0, 5.0, 1_000_000, 4.0),
+        (90.0, 30.0, 500_000, 4.0),
+        (10.0, 5.0, 1_000_000, 4.0),
+        # plate: the zenith window is clipped at the pole (theta >= 0)
+        (0.0, 5.0, 1_000_000, 4.0),
+    ],
 )
 def test_density_integrates_to_one_against_independent_haar_samples(
     mean_deg, std_deg, samples, tolerance_sigmas
@@ -141,3 +150,47 @@ def test_c_axis_roll_is_the_body_e1_elevation_reference():
     assert wrapped_difference(c_axis_roll(spun), c_axis_roll(base) + delta) == pytest.approx(0.0, abs=1e-12)
     with pytest.raises(ValueError):
         c_axis_roll(np.eye(2))
+
+
+def test_haar_uniform_density_is_exactly_one_everywhere():
+    density = HaarUniformPoseDensity()
+    rotations = haar_rotations(10_000, np.random.default_rng(7))
+    batch = density.evaluate_batch(rotations)
+    assert batch.shape == (10_000,) and batch.dtype == np.float64
+    assert batch.mean() == 1.0 and batch.min() == 1.0 and batch.max() == 1.0
+    assert all(density(rotation) == 1.0 for rotation in rotations[:50])
+    assert density.unit == "dimensionless"
+    assert "Haar" in density.normalization and "8 pi^2" in density.normalization
+    with pytest.raises(ValueError):
+        density(np.eye(2))
+    with pytest.raises(ValueError):
+        density.evaluate_batch(np.eye(3))
+
+
+def test_plate_family_is_the_zenith_gaussian_about_the_pole():
+    """mean = 0: the window is clipped at theta = 0 and I = int_0 g sin theta d theta still normalizes."""
+    plate = ZenithGaussianPoseDensity(0.0, np.radians(5.0))
+    theta = np.linspace(0.0, 12.0 * np.radians(5.0), 400_001)
+    trapezoid = np.trapezoid(np.exp(-(theta**2) / (2.0 * np.radians(5.0) ** 2)) * np.sin(theta), theta)
+    assert plate.marginal_integral == pytest.approx(trapezoid, rel=1e-9)
+    assert plate(np.eye(3)) == pytest.approx(2.0 / plate.marginal_integral, rel=1e-12)
+    horizontal = np.array([[1.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]])
+    # 18 sigma from the pole: 2 exp(-162) / I, i.e. ~1e-68 -- negligible but not underflowed
+    assert plate(horizontal) == pytest.approx(2.0 * np.exp(-162.0) / plate.marginal_integral, rel=1e-9)
+
+
+def test_zenith_roll_density_with_a_flat_roll_factor_reduces_to_the_zenith_density():
+    """Wiring baseline: the roll factor integrates to one over a flat spin, so the two
+    classes agree pose-by-pose *only* when the roll factor is identically one; kept as the
+    reference point of the placeholder stage (plan Step 4) and superseded by the real
+    roll factor in Step 5."""
+    column = ZenithGaussianPoseDensity(np.pi / 2.0, np.radians(1.0))
+    parry = ZenithRollGaussianPoseDensity(np.pi / 2.0, np.radians(1.0), 0.0, np.radians(1.0))
+    rotations = haar_rotations(2000, np.random.default_rng(11))
+    np.testing.assert_allclose(parry.evaluate_batch(rotations), column.evaluate_batch(rotations), rtol=0.0, atol=1e-12)
+    assert parry(rotations[0]) == pytest.approx(column(rotations[0]), abs=1e-12)
+    assert parry.unit == "dimensionless" and "spin about the c axis Gaussian" in parry.normalization
+    with pytest.raises(ValueError):
+        ZenithRollGaussianPoseDensity(np.pi / 2.0, np.radians(1.0), 0.0, 0.0)
+    with pytest.raises(ValueError):
+        ZenithRollGaussianPoseDensity(-0.1, np.radians(1.0), 0.0, np.radians(1.0))
