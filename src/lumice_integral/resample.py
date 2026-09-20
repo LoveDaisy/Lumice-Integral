@@ -215,20 +215,49 @@ class ResampledPredictors:
     total: float
 
 
+# The knot batches run over a curve's accepted poses, whose count differs
+# from curve to curve (and so from pixel to pixel).  An eager ``jax.vmap``
+# dispatches every primitive separately and XLA compiles each of them again
+# for every new count (~30 compilations per new length, measured in
+# task-pixel-cost-shape-stable-kernels), so the batches are compiled kernels
+# fed power-of-two padded inputs: at most one compilation per bucket per
+# process.  The maps are elementwise, so padding members (identity rotations,
+# zero quaternions and tangents) never touch the real ones, and the kernels
+# stay the only implementation of the quaternion chart.
+_quaternion_from_rotation_kernel = jax.jit(jax.vmap(quaternion_from_rotation))
+_quaternion_derivative_kernel = jax.jit(jax.vmap(quaternion_derivative))
+
+
+def _bucket_length(count: int) -> int:
+    """Smallest power of two that is at least ``count`` (and at least 1)."""
+    return 1 << max(count - 1, 0).bit_length()
+
+
+def _padded(array: np.ndarray, length: int, fill: np.ndarray) -> jnp.ndarray:
+    """``array`` extended to ``length`` leading entries with copies of ``fill``."""
+    padded = np.empty((length, *array.shape[1:]), dtype=np.float64)
+    padded[: len(array)] = array
+    padded[len(array) :] = fill
+    return jnp.asarray(padded)
+
+
 def _quaternion_from_rotation_batch(rotations: np.ndarray) -> np.ndarray:
-    return np.asarray(
-        jax.vmap(quaternion_from_rotation)(jnp.asarray(rotations, dtype=jnp.float64)),
-        dtype=np.float64,
-    )
+    rotations = np.asarray(rotations, dtype=np.float64)
+    count = len(rotations)
+    padded = _padded(rotations, _bucket_length(count), np.eye(3))
+    return np.asarray(_quaternion_from_rotation_kernel(padded), dtype=np.float64)[:count]
 
 
 def _quaternion_derivative_batch(quaternions: np.ndarray, tangents: np.ndarray) -> np.ndarray:
-    return np.asarray(
-        jax.vmap(quaternion_derivative)(
-            jnp.asarray(quaternions, dtype=jnp.float64), jnp.asarray(tangents, dtype=jnp.float64)
-        ),
-        dtype=np.float64,
+    quaternions = np.asarray(quaternions, dtype=np.float64)
+    tangents = np.asarray(tangents, dtype=np.float64)
+    count = len(quaternions)
+    length = _bucket_length(count)
+    zero = np.zeros(())
+    derivatives = _quaternion_derivative_kernel(
+        _padded(quaternions, length, zero), _padded(tangents, length, zero)
     )
+    return np.asarray(derivatives, dtype=np.float64)[:count]
 
 
 def fiber_spline(result: TraceLike) -> FiberSpline:

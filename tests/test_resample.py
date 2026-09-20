@@ -116,3 +116,51 @@ def test_spline_evaluation_rejects_parameters_outside_the_range(canonical):
     with pytest.raises(ValueError):
         uniform_parameters(spline, 1)
     assert isinstance(spline, FiberSpline)
+
+
+# --- bucketed knot batches (task-pixel-cost-shape-stable-kernels Step 2.2) ---
+
+
+def test_bucket_length_is_the_next_power_of_two():
+    from lumice_integral.resample import _bucket_length
+
+    assert [_bucket_length(n) for n in (0, 1, 2, 3, 4, 5, 8, 9, 1000, 1024, 1025)] == [
+        1, 1, 2, 4, 4, 8, 8, 16, 1024, 1024, 2048,
+    ]
+
+
+@pytest.mark.parametrize("count", [1, 3, 8, 37])
+def test_padded_knot_batches_match_the_unpadded_kernels_bit_for_bit(count):
+    """Padding members are elementwise-isolated: the first ``count`` rows are exactly the plain kernel's.
+
+    Against the *un-jitted* per-element functions the compiled kernels differ
+    by XLA's fusion (last-bit contractions), which is a property of ``jit``,
+    not of the padding; that link is checked at a few ulp.
+    """
+    from lumice_integral.resample import (
+        _quaternion_derivative_batch,
+        _quaternion_derivative_kernel,
+        _quaternion_from_rotation_batch,
+        _quaternion_from_rotation_kernel,
+    )
+    from lumice_integral.so3 import exp, quaternion_derivative, quaternion_from_rotation
+
+    rng = np.random.default_rng(count)
+    rotations = np.stack([np.asarray(exp(jnp.asarray(v))) for v in rng.normal(size=(count, 3))])
+    tangents = rng.normal(size=(count, 3))
+
+    quaternions = _quaternion_from_rotation_batch(rotations)
+    assert quaternions.shape == (count, 4)
+    np.testing.assert_array_equal(quaternions, np.asarray(_quaternion_from_rotation_kernel(jnp.asarray(rotations))))
+    eager = np.stack([np.asarray(quaternion_from_rotation(jnp.asarray(r))) for r in rotations])
+    np.testing.assert_allclose(quaternions, eager, rtol=0.0, atol=4e-16)
+
+    derivatives = _quaternion_derivative_batch(quaternions, tangents)
+    assert derivatives.shape == (count, 4)
+    np.testing.assert_array_equal(
+        derivatives, np.asarray(_quaternion_derivative_kernel(jnp.asarray(quaternions), jnp.asarray(tangents)))
+    )
+    eager = np.stack(
+        [np.asarray(quaternion_derivative(jnp.asarray(q), jnp.asarray(t))) for q, t in zip(quaternions, tangents)]
+    )
+    assert np.all(np.abs(derivatives - eager) <= 4e-16 * (1.0 + np.abs(eager)))
