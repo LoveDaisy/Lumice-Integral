@@ -360,6 +360,125 @@ Only after numerical equivalence is established should the project decide
 whether the reduced formulation becomes an optimization backend, a theory and
 diagnostics tool, or the primary renderer.
 
+### 4.1 Design findings (2026-09-20 discussion, before the Phase II scrum)
+
+These are derived statements, not yet numerically verified unless a test is
+named; the Phase II scrum turns each into a fixture or a design constraint.
+
+**(a) Every geometric and optical weight is a function on $S^2$, not on
+SO(3).** `entry_measure` reduces the pose to `s_body = R.T @ incident`
+$= \mathbf u$ on its first line and uses nothing else; the TIR gates and the
+Fresnel factors depend on the incidence angles, hence on $\mathbf u$ only.
+Rotating the crystal about the sun direction (the fiber coordinate $\psi$)
+changes none of them. So $A_P$, $T_P$, the validity gates and the feasible
+domain $V_P$ are fields on the base $S^2$ of the fibration
+$R \mapsto \mathbf u = R^{-1}\mathbf s$; only $\rho$ sees the full pose.
+Phase I evaluates them point by point along an SO(3) curve because it cannot
+see this structure; Phase II lives on exactly that $S^2$.
+
+**(b) The domain is a precomputed map, and open arcs are a support
+question.** For one (crystal, path) the pair $(V_P, A_P)$ is computed once
+with the existing `entry_measure` (any $R$ taking $\mathbf u$ to
+$\mathbf s$ will do), independent of pixel and of pose density. The pixel
+value is a line integral along the level set of the deviation field
+(coarea on $S^2$, Haar $= dA(\mathbf u)/4\pi \cdot d\psi/2\pi$):
+
+$$
+I(\delta,\alpha)\,\sin\delta \;\propto\;
+\int_{D_P=\delta}\frac{\rho\big(R(\mathbf u,\psi(\mathbf u,\alpha))\big)\,
+A_P(\mathbf u)\,T_P(\mathbf u)}{|\nabla_{S^2}D_P(\mathbf u)|}\,d\ell .
+$$
+
+The integrand vanishes continuously on every boundary: corridor boundaries
+(two polygons separating, $A_P \to 0$ continuously), the exit-face TIR
+boundary of the formula domain $U_P$ (Fresnel transmittance $\to 0$ at the
+critical angle), no critical angle on entry, and partial reflection on the
+internal steps is a continuous weight, not a boundary. A contour cut by
+$\partial V_P$ therefore needs no event handling: trace it on $U_P$ and let
+$A_P T_P$ remove the infeasible part. Phase I's rule "keep tracing, weight
+to zero" (contract section 6.3) is the same fact placed inside the tracer.
+The only non-smoothness left is the kinks of $A_P$ (a vertex crossing an
+edge), which lower the quadrature order locally, as in Phase I.
+
+**(c) Topology and completeness.** Level sets of a scalar field are governed
+by its critical points: $\nabla D_P = 0$ (finitely many, found by AD Newton
+from grid seeds) plus the critical points of $D_P|_{\partial U_P}$ split the
+$\delta$ axis into intervals on which the level-set topology is constant.
+Marching once per interval and Newton-refining gives *every* component, so
+the completeness certificate that Phase I cannot issue (contract C11,
+`completeness` is procedural) becomes a checkable statement. This is the
+larger gain of Phase II; the speed is the smaller one.
+
+**(d) Layered invariance (what a halo shares and what varies).** The fiber
+of a pixel, $\{R : R\,\Phi_P(R^{-1}\mathbf s) = x\}$, depends on the path
+only through $\Phi_P$. Hence:
+
+| layer | object | shared by |
+|---|---|---|
+| $\Phi$ | the field $D_P$, its contours, $1/\lvert\nabla D_P\rvert$, the correspondence $\psi(\mathbf u,\alpha)$, the critical points | the whole $\Phi$-class, across PBD classes |
+| member | the window field $w_m = A_m T_m$ on $S^2$, additive: $w_\Phi = \sum_m w_m$ | one per face sequence |
+| symmetry | a proper crystal symmetry $g$ moves the map: $D_{gPg^{-1}}(\mathbf u) = D_P(g^{-1}\mathbf u)$, $\mathrm{fiber}(gPg^{-1}) = \mathrm{fiber}(P)\,g^{-1}$ exactly, windows transported alike | only $\rho(Rg^{-1})$ can tell the members apart |
+| $\rho$ | the pose density on the fiber | the *columns* of the writing series' table |
+
+So a $\Phi$-class is one contour family plus one effective window field, and
+the writing series' core table (rows = path classes, columns = pose
+families) has the skeleton row $= (D_P, w_\Phi)$, column $= \rho$, cell
+$=$ the line integral. Task 9's `12x` for the column density is the symmetry
+row with a $\rho$ invariant under the $C_6$ rotations and $C_2'$; the tilted
+Parry density breaks it through $\rho$ alone. Improper elements (B/D
+mirrors) do not transport inside SO(3) and are traced separately. The same
+statements hold in Phase I: members with the same $\Phi$ share one SO(3)
+curve (task 9 measured "same direction map, different weight" for `3-1-2-5`
+on row 651), so class rendering should trace once per $\Phi$-group and sum
+the windows — task `path-class-shared-fiber` (tasks.md 12).
+
+**(e) Fixtures this suggests.**
+- *Liljequist* (writing chapter 8): `1-3-2` and `3-5-6-7-3` have the same
+  $\Phi$ (the mirror in the plane of faces 3/6; three reflections in planes
+  at $\pm 60°$ compose to one) and different windows — the `142°` sharp edge
+  is the $D_P$ fold and is shape-independent, the narrow peak is the
+  `3-5-6-7-3` window and moves with the cross-section. Two pictures on one
+  sphere.
+- *Parhelic circle*: $D_P(\mathbf u) = \angle(M\mathbf u, \mathbf u)$ has
+  $\nabla D_P = 0$ only at $\pm\mathbf n_M$, so the ring has **no fold**;
+  its brightness along the ring is entirely the window layer. For plates the
+  ring azimuth is linear in the crystal azimuth, so the profile is a sum of
+  shifted copies of one window function (three mirror planes of the prism).
+  A clean test of the window-sum and symmetry-transport layers without the
+  Jacobian in the way.
+- *22° halo*: the fold; see the caution below.
+
+**(f) Design constraints carried over from the Phase I cost profile**
+(`scratchpad/task-pixel-cost-shape-stable-kernels/evidence/owner_cprofile_col126_rows300-340.prof`):
+`74 %` of a lit pixel is the continuation loop, `~95` corrector trials at
+`~0.9 ms` each of which the arithmetic is $3 \times 3$; the cost is
+per-step Python orchestration and small-kernel dispatch, and 30 workers on
+`home-wsl` sit at the physical-core wall (`100` px/s, `35 min` per image).
+Phase II must be batched, branch-free and `vmap`-able from the first
+design: field evaluation on an $S^2$ grid, contour extraction and
+quadrature as array programs, so that a full image is a field computation
+and a GPU becomes usable. A per-pixel Python loop would reproduce the same
+wall in a new place.
+
+**(g) Open points to settle numerically, not by argument.**
+- For a random orientation the minimum of $D_P$ on $S^2$ is isolated and
+  non-degenerate, and $\int d\ell/|\nabla D|$ near a two-dimensional minimum
+  is finite: the inner edge would be a finite jump, and the
+  $I \sim 1/\sqrt{D - D_{\min}}$ fold profile would belong to pose families
+  that confine $\mathbf u$ to a curve (columns, tangent arcs). Chapter 10's
+  statement should be an acceptance test of the 22° cross-check, not a
+  premise.
+- Rank-deficient maps: $W = 0$ classes are point masses (task 9); the
+  degenerate images of parallel-face classes ($M \ne I$, $W = I$) come from
+  $\rho$ confining $\mathbf u$, not from $\Phi$, and need their own
+  accounting.
+- Non-uniform $\rho$: $\psi(\mathbf u,\alpha)$ is single-valued, so $\rho$
+  is evaluated pointwise; only the "convolution on the sky" reading of
+  chapter 11 needs uniform $\rho$.
+- The Jacobian alignment $1/|\nabla_{S^2} D_P|$ against Phase I's
+  $J_\perp$ under the fibration's coordinate change is the cross-validation
+  contact point (section 4, third bullet).
+
 ## 5. Proposed Responsibility Boundaries
 
 The project will likely need the following conceptual layers, without implying
