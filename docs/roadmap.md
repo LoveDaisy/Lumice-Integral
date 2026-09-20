@@ -237,7 +237,19 @@ order below follows their dependencies, not the solver's own curiosity.
 5. **Pose-density families** (chapter 11): plate / column / Parry / Lowitz /
    random with a width parameter, replacing the single zenith-Gaussian column
    model; the fiber is unchanged, only the integrand. This also turns the
-   `0.5 deg` guess of section 3.3 into a swept parameter.
+   `0.5 deg` guess of section 3.3 into a swept parameter. *Done 2026-09-20*
+   (`docs/ch11-pose-density-families.md`): `pose_density.build_pose_density`
+   covers the five families with three classes (Haar-uniform; zenith
+   Gaussian; zenith Gaussian times a roll-locked Gaussian, roll from the
+   Lumice chain `R = Rz(az - pi) Ry(-zenith) Rz(roll)`), every family
+   normalised against Haar by independent quadrature, provenance recorded
+   per family, and the `0.5 deg` width sweep reproduces the defect-2 table.
+   Finding: on the labelled path `3-5` the ch06 strip is a column/random
+   strip — plate, Parry and Lowitz put their `3-5` light elsewhere on the
+   sky (parhelion, upper Parry arc, Lowitz arcs) and are exactly zero on
+   column `126`; their strip contributions come from other labelled paths of
+   the class, i.e. item 3. Still open: a family parameter on the production
+   CLI, wrapped (vs single-period) roll Gaussian, Lowitz `zigzag`.
 
 Deferred unchanged: pixel-space adaptive sampling, GPU kernels, finite solar
 disk (chapter 10's singularity is the point-source one).
@@ -414,3 +426,9 @@ produce plausible but systematically wrong radiance.
   (crystal height convention, then the height-independent tail), path classes
   as the rendering unit, Phase II as the chapter-10 tool, pose-density
   families. Path-class accounting is decoupled from defect 2.
+- **2026-09-20**: pose-density families (section 3.5 item 5) implemented;
+  the roll-locked families need the crystal's spin about its c axis, taken
+  from the Lumice ZYZ chain with `roll = 0` = face-3 normal in the vertical
+  plane through the c axis (this renderer's own reference, not Lumice's mesh
+  numbering). Provenance grows a trailing `family` key; the column block is
+  otherwise unchanged.
