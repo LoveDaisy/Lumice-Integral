@@ -39,7 +39,7 @@ from .optics import (
     path_3_5_domain,
     path_3_5_domain_batch,
 )
-from .pose_density import ZenithGaussianPoseDensity
+from .pose_density import PoseDensity
 
 STANDARD_WEIGHT_NAMES = (
     "rho_pose",
@@ -251,12 +251,15 @@ def build_3_5_weight_evaluators(
     incident_direction: np.ndarray,
     refractive_index: float,
     crystal: HexPrism,
-    pose_density: ZenithGaussianPoseDensity,
+    pose_density: PoseDensity,
 ) -> dict[str, WeightEvaluator]:
     """Assemble the four Phase I factors for one 3-5 scene (single authority).
 
-    ``visibility``, ``source_factor``, ``pixel_factor`` and ``other_radiometric``
-    are deliberately absent so that they stay ``unavailable`` downstream.
+    ``pose_density`` is any of the :mod:`.pose_density` families (duck-typed:
+    ``unit``, ``normalization``, ``__call__``, ``evaluate_batch``); it only
+    changes the ``rho_pose`` factor.  ``visibility``, ``source_factor``,
+    ``pixel_factor`` and ``other_radiometric`` are deliberately absent so that
+    they stay ``unavailable`` downstream.
     """
     incident = np.asarray(incident_direction, dtype=np.float64)
     index = float(refractive_index)

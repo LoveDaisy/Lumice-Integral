@@ -11,10 +11,12 @@ import lumice_integral.strip_pixel as strip_pixel_module
 from lumice_integral.canonical_scene import (
     CANONICAL_PIXEL_COLUMN,
     CANONICAL_PIXEL_ROW,
+    canonical_pose_density,
     canonical_target_direction,
 )
 from lumice_integral.continuation import ContinuationOptions, FiberStatus, TerminationReason, trace_fiber
-from lumice_integral.discovery import DISCOVERY_EVENT_NAMES, ComponentDiscoveryResult, DiscoveredComponent
+from lumice_integral.discovery import DISCOVERY_EVENT_NAMES, ComponentDiscoveryResult, DiscoveredComponent, retarget_problem
+from lumice_integral.pose_density import build_pose_density
 from lumice_integral.prescan import DEFAULT_SAMPLE_COUNT, build_prescan_table
 from lumice_integral.resample import stitch_open_arc
 from lumice_integral.strip_pixel import (
@@ -325,3 +327,63 @@ def test_quadrature_unavailable_component_makes_the_pixel_unknown(monkeypatch, s
     assert result.completeness == "unknown" and result.value == 0.0
     assert result.status_bits == STATUS_RENDERED | STATUS_UNKNOWN_COMPLETENESS | STATUS_QUADRATURE_UNAVAILABLE
     assert result.warm_seeds == ()  # not integrated -> not a warm seed
+
+
+
+# ---------------------------------------------------------------------------
+# pose density families (task-pose-density-families): the same fibers, another rho_pose
+
+# Diagnostic pixels shared with scripts/probe_defect2_factors.py and the ch11
+# family comparison (docs/ch11-pose-density-families.md).
+FAMILY_PROBE_COLUMN = 126
+FAMILY_PROBE_ROWS = (150, 300, 450, 600)
+FAMILY_DENSITIES = {
+    "random": build_pose_density("random"),
+    "plate": build_pose_density("plate", zenith_std_deg=0.5),
+    "column": build_pose_density("column", zenith_std_deg=0.5),
+    "parry": build_pose_density("parry", zenith_std_deg=1.0, roll_std_deg=1.0),
+    "lowitz": build_pose_density("lowitz", zenith_std_deg=40.0, roll_std_deg=1.0),
+}
+
+
+def test_canonical_strip_scene_defaults_to_the_canonical_column_density(scene):
+    assert scene.pose_density == canonical_pose_density()
+    assert scene.production_template.weight_evaluators["rho_pose"].evaluate is scene.pose_density
+
+
+@pytest.mark.parametrize("row", FAMILY_PROBE_ROWS)
+def test_every_family_renders_the_diagnostic_pixels_on_the_same_fibers(scene, options, row):
+    """Discovery/trace never read rho_pose: the five families share the pose arrays
+    (same component count, pose count, arclength) and differ only in the weight; every
+    family's rho_pose is finite at every accepted pose (parry/lowitz roll extraction
+    stays off the gimbal poles on these fibers) and every integral is finite."""
+    target = pixel_target(scene.render, row, FAMILY_PROBE_COLUMN)
+    results = {}
+    for family, density in FAMILY_DENSITIES.items():
+        family_scene = canonical_strip_scene(prescan_table=scene.prescan_table, pose_density=density)
+        assert family_scene.pose_density is density
+        result = render_pixel(family_scene, row, FAMILY_PROBE_COLUMN, options)
+        results[family] = result
+        for record in result.components:
+            fiber = trace_fiber(retarget_problem(family_scene.production_template, target, record.seed))
+            rho = np.asarray(fiber.weight_observables["rho_pose"].values, dtype=np.float64)
+            assert rho.shape == (record.pose_count,) and np.all(np.isfinite(rho)) and np.all(rho >= 0.0), family
+            np.testing.assert_allclose(rho, density.evaluate_batch(np.asarray(fiber.poses)), rtol=1e-12)
+    reference = results["column"]
+    assert reference.component_count >= 1 and reference.completeness == "complete"
+    for family, result in results.items():
+        assert result.component_count == reference.component_count, family
+        assert result.completeness == "complete", family
+        assert np.isfinite(result.value) and result.value >= 0.0, family
+        for ours, theirs in zip(result.components, reference.components):
+            assert ours.kind == theirs.kind and ours.pose_count == theirs.pose_count, family
+            assert ours.arclength == theirs.arclength, family
+            assert ours.quadrature_status == "available" and ours.non_finite_node_count == 0, family
+            assert np.isfinite(ours.value) and np.isfinite(ours.error_estimate), family
+    # On this labelled path (3 -> 5) and column the fibers have c-axis zenith 88-92 deg
+    # and roll 90-155 deg (face 3 on the side): only column and random carry mass.
+    # plate (zenith about 0 deg), parry and lowitz (roll locked at 0 deg, face 3 on top)
+    # underflow to exactly zero here; their 3 -> 5 light lands outside the strip
+    # (parhelia / Parry / Lowitz arcs), see docs/ch11-pose-density-families.md.
+    assert results["column"].value > 0.0 and results["random"].value > 0.0
+    assert results["plate"].value == 0.0 and results["parry"].value == 0.0 and results["lowitz"].value == 0.0
