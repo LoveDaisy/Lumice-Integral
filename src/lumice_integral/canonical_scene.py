@@ -21,7 +21,8 @@ from .camera import linear_pixel_outgoing_direction, project_linear, sun_inciden
 from .continuation import FiberProblem
 from .geometry import HexPrism
 from .optics import path_3_5_problem
-from .pose_density import ZenithGaussianPoseDensity
+from .pose_density import PoseDensity, build_pose_density
+from .pose_density_provenance import pose_density_provenance
 from .so3 import exp
 from .weights import build_3_5_weight_evaluators
 
@@ -77,9 +78,14 @@ def canonical_seed() -> np.ndarray:
     return np.asarray(exp(jnp.asarray(CANONICAL_SEED_EXPONENTIAL_COORDINATES)))
 
 
-def canonical_pose_density() -> ZenithGaussianPoseDensity:
-    return ZenithGaussianPoseDensity(
-        np.radians(CANONICAL_ZENITH_MEAN_DEG), np.radians(CANONICAL_ZENITH_STD_DEG)
+CANONICAL_POSE_DENSITY_FAMILY = "column"
+
+
+def canonical_pose_density() -> PoseDensity:
+    return build_pose_density(
+        CANONICAL_POSE_DENSITY_FAMILY,
+        zenith_mean_deg=CANONICAL_ZENITH_MEAN_DEG,
+        zenith_std_deg=CANONICAL_ZENITH_STD_DEG,
     )
 
 
@@ -116,11 +122,11 @@ def canonical_fixture_metadata() -> dict[str, Any]:
             "altitude_deg": CANONICAL_SUN_ALTITUDE_DEG,
             "azimuth_deg": CANONICAL_SUN_AZIMUTH_DEG,
         },
-        "pose_density": {
-            "model": "zenith-gaussian column",
-            "zenith_mean_deg": CANONICAL_ZENITH_MEAN_DEG,
-            "zenith_std_deg": CANONICAL_ZENITH_STD_DEG,
-        },
+        "pose_density": pose_density_provenance(
+            CANONICAL_POSE_DENSITY_FAMILY,
+            zenith_mean_deg=CANONICAL_ZENITH_MEAN_DEG,
+            zenith_std_deg=CANONICAL_ZENITH_STD_DEG,
+        ),
         "camera": {"lens": "linear", **CANONICAL_RENDER},
         "pixel": {
             "row": CANONICAL_PIXEL_ROW,

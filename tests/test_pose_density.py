@@ -3,15 +3,26 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from lumice_integral.canonical_scene import (
+    CANONICAL_ZENITH_MEAN_DEG,
+    CANONICAL_ZENITH_STD_DEG,
+    canonical_fixture_metadata,
+    canonical_pose_density,
+)
 from lumice_integral.pose_density import (
+    POSE_DENSITY_FAMILIES,
     HaarUniformPoseDensity,
     ZenithGaussianPoseDensity,
     ZenithRollGaussianPoseDensity,
+    build_pose_density,
     c_axis_roll,
     c_axis_zenith,
     column_zenith_pose_density,
+    resolve_pose_density_parameters,
     zenith_marginal_integral,
 )
+from lumice_integral.pose_density_provenance import pose_density_provenance
+from lumice_integral.strip_io import scene_block
 
 
 def haar_rotations(count: int, rng: np.random.Generator) -> np.ndarray:
@@ -290,3 +301,123 @@ def test_roll_locked_batch_density_matches_the_scalar_call_pose_by_pose():
     np.testing.assert_allclose(batch, scalar, rtol=1e-12, atol=0.0)
     with pytest.raises(ValueError):
         density.evaluate_batch(np.eye(3))
+
+
+# ---------------------------------------------------------------------------
+# family enumeration, factory and provenance (plan Step 6)
+
+
+def test_the_family_enumeration_is_the_five_ch11_families():
+    assert POSE_DENSITY_FAMILIES == ("random", "plate", "column", "parry", "lowitz")
+
+
+def test_factory_dispatches_each_family_to_its_class_with_the_family_defaults():
+    random = build_pose_density("random")
+    assert isinstance(random, HaarUniformPoseDensity)
+
+    plate = build_pose_density("plate", zenith_std_deg=0.5)
+    assert isinstance(plate, ZenithGaussianPoseDensity)
+    assert plate.zenith_mean_rad == 0.0 and plate.zenith_std_rad == np.radians(0.5)
+
+    column = build_pose_density("column", zenith_std_deg=0.5)
+    assert isinstance(column, ZenithGaussianPoseDensity)
+    assert column.zenith_mean_rad == np.radians(90.0)
+    assert column == ZenithGaussianPoseDensity(np.radians(90.0), np.radians(0.5))
+
+    parry = build_pose_density("parry", zenith_std_deg=1.0, roll_std_deg=1.0)
+    assert isinstance(parry, ZenithRollGaussianPoseDensity)
+    assert parry.zenith_mean_rad == np.radians(90.0) and parry.zenith_std_rad == np.radians(1.0)
+    assert parry.roll_mean_rad == 0.0 and parry.roll_std_rad == np.radians(1.0)
+
+    lowitz = build_pose_density("lowitz", zenith_std_deg=40.0, roll_std_deg=1.0)
+    assert isinstance(lowitz, ZenithRollGaussianPoseDensity)
+    assert lowitz.zenith_mean_rad == 0.0 and lowitz.zenith_std_rad == np.radians(40.0)
+
+    # explicit means override the family defaults
+    tilted = build_pose_density("parry", zenith_mean_deg=80.0, zenith_std_deg=1.0, roll_mean_deg=5.0, roll_std_deg=2.0)
+    assert tilted.zenith_mean_rad == np.radians(80.0) and tilted.roll_mean_rad == np.radians(5.0)
+
+
+@pytest.mark.parametrize(
+    "kwargs, message",
+    [
+        (dict(family="column"), "requires zenith_std_deg"),
+        (dict(family="plate"), "requires zenith_std_deg"),
+        (dict(family="parry", zenith_std_deg=1.0), "requires roll_std_deg"),
+        (dict(family="lowitz", roll_std_deg=1.0), "requires zenith_std_deg"),
+        (dict(family="column", zenith_std_deg=0.5, roll_std_deg=1.0), "takes no roll_std_deg"),
+        (dict(family="random", zenith_std_deg=0.5), "takes no zenith_std_deg"),
+        (dict(family="custom"), "unknown pose density family"),
+    ],
+)
+def test_factory_names_the_missing_or_unused_parameter(kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        build_pose_density(**kwargs)
+    with pytest.raises(ValueError, match=message):
+        pose_density_provenance(**kwargs)
+
+
+def test_canonical_pose_density_is_the_column_family_at_the_canonical_width():
+    density = canonical_pose_density()
+    assert density == ZenithGaussianPoseDensity(np.radians(CANONICAL_ZENITH_MEAN_DEG), np.radians(CANONICAL_ZENITH_STD_DEG))
+
+
+# Golden 1: the flat literal ``canonical_scene.canonical_fixture_metadata`` wrote
+# before the families existed (copied from the source at commit 102c904), plus the
+# new trailing ``family`` key; the three historical keys keep their order and values.
+CANONICAL_SCENE_POSE_DENSITY_GOLDEN = {
+    "model": "zenith-gaussian column",
+    "zenith_mean_deg": 90.0,
+    "zenith_std_deg": 0.5,
+}
+# Golden 2: the wrapped literal ``strip_io.scene_block`` wrote (same commit).
+STRIP_IO_POSE_DENSITY_GOLDEN = {
+    "value": {
+        "model": "zenith-gaussian column",
+        "zenith_mean_deg": 90.0,
+        "zenith_std_deg": 0.5,
+    },
+    "provenance": "canonical-new",
+}
+
+
+def test_column_provenance_keeps_the_canonical_scene_literal_and_appends_the_family():
+    block = canonical_fixture_metadata()["pose_density"]
+    assert block == {**CANONICAL_SCENE_POSE_DENSITY_GOLDEN, "family": "column"}
+    assert list(block) == [*CANONICAL_SCENE_POSE_DENSITY_GOLDEN, "family"]
+    assert block == pose_density_provenance("column", zenith_mean_deg=90.0, zenith_std_deg=0.5)
+
+
+def test_column_provenance_keeps_the_strip_io_literal_and_appends_the_family():
+    block = scene_block()["pose_density"]
+    assert block == {"value": {**STRIP_IO_POSE_DENSITY_GOLDEN["value"], "family": "column"}, "provenance": "canonical-new"}
+    assert list(block) == ["value", "provenance"]
+    assert list(block["value"]) == [*STRIP_IO_POSE_DENSITY_GOLDEN["value"], "family"]
+
+
+def test_provenance_blocks_of_the_other_families_carry_only_their_own_parameters():
+    assert pose_density_provenance("random") == {"model": "haar-uniform random", "family": "random"}
+    assert pose_density_provenance("plate", zenith_std_deg=0.5) == {
+        "model": "zenith-gaussian plate",
+        "zenith_mean_deg": 0.0,
+        "zenith_std_deg": 0.5,
+        "family": "plate",
+    }
+    parry = pose_density_provenance("parry", zenith_std_deg=1.0, roll_std_deg=1.0)
+    assert parry == {
+        "model": "zenith-roll-gaussian parry",
+        "zenith_mean_deg": 90.0,
+        "zenith_std_deg": 1.0,
+        "roll_mean_deg": 0.0,
+        "roll_std_deg": 1.0,
+        "family": "parry",
+    }
+    assert list(parry) == ["model", "zenith_mean_deg", "zenith_std_deg", "roll_mean_deg", "roll_std_deg", "family"]
+    lowitz = pose_density_provenance("lowitz", zenith_std_deg=40.0, roll_std_deg=1.0)
+    assert lowitz["model"] == "zenith-roll-gaussian lowitz" and lowitz["zenith_mean_deg"] == 0.0
+    # provenance and factory resolve the same parameter set: rebuilding from the block round-trips
+    for family, kwargs in [("parry", dict(zenith_std_deg=1.0, roll_std_deg=1.0)), ("lowitz", dict(zenith_std_deg=40.0, roll_std_deg=1.0)), ("plate", dict(zenith_std_deg=0.5))]:
+        block = pose_density_provenance(family, **kwargs)
+        parameters = {key: value for key, value in block.items() if key not in ("model", "family")}
+        assert parameters == resolve_pose_density_parameters(family, **kwargs)
+        assert build_pose_density(family, **parameters) == build_pose_density(family, **kwargs)

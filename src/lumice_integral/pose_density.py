@@ -63,6 +63,7 @@ approaching the period; the locked widths (about 1 deg) are far from that.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Literal, get_args
 
 import numpy as np
 
@@ -314,6 +315,98 @@ class ZenithRollGaussianPoseDensity:
 # The duck-typed contract ``weights.py`` consumes (``unit``, ``normalization``,
 # ``__call__``, ``evaluate_batch``); a type alias only, no runtime behaviour.
 PoseDensity = HaarUniformPoseDensity | ZenithGaussianPoseDensity | ZenithRollGaussianPoseDensity
+
+# Family names as provenance JSON spells them (``pose_density_provenance.py``).
+PoseDensityFamily = Literal["random", "plate", "column", "parry", "lowitz"]
+POSE_DENSITY_FAMILIES: tuple[str, ...] = get_args(PoseDensityFamily)
+
+_FAMILY_ZENITH_MEAN_DEG = {
+    "column": COLUMN_ZENITH_MEAN_DEG,
+    "plate": PLATE_ZENITH_MEAN_DEG,
+    "parry": PARRY_ZENITH_MEAN_DEG,
+    "lowitz": LOWITZ_ZENITH_MEAN_DEG,
+}
+_ROLL_LOCKED_FAMILIES = ("parry", "lowitz")
+
+
+def resolve_pose_density_parameters(
+    family: PoseDensityFamily,
+    *,
+    zenith_mean_deg: float | None = None,
+    zenith_std_deg: float | None = None,
+    roll_mean_deg: float | None = None,
+    roll_std_deg: float | None = None,
+) -> dict[str, float]:
+    """The complete degree-valued parameter set of ``family`` (single authority).
+
+    Family defaults fill the means (column/parry 90 deg, plate/lowitz 0 deg,
+    locked roll 0 deg); the widths have no defaults -- ``zenith_std_deg`` is
+    required for every family but ``random``, ``roll_std_deg`` for parry and
+    lowitz -- and a missing one raises ``ValueError`` naming it.  Parameters a
+    family has no use for are rejected too, so a call cannot silently carry a
+    roll width into a column density.  Keys are only those the family uses,
+    in the order the provenance block lists them.
+    """
+    if family not in POSE_DENSITY_FAMILIES:
+        raise ValueError(f"unknown pose density family {family!r}; expected one of {POSE_DENSITY_FAMILIES}")
+    given = {
+        "zenith_mean_deg": zenith_mean_deg,
+        "zenith_std_deg": zenith_std_deg,
+        "roll_mean_deg": roll_mean_deg,
+        "roll_std_deg": roll_std_deg,
+    }
+    if family == "random":
+        used: tuple[str, ...] = ()
+    elif family in _ROLL_LOCKED_FAMILIES:
+        used = ("zenith_mean_deg", "zenith_std_deg", "roll_mean_deg", "roll_std_deg")
+    else:
+        used = ("zenith_mean_deg", "zenith_std_deg")
+    unused = [name for name, value in given.items() if name not in used and value is not None]
+    if unused:
+        raise ValueError(f"pose density family {family!r} takes no {', '.join(unused)}")
+    resolved: dict[str, float] = {}
+    for name in used:
+        value = given[name]
+        if value is None:
+            if name == "zenith_mean_deg":
+                value = _FAMILY_ZENITH_MEAN_DEG[family]
+            elif name == "roll_mean_deg":
+                value = LOCKED_ROLL_MEAN_DEG
+            else:
+                raise ValueError(f"pose density family {family!r} requires {name}")
+        resolved[name] = float(value)
+    return resolved
+
+
+def build_pose_density(
+    family: PoseDensityFamily,
+    *,
+    zenith_mean_deg: float | None = None,
+    zenith_std_deg: float | None = None,
+    roll_mean_deg: float | None = None,
+    roll_std_deg: float | None = None,
+) -> PoseDensity:
+    """Construct the density of ``family`` from degree-valued parameters.
+
+    Parameter defaults and validation are :func:`resolve_pose_density_parameters`'s.
+    """
+    parameters = resolve_pose_density_parameters(
+        family,
+        zenith_mean_deg=zenith_mean_deg,
+        zenith_std_deg=zenith_std_deg,
+        roll_mean_deg=roll_mean_deg,
+        roll_std_deg=roll_std_deg,
+    )
+    if family == "random":
+        return HaarUniformPoseDensity()
+    if family in _ROLL_LOCKED_FAMILIES:
+        return ZenithRollGaussianPoseDensity(
+            np.radians(parameters["zenith_mean_deg"]),
+            np.radians(parameters["zenith_std_deg"]),
+            np.radians(parameters["roll_mean_deg"]),
+            np.radians(parameters["roll_std_deg"]),
+        )
+    return ZenithGaussianPoseDensity(np.radians(parameters["zenith_mean_deg"]), np.radians(parameters["zenith_std_deg"]))
 
 
 def column_zenith_pose_density(
