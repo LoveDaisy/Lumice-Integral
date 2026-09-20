@@ -124,6 +124,33 @@ while `h / a = 2` reproduces it (`0.98-1.06`). The ratio is therefore
 `canonical-new` evidence tied to the Lumice convention, not a historically
 recorded crystal dimension.
 
+Lumice float oracle (2026-09-20, task `lumice-raw-profile-oracle`). The
+Lumice remake above is only known as a tone-mapped 8-bit PNG, so it can
+arbitrate morphology but not radiometry. `Lumice render --format npy`
+(Ice Halo `747b2ec2`, run as an external oracle, never linked) exports the
+unexposed linear XYZ accumulator; the Y channel is proportional to the
+energy that landed in each pixel (`raw[p] = sum of w_ray * CMF(550 nm)`,
+no exposure, no per-sr normalisation, no gamma). Two seeded single-worker
+runs of the `band1e9` scene (`ray_num 5e8`, seeds `7` / `11`, `460 s` each
+on the M2 Max, `emitted_energy = 5e8 = sim_ray_num`) summed to `1e9` rays
+are the `canonical-new` radiometric reference of the scene; the run-to-run
+difference is its noise floor. The `PBD` raypath filter admits `12`
+equivalent `3-5` images per emitted ray against `6` for `P` (same seed,
+`1e7` rays: total Y ratio `2.003`, `1.995-2.03` per `100`-row band), a
+bookkeeping on `emitted_energy` that max-normalisation removes, so the
+export is compared to the single-path Lumice Integral strip without a
+per-pixel factor. The filter is an exact match on the reduced raypath
+(`src/core/filter_spec.cpp`, `RaypathOrbit::Contains`: equal length and
+`memcmp`), so a `[3,5]` filter never admits `3-1-2-5` at any `max_hits`.
+Against this oracle the historical raw is the outlier of the three (section
+7, stage 4): both simulators agree at the noise floor, the historical edge
+sits `0.23 deg` inside the point-sun minimum deviation, and its tail and
+lateral shape belong to none of the one-parameter families probed (solar
+altitude, wavelength, pixel scale, zenith width). The `historical-inferred`
+solar altitude and the `unknown` axes / refractive index / width above are
+therefore known to differ from the canonical scene in at least one respect
+that is not recoverable from the surviving bytes.
+
 ### 3.4 Historical convergence evidence
 
 Using the old JPEGs in their stored orientation, correlation with the direct
@@ -295,7 +322,7 @@ factors are not in the product.
 | ch06 named physical-factor curves | Lumice Integral | Supported for `rho_pose`, `entry_measure`, `fresnel_transmission`, `path_validity` on the canonical pixel fiber (section 4.1, figure-data `weight_<name>` arrays); the pointwise final `integrand` curve (product over `J_perp + epsilon`) is exported alongside | `visibility` (finite-face obstruction) and the radiometric factors remain unavailable. |
 | ch06 one-pixel integrand/integral | Lumice Integral | Supported as a `partial` value: resampled fixed-grid line quadrature over the closed canonical fiber with error estimate and grid/retraction evidence (sections 4.1 and 6, `result.quadrature`); single-pixel component discovery is available as a separate primitive (`lumice_integral.discovery`, procedural `completeness` only) | A completeness certificate; pixel averaging (point value only); the missing factors above. |
 | ch06 single-pixel pipeline (`strip_pixel.render_pixel`) | Lumice Integral | Supported (task-pixel-pipeline-v2, section 7 stage 4): one discovery pass per pixel over the scene prescan table plus the warm seeds of any neighbouring pixels, SO(3)-distance dedup before tracing, one production trace per distinct candidate, closed loops *and* open arcs (forward + backward trace stitched, `resample.OpenArc`) integrated by the resampled quadrature with per-end truncation estimates, linear component sum; `0.07 s` per lit pixel and `0.13 s` per lower-band pixel on the M2 Max | A completeness certificate (`completeness` is procedural); no real open arc exists in the current picture, so the arc path is validated on the analytic two-sided fixture only; the missing factors of the one-pixel row. |
-| ch06 `251 x 801` direct strip | Lumice Integral | Supported as a `partial` physical rerender: `scripts/render_ch06_strip.py` (`lumice_integral.strip_pixel` / `strip_driver` / `strip_io`, format `lumice-integral.strip/v2`) renders any window of the canonical `251 x 801` grid column-wise, each pixel warmed by the one above, and writes float64/float32 raw in the historical layout plus a per-pixel status layer (`has_arc`, `quadrature_unavailable`, ...) and `provenance.json`; pixel model: pixel-centre point value with `epsilon` regularisation (section 7, stage 4); `--workers` is capped at `4` on macOS | A completeness certificate (the status layer is procedural); the missing factors of the one-pixel row; sub-pixel averaging is implemented but off by default (6-10x cost; `O(10-40 %)` effect in the centre-column caustic band, section 7 stage 4); finite-sun averaging. Known limitation on the delivered full image (section 7, stage 4, full rerender): the vertical decay along the centre column was steeper than the historical raw by `3-4x` between rows `150` and `600` (defect 2); with the `h/a = 2` crystal (2026-09-20) the centre column reproduces the historical plateau on rows `150-400` (`0.89-1.06` relative to row `150`), while the height-independent tail below row `400` (`x4` dark by row `600`) and the horizontal narrowness off the centre column (`0.5-0.7x` at `+-20` columns on rows `300-400`) remain, located to the geometric factors but not to an implementation error, see `scratchpad/scrum-strip-pipeline-v2/task-strip-rerender-and-compare/artifacts/defect2_findings.md` sections 8-9. |
+| ch06 `251 x 801` direct strip | Lumice Integral | Supported as a `partial` physical rerender: `scripts/render_ch06_strip.py` (`lumice_integral.strip_pixel` / `strip_driver` / `strip_io`, format `lumice-integral.strip/v2`) renders any window of the canonical `251 x 801` grid column-wise, each pixel warmed by the one above, and writes float64/float32 raw in the historical layout plus a per-pixel status layer (`has_arc`, `quadrature_unavailable`, ...) and `provenance.json`; pixel model: pixel-centre point value with `epsilon` regularisation (section 7, stage 4); `--workers` is capped at `4` on macOS | A completeness certificate (the status layer is procedural); the missing factors of the one-pixel row; sub-pixel averaging is implemented but off by default (6-10x cost; `O(10-40 %)` effect in the centre-column caustic band, section 7 stage 4); finite-sun averaging. Known limitation on the delivered full image (section 7, stage 4, full rerender): the vertical decay along the centre column was steeper than the historical raw by `3-4x` between rows `150` and `600` (defect 2); with the `h/a = 2` crystal (2026-09-20) the centre column reproduces the historical plateau on rows `150-400` (`0.89-1.06` relative to row `150`), while the height-independent tail below row `400` (`x4` dark by row `600`) and the horizontal narrowness off the centre column (`0.5-0.7x` at `+-20` columns on rows `300-400`) remain against the historical raw, see `scratchpad/scrum-strip-pipeline-v2/task-strip-rerender-and-compare/artifacts/defect2_findings.md` sections 8-9; the `1e9`-ray Lumice float export (section 3.3, task `lumice-raw-profile-oracle`, 2026-09-20) reproduces both, agreeing with the strip at the Monte Carlo noise floor (column log-RMS `0.03` against a `0.04-0.06` run-to-run floor), so they are differences of the historical raw, not of this renderer. |
 | ch10 halo-map/Jacobian/fold figures | Lumice Integral numerical data; Writing-Lab presentation | Partially supported | Target sweeps and singular/fold localization beyond one regular fiber. |
 | ch11 orientation-family comparison | Lumice Integral and/or independent Lumice validation | Not supported by the current ordinary-density slice | Pose-density models, physical weights, image driver; exactly constrained families require a separate measure/domain contract. |
 
@@ -829,12 +856,71 @@ color-to-factor mapping.
      0`, fresh directory, so `--resume` could not have mixed `h/a = 1`
      checkpoints in: the driver's options fingerprint does not cover the
      crystal).
-   Radiometric normalisation is not aligned in either comparison (the strip
-   is the partial integrand, the historical raw has unknown units, the
-   Lumice PNG is tone-mapped 8-bit): the v1 preview comparison was
-   morphology only (rank correlation, profiles, side agreement), the v2
-   full-image comparison reports shape-sensitive ratios relative to a
-   whole-image median and log-domain profile differences. Scripts and JSON
+   - Lumice float oracle and the second half of defect 2
+     (task-lumice-raw-profile-oracle, 2026-09-20). The `h/a = 2` strip was
+     compared with the historical raw and the `1e9`-ray Lumice float export
+     of section 3.3 (`scripts/compare_strip_v2.py --lumice-float
+     --lumice-float-run2`, every profile max-normalised, log10, RMS on the
+     lit band above `1e-3`). Vertical profiles, columns `106 / 126 / 146`:
+     ours versus Lumice float `0.034 / 0.029 / 0.035`, Lumice float versus
+     historical `0.405 / 0.391 / 0.397`, ours versus historical `0.407 /
+     0.389 / 0.404`; the two independent `5e8` runs differ from each other
+     by `0.060 / 0.043 / 0.062` on the same measure (the merged profile's
+     own noise is about half of that), so Lumice Integral and Lumice agree
+     at the Monte Carlo noise floor and the historical raw is the outlier.
+     Horizontal profiles, rows `150 / 300 / 450 / 600`: ours versus Lumice
+     float `0.085 / 0.071 / 0.074 / 0.086` against a run-to-run `0.055 /
+     0.090 / 0.142 / 0.096`; Lumice float versus historical `0.486 / 0.569
+     / 0.207 / 0.612`. Per-50-row max-normalised ratio along column `126`,
+     Lumice float / historical: `0.99` (rows `350-400`), `0.75`, `0.48`,
+     `0.33`, `0.29`, `0.26` (rows `600-650`) .. `0.14` (rows `750-800`),
+     band for band the ours / historical signature of the previous bullet,
+     while ours / Lumice float stays within `0.93-1.04` on rows `100-750`
+     (`0.90-1.04` over the column) and the whole-image centre-column band
+     ratio ours / Lumice float relative to its median stays within
+     `0.94-1.02` on every band. The horizontal narrowness is on the Lumice
+     side too: lit width above `1e-2` at rows `150 / 300 / 450 / 600` is
+     `125 / 135 / 101 / 233` columns for the historical raw, `107 / 107 /
+     113 / 251` for ours and `105 / 105 / 113 / 251` for the Lumice float
+     (the historical is wider near the edge and *narrower* at rows `450 /
+     600`, where both simulators are nearly flat across the strip). Inner
+     edge, three columns and three thresholds: `47 / 57 / 60` (historical /
+     ours / Lumice float) everywhere; through the canonical camera the rows
+     are `21.61 / 21.85 / 21.92 deg` from the sun against the point-sun
+     minimum deviation `21.84 deg` (`n = 1.31`), so ours starts half a
+     pixel from the caustic, the Lumice float three rows later (threshold
+     on a Monte Carlo caustic peak) and the historical `0.23 deg` inside
+     it, where no canonical `3-5` ray exists. A `+0.3 deg` solar altitude
+     puts the Lumice edge at row `47` (`5e7`-ray probe), and so does `700
+     nm` (`n` about `1.307`); a `5.79 deg` field of view would as well;
+     none of the three moves the tail (`0.87 / 0.73 / 0.49 / 0.35 / 0.28`
+     and `0.85 / 0.63 / 0.40 / 0.28 / 0.22` on rows `350-600` against the
+     `0.97 / 0.75 / 0.51 / 0.32 / 0.29` baseline), and a `13`-row shift
+     changes the tail ratio by `x0.91` where the deficit is `x4`, so the
+     edge offset and the tail are not one root cause. A wider zenith
+     distribution lifts the tail (`std 5 deg`: rows `600-700` back to
+     `1.0`) but widens rows `150-300` to the full `251` columns at `2 deg`
+     already (historical `125-135`), so the historical shape is not in
+     that family either. The `3-1-2-5` candidate of task
+     `path-class-rendering-unit` is empty on the `h/a = 2` crystal: a
+     `[3,1,2,5]` Lumice filter gives `0` pixels at `height 1.0` for
+     `max_hits 4 / 5 / 8`, `15` pixels at `0.75` and `12495` pixels (rows
+     `263-796`) at `0.5`, the `h/a = 1` crystal its fixtures were
+     recorded on. Verdict: the tail deficit and the lateral narrowness are
+     differences of the historical raw against two independent solvers,
+     not a Lumice Integral defect; no fix task is opened. Evidence:
+     `scratchpad/task-lumice-raw-profile-oracle/artifacts/`
+     (`compare/compare_metrics.json`, `compare/strip_profiles_lumice_float.png`,
+     `edge-offset-analysis.md`, `lumice-raw/run1|run2/` with `config.json`,
+     `img_01.{npy,json}`, `run.log`, and the `probe-*/` runs).
+   Radiometric normalisation is not aligned in the historical and PNG
+   comparisons (the strip is the partial integrand, the historical raw has
+   unknown units, the Lumice PNG is tone-mapped 8-bit): the v1 preview
+   comparison was morphology only (rank correlation, profiles, side
+   agreement), the v2 full-image comparison reports shape-sensitive ratios
+   relative to a whole-image median and log-domain profile differences;
+   only the Lumice float comparison of the last bullet is radiometric up to
+   one scale factor. Scripts and JSON
    of the v1 preview:
    `scratchpad/scrum-ch06-direct-integration/task-strip-image-driver/`
    (`scripts/compare_with_historical.py`, `scripts/cross_check.py`,

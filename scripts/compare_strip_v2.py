@@ -22,6 +22,17 @@ and every panel is on a log scale.
    normalised value exceeds a threshold, for ours and the historical raw,
    reported at several thresholds because the choice is a calibration.
 4. Spearman rank correlation, kept as an auxiliary number only.
+5. Optional three-way radiometric check against a Lumice *float* export
+   (``--lumice-float``, the ``img_01.npy`` of ``Lumice render --format npy``):
+   the Lumice PNG is tone-mapped 8-bit and can only arbitrate display space,
+   the float Y accumulator is proportional to the energy that landed in each
+   pixel, so the same log-profile RMS is reported for Lumice-float vs
+   historical, ours vs Lumice-float and ours vs historical on the profile
+   column and its ``+-20`` neighbours and on rows ``150 / 300 / 450 / 600``,
+   together with the inner-edge rows and the per-band normalised ratio along
+   the column.  A second independent run (``--lumice-float-run2``) is summed
+   into the arbitrating profile and the run-to-run difference is reported as
+   the Monte Carlo noise floor of those numbers.
 
 Inputs are read only; the historical raw and the Lumice PNG live in the
 Writing-Lab project (``--writing-lab-dir``).  The display mapping is the
@@ -34,7 +45,9 @@ Plotting needs matplotlib, which is not a project dependency::
 
 The diagnostic positions (column ``126``, rows ``150 / 300 / 450``) are shared
 with ``scripts/probe_defect2_factors.py``; keep :data:`PROBE_COLUMN` /
-:data:`PROBE_ROWS` in sync with it.
+:data:`PROBE_ROWS` in sync with it.  The float comparison adds row ``600``
+and the ``+-20`` columns locally (:data:`LUMICE_FLOAT_EXTRA_ROWS`,
+:data:`LUMICE_FLOAT_COLUMN_OFFSETS`) so that the shared constants stay put.
 """
 
 from __future__ import annotations
@@ -63,6 +76,15 @@ CENTRE_COLUMNS = (101, 152)  # half-open; +-25 columns around the profile column
 PROFILE_LIT_FLOOR = 1e-3  # normalised level above which a profile point counts as inside the lit band
 EDGE_THRESHOLDS = (1e-3, 1e-2, 1e-1)
 PROFILE_FLOOR = 1e-4
+# --lumice-float only: the tail row and the +-20 columns of task lumice-raw-profile-oracle;
+# kept local so PROBE_ROWS / PROBE_COLUMN stay shared with probe_defect2_factors.py unchanged
+LUMICE_FLOAT_EXTRA_ROWS = (600,)
+LUMICE_FLOAT_COLUMN_OFFSETS = (-20, 0, 20)
+# rays admitted per emitted ray relative to Lumice Integral's single 3-5 path: a raypath filter with
+# symmetry P admits the 6 prism-rotation images, PBD the 12 P/B/D-equivalent raypaths, all on the
+# same emitted budget (doc/raypath-symmetry.zh.md of the Ice Halo repository); a denominator
+# bookkeeping, never a per-pixel factor, and only recorded here for the reader to fold by hand
+LUMICE_SYMMETRY_FOLD = {"P": 6, "PBD": 12}
 
 
 # ---------- ch06 display mapping (docs/ch06-reference-fixture.md section 3.2) ----------
@@ -95,6 +117,91 @@ def load_lumice(path: Path) -> tuple[np.ndarray, dict[str, Any]]:
         image = image.resize((WIDTH, HEIGHT), resample=Image.Resampling.BILINEAR)
         note.update(resized=True, resample="bilinear")
     return np.asarray(image, dtype=np.float64), note
+
+
+def load_lumice_float(path: Path) -> tuple[np.ndarray, dict[str, Any]]:
+    """Y channel of a Lumice ``--format npy`` export plus its sidecar, as ``(H, W)`` float64.
+
+    Unlike :func:`load_lumice` (a PNG, no sidecar) this loader *requires* the
+    ``img_0N.json`` sidecar next to the ``.npy``: the exposure scalars in it
+    (``emitted_energy`` above all) are what make two runs summable and the
+    symmetry folding checkable, so a bare array is refused rather than
+    silently compared.  ``symmetry`` is not in the sidecar; it is read from a
+    ``config.json`` in the same directory when one is there.
+    """
+    sidecar = path.with_suffix(".json")
+    if not sidecar.is_file():
+        raise SystemExit(
+            f"{sidecar} missing: load_lumice_float requires the img_0N.json sidecar that "
+            "`Lumice render --format npy` writes next to the .npy (emitted_energy, sim_ray_num, seed); "
+            "this is stricter than load_lumice, which reads a PNG with no sidecar"
+        )
+    arr = np.load(path)
+    if arr.shape != (HEIGHT, WIDTH, 3):
+        raise SystemExit(f"{path}: shape {arr.shape} != {(HEIGHT, WIDTH, 3)} (H, W, XYZ)")
+    meta = json.loads(sidecar.read_text())
+    note: dict[str, Any] = {
+        "path": str(path),
+        "channel": "Y",
+        "dtype": str(arr.dtype),
+        **{k: meta.get(k) for k in ("normalization", "emitted_energy", "sim_ray_num", "seed", "axis_solid_angle", "intensity_factor", "lumice_api_version")},
+        "symmetry": None,
+        "symmetry_fold_to_single_3_5": None,
+    }
+    config = path.with_name("config.json")
+    if config.is_file():
+        filters = json.loads(config.read_text()).get("filter", [])
+        symmetry = filters[0].get("symmetry") if filters else None
+        note.update(symmetry=symmetry, symmetry_fold_to_single_3_5=LUMICE_SYMMETRY_FOLD.get(symmetry))
+    return np.asarray(arr[:, :, 1], dtype=np.float64), note
+
+
+def merge_lumice_float(runs: list[tuple[np.ndarray, dict[str, Any]]]) -> tuple[np.ndarray, dict[str, Any]]:
+    """Sum independent runs into one accumulator; ``emitted_energy`` / ``sim_ray_num`` add up alongside.
+
+    Noise bookkeeping for the report: with ``r = sigma / mu`` the relative
+    noise of one pixel in a single run, the difference of two i.i.d. runs
+    ``(X1 - X2) / mu`` has standard deviation ``sqrt(2) r`` and the summed
+    profile ``X1 + X2`` has relative noise ``r / sqrt(2)``; so the *merged*
+    relative noise is half the measured relative run-to-run std, and the
+    single-run noise is that std over ``sqrt(2)``.  The three are reported
+    under their own keys and must not be mixed up.
+    """
+    total = np.sum([y for y, _ in runs], axis=0)
+    note: dict[str, Any] = {
+        "runs": [n for _, n in runs],
+        "emitted_energy": float(sum(n["emitted_energy"] for _, n in runs)),
+        "sim_ray_num": int(sum(n["sim_ray_num"] for _, n in runs)),
+        "symmetry": runs[0][1]["symmetry"],
+        "symmetry_fold_to_single_3_5": runs[0][1]["symmetry_fold_to_single_3_5"],
+    }
+    if len({n["symmetry"] for _, n in runs}) > 1 or len({n["normalization"] for _, n in runs}) > 1:
+        raise SystemExit(f"--lumice-float runs disagree on symmetry / normalization: {note['runs']}")
+    return total, note
+
+
+def lumice_float_noise(runs: list[np.ndarray], positions: dict[str, tuple[np.ndarray, np.ndarray]]) -> dict[str, Any]:
+    """Run-to-run relative difference on the lit band of each profile (see :func:`merge_lumice_float`)."""
+    if len(runs) < 2:
+        return {"available": False, "reason": "single run, no independent repeat to difference"}
+    out: dict[str, Any] = {"available": True, "runs_differenced": 2}
+    for key, (pa, pb) in positions.items():
+        na, nb = norm(pa), norm(pb)
+        lit = (na >= PROFILE_LIT_FLOOR) & (nb >= PROFILE_LIT_FLOOR)
+        if not lit.any():
+            out[key] = {"count": 0}
+            continue
+        mu = 0.5 * (pa[lit] + pb[lit])
+        rel = (pa[lit] - pb[lit]) / mu
+        std = float(np.std(rel))
+        out[key] = {
+            "count": int(lit.sum()),
+            "relative_difference_std": std,
+            "single_run_relative_noise": std / np.sqrt(2.0),
+            "merged_relative_noise": std / 2.0,
+            "log_rms_run1_vs_run2": log_profile_rms(pa, pb)["lit_band"]["rms_log10"],
+        }
+    return out
 
 
 def load_baseline(path: Path | None) -> np.ndarray | None:
@@ -210,6 +317,67 @@ def decay_ratio_along_column(ours: np.ndarray, hist: np.ndarray, usable: np.ndar
             entry["median_normalised_ratio"] = float(np.median(ratio))
         out.append(entry)
     return out
+
+
+def lit_width(profile: np.ndarray, threshold: float) -> int:
+    """Number of points of a max-normalised profile at or above ``threshold`` (the band's lateral extent)."""
+    return int((norm(profile) >= threshold).sum())
+
+
+def lumice_float_block(
+    runs: list[tuple[np.ndarray, dict[str, Any]]],
+    *,
+    hist: np.ndarray,
+    ours: np.ndarray,
+    rendered: np.ndarray,
+    complete: np.ndarray,
+    column: int,
+) -> dict[str, Any]:
+    """The three-way radiometric check: merged Lumice float vs historical vs ours (module docstring, item 5)."""
+    lumf, source = merge_lumice_float(runs)
+    ours0 = np.where(rendered, np.nan_to_num(ours, nan=0.0), 0.0)
+    columns = [c for c in (column + d for d in LUMICE_FLOAT_COLUMN_OFFSETS) if 0 <= c < WIDTH and rendered[:, c].any()]
+    rows = (*PROBE_ROWS, *LUMICE_FLOAT_EXTRA_ROWS)
+    profiles: dict[str, Any] = {}
+    noise_positions: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+    widths: dict[str, Any] = {}
+    for c in columns:
+        profiles[f"column_{c}_lumice_float_vs_historical"] = log_profile_rms(lumf[:, c], hist[:, c])
+        profiles[f"column_{c}_ours_vs_lumice_float"] = log_profile_rms(ours0[:, c], lumf[:, c], complete[:, c])
+        profiles[f"column_{c}_ours_vs_historical"] = log_profile_rms(ours0[:, c], hist[:, c], complete[:, c])
+        if len(runs) > 1:
+            noise_positions[f"column_{c}"] = (runs[0][0][:, c], runs[1][0][:, c])
+    for r in rows:
+        profiles[f"row_{r}_lumice_float_vs_historical"] = log_profile_rms(lumf[r], hist[r])
+        profiles[f"row_{r}_ours_vs_lumice_float"] = log_profile_rms(ours0[r], lumf[r], complete[r])
+        profiles[f"row_{r}_ours_vs_historical"] = log_profile_rms(ours0[r], hist[r], complete[r])
+        if len(runs) > 1:
+            noise_positions[f"row_{r}"] = (runs[0][0][r], runs[1][0][r])
+        widths[f"row_{r}"] = {
+            f"{t:g}": {"historical": lit_width(hist[r], t), "ours": lit_width(ours0[r], t), "lumice_float": lit_width(lumf[r], t)}
+            for t in EDGE_THRESHOLDS[1:]
+        }
+    centre = np.zeros(WIDTH, dtype=bool)
+    centre[CENTRE_COLUMNS[0] : CENTRE_COLUMNS[1]] = True
+    everywhere = np.ones((HEIGHT, WIDTH), dtype=bool)
+    return {
+        "source": source,
+        "caveat": "Y accumulator of `Lumice render --format npy`, proportional to the energy landing in each pixel; "
+        "max-normalised like the other two, so a uniform scale (and the symmetry fold) drops out",
+        "columns": columns,
+        "rows": list(rows),
+        "log_profiles": profiles,
+        "inner_edge_offsets": {f"column_{c}": edge_offsets(hist[:, c], ours0[:, c], lumf[:, c]) for c in columns},
+        "column_decay_ratio_lumice_float_vs_historical": {f"column_{c}": decay_ratio_along_column(lumf, hist, everywhere, c) for c in columns},
+        "column_decay_ratio_ours_vs_lumice_float": {f"column_{c}": decay_ratio_along_column(ours0, lumf, complete, c) for c in columns},
+        "column_decay_ratio_ours_vs_historical": {f"column_{c}": decay_ratio_along_column(ours0, hist, complete, c) for c in columns},
+        "row_lit_width": widths,
+        "band_ratio_columns": list(CENTRE_COLUMNS),
+        "band_ratio_lumice_float_vs_historical": band_ratios(lumf, hist, centre[None, :] & everywhere),
+        "band_ratio_ours_vs_lumice_float": band_ratios(ours, lumf, complete & centre[None, :]),
+        "noise": lumice_float_noise([y for y, _ in runs], noise_positions),
+        "_merged": lumf,
+    }
 
 
 # ---------- figures ----------
@@ -335,6 +503,64 @@ def make_figures(
     return {"images": str(images_path), "profiles": str(profiles_path)}
 
 
+def make_float_figure(
+    out_dir: Path,
+    *,
+    hist: np.ndarray,
+    ours: np.ndarray,
+    rendered: np.ndarray,
+    lumf: np.ndarray,
+    column: int,
+    label: str,
+) -> str:
+    """Three-way log profiles with the Lumice float export on the +-20 columns and the four rows."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    ours0 = np.where(rendered, np.nan_to_num(ours, nan=0.0), 0.0)
+    columns = [c for c in (column + d for d in LUMICE_FLOAT_COLUMN_OFFSETS) if 0 <= c < WIDTH and rendered[:, c].any()]
+    rows_list = (*PROBE_ROWS, *LUMICE_FLOAT_EXTRA_ROWS)
+    series = (("historical", hist, "#e07b00"), ("Lumice float", lumf, "#5aa02c"), ("ours v2", ours0, "#2a7de1"))
+    fig, axes = plt.subplots(3, 4, figsize=(22, 14), constrained_layout=True)
+    rows = np.arange(HEIGHT)
+    for ax, c in zip(axes[0], columns):
+        for name, arr, colour in series:
+            ax.semilogy(rows, np.maximum(norm(arr[:, c]), PROFILE_FLOOR), color=colour, lw=1.6, label=name)
+        ax.set_title(f"vertical profile, column {c} (max-normalised, log)")
+        ax.set_xlabel("row")
+        ax.set_ylim(PROFILE_FLOOR, 1.5)
+    axes[0, 0].legend(loc="upper right", frameon=False, fontsize=8)
+    for ax, c in zip(axes[1], columns):
+        h, f, o = norm(hist[:, c]), norm(lumf[:, c]), norm(ours0[:, c])
+        ok = (h > 0) & (f > 0)
+        ax.semilogy(rows[ok], f[ok] / h[ok], ".", color="#5aa02c", ms=3, label="Lumice float / historical")
+        ok = (f > 0) & (o > 0)
+        ax.semilogy(rows[ok], o[ok] / f[ok], ".", color="#2a7de1", ms=3, label="ours / Lumice float")
+        ax.axhline(1.0, color="#e07b00", lw=1.2, ls="--")
+        ax.set_ylim(0.01, 100)
+        ax.set_title(f"normalised ratio along column {c} (log)")
+        ax.set_xlabel("row")
+    axes[1, 0].legend(loc="upper left", frameon=False, fontsize=8)
+    axes[0, 3].axis("off")
+    axes[1, 3].axis("off")
+    cols = np.arange(WIDTH)
+    for ax, r in zip(axes[2], rows_list):
+        for name, arr, colour in series:
+            ax.semilogy(cols, np.maximum(norm(arr[r]), PROFILE_FLOOR), color=colour, lw=1.6, label=name)
+        ax.set_title(f"horizontal profile, row {r} (max-normalised, log)")
+        ax.set_xlabel("column")
+        ax.set_ylim(PROFILE_FLOOR, 1.5)
+    for ax in axes.ravel():
+        ax.grid(True, which="major", color="#dddddd", lw=0.6)
+    fig.suptitle(f"ch06 strip, three-way radiometric profiles with the Lumice float export — {label}", fontsize=12)
+    path = out_dir / "strip_profiles_lumice_float.png"
+    fig.savefig(path, dpi=110)
+    plt.close(fig)
+    return str(path)
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--strip-dir", type=Path, required=True, help="render output directory (provenance.json + raw arrays)")
@@ -344,7 +570,11 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--column", type=int, default=PROBE_COLUMN, help="vertical profile column (nearest rendered column is used)")
     parser.add_argument("--label", default="", help="free text for figure titles and the JSON")
     parser.add_argument("--no-figures", action="store_true")
+    parser.add_argument("--lumice-float", type=Path, default=None, help="Lumice `--format npy` img_0N.npy (sidecar img_0N.json required) for the radiometric three-way check")
+    parser.add_argument("--lumice-float-run2", type=Path, default=None, help="second independent run of the same config; summed into the arbitrating profile, differenced for the noise floor")
     args = parser.parse_args(argv)
+    if args.lumice_float_run2 is not None and args.lumice_float is None:
+        parser.error("--lumice-float-run2 needs --lumice-float")
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     arrays, provenance = read_strip(args.strip_dir)
@@ -357,6 +587,7 @@ def main(argv: list[str] | None = None) -> None:
     hist = load_historical(args.writing_lab_dir / HISTORICAL_RAW)
     lum, lumice_note = load_lumice(args.writing_lab_dir / LUMICE_REMAKE)
     baseline = load_baseline(args.baseline_npz)
+    float_runs = [load_lumice_float(p) for p in (args.lumice_float, args.lumice_float_run2) if p is not None]
 
     rendered_columns = np.where(rendered.any(axis=0))[0]
     column = int(rendered_columns[np.argmin(np.abs(rendered_columns - args.column))])
@@ -420,6 +651,8 @@ def main(argv: list[str] | None = None) -> None:
         "inner_edge_offsets": edges,
         "spearman_auxiliary": spearman_block(ours, hist, lum, rendered, complete),
     }
+    if float_runs:
+        metrics["lumice_float"] = lumice_float_block(float_runs, hist=hist, ours=ours, rendered=rendered, complete=complete, column=column)
     if not args.no_figures:
         metrics["figures"] = make_figures(
             args.output_dir,
@@ -436,6 +669,12 @@ def main(argv: list[str] | None = None) -> None:
             column=column,
             label=label,
         )
+        if float_runs:
+            metrics["figures"]["lumice_float_profiles"] = make_float_figure(
+                args.output_dir, hist=hist, ours=ours, rendered=rendered, lumf=metrics["lumice_float"]["_merged"], column=column, label=label
+            )
+    if float_runs:
+        del metrics["lumice_float"]["_merged"]
     out = args.output_dir / "compare_metrics.json"
     out.write_text(json.dumps(metrics, indent=2) + "\n")
 
@@ -449,6 +688,17 @@ def main(argv: list[str] | None = None) -> None:
     for key, value in edges.items():
         for e in value:
             print(f"edge {key} @{e['threshold']:g}: hist {e['historical_row']} ours {e['ours_row']} lumice {e['lumice_row']} -> ours-hist {e['ours_minus_historical']}")
+    if float_runs:
+        lf = metrics["lumice_float"]
+        print(f"lumice float: {lf['source']['sim_ray_num']:.3g} rays over {len(lf['source']['runs'])} run(s), symmetry {lf['source']['symmetry']} (fold x{lf['source']['symmetry_fold_to_single_3_5']} to single 3-5)")
+        for key, value in lf["log_profiles"].items():
+            print(f"log profile {key}: lit-band rms {value['lit_band']['rms_log10']:.3f} (n={value['lit_band']['count']})")
+        for key, value in lf["noise"].items():
+            if isinstance(value, dict) and "relative_difference_std" in value:
+                print(f"noise {key}: run1-run2 rel std {value['relative_difference_std']:.4f}, merged rel noise {value['merged_relative_noise']:.4f}, log rms {value['log_rms_run1_vs_run2']:.4f}")
+        for key, value in lf["inner_edge_offsets"].items():
+            for e in value:
+                print(f"edge {key} @{e['threshold']:g}: hist {e['historical_row']} ours {e['ours_row']} lumice-float {e['lumice_row']}")
     print(f"spearman lit-in-both {metrics['spearman_auxiliary']['lit_in_both']['rho']:.4f}")
     print(f"wrote {out}")
 
