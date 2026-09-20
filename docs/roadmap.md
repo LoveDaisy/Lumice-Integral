@@ -164,7 +164,8 @@ chosen by a caustic probe (the probe found `O(10-40 %)` point-vs-sub-pixel
 differences within about seven rows of the `22 deg` inner edge at the centre
 column, so the caustic band is a documented pixel-model limitation of the
 default render). The full `251 x 801` image is rendered (`home-wsl`, `30`
-workers, `1.86 h` wall clock): every pixel `complete`, no `unknown` band,
+workers, `1.86 h` wall clock then; `35 min` since the per-pixel
+recompilations were removed, section 3.5 item 1): every pixel `complete`, no `unknown` band,
 no open arc found on this scene. Compared with the historical raw on
 multiplicative-bias-sensitive metrics: the row-band ratio slides
 monotonically by `8.4x` from the inner edge to the bottom with no step (the
@@ -198,14 +199,34 @@ reconstruction milestone.
 The writing series' chapters 6-11 fix what the solver must deliver next; the
 order below follows their dependencies, not the solver's own curiosity.
 
-1. **Per-pixel cost** (task `pixel-cost-shape-stable-kernels`): the strip's
-   real single-process cost is `0.29 s` per pixel, not the `0.067 s` of the
-   warm single-pixel benchmark, because candidate-pool and curve sizes change
-   from pixel to pixel and every change recompiles the XLA kernels behind
-   `discovery` (`1112` compilations for `60` pixels); thirty workers each
-   recompiling oversubscribe the cores. Shape-stable kernels (bucketed sizes,
-   or plain numpy for the small SO(3)-distance work) come first because every
-   later item rerenders the full image; target `<= 15 min` for `251 x 801`.
+1. **Per-pixel cost** (task `pixel-cost-shape-stable-kernels`, done
+   2026-09-20): the strip's real single-process cost was `0.29 s` per pixel,
+   not the `0.067 s` of the warm single-pixel benchmark, because candidate-pool
+   and curve sizes change from pixel to pixel and every change recompiled the
+   XLA kernels behind `discovery` and the resampling (`1065-1112` compilations
+   for `60` pixels). The ruler is now `benchmarks/benchmark_column_steady_state.py`
+   (one column single-process, steady-state s/px plus compile count; the
+   single-pixel `probe_step7_timing.py` figure is a hot-cache lower bound).
+   Pool clustering and curve dedup use the numpy batch `so3.rotation_distances`
+   (same formula as `rotation_distance`, ulp-locked by test) and the knot
+   quaternion batches in `resample.py` are compiled once per power-of-two
+   bucket: `101` compilations for the same `60` pixels (`143` for a full
+   column, `6` pixels compile at all), steady state `0.066-0.11 s` per pixel
+   on the M2 Max (`0.17 s` on `home-wsl`). Worker probe on `home-wsl`
+   (Ryzen 9950X, 16C/32T): total throughput `5.8 / 19 / 31 / 48 / 100 / 95`
+   px/s at `1 / 4 / 8 / 16 / 30 / 32` workers, per-worker rate falling
+   from `5.8` to `3.5` px/s with SMT sharing, not compile threads (after the
+   fix a worker is `1.06` cores, `llvm-worker` threads idle past the first
+   pixel; no persistent compile cache or thread cap needed); the knee is the
+   logical CPU count, `30` workers recommended. Full `251 x 801` rerender:
+   `2085 s` (`35 min`) wall clock, `3.2x` faster than `1.86 h`, every
+   pixel's status bits and component count identical to
+   `artifacts/strip-full`, values within `8.1e-13` relative. The `<= 15 min`
+   target is missed by `2.3x`: the per-pixel cost is at the hot-cache floor,
+   so the remaining levers are algorithmic (trace and quadrature work per
+   pixel, out of this task's scope) or more physical cores.
+   `continuation.py:_rotation_distance_kernel` (fixed `(3,3),(3,3)` shape,
+   one compilation per process) is outside this root cause and stays as is.
 2. **Defect 2** (rows `300-650` decay; section 3.3) in two halves. (a) The
    canonical crystal is half as tall as the Lumice remake's: Lumice's
    `height: 1.0` is `h / diameter` (side planes at inradius `√3/4`, basal at

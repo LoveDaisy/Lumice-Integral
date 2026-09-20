@@ -88,7 +88,7 @@ from .geometry import Polyhedron, entry_measure
 from .optics import path_3_5_domain, path_3_5_problem
 from .prescan import PrescanTable
 from .resample import OpenArc, stitch_open_arc
-from .so3 import exp, rotation_distance
+from .so3 import exp, rotation_distances
 
 PATH_3_5_FACES = (3, 5)
 
@@ -195,7 +195,11 @@ class ComponentDiscoveryResult:
         return len(self.incomplete)
 
 
-_distances_kernel = jax.jit(jax.vmap(rotation_distance, in_axes=(None, 0)))
+# Pool clustering and curve dedup compare one pose against a few thousand and
+# never differentiate; they run on the host through ``so3.rotation_distances``
+# because a ``jax.jit(vmap(rotation_distance))`` kernel is recompiled for
+# every distinct pool size / curve length, i.e. for nearly every pixel
+# (task-pixel-cost-shape-stable-kernels).
 
 
 def _geodesic_cluster(rotations: np.ndarray, radius: float) -> list[list[int]]:
@@ -203,10 +207,9 @@ def _geodesic_cluster(rotations: np.ndarray, radius: float) -> list[list[int]]:
     count = rotations.shape[0]
     unassigned = set(range(count))
     clusters: list[list[int]] = []
-    rotation_array = jnp.asarray(rotations)
     while unassigned:
         seed_index = next(iter(unassigned))
-        distances = np.asarray(_distances_kernel(rotation_array[seed_index], rotation_array))
+        distances = rotation_distances(rotations[seed_index], rotations)
         members = [i for i in unassigned if distances[i] < radius]
         clusters.append(members)
         unassigned -= set(members)
@@ -221,7 +224,7 @@ def distance_to_curve(rotation: np.ndarray, poses: np.ndarray) -> float:
     be up to half a chord away from the nearest sample; the dedup threshold
     must absorb that.
     """
-    return float(jnp.min(_distances_kernel(jnp.asarray(rotation), jnp.asarray(poses))))
+    return float(np.min(rotation_distances(rotation, poses)))
 
 
 @partial(jax.jit, static_argnums=(0,))
