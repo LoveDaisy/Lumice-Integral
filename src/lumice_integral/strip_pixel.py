@@ -60,11 +60,11 @@ from .canonical_scene import (
 from .continuation import ContinuationOptions, FiberProblem
 from .discovery import DISCOVERY_EVENT_NAMES, DiscoveredComponent, discover_components, retarget_problem
 from .geometry import HexPrism
-from .optics import path_3_5_problem
+from .optics import PATH_3_5_FACES, normalize_faces, path_id_of, path_problem, problem_path_label
 from .pose_density import PoseDensity
 from .prescan import DEFAULT_RNG_SEED, DEFAULT_SAMPLE_COUNT, PrescanTable, build_prescan_table
 from .quadrature import ResampleOptions, integrate_fiber_resampled
-from .weights import build_3_5_weight_evaluators
+from .weights import build_path_weight_evaluators
 
 Completeness = str  # "complete" | "unknown"
 
@@ -101,7 +101,9 @@ class StripScene:
     the same evaluator closures, so every per-pixel problem derived by
     :func:`.discovery.retarget_problem` hits the same ``jax.jit`` caches.
     ``prescan_table`` is the scene-level :class:`.prescan.PrescanTable` every
-    pixel queries (built once per scene, read-only afterwards).
+    pixel queries (built once per scene, read-only afterwards) and the single
+    source of the scene's face sequence (:attr:`faces`); both templates must
+    be problems of that path.
     """
 
     incident_direction: np.ndarray
@@ -119,6 +121,18 @@ class StripScene:
             raise ValueError("prescan_table incident direction does not match the scene")
         if table.refractive_index != float(self.refractive_index):
             raise ValueError("prescan_table refractive index does not match the scene")
+        expected = problem_path_label(table.faces, self.refractive_index)
+        for name in ("discovery_template", "production_template"):
+            if getattr(self, name).path != expected:
+                raise ValueError(f"{name} path {getattr(self, name).path!r} does not match the prescan table's {expected!r}")
+
+    @property
+    def faces(self) -> tuple[int, ...]:
+        return self.prescan_table.faces
+
+    @property
+    def path_id(self) -> str:
+        return self.prescan_table.path_id
 
     @property
     def width(self) -> int:
@@ -129,6 +143,61 @@ class StripScene:
         return int(self.render["height"])
 
 
+def build_strip_scene(
+    faces: Sequence[int],
+    *,
+    incident_direction: np.ndarray,
+    refractive_index: float,
+    crystal: HexPrism,
+    pose_density: PoseDensity,
+    render: Mapping[str, Any],
+    prescan_table: PrescanTable | None = None,
+    prescan_sample_count: int = DEFAULT_SAMPLE_COUNT,
+    prescan_rng_seed: int = DEFAULT_RNG_SEED,
+) -> StripScene:
+    """Assemble the scene of one face sequence (single authority; :func:`canonical_strip_scene` is its ch06 binding).
+
+    ``prescan_table`` (a table the driver built or loaded once) is used as is
+    and must be a table of ``faces``; otherwise one is built here from
+    ``prescan_sample_count`` / ``prescan_rng_seed``.  The two templates are
+    one :func:`.optics.path_problem` of ``faces`` (weightless for discovery,
+    with :func:`.weights.build_path_weight_evaluators` for production).
+    """
+    faces = normalize_faces(faces)
+    incident = np.asarray(incident_direction, dtype=np.float64)
+    index = float(refractive_index)
+    if prescan_table is None:
+        prescan_table = build_prescan_table(
+            incident, index, sample_count=prescan_sample_count, rng_seed=prescan_rng_seed, path_id=path_id_of(faces)
+        )
+    elif prescan_table.faces != faces:
+        raise ValueError(f"prescan_table is of path {prescan_table.path_id!r}, not {path_id_of(faces)!r}")
+    template = path_problem(
+        jnp.asarray(np.eye(3)),
+        faces,
+        jnp.asarray(incident),
+        target_direction=jnp.asarray(pixel_target(render, 0, 0)),
+        refractive_index=jnp.asarray(index, dtype=jnp.float64),
+    )
+    evaluators = build_path_weight_evaluators(
+        faces=faces,
+        incident_direction=incident,
+        refractive_index=index,
+        crystal=crystal,
+        pose_density=pose_density,
+    )
+    return StripScene(
+        incident_direction=incident,
+        refractive_index=index,
+        crystal=crystal,
+        pose_density=pose_density,
+        render=dict(render),
+        discovery_template=template,
+        production_template=replace(template, weight_evaluators=evaluators),
+        prescan_table=prescan_table,
+    )
+
+
 def canonical_strip_scene(
     *,
     prescan_table: PrescanTable | None = None,
@@ -136,7 +205,7 @@ def canonical_strip_scene(
     prescan_rng_seed: int = DEFAULT_RNG_SEED,
     pose_density: PoseDensity | None = None,
 ) -> StripScene:
-    """The ch06 canonical scene (``docs/ch06-reference-fixture.md`` section 3.3).
+    """The ch06 canonical scene (``docs/ch06-reference-fixture.md`` section 3.3), path 3-5.
 
     ``prescan_table`` (a table the driver built or loaded once) is used as is;
     otherwise one is built here from ``prescan_sample_count`` /
@@ -146,35 +215,16 @@ def canonical_strip_scene(
     the prescan table do not depend on it (only the ``rho_pose`` weight does),
     so the same prescan table serves every family.
     """
-    incident = canonical_incident_direction()
-    crystal = canonical_crystal()
-    if pose_density is None:
-        pose_density = canonical_pose_density()
-    if prescan_table is None:
-        prescan_table = build_prescan_table(
-            incident, CANONICAL_REFRACTIVE_INDEX, sample_count=prescan_sample_count, rng_seed=prescan_rng_seed
-        )
-    template = path_3_5_problem(
-        jnp.asarray(np.eye(3)),
-        jnp.asarray(incident),
-        target_direction=jnp.asarray(pixel_target(CANONICAL_RENDER, 0, 0)),
-        refractive_index=jnp.asarray(CANONICAL_REFRACTIVE_INDEX, dtype=jnp.float64),
-    )
-    evaluators = build_3_5_weight_evaluators(
-        incident_direction=incident,
+    return build_strip_scene(
+        PATH_3_5_FACES,
+        incident_direction=canonical_incident_direction(),
         refractive_index=CANONICAL_REFRACTIVE_INDEX,
-        crystal=crystal,
-        pose_density=pose_density,
-    )
-    return StripScene(
-        incident_direction=incident,
-        refractive_index=CANONICAL_REFRACTIVE_INDEX,
-        crystal=crystal,
-        pose_density=pose_density,
-        render=dict(CANONICAL_RENDER),
-        discovery_template=template,
-        production_template=replace(template, weight_evaluators=evaluators),
+        crystal=canonical_crystal(),
+        pose_density=canonical_pose_density() if pose_density is None else pose_density,
+        render=CANONICAL_RENDER,
         prescan_table=prescan_table,
+        prescan_sample_count=prescan_sample_count,
+        prescan_rng_seed=prescan_rng_seed,
     )
 
 
@@ -427,6 +477,7 @@ __all__ = [
     "STATUS_UNKNOWN_COMPLETENESS",
     "STAGE_NAMES",
     "StripScene",
+    "build_strip_scene",
     "canonical_strip_scene",
     "pixel_target",
     "render_pixel",
