@@ -35,6 +35,10 @@ JAX_PLATFORMS=cpu XLA_FLAGS="--xla_cpu_multi_thread_eigen=false" OMP_NUM_THREADS
   uv run python scripts/render_ch06_strip.py --workers 30 --output-dir artifacts/strip-full --resume
 # log-domain comparison with the historical raw and the Lumice remake (matplotlib is not a dependency)
 uv run --with matplotlib python scripts/compare_strip_v2.py --strip-dir artifacts/strip-full --output-dir /tmp/strip-compare
+# ... plus the radiometric three-way check against a Lumice float export (`Lumice render --format npy`, run
+# externally; img_01.npy with its img_01.json sidecar; a second seed is summed in and gives the noise floor)
+uv run --with matplotlib python scripts/compare_strip_v2.py --strip-dir artifacts/strip-full --output-dir /tmp/strip-compare \
+  --lumice-float <run1>/img_01.npy --lumice-float-run2 <run2>/img_01.npy
 # Linux/NVIDIA environment
 uv sync --extra cuda13 --dev
 XLA_PYTHON_CLIENT_PREALLOCATE=false uv run python benchmarks/benchmark_batch.py
