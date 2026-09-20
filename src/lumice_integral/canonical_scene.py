@@ -95,8 +95,13 @@ def canonical_pose_density() -> PoseDensity:
     )
 
 
-def canonical_pixel_problem(*, with_weights: bool = True) -> FiberProblem:
-    """The canonical pixel's 3-5 continuation problem, optionally with the four weights."""
+def canonical_pixel_problem(*, with_weights: bool = True, crystal: HexPrism | None = None) -> FiberProblem:
+    """The canonical pixel's 3-5 continuation problem, optionally with the four weights.
+
+    ``crystal`` replaces :func:`canonical_crystal` for diagnostics and for
+    baselines recorded on another crystal; the fiber itself does not depend on
+    it (only the ``entry_measure`` weight does).
+    """
     incident = canonical_incident_direction()
     problem = path_3_5_problem(
         jnp.asarray(canonical_seed()),
@@ -109,7 +114,7 @@ def canonical_pixel_problem(*, with_weights: bool = True) -> FiberProblem:
     evaluators = build_3_5_weight_evaluators(
         incident_direction=incident,
         refractive_index=CANONICAL_REFRACTIVE_INDEX,
-        crystal=canonical_crystal(),
+        crystal=canonical_crystal() if crystal is None else crystal,
         pose_density=canonical_pose_density(),
     )
     return replace(problem, weight_evaluators=evaluators)

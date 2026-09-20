@@ -9,6 +9,13 @@ production density classes (``build_pose_density("column", ...)``) and
 ``scripts/compare_pose_density_families.py::zenith_width_sensitivity``; the 16
 cells must each agree with the recorded table to 1.5 % (the table is rounded to
 three decimals; the probe's own run-to-run scatter is well below that).
+
+The table was recorded on the ``h/a = 1`` crystal of 2026-09-17; the canonical
+scene moved to ``h/a = 2`` on 2026-09-20 (task
+defect2-crystal-height-convention), which reweights the fiber through
+``entry_measure`` and changes the ratios, so the scene here binds the
+recording's crystal explicitly (``TABLE_CRYSTAL``).  The check is about the
+density classes, not about the crystal.
 """
 
 from __future__ import annotations
@@ -22,6 +29,7 @@ import pytest
 
 from lumice_integral.continuation import trace_fiber
 from lumice_integral.discovery import retarget_problem
+from lumice_integral.geometry import HexPrism
 from lumice_integral.pose_density import ZenithGaussianPoseDensity
 from lumice_integral.quadrature import HAAR_TO_DVOL_G_FACTOR
 from lumice_integral.strip_pixel import PixelOptions, canonical_strip_scene, pixel_target, render_pixel
@@ -37,6 +45,7 @@ DEFECT2_SECTION_4 = {
 }
 RELATIVE_TOLERANCE = 0.015
 TEST_PRESCAN_SAMPLES = 400_000
+TABLE_CRYSTAL = HexPrism.from_ratio(1.0)
 
 
 @pytest.fixture(scope="module")
@@ -50,7 +59,7 @@ def families_script():
 
 @pytest.fixture(scope="module")
 def scene():
-    return canonical_strip_scene(prescan_sample_count=TEST_PRESCAN_SAMPLES)
+    return canonical_strip_scene(prescan_sample_count=TEST_PRESCAN_SAMPLES, crystal=TABLE_CRYSTAL)
 
 
 @pytest.mark.parametrize("row", sorted(DEFECT2_SECTION_4))

@@ -35,17 +35,18 @@ from lumice_integral.strip_pixel import (
     subpixel_targets,
 )
 
-# docs/ch06-reference-fixture.md section 4.1: the retired adaptive integrator's
-# rtol=1e-8 value (Haar-converted, partial), frozen as the alignment reference
-# of tests/test_resample_quadrature.py.  Half of the 4.728847630 recorded before
-# task-continuation-gates-and-fixtures: the canonical loop (2.379 < pi) was
-# integrated over two traversals.  The pipeline integrates with the resampled
-# quadrature (rtol 1e-4) from the *discovered* seed: 2.364412980 at 257 nodes
-# (61 poses), 4.6e-6 below the reference and inside its own error estimate
-# 9.8e-5; unchanged by task-pixel-pipeline-v2 (the one production trace is
-# the same trace the old pipeline ran last).
-CANONICAL_PIXEL_VALUE = 2.364423815
-CANONICAL_PIXEL_RESAMPLED_VALUE = 2.364412980
+# docs/ch06-reference-fixture.md section 4.1: the pipeline's resampled
+# quadrature (rtol 1e-4) from the *discovered* seed on the canonical ``h/a = 2``
+# crystal, 257 nodes (61 poses).  History: ``h/a = 1`` gave 2.364412980 (task
+# defect2-crystal-height-convention, 2026-09-20, re-pinned 2.364412980 ->
+# 6.581419934 when the canonical crystal became ``h/a = 2``; the fiber, its
+# 61 poses and 257 nodes are unchanged, only the ``entry_measure`` weight
+# moved), itself half of the 4.728847630 recorded before
+# task-continuation-gates-and-fixtures (the loop, 2.379 < pi, had been
+# integrated over two traversals).  The retired adaptive integrator's
+# rtol=1e-8 reference (2.364423815) exists only for ``h/a = 1``; the alignment
+# against it lives in tests/test_resample_quadrature.py on that crystal.
+CANONICAL_PIXEL_RESAMPLED_VALUE = 6.581419934
 # tests/test_discovery.py baselines.
 CANONICAL_ARCLENGTH = 2.379121
 ROW_225_ARCLENGTH = 3.121867
@@ -143,8 +144,6 @@ def test_canonical_pixel_single_component_reproduces_the_fixture_value(canonical
     assert np.isnan(component.start_truncation_estimate) and np.isnan(component.end_truncation_estimate)
     assert canonical.value == component.value
     assert canonical.value == pytest.approx(CANONICAL_PIXEL_RESAMPLED_VALUE, abs=5e-9)
-    assert abs(canonical.value - CANONICAL_PIXEL_VALUE) <= canonical.error_estimate
-    assert abs(canonical.value - CANONICAL_PIXEL_VALUE) <= 1e-4 * CANONICAL_PIXEL_VALUE
     assert component.node_count == 257 and component.refinement_rounds == 1
     assert not component.node_count_exhausted and component.non_finite_node_count == 0
     # |I_257 - I_129| / I at rtol 1e-4: a conservative estimate (order ~2 grid),
@@ -207,7 +206,8 @@ def test_caustic_neighbourhood_pixel_60_126_is_one_short_closed_loop(scene, opti
     assert result.component_count == 1 and result.completeness == "complete"
     assert result.components[0].kind == "closed"
     assert result.components[0].arclength == pytest.approx(0.466397, rel=1e-4)
-    assert result.value == pytest.approx(19.0379, rel=1e-3)
+    # h/a = 1: 19.0379 -> h/a = 2: 39.3657 (2026-09-20); the loop itself is crystal-independent.
+    assert result.value == pytest.approx(39.3657, rel=1e-3)
 
 
 def test_dark_pixel_is_complete_with_zero_value(scene, options):
