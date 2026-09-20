@@ -179,18 +179,114 @@ def test_plate_family_is_the_zenith_gaussian_about_the_pole():
     assert plate(horizontal) == pytest.approx(2.0 * np.exp(-162.0) / plate.marginal_integral, rel=1e-9)
 
 
-def test_zenith_roll_density_with_a_flat_roll_factor_reduces_to_the_zenith_density():
-    """Wiring baseline: the roll factor integrates to one over a flat spin, so the two
-    classes agree pose-by-pose *only* when the roll factor is identically one; kept as the
-    reference point of the placeholder stage (plan Step 4) and superseded by the real
-    roll factor in Step 5."""
+def test_zenith_roll_density_factorizes_into_the_zenith_density_times_a_unit_mean_spin_factor():
+    """The zenith factor is the column/plate density verbatim; the spin factor averages to
+    one over a flat spin (so the placeholder stage, roll factor == 1, was the right wiring
+    baseline: both classes then agreed pose by pose)."""
     column = ZenithGaussianPoseDensity(np.pi / 2.0, np.radians(1.0))
     parry = ZenithRollGaussianPoseDensity(np.pi / 2.0, np.radians(1.0), 0.0, np.radians(1.0))
     rotations = haar_rotations(2000, np.random.default_rng(11))
-    np.testing.assert_allclose(parry.evaluate_batch(rotations), column.evaluate_batch(rotations), rtol=0.0, atol=1e-12)
-    assert parry(rotations[0]) == pytest.approx(column(rotations[0]), abs=1e-12)
+    psi = np.array([c_axis_roll(rotation) for rotation in rotations])
+    expected = column.evaluate_batch(rotations) * parry.density_at_roll(psi)
+    np.testing.assert_allclose(parry.evaluate_batch(rotations), expected, rtol=1e-12, atol=0.0)
+    assert parry(rotations[0]) == pytest.approx(expected[0], rel=1e-12)
+    psi_grid = np.linspace(-np.pi, np.pi, 2_000_001)
+    assert np.trapezoid(parry.density_at_roll(psi_grid), psi_grid) / (2.0 * np.pi) == pytest.approx(1.0, rel=1e-9)
     assert parry.unit == "dimensionless" and "spin about the c axis Gaussian" in parry.normalization
     with pytest.raises(ValueError):
         ZenithRollGaussianPoseDensity(np.pi / 2.0, np.radians(1.0), 0.0, 0.0)
     with pytest.raises(ValueError):
         ZenithRollGaussianPoseDensity(-0.1, np.radians(1.0), 0.0, np.radians(1.0))
+
+
+def haar_expectation(density, samples: int, seed: int, chunk: int = 1_000_000) -> tuple[float, float]:
+    """Monte Carlo ``E_Haar[rho]`` and its standard error, sampled in chunks."""
+    rng = np.random.default_rng(seed)
+    total = 0.0
+    total_squares = 0.0
+    remaining = samples
+    while remaining > 0:
+        values = density.evaluate_batch(haar_rotations(min(chunk, remaining), rng))
+        total += float(values.sum())
+        total_squares += float(np.square(values).sum())
+        remaining -= len(values)
+    mean = total / samples
+    variance = total_squares / samples - mean * mean
+    return mean, float(np.sqrt(variance / samples))
+
+
+@pytest.mark.parametrize(
+    "family, zenith_mean_deg, zenith_std_deg, roll_std_deg, samples, standard_error_bound",
+    [
+        ("parry", 90.0, 1.0, 1.0, 4_000_000, 0.05),  # var ~ sqrt(pi)/sigma_roll . 1/(sqrt(pi) sigma_zen) ~ 3.3e3
+        ("lowitz", 0.0, 40.0, 1.0, 1_000_000, 0.02),
+    ],
+)
+def test_roll_locked_density_integrates_to_one_against_independent_haar_samples(
+    family, zenith_mean_deg, zenith_std_deg, roll_std_deg, samples, standard_error_bound
+):
+    density = ZenithRollGaussianPoseDensity(
+        np.radians(zenith_mean_deg), np.radians(zenith_std_deg), 0.0, np.radians(roll_std_deg)
+    )
+    mean, standard_error = haar_expectation(density, samples, 20260920)
+    assert abs(mean - 1.0) <= 4.0 * standard_error, family
+    assert standard_error < standard_error_bound, family
+
+
+def haar_integral_by_scipy(density) -> float:
+    """``int rho d mu_Haar`` on the ZYZ chart: ``sin(beta) d alpha d beta d gamma / (8 pi^2)``.
+
+    Independent of the classes' own Gauss-Legendre normalisation (adaptive
+    QUADPACK through ``scipy.integrate.nquad``); the azimuth integral is the
+    factor ``2 pi`` since no family depends on it.
+    """
+    from scipy.integrate import nquad
+
+    def integrand(gamma: float, beta: float) -> float:
+        return density(chain_rotation(0.3, beta, gamma)) * np.sin(beta) / (4.0 * np.pi)
+
+    breakpoints = {"points": [np.radians(d) for d in (0.5, 1.0, 5.0, 45.0, 90.0, 135.0, 175.0, 179.0, 179.5)], "limit": 200}
+    value, _ = nquad(integrand, [[-np.pi, np.pi], [0.0, np.pi]], opts=[breakpoints, breakpoints])
+    return float(value)
+
+
+@pytest.mark.parametrize(
+    "density",
+    [
+        HaarUniformPoseDensity(),
+        ZenithGaussianPoseDensity(np.pi / 2.0, np.radians(0.5)),  # column
+        ZenithGaussianPoseDensity(0.0, np.radians(0.5)),  # plate
+        ZenithRollGaussianPoseDensity(np.pi / 2.0, np.radians(1.0), 0.0, np.radians(1.0)),  # parry
+        ZenithRollGaussianPoseDensity(0.0, np.radians(40.0), 0.0, np.radians(1.0)),  # lowitz
+        ZenithRollGaussianPoseDensity(np.pi / 2.0, np.radians(1.0), np.radians(10.0), np.radians(60.0)),  # wide roll
+    ],
+    ids=["random", "column", "plate", "parry", "lowitz", "wide-roll"],
+)
+def test_every_family_integrates_to_one_by_independent_scipy_quadrature(density):
+    assert haar_integral_by_scipy(density) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_narrowing_the_roll_width_sharpens_the_locked_peak_and_kills_the_tail():
+    locked = chain_rotation(np.radians(40.0), np.pi / 2.0, 0.0)
+    spun = chain_rotation(np.radians(40.0), np.pi / 2.0, np.radians(2.0))
+    wide = ZenithRollGaussianPoseDensity(np.pi / 2.0, np.radians(1.0), 0.0, np.radians(5.0))
+    narrow = ZenithRollGaussianPoseDensity(np.pi / 2.0, np.radians(1.0), 0.0, np.radians(0.5))
+    column = ZenithGaussianPoseDensity(np.pi / 2.0, np.radians(1.0))
+    assert narrow(locked) > wide(locked) > column(locked)
+    assert narrow(spun) < wide(spun)
+    assert narrow(spun) / narrow(locked) == pytest.approx(np.exp(-0.5 * (2.0 / 0.5) ** 2), rel=1e-9)
+    # the roll factor is periodic: psi and psi + 2 pi (and the (-pi, pi] representative) agree
+    assert narrow.density_at_roll(np.radians(359.0)) == pytest.approx(narrow.density_at_roll(np.radians(-1.0)), rel=1e-12)
+    # wide locks (60 deg) are outside the Parry/Lowitz scenario; only "runs and stays normalised" is promised
+    ZenithRollGaussianPoseDensity(np.pi / 2.0, np.radians(1.0), 0.0, np.radians(60.0))
+
+
+def test_roll_locked_batch_density_matches_the_scalar_call_pose_by_pose():
+    density = ZenithRollGaussianPoseDensity(np.radians(0.0), np.radians(40.0), 0.0, np.radians(1.0))
+    rotations = haar_rotations(3000, np.random.default_rng(5))
+    batch = density.evaluate_batch(rotations)
+    scalar = np.array([density(rotation) for rotation in rotations])
+    assert batch.shape == (len(rotations),) and batch.dtype == np.float64
+    np.testing.assert_allclose(batch, scalar, rtol=1e-12, atol=0.0)
+    with pytest.raises(ValueError):
+        density.evaluate_batch(np.eye(3))

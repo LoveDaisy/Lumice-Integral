@@ -293,12 +293,10 @@ class ZenithRollGaussianPoseDensity:
         )
 
     def density_at_roll(self, psi: np.ndarray) -> np.ndarray:
-        """Spin factor ``2 pi h(psi) / Q``.
-
-        Placeholder stage (plan Step 4): held at ``1`` so that the class reduces
-        to :class:`ZenithGaussianPoseDensity` while the wiring is validated.
-        """
-        return np.ones_like(np.asarray(psi, dtype=np.float64))
+        """Spin factor ``2 pi h(psi) / Q`` (integrates to one against ``d psi / (2 pi)``)."""
+        return 2.0 * np.pi * roll_gaussian(
+            psi, roll_mean_rad=self.roll_mean_rad, roll_std_rad=self.roll_std_rad
+        ) / self.roll_integral
 
     def __call__(self, rotation: np.ndarray) -> float:
         return float(self.zenith.density_at_zenith(c_axis_zenith(rotation)) * self.density_at_roll(c_axis_roll(rotation)))
