@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from lumice_integral.so3 import exp, log, rotation_distance
+from lumice_integral.so3 import exp, log, rotation_distance, rotation_distances
 
 
 @pytest.mark.parametrize("angle", [0.0, 1e-9, 1e-5, 1e-3, 0.1, 1.0, 3.0])
@@ -25,6 +25,46 @@ def test_log_is_zero_and_ad_safe_at_the_identity():
     # d/dv log(exp(v)) at v = 0 is the identity: both branches must be AD safe.
     jacobian = np.asarray(jax.jacfwd(lambda v: log(exp(v)))(jnp.zeros(3, dtype=jnp.float64)))
     np.testing.assert_allclose(jacobian, np.eye(3), rtol=0.0, atol=1e-15)
+
+
+# --- host-side batch distance (task-pixel-cost-shape-stable-kernels) ----------
+
+
+def test_rotation_distances_matches_the_jax_kernel_pairwise():
+    """The numpy batch is the same formula as ``rotation_distance``: ulp-level agreement."""
+    rng = np.random.default_rng(20260920)
+    axes = rng.normal(size=(64, 3))
+    axes /= np.linalg.norm(axes, axis=1, keepdims=True)
+    # Angles across the range, including the near-identity and near-pi ends.
+    angles = np.concatenate(
+        ([0.0, 1e-9, 1e-6, 1e-3, np.pi - 1e-6, np.pi], rng.uniform(0.0, np.pi, size=58))
+    )
+    rotations = np.stack([np.asarray(exp(jnp.asarray(a * v))) for a, v in zip(angles, axes)])
+    left = np.asarray(exp(jnp.array([0.4, -0.7, 0.2], dtype=jnp.float64)))
+
+    batch = rotation_distances(left, rotations)
+    pairwise = np.array([float(rotation_distance(jnp.asarray(left), jnp.asarray(r))) for r in rotations])
+
+    assert batch.shape == (64,) and batch.dtype == np.float64
+    # Absolute agreement scaled by the angle (both sides lose the same
+    # O(eps) in the matrix product), not a fixed single-machine tolerance.
+    assert np.all(np.abs(batch - pairwise) <= 8e-16 * (1.0 + pairwise)), np.abs(batch - pairwise).max()
+    # And the identity member is at the same distance the pairwise kernel reports for it.
+    assert rotation_distances(left, left[None])[0] == pytest.approx(0.0, abs=1e-15)
+
+
+def test_rotation_distances_accepts_jax_inputs_and_rejects_bad_shapes():
+    left = exp(jnp.array([0.1, 0.2, 0.3], dtype=jnp.float64))
+    rights = jnp.stack([left, jnp.eye(3, dtype=jnp.float64)])
+    distances = rotation_distances(left, rights)
+    assert isinstance(distances, np.ndarray)
+    assert distances[0] == pytest.approx(0.0, abs=1e-15)
+    assert distances[1] == pytest.approx(float(rotation_distance(left, jnp.eye(3))), abs=1e-15)
+    assert rotation_distances(np.eye(3), np.zeros((0, 3, 3))).shape == (0,)
+    with pytest.raises(ValueError):
+        rotation_distances(np.eye(3), np.eye(3))
+    with pytest.raises(ValueError):
+        rotation_distances(np.eye(4), np.zeros((2, 3, 3)))
 
 
 # --- quaternion chart (task-resample-and-integrate Step 1) --------------------

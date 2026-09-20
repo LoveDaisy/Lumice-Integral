@@ -89,7 +89,15 @@ def log(rotation: Array) -> Array:
 
 
 def rotation_distance(left: Array, right: Array) -> Array:
-    """Return the geodesic angle between two rotation matrices."""
+    """Return the geodesic angle between two rotation matrices.
+
+    The angle of ``left.T @ right`` from ``arctan2(sine, cosine)``: the cosine
+    from the trace, the sine from the norm of the skew part, which stays
+    accurate near the identity where ``arccos`` of the trace does not.
+    Differentiable (the continuation's step control differentiates through
+    it); :func:`rotation_distances` is the host-side batch of the same
+    formula and must stay numerically equivalent (``tests/test_so3.py``).
+    """
     relative = left.T @ right
     cosine = jnp.clip((jnp.trace(relative) - 1.0) / 2.0, -1.0, 1.0)
     skew_vector = jnp.array(
@@ -101,6 +109,40 @@ def rotation_distance(left: Array, right: Array) -> Array:
     ) / 2.0
     sine = jnp.linalg.norm(skew_vector)
     return jnp.arctan2(sine, cosine)
+
+
+def rotation_distances(left: np.ndarray, rights: np.ndarray) -> np.ndarray:
+    """Geodesic angles from ``left`` ``(3, 3)`` to each of ``rights`` ``(N, 3, 3)``.
+
+    Host-side numpy batch of :func:`rotation_distance` (same trace / skew
+    vector / ``arctan2`` derivation, evaluated once per member) for callers
+    that only compare thousands of poses against one and never
+    differentiate: candidate-pool clustering and curve deduplication in
+    ``discovery.py``.  A ``jax.vmap`` of :func:`rotation_distance` would be
+    recompiled for every distinct ``N``, and ``N`` changes with every pixel
+    (task-pixel-cost-shape-stable-kernels); numpy has no shape
+    specialisation at all.  Equivalence with :func:`rotation_distance` is
+    locked by ``tests/test_so3.py``.
+    """
+    left = np.asarray(left, dtype=np.float64)
+    rights = np.asarray(rights, dtype=np.float64)
+    if left.shape != (3, 3) or rights.ndim != 3 or rights.shape[1:] != (3, 3):
+        raise ValueError("left must have shape (3, 3) and rights shape (N, 3, 3)")
+    relative = left.T @ rights
+    cosine = np.clip((np.trace(relative, axis1=1, axis2=2) - 1.0) / 2.0, -1.0, 1.0)
+    skew_vectors = (
+        np.stack(
+            [
+                relative[:, 2, 1] - relative[:, 1, 2],
+                relative[:, 0, 2] - relative[:, 2, 0],
+                relative[:, 1, 0] - relative[:, 0, 1],
+            ],
+            axis=1,
+        )
+        / 2.0
+    )
+    sine = np.linalg.norm(skew_vectors, axis=1)
+    return np.arctan2(sine, cosine)
 
 
 def quaternion_from_rotation(rotation: Array) -> Array:
