@@ -1,8 +1,8 @@
 """Scene-level prescan table: which poses send the incident ray where.
 
 For a fixed ray path, incident direction ``s`` and refractive index ``n`` the
-question "does Haar sample ``R`` pass the smooth 3-5 domain, and where does it
-send ``s``?" does not depend on the pixel.  :func:`discover_components` used
+question "does Haar sample ``R`` pass the path's smooth domain, and where does
+it send ``s``?" does not depend on the pixel.  :func:`discover_components` used
 to answer it afresh for every cold pixel (400k samples, about 2.6 s each,
 roughly 7000 times over the 58-column strip); :class:`PrescanTable` answers
 it once per scene and indexes the domain-valid samples by outgoing direction
@@ -10,17 +10,21 @@ so a pixel only asks ``candidates(d, angle_tolerance_deg)``.
 
 What the table holds (and does not):
 
-- Every *domain-valid* sample: its rotation, outgoing direction, the four
-  margins of :func:`.optics.path_3_5_domain_batch` and its index in the
-  original sampling stream.  Nothing is pre-filtered by any pixel direction;
+- Every *domain-valid* sample: its rotation, outgoing direction, the margins
+  of :func:`.optics.path_domain_batch` (:func:`.optics.domain_margin_names`
+  of the path: four for ``3-5``, two more per internal reflection) and its
+  index in the original sampling stream.  Nothing is pre-filtered by any pixel direction;
   the angular tolerance is a query parameter, so one table serves the image.
-- It does not depend on the crystal: :func:`.optics.path_3_5` refracts
-  through the two rotated face normals of an infinite prism, and the
+- It does not depend on the crystal: :func:`.optics.path_direction` refracts
+  and reflects on the rotated face normals of an infinite prism, and the
   finite-crystal :func:`.geometry.entry_measure` gate stays in discovery,
   applied per candidate after the query.  Swapping crystal sizes therefore
   needs no rebuild.
-- ``path_id`` names the ray path (``"3-5"`` only, for now) so a future
-  multi-path scene can keep one table per path without changing the layout.
+- ``path_id`` names the ray path (``"3-5"``, ``"3-1-2-5"``, ...; the format
+  of :func:`.optics.path_id_of`) and is the table's single source of the
+  face sequence (:attr:`PrescanTable.faces`); a multi-path scene keeps one
+  table per member, all built from the same ``(rng_seed, sample_count)``
+  stream (:mod:`.path_class`).
 
 Sampling is one ``numpy`` generator per ``rng_seed`` consumed in
 ``batch_size`` chunks, so (a) ``batch_size`` only bounds memory and never
@@ -52,10 +56,10 @@ from typing import Any, Callable, Mapping
 import numpy as np
 from scipy.spatial import cKDTree
 
-from .optics import DOMAIN_MARGIN_NAMES, path_3_5_domain_batch
+from .optics import PATH_3_5_FACES, domain_margin_names, faces_of_path_id, path_domain_batch, path_id_of
 from .provenance import git_commit, sha256_of
 
-DEFAULT_PATH_ID = "3-5"
+DEFAULT_PATH_ID = path_id_of(PATH_3_5_FACES)
 # Pinned by the density survey of docs/ch06-reference-fixture.md (section 7,
 # stage 4): on 32 strip pixels the discovered components and arclengths are
 # unchanged from 2M to 16M samples (the one exception is a dedup-tolerance
@@ -119,8 +123,9 @@ class PrescanTable:
             raise ValueError("rotations must have shape (M, 3, 3)")
         if self.directions.shape != (self.valid_count, 3):
             raise ValueError("directions must have shape (M, 3)")
-        if set(self.margins) != set(DOMAIN_MARGIN_NAMES):
-            raise ValueError(f"margins must carry exactly {DOMAIN_MARGIN_NAMES}")
+        margin_names = self.margin_names
+        if set(self.margins) != set(margin_names):
+            raise ValueError(f"margins must carry exactly {margin_names}")
         if self.sample_indices.shape != (self.valid_count,):
             raise ValueError("sample_indices must have shape (M,)")
         object.__setattr__(self, "_tree", cKDTree(self.directions))
@@ -128,6 +133,15 @@ class PrescanTable:
     @property
     def valid_count(self) -> int:
         return int(self.rotations.shape[0])
+
+    @property
+    def faces(self) -> tuple[int, ...]:
+        """The face sequence named by ``path_id`` (:func:`.optics.faces_of_path_id`)."""
+        return faces_of_path_id(self.path_id)
+
+    @property
+    def margin_names(self) -> tuple[str, ...]:
+        return domain_margin_names(self.faces)
 
     def candidates(self, target_direction: np.ndarray, angle_tolerance_deg: float) -> np.ndarray:
         """Row indices whose direction lies within ``angle_tolerance_deg`` of ``target_direction``.
@@ -201,7 +215,7 @@ class PrescanTable:
             rotations=self.rotations,
             directions=self.directions,
             sample_indices=self.sample_indices,
-            **{f"margin_{name}": self.margins[name] for name in DOMAIN_MARGIN_NAMES},
+            **{f"margin_{name}": self.margins[name] for name in self.margin_names},
         )
         provenance = {
             "format": "lumice-integral-prescan-table-v1",
@@ -223,14 +237,15 @@ class PrescanTable:
         if actual != provenance["arrays"]["sha256"]:
             raise ValueError(f"{path.name}: sha256 mismatch (provenance {provenance['arrays']['sha256']}, file {actual})")
         build = provenance["build"]
+        path_id = str(build["path_id"])
         with np.load(path) as payload:
             return cls(
-                path_id=str(build["path_id"]),
+                path_id=path_id,
                 incident_direction=np.asarray(build["incident_direction"], dtype=np.float64),
                 refractive_index=float(build["refractive_index"]),
                 rotations=payload["rotations"],
                 directions=payload["directions"],
-                margins={name: payload[f"margin_{name}"] for name in DOMAIN_MARGIN_NAMES},
+                margins={name: payload[f"margin_{name}"] for name in domain_margin_names(faces_of_path_id(path_id))},
                 sample_indices=payload["sample_indices"],
                 sample_count=int(build["sample_count"]),
                 rng_seed=int(build["rng_seed"]),
@@ -253,29 +268,32 @@ def build_prescan_table(
 ) -> PrescanTable:
     """Sample ``sample_count`` Haar poses in ``batch_size`` chunks and keep the domain-valid ones.
 
-    ``batch_size`` bounds the transient memory of one
-    :func:`.optics.path_3_5_domain_batch` call and nothing else (module
-    docstring).  Only ``path_id == "3-5"`` is implemented.
+    ``path_id`` names the face sequence (:func:`.optics.path_id_of` format;
+    parsed once by :func:`.optics.faces_of_path_id`, which rejects malformed
+    ids and unknown faces).  ``batch_size`` bounds the transient memory of
+    one :func:`.optics.path_domain_batch` call and nothing else (module
+    docstring).
     """
-    if path_id != DEFAULT_PATH_ID:
-        raise ValueError(f"unsupported path_id {path_id!r}; only {DEFAULT_PATH_ID!r} is implemented")
+    faces = faces_of_path_id(path_id)
+    path_id = path_id_of(faces)
     if sample_count < 1 or batch_size < 1:
         raise ValueError("sample_count and batch_size must be positive")
     incident = np.asarray(incident_direction, dtype=np.float64)
     index = float(refractive_index)
     rng = np.random.default_rng(rng_seed)
+    margin_names = domain_margin_names(faces)
     rotations: list[np.ndarray] = []
     directions: list[np.ndarray] = []
-    margins: dict[str, list[np.ndarray]] = {name: [] for name in DOMAIN_MARGIN_NAMES}
+    margins: dict[str, list[np.ndarray]] = {name: [] for name in margin_names}
     sample_indices: list[np.ndarray] = []
     for start in range(0, sample_count, batch_size):
         count = min(batch_size, sample_count - start)
         chunk = haar_rotations(count, rng)
-        domain = path_3_5_domain_batch(chunk, incident, index)
+        domain = path_domain_batch(chunk, faces, incident, index)
         keep = np.nonzero(domain.valid)[0]
         rotations.append(chunk[keep])
         directions.append(domain.direction[keep])
-        for name in DOMAIN_MARGIN_NAMES:
+        for name in margin_names:
             margins[name].append(domain.margins[name][keep])
         sample_indices.append(keep + start)
     return PrescanTable(
@@ -311,7 +329,7 @@ def build_or_load_prescan_table(
     (same policy as :func:`.strip_driver.load_checkpoints`).
     """
     requested = {
-        "path_id": path_id,
+        "path_id": path_id_of(faces_of_path_id(path_id)),
         "incident_direction": [float(x) for x in np.asarray(incident_direction, dtype=np.float64)],
         "refractive_index": float(refractive_index),
         "sample_count": int(sample_count),

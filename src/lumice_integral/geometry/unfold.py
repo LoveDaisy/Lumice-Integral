@@ -8,6 +8,11 @@
 
 Provenance：迁移自写作仓 ``halo_notes.geometry.unfold``（2026-09-16）；镜像逻辑只此一份，写作仓侧的绘图封装
 今后调用本模块。
+
+光路级不变量（2026-09-20，task-path-class-rendering-unit）：:func:`wedge_angle_deg` 是写作仓
+``halo_notes.math.signature.wedge_angle`` 的最小子集迁移（楔角 $W = \\arccos(-n_a\\cdot M^T n_b)$，度），
+:func:`halo_map_rank` 按 ch8 A0-06 族的规则把"$M = I$ 且 $W = 0$"的光路判为秩 0（出射方向与姿态无关，
+晕图是太阳方向的点质量），其余判为秩 2。Φ-类等价、34 类表与 D6h 群本身不在此处（见 plan 默认假设 1）。
 """
 
 from __future__ import annotations
@@ -53,3 +58,32 @@ def fold_matrix(crystal: Polyhedron, faces: Sequence[int]) -> np.ndarray:
         n = crystal.normal(crystal.face(number))
         M = (np.eye(3) - 2.0 * np.outer(n, n)) @ M
     return M
+
+
+WEDGE_ZERO_TOLERANCE_DEG = 1e-9
+
+
+def wedge_angle_deg(crystal: Polyhedron, faces: Sequence[int]) -> float:
+    """面序列的楔角 $W = \\arccos(-n_a \\cdot M^T n_b)$（度）：展开空间里入射面与出射面法向的夹角。
+
+    ``M^T n_b`` 就是 :func:`unfold_faces` 返回的 ``n_tilde_b``（模块文档）；平行光路（首尾折射抵消）
+    ``W = 0``，六棱柱 22° 晕族的两面光路（如 ``3-5``、``3-1-2-5``）``W = 60``，46° 族（如 ``1-3``）
+    ``W = 90``。返回值单位为度，与 :class:`lumice_integral.path_class.PathClass.wedge_deg` 一致。
+    """
+    faces = _check_faces(faces)
+    n_a = crystal.normal(crystal.face(faces[0]))
+    n_b = crystal.normal(crystal.face(faces[-1]))
+    minus_n_tilde_b = -(fold_matrix(crystal, faces).T @ n_b)
+    # atan2 form: arccos loses ~sqrt(eps) near W = 0 (Newell normals put the
+    # antipodal pairs 5-8 at 8.5e-7 deg), which is exactly where rank 0 is decided.
+    return float(np.degrees(np.arctan2(np.linalg.norm(np.cross(n_a, minus_n_tilde_b)), n_a @ minus_n_tilde_b)))
+
+
+def halo_map_rank(crystal: Polyhedron, faces: Sequence[int], *,
+                  tolerance_deg: float = WEDGE_ZERO_TOLERANCE_DEG) -> int:
+    """光路的晕图秩：``0`` 当且仅当 ``fold_matrix`` 为单位阵且楔角为 0（ch8 A0-06 族，如 ``1-2``、``3-6``），
+    此时出射方向恒等于入射方向；否则 ``2``。秩 0 光路不进纤维流水线（``path_class`` 模块）。"""
+    faces = _check_faces(faces)
+    if not np.allclose(fold_matrix(crystal, faces), np.eye(3), rtol=0.0, atol=1e-12):
+        return 2
+    return 0 if wedge_angle_deg(crystal, faces) <= tolerance_deg else 2

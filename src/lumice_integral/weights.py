@@ -7,9 +7,13 @@ section 7 that Phase I can evaluate today:
 
 - ``rho_pose``: :mod:`.pose_density` (relative to Haar probability);
 - ``entry_measure``: :func:`.geometry.entry_measure` (absolute area);
-- ``fresnel_transmission``: :func:`.optics.fresnel_transmission_3_5`;
-- ``path_validity``: boolean gate ``path_3_5_domain(...).valid`` and
+- ``fresnel_transmission``: :func:`.optics.fresnel_transmission_path`;
+- ``path_validity``: boolean gate ``path_domain(...).valid`` and
   ``entry_measure > 0``.
+
+Every factor takes the face sequence explicitly
+(:func:`build_path_weight_evaluators`); :func:`build_3_5_weight_evaluators`
+is the same assembly at ``faces == PATH_3_5_FACES``.
 
 Every factor is exposed on its own; nothing here multiplies factors together,
 substitutes ``1`` for a missing factor, or folds in ``J_perp`` or the
@@ -28,16 +32,19 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Callable, Mapping, NamedTuple
+from typing import Callable, Mapping, NamedTuple, Sequence
 
 import numpy as np
 
 from .geometry import HexPrism, entry_measure, entry_measure_batch
 from .optics import (
-    fresnel_transmission_3_5,
-    fresnel_transmission_3_5_batch,
-    path_3_5_domain,
-    path_3_5_domain_batch,
+    PATH_3_5_FACES,
+    fresnel_transmission_path,
+    fresnel_transmission_path_batch,
+    normalize_faces,
+    path_domain,
+    path_domain_batch,
+    path_id_of,
 )
 from .pose_density import PoseDensity
 
@@ -168,15 +175,16 @@ def evaluate_weights_batch(
 def entry_measure_weight(
     rotation: np.ndarray,
     *,
+    faces: Sequence[int],
     incident_direction: np.ndarray,
     crystal: HexPrism,
     refractive_index: float,
 ) -> float:
-    """``entry_measure(...).value`` for the 3-5 path (absolute projected area)."""
+    """``entry_measure(...).value`` of ``faces`` (absolute projected area)."""
     return float(
         entry_measure(
             np.asarray(rotation, dtype=np.float64),
-            (3, 5),
+            normalize_faces(faces),
             np.asarray(incident_direction, dtype=np.float64),
             crystal,
             n_ice=refractive_index,
@@ -185,17 +193,18 @@ def entry_measure_weight(
 
 
 def fresnel_transmission_weight(
-    rotation: np.ndarray, *, incident_direction: np.ndarray, refractive_index: float
+    rotation: np.ndarray, *, faces: Sequence[int], incident_direction: np.ndarray, refractive_index: float
 ) -> float:
-    return fresnel_transmission_3_5(
+    return fresnel_transmission_path(
         np.asarray(rotation, dtype=np.float64),
+        faces,
         np.asarray(incident_direction, dtype=np.float64),
         refractive_index,
     )
 
 
 class _EntryMeasureBatch:
-    """:func:`.geometry.entry_measure_batch` for the 3-5 path, memoised once.
+    """:func:`.geometry.entry_measure_batch` for one face sequence, memoised once.
 
     ``entry_measure`` and ``path_validity`` need the same per-pose footprint
     areas; the memo keeps the most recent pose array object and its values so
@@ -205,7 +214,10 @@ class _EntryMeasureBatch:
     a general cache: one entry, replaced on every new array.
     """
 
-    def __init__(self, *, incident_direction: np.ndarray, crystal: HexPrism, refractive_index: float) -> None:
+    def __init__(
+        self, *, faces: Sequence[int], incident_direction: np.ndarray, crystal: HexPrism, refractive_index: float
+    ) -> None:
+        self._faces = normalize_faces(faces)
         self._incident = np.asarray(incident_direction, dtype=np.float64)
         self._crystal = crystal
         self._index = float(refractive_index)
@@ -216,7 +228,7 @@ class _EntryMeasureBatch:
             return self._last[1]
         values = np.asarray(
             entry_measure_batch(
-                np.asarray(rotations, dtype=np.float64), (3, 5), self._incident, self._crystal,
+                np.asarray(rotations, dtype=np.float64), self._faces, self._incident, self._crystal,
                 n_ice=self._index,
             ),
             dtype=np.float64,
@@ -228,17 +240,19 @@ class _EntryMeasureBatch:
 def path_validity_weight(
     rotation: np.ndarray,
     *,
+    faces: Sequence[int],
     incident_direction: np.ndarray,
     crystal: HexPrism,
     refractive_index: float,
 ) -> float:
-    """``1.0`` when the smooth 3-5 branch is valid and the entry footprint is nonempty."""
+    """``1.0`` when the smooth branch of ``faces`` is valid and the entry footprint is nonempty."""
     rotation = np.asarray(rotation, dtype=np.float64)
     incident = np.asarray(incident_direction, dtype=np.float64)
-    if not path_3_5_domain(rotation, incident, refractive_index).valid:
+    if not path_domain(rotation, faces, incident, refractive_index).valid:
         return 0.0
     measure = entry_measure_weight(
         rotation,
+        faces=faces,
         incident_direction=incident,
         crystal=crystal,
         refractive_index=refractive_index,
@@ -246,14 +260,15 @@ def path_validity_weight(
     return 1.0 if measure > 0.0 else 0.0
 
 
-def build_3_5_weight_evaluators(
+def build_path_weight_evaluators(
     *,
+    faces: Sequence[int],
     incident_direction: np.ndarray,
     refractive_index: float,
     crystal: HexPrism,
     pose_density: PoseDensity,
 ) -> dict[str, WeightEvaluator]:
-    """Assemble the four Phase I factors for one 3-5 scene (single authority).
+    """Assemble the four Phase I factors of one face sequence in one scene (single authority).
 
     ``pose_density`` is any of the :mod:`.pose_density` families (duck-typed:
     ``unit``, ``normalization``, ``__call__``, ``evaluate_batch``); it only
@@ -261,14 +276,16 @@ def build_3_5_weight_evaluators(
     ``pixel_factor`` and ``other_radiometric`` are deliberately absent so that
     they stay ``unavailable`` downstream.
     """
+    faces = normalize_faces(faces)
+    path_id = path_id_of(faces)
     incident = np.asarray(incident_direction, dtype=np.float64)
     index = float(refractive_index)
     entry_measure_batch = _EntryMeasureBatch(
-        incident_direction=incident, crystal=crystal, refractive_index=index
+        faces=faces, incident_direction=incident, crystal=crystal, refractive_index=index
     )
 
     def path_validity_batch(rotations: np.ndarray) -> np.ndarray:
-        valid = path_3_5_domain_batch(rotations, incident, index).valid
+        valid = path_domain_batch(rotations, faces, incident, index).valid
         return np.where(valid & (entry_measure_batch(rotations) > 0.0), 1.0, 0.0)
 
     return {
@@ -279,13 +296,14 @@ def build_3_5_weight_evaluators(
         "entry_measure": WeightEvaluator(
             lambda rotation: entry_measure_weight(
                 rotation,
+                faces=faces,
                 incident_direction=incident,
                 crystal=crystal,
                 refractive_index=index,
             ),
             f"length^2 (crystal length unit; hexagon edge a = {crystal.a:g})",
             (
-                "absolute area of the face-3 footprint that follows path 3-5, "
+                f"absolute area of the face-{faces[0]} footprint that follows path {path_id}, "
                 "projected perpendicular to the world incident direction; not "
                 "divided by any face area or reference cross-section; 0 when "
                 "any gate fails (see geometry.entry_measure)"
@@ -294,27 +312,46 @@ def build_3_5_weight_evaluators(
         ),
         "fresnel_transmission": WeightEvaluator(
             lambda rotation: fresnel_transmission_weight(
-                rotation, incident_direction=incident, refractive_index=index
+                rotation, faces=faces, incident_direction=incident, refractive_index=index
             ),
             "dimensionless",
             (
                 "product of unpolarized (s/p averaged) power transmittances at "
-                "the face-3 entry and face-5 exit interfaces; 0 outside the smooth "
-                "3-5 domain"
+                f"the face-{faces[0]} entry and face-{faces[-1]} exit interfaces "
+                "(internal reflections are total on the smooth branch); "
+                f"0 outside the smooth {path_id} domain"
             ),
-            evaluate_batch=lambda rotations: fresnel_transmission_3_5_batch(
-                rotations, incident, index
+            evaluate_batch=lambda rotations: fresnel_transmission_path_batch(
+                rotations, faces, incident, index
             ),
         ),
         "path_validity": WeightEvaluator(
             lambda rotation: path_validity_weight(
                 rotation,
+                faces=faces,
                 incident_direction=incident,
                 crystal=crystal,
                 refractive_index=index,
             ),
             "boolean (0 or 1)",
-            "gate: path_3_5_domain(...).valid and entry_measure > 0; not a gain",
+            f"gate: path_domain(..., {path_id}).valid and entry_measure > 0; not a gain",
             evaluate_batch=path_validity_batch,
         ),
     }
+
+
+def build_3_5_weight_evaluators(
+    *,
+    incident_direction: np.ndarray,
+    refractive_index: float,
+    crystal: HexPrism,
+    pose_density: PoseDensity,
+) -> dict[str, WeightEvaluator]:
+    """The four Phase I factors of the 3-5 scene (:func:`build_path_weight_evaluators` at ``(3, 5)``)."""
+    return build_path_weight_evaluators(
+        faces=PATH_3_5_FACES,
+        incident_direction=incident_direction,
+        refractive_index=refractive_index,
+        crystal=crystal,
+        pose_density=pose_density,
+    )

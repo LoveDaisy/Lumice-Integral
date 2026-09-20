@@ -16,7 +16,7 @@ from lumice_integral.canonical_scene import (
     canonical_incident_direction,
 )
 from lumice_integral.camera import linear_pixel_outgoing_direction
-from lumice_integral.optics import DOMAIN_MARGIN_NAMES, path_3_5_domain
+from lumice_integral.optics import DOMAIN_MARGIN_NAMES, domain_margin_names, path_3_5_domain, path_domain
 from lumice_integral.prescan import (
     PROVENANCE_SUFFIX,
     PrescanTable,
@@ -182,10 +182,47 @@ def test_build_or_load_reuses_a_matching_cache_and_rebuilds_a_mismatched_one(tab
     _assert_same_table(table, memory)
 
 
-def test_build_rejects_unsupported_paths_and_bad_counts():
+def test_build_rejects_malformed_paths_and_bad_counts():
     with pytest.raises(ValueError, match="path_id"):
-        _build(path_id="4-6")
+        _build(path_id="4-x")
+    with pytest.raises(ValueError):
+        _build(path_id="4")  # a single face is not a path
+    with pytest.raises(ValueError):
+        _build(path_id="3-9")  # unknown face
     with pytest.raises(ValueError):
         _build(sample_count=0)
     with pytest.raises(ValueError):
         _build(batch_size=0)
+
+
+def test_a_reflecting_path_table_carries_its_own_margins_and_round_trips(tmp_path: Path):
+    """``3-1-2-5``: eight margins (four entry/exit plus two per internal reflection), every kept pose valid, save/load exact."""
+    table = _build(sample_count=20_000, path_id="3-1-2-5")
+    assert table.path_id == "3-1-2-5" and table.faces == (3, 1, 2, 5)
+    assert table.margin_names == domain_margin_names((3, 1, 2, 5)) and len(table.margin_names) == 8
+    assert set(table.margins) == set(table.margin_names)
+    assert 0 < table.valid_count < 20_000
+    for i in range(0, table.valid_count, max(1, table.valid_count // 20)):
+        check = path_domain(table.rotations[i], (3, 1, 2, 5), table.incident_direction, table.refractive_index)
+        assert check.valid
+        for name in table.margin_names:
+            assert check.margins[name] == pytest.approx(table.margins[name][i], abs=1e-12)
+    loaded = PrescanTable.load(table.save(tmp_path / "reflecting.npz")["arrays"])
+    assert loaded.faces == (3, 1, 2, 5)
+    _assert_same_table(table, loaded)
+    for name in table.margin_names:
+        assert np.array_equal(loaded.margins[name], table.margins[name])
+
+
+def test_a_cache_of_another_path_is_never_reused(tmp_path: Path):
+    """The same ``(s, n, N, seed)`` under a different ``path_id`` is a different table (silent-miss guard)."""
+    cache = tmp_path / "prescan.npz"
+    messages: list[str] = []
+    kwargs = dict(sample_count=20_000, rng_seed=SEED, log=messages.append)
+    first = build_or_load_prescan_table(cache, canonical_incident_direction(), CANONICAL_REFRACTIVE_INDEX, path_id="3-5", **kwargs)
+    messages.clear()
+    other = build_or_load_prescan_table(cache, canonical_incident_direction(), CANONICAL_REFRACTIVE_INDEX, path_id="3-7", **kwargs)
+    assert "different parameters; rebuilding" in messages[0]
+    assert other.path_id == "3-7" and first.path_id == "3-5"
+    assert not np.array_equal(other.sample_indices, first.sample_indices)
+    assert json.loads(provenance_path_of(cache).read_text())["build"]["path_id"] == "3-7"

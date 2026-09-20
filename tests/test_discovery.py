@@ -31,6 +31,7 @@ from lumice_integral.canonical_scene import (
     canonical_crystal,
     canonical_incident_direction,
     canonical_pixel_problem,
+    canonical_target_direction,
 )
 from lumice_integral.continuation import (
     ContinuationOptions,
@@ -54,6 +55,7 @@ from lumice_integral.discovery import (
     distance_to_curve,
     retarget_problem,
 )
+from lumice_integral.optics import path_domain
 from lumice_integral.prescan import build_prescan_table
 from lumice_integral.resample import OpenArc
 from lumice_integral.so3 import exp
@@ -533,3 +535,26 @@ def test_template_with_a_different_scene_is_rejected() -> None:
     other_index = build_prescan_table(canonical_incident_direction(), 1.33, sample_count=1_000)
     with pytest.raises(ValueError, match="path"):
         discover_components(pixel_target(150, 150), canonical_crystal(), other_index, template=template)
+
+
+@pytest.mark.parametrize("path_id", ["3-7", "3-1-2-5"])
+def test_discovery_runs_on_another_member_of_the_class(path_id: str) -> None:
+    """Structural smoke of the generalised pipeline on ``3-7`` and ``3-1-2-5`` (numbers are pinned by
+    the path-class conformance tests, not here)."""
+    table = build_prescan_table(
+        canonical_incident_direction(), CANONICAL_REFRACTIVE_INDEX, sample_count=100_000, rng_seed=RNG_SEED, path_id=path_id
+    )
+    assert table.faces == tuple(int(f) for f in path_id.split("-"))
+    result = discover_components(canonical_target_direction(), canonical_crystal(), table, **DISCOVERY_KWARGS)
+    assert isinstance(result, ComponentDiscoveryResult)
+    assert result.completeness in ("complete", "unknown")
+    for component in result.components:
+        assert component.kind in ("closed", "arc") and component.arclength > 0.0
+        assert path_domain(component.seed, table.faces, table.incident_direction, table.refractive_index).valid
+
+
+def test_template_of_another_path_is_rejected() -> None:
+    other = build_prescan_table(canonical_incident_direction(), CANONICAL_REFRACTIVE_INDEX, sample_count=1_000, path_id="3-7")
+    template = canonical_pixel_problem(with_weights=False)  # a 3-5 problem
+    with pytest.raises(ValueError, match="3-7"):
+        discover_components(canonical_target_direction(), canonical_crystal(), other, template=template)

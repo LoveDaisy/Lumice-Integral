@@ -1,8 +1,8 @@
-"""Single-pixel component discovery for the 3-5 fiber.
+"""Single-pixel component discovery for one fixed-path fiber.
 
 Given one pixel's target direction ``d``, this module finds the connected
-pieces of the inverse-image fiber ``X_(3-5, d)`` in SO(3) that the scene's
-prescan can reach, traces each once with the production continuation, and
+pieces of the inverse-image fiber ``X_(P, d)`` in SO(3) that the scene's
+prescan of path ``P`` can reach, traces each once with the production continuation, and
 returns them as distinct *components* -- closed loops or open arcs -- plus the
 candidates that could not be classified.
 
@@ -11,17 +11,18 @@ The procedure (task-pixel-pipeline-v2, after the author's ruling of
 
 1. Candidate pool: ``extra_seeds`` (already converged poses of neighbouring
    pixels, any neighbour -- the caller decides which) followed by the query of
-   the scene's :class:`.prescan.PrescanTable` (Haar samples that pass all
-   four refraction discriminants of the smooth 3-5 branch, indexed by
-   outgoing direction) for the poses whose outgoing direction lies within
-   ``angle_tolerance_deg`` of ``d``.
+   the scene's :class:`.prescan.PrescanTable` (Haar samples that pass every
+   gate of the path's smooth branch, indexed by outgoing direction) for the
+   poses whose outgoing direction lies within ``angle_tolerance_deg`` of
+   ``d``.  The table's ``path_id`` is the single source of the face sequence
+   this call discovers (:attr:`.prescan.PrescanTable.faces`).
 2. Greedy geodesic clustering of the whole pool with radius
    ``cluster_radius_rad``.  A cluster's representative is its first extra
    seed if it contains one (that is all a warm seed does: it puts the
    Gauss-Newton start of its cluster on a neighbouring solution), else its
    best-aligned prescan member.
 3. Per cluster, in pool order: Gauss-Newton the representative onto the
-   fiber, gate it with :func:`.optics.path_3_5_domain` and
+   fiber, gate it with :func:`.optics.path_domain` and
    :func:`.geometry.entry_measure`, then *deduplicate before tracing*: a
    corrected seed whose SO(3) geodesic distance to any accepted pose of an
    already accepted component is below ``distance_threshold`` is the same
@@ -50,7 +51,7 @@ not prove that every connected component of ``X_(P,d)`` was found (that
 remains an open item of ``docs/phase1-math-contract.md``).  A dark pixel with
 no admissible candidate is therefore ``"complete"`` with zero components.
 
-Batch callers pass ``template`` (a 3-5 :class:`FiberProblem` for the same
+Batch callers pass ``template`` (a :class:`FiberProblem` of the same path,
 incident direction and refractive index); the per-pixel problem is then
 :func:`retarget_problem` of that template, so the continuation kernels keyed
 on the template's ``direction_evaluator`` identity are compiled once per
@@ -85,12 +86,10 @@ from .continuation import (
     trace_fiber,
 )
 from .geometry import Polyhedron, entry_measure
-from .optics import path_3_5_domain, path_3_5_problem
+from .optics import PATH_3_5_FACES, path_domain, path_problem, problem_path_label
 from .prescan import PrescanTable
 from .resample import OpenArc, stitch_open_arc
 from .so3 import exp, rotation_distances
-
-PATH_3_5_FACES = (3, 5)
 
 Completeness = Literal["complete", "unknown"]
 ComponentKind = Literal["closed", "arc"]
@@ -270,24 +269,24 @@ def _admissible_seed(
     template: FiberProblem,
     options: ContinuationOptions,
     crystal: Polyhedron,
+    faces: tuple[int, ...],
     refractive_index: float,
     raw_rotation: Array,
 ) -> np.ndarray | None:
     """Correct one candidate onto the fiber and gate it; ``None`` if inadmissible.
 
     The incident direction is read from ``template`` so the gates cannot
-    drift from the problem being traced; ``refractive_index`` is passed
-    separately because :class:`FiberProblem` does not store it as a number.
-    The gates are the residual, domain validity and a positive entry measure.
+    drift from the problem being traced; ``faces`` and ``refractive_index``
+    are passed separately because :class:`FiberProblem` stores them only in
+    its ``path`` label.  The gates are the residual, domain validity and a
+    positive entry measure.
     """
     tolerance = options.residual_tolerance + options.relative_residual_tolerance
     corrected, residual_norm = _newton_correct(template, raw_rotation, tolerance * 1e-2)
     corrected_np = np.asarray(corrected)
     incident = np.asarray(template.incident_direction)
-    domain = path_3_5_domain(corrected_np, incident, refractive_index)
-    measure = entry_measure(
-        corrected_np, PATH_3_5_FACES, incident, crystal, n_ice=refractive_index
-    )
+    domain = path_domain(corrected_np, faces, incident, refractive_index)
+    measure = entry_measure(corrected_np, faces, incident, crystal, n_ice=refractive_index)
     if not (residual_norm <= tolerance and domain.valid and measure.value > 0):
         return None
     return corrected_np
@@ -339,7 +338,7 @@ def retarget_problem(
 ) -> FiberProblem:
     """``template`` with a new target chart and seed, keeping its evaluator closures.
 
-    The chart is rebuilt the way :func:`.optics.path_3_5_problem` builds it
+    The chart is rebuilt the way :func:`.optics.path_problem` builds it
     (``tangent_basis`` of the target, the template's ``minimum_dot``); the
     ``direction_evaluator`` / ``domain_and_event_evaluator`` objects and the
     weight evaluators are shared, so ``jax.jit`` caches keyed on them stay warm.
@@ -356,6 +355,7 @@ def retarget_problem(
 
 def _problem_template(
     target_direction: np.ndarray,
+    faces: tuple[int, ...],
     incident_direction: np.ndarray,
     refractive_index: float,
     seed: np.ndarray,
@@ -365,11 +365,13 @@ def _problem_template(
         incident = np.asarray(template.incident_direction)
         if not np.allclose(incident, np.asarray(incident_direction, dtype=np.float64)):
             raise ValueError("template incident direction does not match incident_direction")
-        if template.path != f"3-5:n={float(refractive_index):.8g}":
-            raise ValueError(f"template path {template.path!r} does not match the 3-5 problem")
+        expected = problem_path_label(faces, refractive_index)
+        if template.path != expected:
+            raise ValueError(f"template path {template.path!r} does not match the {expected!r} problem")
         return retarget_problem(template, target_direction, seed)
-    return path_3_5_problem(
+    return path_problem(
         jnp.asarray(seed, dtype=jnp.float64),
+        faces,
         jnp.asarray(incident_direction, dtype=jnp.float64),
         target_direction=jnp.asarray(target_direction, dtype=jnp.float64),
         refractive_index=jnp.asarray(refractive_index, dtype=jnp.float64),
@@ -388,11 +390,11 @@ def discover_components(
     distance_threshold: float = ContinuationOptions.closure_distance,
     template: FiberProblem | None = None,
 ) -> ComponentDiscoveryResult:
-    """Discover the 3-5 fiber components reaching ``target_direction``.
+    """Discover the fiber components of the table's path reaching ``target_direction``.
 
     ``table`` is the scene's prescan (:func:`.prescan.build_prescan_table`)
-    and the single source of the incident direction and refractive index of
-    the problem; ``crystal`` only feeds the finite-crystal
+    and the single source of the face sequence (``table.faces``), the
+    incident direction and the refractive index of the problem; ``crystal`` only feeds the finite-crystal
     :func:`.geometry.entry_measure` gate applied to each corrected candidate
     (the table does not depend on it).  ``continuation`` is the production
     policy every trace runs under (default :class:`ContinuationOptions`);
@@ -403,12 +405,13 @@ def discover_components(
     radius); ``distance_threshold`` defaults to the continuation's
     ``closure_distance`` (same scale: "is this pose on that curve").  The
     result's ``completeness`` is procedural; see the module docstring.
-    ``template`` (optional) is a 3-5 problem for the same incident direction
+    ``template`` (optional) is a problem of the same path, incident direction
     and index whose evaluator closures are reused via :func:`retarget_problem`.
     """
     if distance_threshold <= 0.0:
         raise ValueError("distance_threshold must be positive")
     options = continuation or ContinuationOptions()
+    faces = table.faces
     incident = table.incident_direction
     refractive_index = table.refractive_index
     target = np.asarray(target_direction, dtype=np.float64)
@@ -425,6 +428,7 @@ def discover_components(
     clusters = _geodesic_cluster(pool_rotations, cluster_radius_rad)
     template = _problem_template(
         target,
+        faces,
         incident,
         refractive_index,
         pool_rotations[0] if len(pool_rotations) else np.eye(3),
@@ -439,7 +443,7 @@ def discover_components(
         warm = [i for i in cluster if i < extra_count]
         representative = warm[0] if warm else max(cluster, key=lambda i: pool_alignment[i])
         seed = _admissible_seed(
-            template, options, crystal, refractive_index, jnp.asarray(pool_rotations[representative])
+            template, options, crystal, faces, refractive_index, jnp.asarray(pool_rotations[representative])
         )
         if seed is None:
             continue
@@ -468,6 +472,7 @@ def discover_components(
 __all__ = [
     "ARC_EVENTS",
     "DISCOVERY_EVENT_NAMES",
+    "PATH_3_5_FACES",
     "ComponentDiscoveryResult",
     "DiscoveredComponent",
     "IncompleteCandidate",
