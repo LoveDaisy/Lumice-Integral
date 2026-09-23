@@ -734,6 +734,106 @@ method stays the accuracy and completeness authority; the band sum becomes
 its fast renderer and independent cross-check. Figures and tables:
 `scratchpad/task-band-sum-quadrature-probe/artifacts/` (local).
 
+**Narrow densities: plate, Parry, Lowitz (2026-09-23).** The scenes above
+never saw a narrow family: on the labelled path 3-5 plate, Parry and Lowitz
+are exactly zero (`docs/ch11-pose-density-families.md` section 5.1). The
+follow-up probe (`scripts/probe_band_sum_narrow.py`, task
+`narrow-density-band-sum-probe`) renders the ray-path class `[3,5]`: one
+Fibonacci event store per PBD member (12 stores, rank 2), and the class
+value is the band sum of the pooled member contributions (every member
+shares the pixel's band and constant). Same crystal, index and sun as
+above; Lumice preset widths: plate zenith std 1°, Parry zenith 1° and roll
+1°, Lowitz zenith 40° and roll 1°. A wide band-sum render at $N = 10^7$
+(0.6°/px, then 0.1°/px zooms) placed one profile per family at the ch06
+pixel scale (0.024°): plate, a horizontal line through the right parhelion
+(121 px: dark, inner edge, peak, 2.4° of tail); Parry, a vertical line at
+azimuth 15° across the upper suncave Parry arc (181 px); Lowitz, a
+horizontal line at elevation 10.8° across the sharp inner edge, the
+Lowitz-arc peaks and a second arc crossing (151 px). Reference: Phase I
+`render_class_pixel` on every pixel, all `complete`; a refined quadrature
+(`rtol 1e-6`, 513-4097 nodes) on six lit pixels per family moved values by
+at most `6e-5`. Where the reference changes by more than 10 % between
+neighbouring pixels (a criterion on the reference alone: 10 / 18 / 21
+pixels), the reference is the Phase I *band average* (eight midpoint
+targets across the pixel's deviation band at its azimuth), because that is
+the band sum's pixel. There the band-average-to-point ratio reproduces the
+band sum's constant offset from the point value pixel by pixel (plate
+inner edge `1.0267` vs `+2.76 %`, Lowitz inner edge `1.1344` vs
+`+13.5 %`, `0.958` vs `-4.2 %`): the pixel model, not sampling. Lit =
+reference above `1e-2` of the profile maximum.
+
+| family | $N$ | median $K_{\mathrm{eff}}$ (lit) | $K_{\mathrm{eff}}/K$ | RMS rel. error | median \|rel.\| | p95 \|rel.\| | max \|rel.\| | RMS vs point ref. | median ratio |
+|---|---|---|---|---|---|---|---|---|---|
+| plate (113 lit px) | $10^6$ | 115 | 0.029 | 2.0e-2 | 1.1e-2 | 4.5e-2 | 7.5e-2 | 2.0e-2 | 0.9974 |
+| | $10^7$ | 1170 | 0.030 | 3.2e-3 | 2.1e-3 | 6.4e-3 | 8.6e-3 | 4.7e-3 | 0.9997 |
+| | $5\times10^7$ | 5842 | 0.030 | 1.3e-3 | 8.5e-4 | 2.7e-3 | 4.2e-3 | 3.7e-3 | 1.0001 |
+| | $10^8$ | 11665 | 0.030 | 8.2e-4 | 6.0e-4 | 1.5e-3 | 2.2e-3 | 3.6e-3 | 1.0001 |
+| Parry (135 lit px) | $10^6$ | 13 | 0.0045 | 8.7e-2 | 5.7e-2 | 1.7e-1 | 2.2e-1 | 8.7e-2 | 0.9928 |
+| | $10^7$ | 127 | 0.0044 | 8.4e-2 | 3.4e-2 | 1.9e-1 | 2.6e-1 | 8.4e-2 | 0.9938 |
+| | $5\times10^7$ | 628 | 0.0045 | 4.5e-3 | 2.7e-3 | 8.8e-3 | 1.6e-2 | 4.5e-3 | 0.9998 |
+| | $10^8$ | 1255 | 0.0045 | 4.4e-3 | 1.9e-3 | 8.0e-3 | 2.9e-2 | 4.4e-3 | 1.0003 |
+| Lowitz (137 lit px) | $10^6$ | 27 | 0.0059 | 7.4e-2 | 4.9e-2 | 1.3e-1 | 2.3e-1 | 7.5e-2 | 0.9972 |
+| | $10^7$ | 259 | 0.0058 | 9.4e-3 | 4.6e-3 | 2.1e-2 | 3.3e-2 | 1.6e-2 | 0.9990 |
+| | $5\times10^7$ | 1294 | 0.0058 | 3.4e-3 | 1.9e-3 | 6.5e-3 | 1.3e-2 | 1.4e-2 | 1.0003 |
+| | $10^8$ | 2599 | 0.0058 | 3.7e-3 | 1.5e-3 | 9.2e-3 | 1.4e-2 | 1.4e-2 | 0.9996 |
+
+- *$\rho$ collapses $K_{\mathrm{eff}}/K$, not the estimate.* The band keeps
+  3.0 % (plate), 0.45 % (Parry) and 0.58 % (Lowitz) of its events, against
+  65 % / 17 % for the column density above. $K_{\mathrm{eff}}$ still grows
+  as $N^{1.00}$: $K_{\mathrm{eff}}/N = 1.2\times10^{-4}$ (plate),
+  $1.25\times10^{-5}$ (Parry), $2.6\times10^{-5}$ (Lowitz) at the median lit
+  pixel, worst pixel $7.2\times10^{-5}$ / $1.2\times10^{-5}$ /
+  $1.6\times10^{-5}$ — 6-60× above the owner's prior $2\times10^{-6}N$
+  and never collapsing to zero on a lit pixel. The derived constant needs
+  no fit: median ratio `0.9996-1.0003` at $10^8$, mean relative error at most `5e-4` in magnitude.
+- *The lattice beats $1/\sqrt{K_{\mathrm{eff}}}$, but not reliably.* An
+  i.i.d. uniform store (same estimator, $10^7$ and $5\times10^7$) measures
+  median $|\mathrm{rel}|\sqrt{K_{\mathrm{eff}}}$ = `0.53-0.79` (random
+  sampling: about `0.67`), so $K_{\mathrm{eff}}$ is the right Monte Carlo
+  ruler. The Fibonacci store usually reaches `0.07-0.10` (7-9× better)
+  but aliases: Parry at $10^7$ shows a sawtooth in $K_{\mathrm{eff}}$ and in
+  the error along the profile, `0.40`, no better than random (RMS `8.4e-2`
+  vs `8.9e-2`). The error is therefore not monotone in $N$ (Parry: flat
+  $10^6 \to 10^7$, then 19× down by $5\times10^7$; Parry and Lowitz flat
+  again $5\times10^7 \to 10^8$). Per-pixel errors of different tiers are
+  uncorrelated (coefficients -0.05 to 0.08) and average to zero: lattice
+  noise, not a floor. Correction 1 above ("no aliasing seen") holds for the
+  column scenes only.
+- *$N$ for a `1e-2` lit RMS.* Power laws over the four tiers (slopes
+  -0.69 / -0.74 / -0.68): $2.5\times10^6$ (plate), $3.7\times10^7$
+  (Parry), $1.4\times10^7$ (Lowitz), each confirmed by a measured tier.
+  Without the lattice gain (error $1/\sqrt{K_{\mathrm{eff}}}$), $N =
+  10^4/(K_{\mathrm{eff}}/N)$: $0.9\times10^8$ / $8.0\times10^8$ /
+  $3.8\times10^8$ at the median pixel, $1.4\times10^8$ / $8.3\times10^8$ /
+  $6.4\times10^8$ at the worst — all below $10^9$, so no family collapses
+  and the rho-aware store (importance sampling of $\mathbf u$ by the
+  family's marginal) was not tried.
+- *Cost.* Windowed precompute (only events with $D$ in the profiles'
+  union band 21.6°-32.9°, bit-identical for these pixels): 87-92 s per
+  member at $10^8$, 4.5 min for 12 members on 4 processes (2.3-2.6 GB each;
+  together above the 8 GB budget of the task, recorded). The wide render
+  (32761 px × 12 stores at $10^7$, three densities at once) took 9 min;
+  a profile at $10^8$ 5-7 s including loading 12 stores. Phase I class
+  pixels: 1.9-2.2 s each. The probe's compute totalled about 45 min.
+- *Scope.* One profile per family, the sun at 15°, the class `[3,5]`
+  only; the learnings of the column scenes (column 126 was an easy case)
+  say a single line can be optimistic, so the verdict below is per family
+  at these settings, with the worst pixel of each profile reported.
+
+Verdict: the band sum qualifies as a **rendering backend for plate,
+Parry and Lowitz** on the class `[3,5]`, at $N = 10^8$ Fibonacci points per
+member store (lit RMS `8e-4` / `4e-3` / `4e-3`, confirmed; $\le 10^9$ even
+without the lattice gain), with the same caveats as above: no completeness
+certificate, a band-average pixel (steep edges differ from a point pixel by
+up to `13 %` on the Lowitz inner edge, reproduced by Phase I band averages),
+and lattice aliasing that makes the error non-monotone in $N$ — size the
+store by $K_{\mathrm{eff}}$ ($10^4$ at the worst pixel of interest), not
+by the lattice's typical gain. Narrow $\rho$ is not the structural failure
+correction 2 feared at these widths: it removes 97-99.5 % of the band,
+but the band holds enough events. A rho-aware store is not needed for
+these families. Figures and tables:
+`scratchpad/task-narrow-density-band-sum-probe/artifacts/` (local).
+
 ## 5. Proposed Responsibility Boundaries
 
 The project will likely need the following conceptual layers, without implying
@@ -888,3 +988,16 @@ produce plausible but systematically wrong radiance.
   `5e-3` / `4e-3` on column 126); the contour method keeps accuracy and the
   completeness certificate. The store is organised by $\Phi$-class, and
   divergent light is deferred.
+- **2026-09-23**: band sum on the narrow families (section 4.2, task
+  `narrow-density-band-sum-probe`): class `[3,5]`, one store per PBD
+  member, Phase I class pixels as reference (band averages on steep
+  pixels). Verdict: rendering backend for plate, Parry and Lowitz at
+  $N = 10^8$ (lit RMS `8e-4` / `4e-3` / `4e-3`); $K_{\mathrm{eff}}/N$
+  `1.2e-5`-`1.2e-4`, never collapsed, so the rho-aware store is not
+  needed. The Fibonacci lattice usually beats $1/\sqrt{K_{\mathrm{eff}}}$
+  by 7-9× but aliases (Parry at $10^7$), so stores are sized by
+  $K_{\mathrm{eff}} \ge 10^4$ (all families $< 10^9$). With task
+  `band-sum-quadrature-probe`, Phase II's S² field layer and band-sum
+  renderer can target all five families of chapter 11 with one uniform
+  store per member (measured at sun 15°, class `[3,5]`, one profile per
+  family; other classes and elevations are unmeasured).
