@@ -1,15 +1,16 @@
-"""Symmetry transport of the S^2 event store (roadmap section 4.1(d)): one store serves a proper orbit.
+"""Symmetry transport of the S^2 event store (roadmap section 4.1(d)): one store serves a ``D6h`` orbit.
 
-For a class member reached from the representative by a proper ``D6h``
-element ``g`` (:func:`.path_class.path_class_symmetry`), the member's
-events are the representative's with ``u' = g u``, ``Phi' = g Phi`` and
-``D``, ``w`` unchanged.  The Fibonacci lattice is not closed under ``g``,
+For a class member reached from the representative by a ``D6h`` element
+``g``, proper or improper (:func:`.path_class.path_class_symmetry`), the
+member's events are the representative's with ``u' = g u``, ``Phi' = g Phi``
+and ``D``, ``w`` and the valid domain unchanged.  The Fibonacci lattice is not closed under ``g``,
 so the member's own store is built on the ``g``-rotated lattice (the same
 point set the transported events live on) through the production builder,
 which evaluates the member's own faces: equal events there are the
-physical statement, not a tautology.  The production interface is the pose
-factor ``g^-1`` (``s2_store`` module docstring); :func:`transport_events`
-lives here, in the tests, as the literal form it is checked against.
+physical statement, not a tautology.  The production interface is
+:func:`.s2_store.transported_rotations` (``L_g R g^T``, ``s2_store`` module
+docstring); :func:`transport_events` lives here, in the tests, as the
+literal form it is checked against.
 """
 
 from __future__ import annotations
@@ -29,9 +30,25 @@ from lumice_integral.canonical_scene import (
 )
 from lumice_integral.geometry import HexPrism
 from lumice_integral.optics import path_id_of
-from lumice_integral.path_class import build_path_class, hexprism_symmetry_matrices, path_class_symmetry
+from lumice_integral.path_class import (
+    PathClass,
+    _hexprism_normals,
+    _symmetry_image_of_faces,
+    build_path_class,
+    hexprism_symmetry_matrices,
+    path_class_symmetry,
+)
 from lumice_integral.pose_density import build_pose_density
-from lumice_integral.s2_store import S2Events, S2EventStore, build_event_store, event_rotations, fibonacci_sphere
+from lumice_integral.s2_store import (
+    S2Events,
+    S2EventStore,
+    align_rotations,
+    build_event_store,
+    evaluate_fields,
+    event_rotations,
+    fibonacci_sphere,
+    transported_rotations,
+)
 
 TASK14_ARTIFACTS = Path(__file__).resolve().parents[1] / "scratchpad/task-narrow-density-band-sum-probe/artifacts"
 N_EVENTWISE = 1_000_000
@@ -96,19 +113,32 @@ def test_transported_events_equal_each_members_own_store(class_3_5, representati
     assert set(worst) == {"u", "phi", "D", "w"}
 
 
-def test_pose_factor_is_the_transport(class_3_5, representative) -> None:
-    """``event_rotations`` of the transported events equals the representative's poses times ``g^-1``."""
-    _, symmetry = class_3_5
+def test_transported_rotations_rebuild_the_transported_events_for_all_24_elements(class_3_5, representative) -> None:
+    """``L_g R g^T`` equals ``event_rotations`` of ``(g u, g Phi, D)`` for every ``D6h`` element, and is a rotation.
+
+    For a proper ``g`` it is the plain pose factor ``R g^T``, bit for bit
+    (the task ``band-sum-renderer`` operation); for a mirror the reflection
+    ``L_g`` in the ``(s, centre)`` plane makes it a rotation again.
+    """
     s = canonical_incident_direction()
-    centre = linear_pixel_outgoing_direction(400, 126, **CANONICAL_RENDER)
     band = representative.band_slice(np.radians(22.0), np.radians(23.0))
     assert len(band) > 1000
-    poses = event_rotations(band.u, band.phi, band.D, s, centre)
-    for member, g in symmetry.items():
-        moved = transport_events(band, g)
-        direct = event_rotations(moved.u, moved.phi, moved.D, s, centre)
-        assert np.max(np.abs(direct - poses @ g.T)) <= 1e-12, member
-        assert np.max(np.abs(np.einsum("nij,nj->ni", direct, moved.u) - s)) <= 1e-12
+    for row, column in ((400, 126), (120, 30), (700, 240)):
+        centre = linear_pixel_outgoing_direction(row, column, **CANONICAL_RENDER)
+        poses = event_rotations(band.u, band.phi, band.D, s, centre)
+        for g in hexprism_symmetry_matrices():
+            moved = transport_events(band, g)
+            direct = event_rotations(moved.u, moved.phi, moved.D, s, centre)
+            fast = transported_rotations(poses, g, s, centre)
+            assert np.max(np.abs(direct - fast)) <= 1e-13, (row, column, g.round(3).tolist())
+            if np.linalg.det(g) > 0.0:
+                np.testing.assert_array_equal(fast, poses @ g.T)
+            assert np.max(np.abs(np.linalg.det(fast) - 1.0)) <= 1e-13
+            assert np.max(np.abs(np.einsum("nij,nkj->nik", fast, fast) - np.eye(3))) <= 1e-13
+            assert np.max(np.abs(np.einsum("nij,nj->ni", fast, moved.u) - s)) <= 1e-12
+    # The class's own elements are among them.
+    _, symmetry = class_3_5
+    assert all(np.linalg.det(g) > 0.0 for g in symmetry.values())
 
 
 def test_none_is_not_a_transport(class_3_5, representative) -> None:
@@ -116,27 +146,74 @@ def test_none_is_not_a_transport(class_3_5, representative) -> None:
         transport_events(representative.band_slice(0.4, 0.41), None)
 
 
-def test_improper_member_needs_its_own_store() -> None:
-    """Class ``[3,1,2,5]`` on a plate: a mirror still maps the fields, but ``R g^-1`` is not a rotation.
+@pytest.mark.parametrize("faces", [(3, 5), (1, 3), (3, 1, 2, 5)])
+def test_fields_are_equivariant_under_all_24_elements(faces) -> None:
+    """``w_{gPg^-1}(g u) = w_P(u)``, ``Phi_{gPg^-1}(g u) = g Phi_P(u)``, the same valid domain, all of ``D6h``.
 
-    ``path_class_symmetry`` gives ``None`` for ``3-2-1-5`` (the basal swap).
-    The transported events equal that member's own store on the mirrored
-    lattice -- the optics are mirror symmetric -- but the pose factor has
-    determinant ``-1``, so the representative's store cannot serve it.
+    Random ``u`` on the canonical crystal (``h/a = 2``), the production
+    evaluators on each image face sequence; ``3-1-2-5`` is a four-face path
+    that is feasible there.  The owner probe of this task
+    (``owner_probe_mirror.py``) checked the twelve mirrors; here every
+    element, proper ones included.
+    """
+    crystal = canonical_crystal()
+    s = canonical_incident_direction()
+    normals = _hexprism_normals(crystal)
+    u = np.random.default_rng(3).normal(size=(20_000, 3))
+    u /= np.linalg.norm(u, axis=1, keepdims=True)
+    base = evaluate_fields(align_rotations(u, s), s, crystal, CANONICAL_REFRACTIVE_INDEX, [faces])
+    assert 0 < np.count_nonzero(base["valid"])
+    for g in hexprism_symmetry_matrices():
+        image = _symmetry_image_of_faces(g, faces, normals)
+        moved = evaluate_fields(align_rotations(u @ g.T, s), s, crystal, CANONICAL_REFRACTIVE_INDEX, [image])
+        np.testing.assert_array_equal(moved["valid"], base["valid"])
+        valid = base["valid"]
+        assert np.max(np.abs(moved["w"] - base["w"])) <= 1e-12, (faces, image)
+        assert np.max(np.abs(moved["phi"][valid] - base["phi"][valid] @ g.T)) <= 1e-12, (faces, image)
+        assert np.max(np.abs(moved["D"][valid] - base["D"][valid])) <= 1e-12, (faces, image)
+
+
+def test_improper_member_is_served_by_the_representatives_store() -> None:
+    """Class ``[3,1,2,5]`` on a plate: ``3-2-1-5`` is reached by the basal mirror only, and one store serves it.
+
+    ``path_class_symmetry`` gives it an improper element.  The transported
+    events equal that member's own store on the mirrored lattice (the optics
+    are mirror symmetric), and the poses rebuilt from them are rotations,
+    equal to :func:`transported_rotations` of the representative's poses.
     """
     plate = HexPrism.from_ratio(0.3)
     path_class = build_path_class(plate, (3, 1, 2, 5))
     member = (3, 2, 1, 5)
-    assert path_class_symmetry(path_class, plate)[member] is None
-    mirror = next(e for e in hexprism_symmetry_matrices() if np.allclose(e, np.diag([1.0, 1.0, -1.0])))
+    g = path_class_symmetry(path_class, plate)[member]
+    assert np.linalg.det(g) < 0.0
+    assert not any(
+        np.linalg.det(e) > 0.0 and _symmetry_image_of_faces(e, (3, 1, 2, 5), _hexprism_normals(plate)) == member
+        for e in hexprism_symmetry_matrices()
+    )
     n = 100_000
     representative = build([(3, 1, 2, 5)], n, crystal=plate)
-    own = build([member], n, crystal=plate, g=mirror)
-    transported = transport_events(representative.events, mirror)
+    own = build([member], n, crystal=plate, g=g)
+    transported = transport_events(representative.events, g)
     assert max(max_event_difference(transported, own.events).values()) <= 1e-12
     s = canonical_incident_direction()
-    poses = event_rotations(representative.events.u, representative.events.phi, representative.events.D, s, np.array([0.0, 1.0, 0.0]))
-    assert np.allclose(np.linalg.det(poses @ mirror.T), -1.0)
+    centre = np.array([0.0, 1.0, 0.0])
+    events = representative.events
+    poses = event_rotations(events.u, events.phi, events.D, s, centre)
+    assert np.allclose(np.linalg.det(poses @ g.T), -1.0)  # the plain pose factor is not a rotation
+    fast = transported_rotations(poses, g, s, centre)
+    own_poses = event_rotations(own.events.u, own.events.phi, own.events.D, s, centre)
+    assert np.max(np.abs(fast - own_poses)) <= 1e-12
+    assert np.allclose(np.linalg.det(fast), 1.0)
+
+
+def test_a_member_outside_the_orbit_is_an_error() -> None:
+    """A hand-made class whose members are not one ``D6h`` orbit is a construction error, not a fallback."""
+    crystal = canonical_crystal()
+    broken = PathClass((3, 5), ((3, 5), (3, 7)), 60.0, 2)
+    assert set(path_class_symmetry(broken, crystal)) == {(3, 5), (3, 7)}
+    broken = PathClass((3, 5), ((3, 5), (1, 3)), 60.0, 2)
+    with pytest.raises(RuntimeError, match="not a D6h image"):
+        path_class_symmetry(broken, crystal)
 
 
 # ------------------------------------------------- task 14 class regression
@@ -152,7 +229,7 @@ def pixel_band(row: int, column: int, s: np.ndarray, render) -> tuple[np.ndarray
 
 
 def class_totals(stores, factors, density, pixels, s) -> np.ndarray:
-    """Per pixel ``sum_members sum_band w rho(R g^-1)``; ``stores[k]`` is paired with pose factor ``factors[k]``."""
+    """Per pixel ``sum_members sum_band w rho(R g^T)``; ``stores[k]`` is paired with pose factor ``factors[k]``."""
     totals = np.zeros(len(pixels))
     for store, factor in zip(stores, factors):
         for p, (centre, lo, hi) in enumerate(pixels):

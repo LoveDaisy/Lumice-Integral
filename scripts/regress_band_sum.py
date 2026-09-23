@@ -24,7 +24,22 @@ Stages (``--stage``):
   (``--tiers``; all twelve stores of a tier are in memory at once, ~0.36 GB each
   at ``5e7``); and the production ``transport=True`` plan (one ``3-5`` store,
   ``--store-n`` from ``--store-cache-dir``, twelve pose factors) against the
-  same CSV at that ``N`` (different points: a sampling-level comparison).
+  same CSV at that ``N`` (different points: a sampling-level comparison; the
+  difference over ``sqrt(1/K_eff + 1/K_eff_task14)``).  Per family it also
+  tabulates the median ``K_eff`` of the production render (distinct events,
+  ``band_sum.K_EFF_SEMANTICS``), of the task ``band-sum-renderer`` pooling of
+  every ``(event, transport)`` pair (``per_transport_sample``, recomputed
+  literally), of the representative's store alone (one member) and of task
+  14's twelve independent stores.
+- ``k-eff``: the ruler of the noise diagnostic (a16).  Two i.i.d. uniform
+  stores (``s2_store.RandomSphereSampler``, seeds 1 and 2, ``--random-n``) of
+  class ``[3, 5]`` render task 14's three profiles; with i.i.d. points the
+  Kish size is the Monte Carlo noise predictor, so
+  ``z = (a - b) / sqrt(a^2 / K_eff_a + b^2 / K_eff_b)`` is standard normal
+  when ``K_eff`` counts what is independent.  Reported for the per-event
+  ``K_eff`` and for the pooled ``per_transport_sample`` one.  (The Fibonacci
+  lattice is not i.i.d.: its error is below ``1 / sqrt(K_eff)``, so the
+  ``class`` stage's ``z`` is below 1 by the lattice gain.)
 - ``figure``: log-scale images of render directories (``uv run --with matplotlib``).
 
 Usage::
@@ -33,6 +48,7 @@ Usage::
         --coarse-dir artifacts/band-sum-full-N1e7 --output <report.json>
     uv run python scripts/regress_band_sum.py --stage class --tiers 1000000 10000000 50000000 \\
         --store-n 100000000 --output <report.json>
+    uv run python scripts/regress_band_sum.py --stage k-eff --random-n 10000000 --output <report.json>
     uv run --with matplotlib python scripts/regress_band_sum.py --stage figure --band-dir <dir> --output <png>
 """
 
@@ -47,7 +63,16 @@ from typing import Any
 
 import numpy as np
 
-from lumice_integral.band_sum import class_band_sum_pixel, pixel_band, store_plan
+from lumice_integral.band_sum import (
+    K_EFF_SEMANTICS,
+    StoreGroup,
+    Transport,
+    band_poses,
+    class_band_sum_pixel,
+    kish_k_eff,
+    pixel_band,
+    store_plan,
+)
 from lumice_integral.canonical_scene import (
     CANONICAL_REFRACTIVE_INDEX,
     canonical_crystal,
@@ -56,7 +81,7 @@ from lumice_integral.canonical_scene import (
 from lumice_integral.optics import path_id_of
 from lumice_integral.path_class import build_path_class
 from lumice_integral.pose_density import build_pose_density
-from lumice_integral.s2_store import DEFAULT_CACHE_DIR, build_or_load
+from lumice_integral.s2_store import DEFAULT_CACHE_DIR, RandomSphereSampler, build_event_store, build_or_load
 from lumice_integral.strip_io import read_strip
 
 # Machine-specific default (the main checkout's gitignored strip-full artifact); other environments
@@ -67,6 +92,11 @@ LIT_FRACTION = 1e-2
 STEEP_NEIGHBOUR_CHANGE = 0.1  # task 14's criterion for "the two pixel models differ visibly"
 NOISE_Z = 4.0
 WORST = 25
+
+
+def k_eff_semantics_of(provenance: dict[str, Any]) -> str:
+    """What a render's ``K_eff`` counts; renders before ``options.k_eff_semantics`` pooled every transport."""
+    return provenance["options"].get("k_eff_semantics", "per_transport_sample")
 
 
 # ------------------------------------------------------------------ full
@@ -125,6 +155,7 @@ def stage_full(band_dir: Path, reference_dir: Path, coarse_dir: Path | None) -> 
         "reference_dir": str(reference_dir),
         "N": band_provenance["options"]["N"],
         "lit_definition": f"reference > {LIT_FRACTION} x its column maximum",
+        "k_eff_semantics": k_eff_semantics_of(band_provenance),
         "lit": lit_statistics(est, ref, lit),
         "whole_image_sum_ratio": float(est.sum() / ref.sum()),
         "execution": {
@@ -243,10 +274,41 @@ def read_task14_metrics(family: str, n: int) -> dict[tuple[int, int], dict[str, 
         }
 
 
-def compare_profile(stores, family: str, spec: dict[str, Any], n: int, probe: dict) -> dict[str, Any]:
+def pooled_k_eff(stores, s, density, row: int, column: int, render) -> float:
+    """Task ``band-sum-renderer``'s ``K_eff``: Kish size of every ``(event, transport)`` pair (``per_transport_sample``).
+
+    Recomputed literally for the comparison table only; the renderer counts distinct events.
+    """
+    centre, _, lo, hi = pixel_band(row, column, s, render)
+    total, square = 0.0, 0.0
+    for events, group in stores:
+        rotations, weight = band_poses(events, s, centre, lo, hi)
+        if len(weight) == 0:
+            continue
+        for t in group.transports:
+            contribution = weight * density.evaluate_batch(rotations if t.g is None else rotations @ t.g.T)
+            total += float(np.sum(contribution))
+            square += float(np.sum(contribution**2))
+    return kish_k_eff(total, square)
+
+
+def single_member_k_eff(stores, s, density, row: int, column: int, n: int, render) -> float:
+    """``K_eff`` of one member's events: the single transport with the largest contribution (0 if none is lit).
+
+    Not the representative's own: under a Lowitz density the representative is dark where another member is lit.
+    """
+    ((events, group),) = stores
+    best = max(
+        (class_band_sum_pixel([(events, StoreGroup(group.members, (t,)))], s, density, row, column, n, render) for t in group.transports),
+        key=lambda r: r.total,
+    )
+    return best.K_eff
+
+
+def compare_profile(stores, family: str, spec: dict[str, Any], n: int, probe: dict, *, k_eff_table: bool = False) -> dict[str, Any]:
     s = canonical_incident_direction()
     density = build_pose_density(family, **spec["density"])
-    worst_rel, worst_counts, count, rows = 0.0, 0, 0, []
+    worst_rel, worst_counts, count, rows, table = 0.0, 0, 0, [], []
     for row, column in spec["pixels"]:
         result = class_band_sum_pixel(stores, s, density, row, column, n, spec["render"])
         ref = probe[(row, column)]
@@ -255,7 +317,13 @@ def compare_profile(stores, family: str, spec: dict[str, Any], n: int, probe: di
         worst_counts += (result.K, result.K_rho_pos) != (int(ref["K"]), int(ref["K_rho_pos"]))
         count += 1
         rows.append((result.value, ref["estimate"], result.K_eff, ref["K_eff"]))
-    return {"pixels": count, "max_rel": worst_rel, "K_or_K_rho_pos_mismatches": worst_counts, "rows": rows}
+        if k_eff_table:
+            one = single_member_k_eff(stores, s, density, row, column, n, spec["render"])
+            table.append((result.K_eff, pooled_k_eff(stores, s, density, row, column, spec["render"]), one, ref["K_eff"]))
+    out = {"pixels": count, "max_rel": worst_rel, "K_or_K_rho_pos_mismatches": worst_counts, "rows": rows}
+    if k_eff_table:
+        out["k_eff_rows"] = table
+    return out
 
 
 def stage_class(tiers: list[int], store_n: int | None, store_cache_dir: Path) -> dict[str, Any]:
@@ -282,15 +350,26 @@ def stage_class(tiers: list[int], store_n: int | None, store_cache_dir: Path) ->
         )
         (plan,) = store_plan(path_class, crystal)
         stores = [(store.events.arrays(), plan)]
-        block = {"N": store_n, "cache_key": store.spec.cache_key(), "transports": len(plan.transports)}
+        block = {
+            "N": store_n,
+            "cache_key": store.spec.cache_key(),
+            "transports": len(plan.transports),
+            "k_eff_semantics": {
+                "K_eff": K_EFF_SEMANTICS,
+                "K_eff_pooled": "per_transport_sample (task band-sum-renderer, recomputed)",
+                "K_eff_single_member": "one member's events: the single transport with the largest contribution",
+                "K_eff_task14": "task 14's twelve independent member stores, pooled (distinct events)",
+            },
+        }
         for family, spec in windows.items():
             probe = read_task14_metrics(family, store_n)
-            result = compare_profile(stores, family, spec, store_n, probe)
-            value, ref, k_eff, _ = (np.array(v) for v in zip(*result.pop("rows")))
+            result = compare_profile(stores, family, spec, store_n, probe, k_eff_table=True)
+            value, ref, k_eff, ref_k_eff = (np.array(v) for v in zip(*result.pop("rows")))
+            new, pooled, single, task14 = (np.array(v) for v in zip(*result.pop("k_eff_rows")))
             peak = ref > 0.1 * ref.max()
             ratio = value[peak] / ref[peak]
             # Two independent samplings of one integral: the difference over the combined noise.
-            z = (value[peak] - ref[peak]) / (ref[peak] * np.sqrt(2.0 / k_eff[peak]))
+            z = (value[peak] - ref[peak]) / (ref[peak] * np.sqrt(1.0 / k_eff[peak] + 1.0 / ref_k_eff[peak]))
             block[family] = {
                 "peak_pixels": int(peak.sum()),
                 "ratio_median": float(np.median(ratio)),
@@ -299,9 +378,70 @@ def stage_class(tiers: list[int], store_n: int | None, store_cache_dir: Path) ->
                 "sum_ratio": float(value[peak].sum() / ref[peak].sum()),
                 "z_rms": float(np.sqrt(np.mean(z**2))),
                 "z_max_abs": float(np.max(np.abs(z))),
+                "K_eff_median_peak": {
+                    "K_eff": float(np.median(new[peak])),
+                    "K_eff_pooled": float(np.median(pooled[peak])),
+                    "K_eff_single_member": float(np.median(single[peak])),
+                    "K_eff_task14": float(np.median(task14[peak])),
+                },
+                "K_eff_ratio_median_peak": {
+                    "K_eff / single_member": float(np.median(new[peak] / single[peak])),
+                    "pooled / single_member": float(np.median(pooled[peak] / single[peak])),
+                    "task14 / K_eff": float(np.median(task14[peak] / new[peak])),
+                },
             }
             print("transport", family, json.dumps(block[family]))
         report["transport"] = block
+    return report
+
+
+def stage_k_eff(random_n: int) -> dict[str, Any]:
+    """Two i.i.d. stores of class ``[3, 5]`` on task 14's profiles: ``z`` of their difference under each ``K_eff``."""
+    crystal = canonical_crystal()
+    s = canonical_incident_direction()
+    path_class = build_path_class(crystal, (3, 5))
+    (plan,) = store_plan(path_class, crystal)
+    windows = json.loads((TASK14_ARTIFACTS / "profile_windows.json").read_text())["families"]
+    bands = [pixel_band(r, c, s, spec["render"])[2:] for spec in windows.values() for r, c in spec["pixels"]]
+    window = (min(lo for lo, _ in bands), max(hi for _, hi in bands))
+    stores = []
+    for seed in (1, 2):
+        start = time.perf_counter()
+        sampler = RandomSphereSampler(seed)
+        store = build_event_store(
+            crystal, CANONICAL_REFRACTIVE_INDEX, [(3, 5)], random_n, incident_direction=s, sampler=sampler,
+            sampling=f"{sampler.description}, seed {seed}", deviation_window=window, run_checks=False,
+        )
+        stores.append([(store.events.arrays(), plan)])
+        print(f"random store seed {seed}: {len(store.events)} events in the window, {time.perf_counter() - start:.1f} s")
+    report: dict[str, Any] = {
+        "N": random_n, "sampling": RandomSphereSampler.description, "seeds": [1, 2],
+        "deviation_window_rad": list(window), "k_eff_semantics": K_EFF_SEMANTICS,
+        "z": "(a - b) / sqrt(a^2 / K_eff_a + b^2 / K_eff_b) over pixels with both values > 0 and both K_eff >= 30",
+    }
+    for family, spec in windows.items():
+        density = build_pose_density(family, **spec["density"])
+        rows = []
+        for row, column in spec["pixels"]:
+            a, b = (class_band_sum_pixel(st, s, density, row, column, random_n, spec["render"]) for st in stores)
+            pa, pb = (pooled_k_eff(st, s, density, row, column, spec["render"]) for st in stores)
+            one = single_member_k_eff(stores[0], s, density, row, column, random_n, spec["render"])
+            rows.append((a.value, b.value, a.K_eff, b.K_eff, pa, pb, one))
+        va, vb, ka, kb, pa, pb, one = (np.array(v) for v in zip(*rows))
+        used = (va > 0.0) & (vb > 0.0) & (np.minimum(ka, kb) >= 30.0)
+        block: dict[str, Any] = {"pixels": len(rows), "used": int(used.sum())}
+        for tag, (k1, k2) in (("per_event", (ka, kb)), ("per_transport_sample", (pa, pb))):
+            z = (va[used] - vb[used]) / np.sqrt(va[used] ** 2 / k1[used] + vb[used] ** 2 / k2[used])
+            block[tag] = {
+                "z_rms": float(np.sqrt(np.mean(z**2))),
+                "z_mean": float(np.mean(z)),
+                "frac_abs_z_gt_2": float(np.mean(np.abs(z) > 2.0)),
+                "z_max_abs": float(np.max(np.abs(z))),
+                "K_eff_median": float(np.median(k1[used])),
+            }
+        block["K_eff_single_member_median"] = float(np.median(one[used]))
+        report[family] = block
+        print("k-eff", family, json.dumps(block))
     return report
 
 
@@ -341,7 +481,7 @@ def stage_figure(band_dirs: list[Path], output: Path, title: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--stage", choices=("full", "class", "figure"), required=True)
+    parser.add_argument("--stage", choices=("full", "class", "k-eff", "figure"), required=True)
     parser.add_argument("--band-dir", type=Path, nargs="+")
     parser.add_argument("--coarse-dir", type=Path, default=None)
     parser.add_argument(
@@ -353,6 +493,7 @@ def main() -> None:
     parser.add_argument("--tiers", type=int, nargs="*", default=[1_000_000, 10_000_000, 50_000_000])
     parser.add_argument("--store-n", type=int, default=None)
     parser.add_argument("--store-cache-dir", type=Path, default=DEFAULT_CACHE_DIR)
+    parser.add_argument("--random-n", type=int, default=10_000_000, help="points of each i.i.d. store (--stage k-eff)")
     parser.add_argument("--title", default="band-sum renderer (log scale, 4 decades)")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
@@ -362,6 +503,8 @@ def main() -> None:
     if args.stage == "full":
         report = stage_full(args.band_dir[0], args.reference_dir, args.coarse_dir)
         print(json.dumps({k: v for k, v in report.items() if k not in ("worst_pixels", "per_column_median_abs_rel", "unexplained_pixels")}, indent=1))
+    elif args.stage == "k-eff":
+        report = stage_k_eff(args.random_n)
     else:
         report = stage_class(args.tiers, args.store_n, args.store_cache_dir)
     args.output.write_text(json.dumps(report, indent=2) + "\n")

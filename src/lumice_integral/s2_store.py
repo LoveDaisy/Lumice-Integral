@@ -26,18 +26,24 @@ normal and unfolded exit normal, hence the same ``Phi(u)`` and ``D(u)``);
 their weights are then summed on the same ``u`` (``w_Phi = sum_m w_m``) and
 an event is kept where any member has ``w_m > 0``.
 
-Symmetry transport.  For a proper crystal symmetry ``g`` (``det g = +1``)
-mapping the representative's faces onto a member's
+Symmetry transport.  For any crystal symmetry ``g`` of ``D6h``, proper or
+improper, mapping the representative's faces onto a member's
 (:func:`.path_class.path_class_symmetry`), section 4.1(d) gives
-``Phi_member(u) = g Phi_rep(g^-1 u)`` with ``D`` and ``w`` unchanged: the
-member's events are the representative's with ``u' = g u``, ``Phi' = g Phi``.
-The production interface is the pose factor, not a transported copy: a
-renderer rebuilds the representative's poses and right-multiplies them by
-``g^-1`` (:func:`event_rotations` of the transported event equals that of
-the original event times ``g^T``, pinned by ``tests/test_s2_store_symmetry.py``),
-so one store in memory serves the whole proper orbit.  A member reached only
-by an improper element (``None`` in ``path_class_symmetry``) needs its own
-store: ``R g^-1`` would not be a rotation.
+``Phi_member(u) = g Phi_rep(g^-1 u)`` with ``D``, ``w`` and the valid domain
+unchanged: the member's events are the representative's with ``u' = g u``,
+``Phi' = g Phi``.  The pose of a transported event is rebuilt from
+``(g u, g Phi, D)`` and the pixel's azimuth by :func:`event_rotations`,
+whose two orthonormal frames always give a rotation, whatever ``det g``
+(a mirror needs no store of its own on ``S^2``; that restriction belongs to
+Phase I, where ``R g^-1`` would have to stay in SO(3)).  The production
+interface is :func:`transported_rotations`, the closed form of that rebuild
+on the representative's poses: ``L_g R g^T`` with ``L_g = I`` for a proper
+``g`` and the reflection in the plane of ``s`` and the pixel centre for an
+improper one (equal to :func:`event_rotations` of the transported events,
+pinned by ``tests/test_s2_store_symmetry.py`` for all 24 elements), so one
+store in memory serves the whole ``D6h`` orbit.  Symmetry saves repeated
+evaluation, not samples: the transported events are the same precomputed
+events.
 
 Memory layout: every array is C-contiguous, ``u`` / ``phi`` ``(K, 3)``,
 ``D`` / ``w`` (and ``iw`` for a non-uniform sampler) ``(K,)``, in the
@@ -162,8 +168,8 @@ def event_rotations(
 
     The pose of each event for a pixel whose centre direction is ``centre``
     (Gislen eq. 19 at ``omega = D_i``, built from two orthonormal frames).
-    For a member reached by a proper symmetry ``g`` the poses are these
-    times ``g^-1`` (module docstring).
+    For the events transported by a crystal symmetry ``g`` see
+    :func:`transported_rotations` (module docstring).
     """
     e = centre - (centre @ s) * s
     e /= np.linalg.norm(e)
@@ -171,6 +177,31 @@ def event_rotations(
     f2 /= np.linalg.norm(f2, axis=1, keepdims=True)
     world = np.stack([s, e, np.cross(s, e)], axis=1)
     return np.einsum("ij,nkj->nik", world, frame(u, f2))
+
+
+def transported_rotations(rotations: np.ndarray, g: np.ndarray, s: np.ndarray, centre: np.ndarray) -> np.ndarray:
+    """:func:`event_rotations` of the events transported by ``g`` (``u' = g u``, ``Phi' = g Phi``), from their poses.
+
+    ``rotations`` are :func:`event_rotations` of the untransported events
+    for the same ``s`` and ``centre``; ``g`` is any orthogonal crystal
+    symmetry.  :func:`event_rotations` is ``R = W F^T`` with the world frame
+    ``W`` and the event frame ``F`` of ``(u, f)``.  The transported frame is
+    ``g F J`` with ``J = diag(1, 1, det g)`` (a cross product changes sign
+    under a mirror), so ``R' = W J F^T g^T = L_g R g^T`` with
+    ``L_g = W J W^T = I - (1 - det g) m m^T``, ``m = W e_3`` the normal of
+    the plane of ``s`` and ``centre``.  For a proper ``g`` this is ``R g^T``
+    (``L_g`` skipped: the same floating-point operation as the proper-only
+    transport of task ``band-sum-renderer``); for an improper one ``L_g`` is
+    the reflection in the ``(s, centre)`` plane.  The result is a rotation
+    either way.
+    """
+    g = np.asarray(g, dtype=np.float64)
+    moved = rotations @ g.T
+    if np.linalg.det(g) > 0.0:
+        return moved
+    e = centre - (centre @ s) * s
+    m = np.cross(s, e / np.linalg.norm(e))
+    return (np.eye(3) - 2.0 * np.outer(m, m)) @ moved
 
 
 def evaluate_fields(
@@ -635,5 +666,6 @@ __all__ = [
     "self_check_gate_coverage",
     "self_check_haar_mean",
     "self_check_psi_invariance",
+    "transported_rotations",
     "twist_about",
 ]

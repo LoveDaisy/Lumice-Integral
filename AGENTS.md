@@ -51,12 +51,14 @@ uv run --with matplotlib python scripts/compare_strip_v2.py --strip-dir artifact
 # 2.8 min on 4 workers with the store cached under artifacts/s2-store (first build ~80 s); N = 1e7: 35 s
 JAX_PLATFORMS=cpu OMP_NUM_THREADS=1 \
   uv run python scripts/render_band_sum.py --store-n 100000000 --workers 4 --output-dir artifacts/band-sum-full
-# ... a path class with a narrow family and its own camera (one store per proper orbit, pose factors g^-1)
+# ... a path class with a narrow family and its own camera (one store per class, D6h transports incl. mirrors)
 uv run python scripts/render_band_sum.py --store-n 10000000 --path 3 5 --path-class --workers 3 \
   --pose-density-family plate --pose-density-zenith-std-deg 1 \
   --width 321 --height 161 --fov-deg 32 --view-elevation 15 --output-dir /tmp/band-sum-plate
 # ... and its regressions (against strip-full; against task 14's profiles) and log-scale figures
 uv run python scripts/regress_band_sum.py --stage full --band-dir artifacts/band-sum-full --output /tmp/regression_full.json
+# ... the K_eff ruler: two i.i.d. stores of class [3,5] on task 14's profiles (z of their difference, ~1 min)
+uv run python scripts/regress_band_sum.py --stage k-eff --random-n 10000000 --output /tmp/regression_k_eff.json
 # a non-canonical pose-density family (recorded in provenance.json and the resume fingerprint)
 uv run python scripts/render_ch06_strip.py --rows 300:302 --columns 126:127 --output-dir /tmp/strip-parry \
   --pose-density-family parry --pose-density-zenith-std-deg 1 --pose-density-roll-std-deg 1

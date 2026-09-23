@@ -45,9 +45,9 @@ pipeline of :mod:`.strip_pixel` once per member:
    premise is false there.
 5. :func:`phi_key` groups face sequences by their outgoing-direction map
    ``Phi`` (``3-5`` and ``3-1-2-5`` share one), and
-   :func:`path_class_symmetry` gives each class member the proper ``D6h``
-   element that transports the representative's S^2 event store onto it
-   (:mod:`.s2_store`).  Both are pure combinatorics on the prism's face
+   :func:`path_class_symmetry` gives each class member a ``D6h`` element
+   (proper or improper) that transports the representative's S^2 event
+   store onto it (:mod:`.s2_store`).  Both are pure combinatorics on the prism's face
    normals and the ``D6h`` table; the store itself (building, caching,
    I/O) lives in :mod:`.s2_store`, not here.  Everything in this module is
    specific to the hexagonal prism.
@@ -189,25 +189,34 @@ def path_class_symmetry(
     crystal: HexPrism | None = None,
     *,
     symmetry_elements: Sequence[np.ndarray] | None = None,
-) -> dict[Faces, np.ndarray | None]:
-    """Per member, a *proper* symmetry ``g`` (``det g = +1``) mapping the representative's faces onto it.
+) -> dict[Faces, np.ndarray]:
+    """Per member, a ``D6h`` element ``g`` (proper or improper) mapping the representative's faces onto it.
 
     ``g`` maps face ``f`` to the face with normal ``g @ n_f`` (the action of
-    :func:`pbd_orbit_hexprism`), so the member's ``Phi`` and weights are the
-    representative's transported by ``g`` (:mod:`.s2_store`, roadmap section
-    4.1(d)).  A member reached only by improper elements maps to ``None``:
-    it needs its own event store.  The representative maps to the identity.
-    ``symmetry_elements`` (default all 24 of ``D6h``) restricts the search;
-    elements are tried in order and the first proper one wins.
+    :func:`pbd_orbit_hexprism`), so the member's ``Phi``, weights and valid
+    domain are the representative's transported by ``g`` (:mod:`.s2_store`,
+    roadmap section 4.1(d)); on ``S^2`` a mirror transports like a rotation.
+    The representative maps to the identity.  ``symmetry_elements`` (default
+    all 24 of ``D6h``) restricts the search; proper elements are tried
+    first, then improper ones, each in order, and the first match wins.
+    Any matching element serves: two of them differ by an element fixing
+    the representative's face sequence, which fixes its fields.  A member
+    that no element reaches is not in the representative's orbit -- the
+    class was built wrong -- and raises ``RuntimeError``.
     """
     normals = _hexprism_normals(HexPrism() if crystal is None else crystal)
     elements = _D6H if symmetry_elements is None else tuple(np.asarray(e, dtype=np.float64) for e in symmetry_elements)
-    proper = [e for e in elements if np.linalg.det(e) > 0.0]
-    images = [(_symmetry_image_of_faces(e, path_class.representative, normals), e) for e in proper]
-    out: dict[Faces, np.ndarray | None] = {}
+    ordered = [e for e in elements if np.linalg.det(e) > 0.0] + [e for e in elements if np.linalg.det(e) < 0.0]
+    images = [(_symmetry_image_of_faces(e, path_class.representative, normals), e) for e in ordered]
+    out: dict[Faces, np.ndarray] = {}
     for member in path_class.members:
         found = next((e for image, e in images if image == member), None)
-        out[member] = None if found is None else np.array(found)
+        if found is None:
+            raise RuntimeError(
+                f"{path_id_of(member)} is not a D6h image of {path_id_of(path_class.representative)}: "
+                "the class is not one orbit"
+            )
+        out[member] = np.array(found)
     return out
 
 

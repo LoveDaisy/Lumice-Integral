@@ -16,7 +16,9 @@ point value: next to a steep edge or an inner caustic it differs from the
 point-pixel Phase I value by the band's own averaging (roadmap section 4.2).
 Per pixel the renderer reports ``K`` (band events), ``K_rho_pos`` (events
 with ``rho > 0``) and ``K_eff`` (Kish effective sample size of ``w rho``) next
-to the value, the sampling-noise diagnostic ``~ 1 / sqrt(K_eff)``.
+to the value, the sampling-noise diagnostic ``~ 1 / sqrt(K_eff)``.  All three
+count distinct precomputed events (``K_EFF_SEMANTICS``, class paragraph
+below).
 
 The estimator functions (:func:`pixel_band`, :func:`band_rotations`,
 :func:`band_contributions`, :func:`band_sum_estimate`, :func:`kish_k_eff`,
@@ -25,18 +27,26 @@ The estimator functions (:func:`pixel_band`, :func:`band_rotations`,
 
 Path classes (:func:`store_plan`).  The members of a PBD class are grouped by
 :func:`.path_class.phi_key` (members sharing ``Phi`` share one store with
-summed weights, :mod:`.s2_store`), and the ``Phi`` groups by proper ``D6h``
-elements (:func:`.path_class.path_class_symmetry`): one store per proper
-orbit, each group of the orbit served by the orbit's store with poses
-right-multiplied by ``g^-1 = g^T``; ``D`` and ``w`` are invariant.  A group
-reached only by improper elements starts an orbit of its own (on the
-hexagonal prism at most two stores per class: the proper subgroup has index
-2).  The class value is the sum of the member contributions; ``K``,
-``K_rho_pos`` and the Kish ``K_eff`` are of the pooled contributions (the
-task 14 pooling).  ``transport=False`` gives every ``Phi`` group its own
-store (a verification mode: on the same points it is the task 14 layout).
-The Fibonacci lattice is not closed under ``D6h``, so the two modes sample
-different points and agree to the discretisation level, not bit for bit.
+summed weights, :mod:`.s2_store`), and the ``Phi`` groups by ``D6h``
+elements, proper and improper (:func:`.path_class.path_class_symmetry`):
+a class is one ``D6h`` orbit, so one store serves every group, each through
+its element ``g`` (:func:`.s2_store.transported_rotations`: the poses of
+the events moved to ``(g u, g Phi)``, ``L_g R g^T``; ``D`` and ``w`` are
+invariant).  The class value is the sum of the member contributions.  The
+precomputation view (roadmap section 4.2): the store on all of ``S^2`` is
+the same information as every member's store on a fundamental domain, so
+symmetry saves repeated evaluation and makes no new samples.  ``K``,
+``K_rho_pos`` and ``K_eff`` therefore count distinct events: per store
+event the contributions of all its transports are summed first,
+``c_i = w_i sum_g rho(R_i^(g))``, and the Kish size is of ``{c_i}``
+(``K_EFF_SEMANTICS = "per_event"``; task ``band-sum-renderer`` pooled every
+``(event, transport)`` pair, ``"per_transport_sample"``, which overstates
+``K_eff`` by up to the number of transports whose ``rho`` agree, 6 for a
+plate density on ``[3,5]``).  ``transport=False`` gives every ``Phi`` group
+its own store (a verification mode: on the same points it is the task 14
+layout, whose member stores are independent samples).  The Fibonacci
+lattice is not closed under ``D6h``, so the two modes sample different
+points and agree to the discretisation level, not bit for bit.
 
 A rank-0 class (``halo_map_rank == 0``) is not a band sum: its contribution
 is the point mass of task 9 (:func:`.path_class.render_class_pixel` on the
@@ -80,6 +90,7 @@ from .s2_store import (
     build_or_load,
     event_rotations,
     max_rss_mb,
+    transported_rotations,
 )
 from .strip_io import FILE_NAMES, Window, environment_block, scene_block, write_binary_arrays
 from .strip_pixel import STATUS_HAS_COMPONENT, STATUS_RENDERED, PixelOptions
@@ -92,6 +103,10 @@ ESTIMATOR = (
     "R_i from the event's own deviation D_i (s2_store.event_rotations); derived constant, not fitted"
 )
 PIXEL_CSV_COLUMNS = ("row", "column", "value", "delta_deg", "band_width_rad", "K", "K_rho_pos", "K_eff")
+# What K, K_rho_pos and K_eff count (provenance ``options.k_eff_semantics``): distinct store events, each
+# with its transports' contributions summed.  Renders without the field (task band-sum-renderer) pooled
+# every (event, transport) pair: "per_transport_sample".
+K_EFF_SEMANTICS = "per_event"
 
 
 # ------------------------------------------------------------- estimator
@@ -172,10 +187,11 @@ def band_sum_pixel(
 # ------------------------------------------------------------ store plan
 @dataclasses.dataclass(frozen=True, eq=False)
 class Transport:
-    """A ``Phi`` group served by a store: poses of the store's events are right-multiplied by ``g^T``.
+    """A ``Phi`` group served by a store through the ``D6h`` element ``g`` (:func:`.s2_store.transported_rotations`).
 
-    ``g is None`` is the identity (the store's own group; no multiplication,
-    so the poses are bit-identical to the untransported ones).
+    ``g`` may be proper or improper.  ``g is None`` is the identity (the
+    store's own group; no multiplication, so the poses are bit-identical to
+    the untransported ones).
 
     ``eq=False`` (identity comparison): ``g`` is an ``np.ndarray``, which
     breaks the dataclass-generated ``__eq__``/``__hash__`` (ambiguous truth
@@ -219,11 +235,14 @@ def single_path_class(crystal: HexPrism, faces: Sequence[int]) -> PathClass:
 
 
 def store_plan(path_class: PathClass, crystal: HexPrism, *, transport: bool = True) -> tuple[StoreGroup, ...]:
-    """Stores of a rank-2 class: ``Phi`` groups, then one store per proper orbit of groups (module docstring).
+    """Stores of a rank-2 class: ``Phi`` groups, then one store for the ``D6h`` orbit of groups (module docstring).
 
-    Every member is served exactly once (checked).  The first orbit is the
-    representative's; ``transport=False`` gives every group its own store.
-    A rank-0 class has no stores (empty plan).
+    Every member is served exactly once (checked).  A class is one ``D6h``
+    orbit, so with ``transport`` the plan is a single store (the
+    representative's group); a member outside the orbit is a class
+    construction error (``RuntimeError`` from
+    :func:`.path_class.path_class_symmetry`).  ``transport=False`` gives
+    every group its own store.  A rank-0 class has no stores (empty plan).
     """
     if path_class.halo_map_rank == 0:
         return ()
@@ -232,36 +251,34 @@ def store_plan(path_class: PathClass, crystal: HexPrism, *, transport: bool = Tr
         by_key.setdefault(phi_key(crystal, member), []).append(member)
     groups = [tuple(sorted(g)) for g in by_key.values()]
     groups.sort(key=lambda g: (path_class.representative not in g, g))
-    remaining = list(groups)
-    plan: list[StoreGroup] = []
-    while remaining:
-        source = remaining[0]
-        if not transport:
-            plan.append(StoreGroup(source, (Transport(source, None),)))
-            remaining.pop(0)
-            continue
+    if not transport:
+        plan = tuple(StoreGroup(group, (Transport(group, None),)) for group in groups)
+    else:
+        source = groups[0]
         rooted = PathClass(source[0], path_class.members, path_class.wedge_deg, path_class.halo_map_rank)
         symmetry = path_class_symmetry(rooted, crystal)
         transports = [Transport(source, None)]
-        for group in remaining[1:]:
-            # g maps source[0] onto a member of ``group``; Phi_{g m}(u) = g Phi_m(g^-1 u) for every
-            # member m of ``source``, so g maps the whole Phi group onto ``group`` (same size).
-            g = next((symmetry[m] for m in group if symmetry[m] is not None), None)
-            if g is not None:
-                transports.append(Transport(group, g))
-        served = {t.members for t in transports}
-        remaining = [g for g in remaining if g not in served]
-        plan.append(StoreGroup(source, tuple(transports)))
+        for group in groups[1:]:
+            # g maps source[0] onto a member of ``group``; Phi_{g m}(u) = g Phi_m(g^-1 u) for every member m
+            # of ``source`` (proper or improper g), so g maps the whole Phi group onto ``group`` (same size).
+            # Any member's element serves; a proper one is preferred (no reflection factor, cheaper).
+            g = next((symmetry[m] for m in group if np.linalg.det(symmetry[m]) > 0.0), symmetry[group[0]])
+            transports.append(Transport(group, g))
+        plan = (StoreGroup(source, tuple(transports)),)
     served = sorted(m for s in plan for m in s.served_members)
     if served != sorted(path_class.members):
         raise RuntimeError(f"store plan serves {served}, class has {sorted(path_class.members)}")
-    return tuple(plan)
+    return plan
 
 
 # ---------------------------------------------------------------- pixels
 @dataclasses.dataclass(frozen=True)
 class BandSumPixelResult:
-    """One pixel: the value, its deviation band and the pooled diagnostics."""
+    """One pixel: the value, its deviation band and the diagnostics.
+
+    ``K``, ``K_rho_pos`` and ``K_eff`` count distinct store events (``K_EFF_SEMANTICS``);
+    ``total`` is the sum of the contributions and ``square`` the sum of the squared per-event ones.
+    """
 
     row: int
     column: int
@@ -296,12 +313,18 @@ def class_band_sum_pixel(
     n: int,
     render: Mapping[str, Any] = CANONICAL_RENDER,
 ) -> BandSumPixelResult:
-    """Band sum of one pixel over every ``(events, group)`` store of a plan, contributions pooled.
+    """Band sum of one pixel over every ``(events, group)`` store of a plan; diagnostics per distinct event.
 
     Per store the band, its poses and weights are computed once; each
-    transport re-evaluates ``rho`` at ``R g^T``.  With one store and one
-    identity transport this is :func:`band_sum_pixel`, value for value,
-    except that an empty band is ``0`` also where ``sin(delta) = 0``.
+    transport evaluates ``rho`` at its transported poses
+    (:func:`.s2_store.transported_rotations`).  The value is the sum over
+    stores, transports and events.  ``K`` / ``K_rho_pos`` / ``K_eff`` are of
+    the per-event contributions ``c_i = w_i sum_t rho(R_i^(t))`` (module
+    docstring): transports reuse the same events and add no samples.  The
+    value is accumulated per transport, in the order of task
+    ``band-sum-renderer``, so it is unchanged bit for bit.  With one store
+    and one identity transport this is :func:`band_sum_pixel`, value for
+    value, except that an empty band is ``0`` also where ``sin(delta) = 0``.
     """
     centre, delta, lo_d, hi_d = pixel_band(row, column, s, render)
     width = hi_d - lo_d
@@ -310,12 +333,15 @@ def class_band_sum_pixel(
         rotations, weight = band_poses(events, s, centre, lo_d, hi_d)
         if len(weight) == 0:
             continue
+        per_event = np.zeros(len(weight))
         for t in group.transports:
-            contribution = weight * density.evaluate_batch(rotations if t.g is None else rotations @ t.g.T)
+            poses = rotations if t.g is None else transported_rotations(rotations, t.g, s, centre)
+            contribution = weight * density.evaluate_batch(poses)
             total += float(np.sum(contribution))
-            square += float(np.sum(contribution**2))
-            k += int(len(contribution))
-            k_pos += int(np.count_nonzero(contribution > 0.0))
+            per_event += contribution
+        square += float(np.sum(per_event**2))
+        k += int(len(per_event))
+        k_pos += int(np.count_nonzero(per_event > 0.0))
     # An empty band is 0 even where the constant is singular (the pixel containing delta = 0, i.e. the sun).
     value = band_sum_estimate(total, n, width, delta) if total != 0.0 else 0.0
     return BandSumPixelResult(int(row), int(column), value, delta, width, k, k_pos, kish_k_eff(total, square), total, square)
@@ -556,9 +582,13 @@ def write_band_sum_strip(
             "path_class": scene.path_class.provenance(),
             "symmetry_transport": scene.transport,
             "store_plan": [g.as_json() for g in scene.plan],
+            "k_eff_semantics": K_EFF_SEMANTICS,
             "stores": list(execution.get("stores", [])),
             "rank0": execution.get("rank0"),
-            "class_value": "sum of member contributions; K, K_rho_pos, K_eff of the pooled contributions",
+            "class_value": (
+                "sum of member contributions; K, K_rho_pos, K_eff count distinct store events, each event's "
+                "contribution summed over the transports serving it (k_eff_semantics)"
+            ),
         },
         "window": window.as_json(),
         "arrays": {
@@ -583,7 +613,9 @@ def write_band_sum_strip(
             "value_semantics": (
                 "band average over the pixel's deviation band [delta_lo, delta_hi] at the pixel-centre azimuth, "
                 "sum of the class members; not a point value (differs from the Phase I point pixel at steep edges "
-                "and inner caustics); sampling noise ~ 1/sqrt(K_eff), K_eff per pixel in pixels.csv"
+                "and inner caustics); sampling noise ~ 1/sqrt(K_eff), K_eff per pixel in pixels.csv; K, K_rho_pos "
+                "and K_eff count distinct precomputed store events (options.k_eff_semantics = per_event): a "
+                "symmetry transport reuses an event and adds no sample"
             ),
             "radiometric_normalization": "the Phase I pixel normalisation (roadmap section 4.2); not aligned with Lumice",
         },
@@ -607,6 +639,7 @@ def write_band_sum_strip(
 __all__ = [
     "ESTIMATOR",
     "FORMAT_VERSION",
+    "K_EFF_SEMANTICS",
     "PIXEL_CSV_COLUMNS",
     "BandSumPixelResult",
     "BandSumScene",
