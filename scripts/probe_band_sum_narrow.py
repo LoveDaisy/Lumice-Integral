@@ -62,6 +62,7 @@ import dataclasses
 import datetime as dt
 import json
 import multiprocessing
+import sys
 import time
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -81,10 +82,13 @@ from probe_band_sum import (
     precompute,
 )
 
+from lumice_integral.camera import linear_pixel_sky_direction
 from lumice_integral.canonical_scene import canonical_crystal, canonical_incident_direction
 from lumice_integral.optics import path_id_of
-from lumice_integral.path_class import PathClass, build_path_class
+from lumice_integral.path_class import PathClass, build_path_class, canonical_class_scene, render_class_pixel
 from lumice_integral.pose_density import build_pose_density
+from lumice_integral.quadrature import ResampleOptions
+from lumice_integral.strip_pixel import PixelOptions
 
 REPRESENTATIVE = (3, 5)
 FAMILIES = ("plate", "parry", "lowitz")
@@ -96,6 +100,12 @@ FAMILY_PARAMETERS: dict[str, dict[str, float]] = {
 }
 LOCATE_RENDER: dict[str, Any] = {"width": 181, "height": 181, "fov_deg": 110.0, "view": {"azimuth": 0.0, "elevation": 30.0}}
 MAX_WORKERS = 4
+# Windowed precompute at N >= this tier measured ~2.3-2.6 GB RSS per worker process
+# (progress.md 2026-09-23 18:26 DECISION); at MAX_WORKERS=4 that is ~10 GB, over the
+# issue's <= 8 GB budget line (3 x 2.6 GB ~= 7.8 GB stays under it). Capped here so the
+# budget holds without relying on the caller to remember a smaller --workers.
+WINDOWED_HIGH_N_THRESHOLD = 1e8
+WINDOWED_HIGH_N_MAX_WORKERS = 3
 
 
 def family_density(family: str):
@@ -113,10 +123,11 @@ def member_dir(output_dir: Path, member: Sequence[int], store: str = "members") 
     return output_dir / store / path_id_of(member)
 
 
-def pool(workers: int) -> concurrent.futures.ProcessPoolExecutor:
-    return concurrent.futures.ProcessPoolExecutor(
-        max_workers=min(workers, MAX_WORKERS), mp_context=multiprocessing.get_context("spawn")
-    )
+def pool(workers: int, *, cap: int = MAX_WORKERS) -> concurrent.futures.ProcessPoolExecutor:
+    capped = min(workers, cap)
+    if capped < workers:
+        print(f"pool: --workers {workers} clamped to {capped} (budget line: workers <= {cap})", file=sys.stderr)
+    return concurrent.futures.ProcessPoolExecutor(max_workers=capped, mp_context=multiprocessing.get_context("spawn"))
 
 
 def write_json(path: Path, payload: Any) -> None:
@@ -175,8 +186,9 @@ def stage_precompute(
         for j, n in enumerate(tiers)
         for i, member in enumerate(path_class.members)
     ]
+    cap = WINDOWED_HIGH_N_MAX_WORKERS if windowed and max(tiers) >= WINDOWED_HIGH_N_THRESHOLD else MAX_WORKERS
     start = time.perf_counter()
-    with pool(workers) as executor:
+    with pool(workers, cap=cap) as executor:
         metas = list(executor.map(_precompute_member, jobs))
     wall = time.perf_counter() - start
     summary_path = output_dir / "precompute_summary.json"
@@ -189,7 +201,7 @@ def stage_precompute(
             "sampling": sampling,
             "store": store,
             "deviation_window_rad": window,
-            "workers": min(workers, MAX_WORKERS),
+            "workers": min(workers, cap),
             "wall_clock_s": wall,
             "members": {
                 f"{path_id_of(member)}/N{meta['N']}": {
@@ -299,8 +311,6 @@ def estimates(acc: Accumulator, n: int, delta: np.ndarray, width: np.ndarray) ->
 # ----------------------------------------------------------------- locate
 def sky_angles(row: int, column: int, render: Mapping[str, Any]) -> tuple[float, float]:
     """Elevation and azimuth (degrees) of the pixel centre's sky direction."""
-    from lumice_integral.camera import linear_pixel_sky_direction
-
     sky = linear_pixel_sky_direction(row, column, **render)
     return float(np.degrees(np.arcsin(sky[2]))), float(np.degrees(np.arctan2(sky[1], sky[0])))
 
@@ -404,8 +414,6 @@ _SCENES: dict[tuple[str, str], Any] = {}
 
 
 def _class_scene(family: str, render: Mapping[str, Any]):
-    from lumice_integral.path_class import canonical_class_scene
-
     key = (family, json.dumps(render, sort_keys=True))
     if key not in _SCENES:
         _SCENES[key] = canonical_class_scene(REPRESENTATIVE, pose_density=family_density(family), render=render)
@@ -415,10 +423,6 @@ def _class_scene(family: str, render: Mapping[str, Any]):
 
 
 def _reference_job(args) -> list[dict[str, Any]]:
-    from lumice_integral.quadrature import ResampleOptions
-    from lumice_integral.path_class import render_class_pixel
-    from lumice_integral.strip_pixel import PixelOptions
-
     family, render, pixels, refined = args
     scene = _class_scene(family, render)
     options = PixelOptions(quadrature=ResampleOptions(**REFINED_QUADRATURE)) if refined else PixelOptions()
@@ -464,6 +468,11 @@ def stage_reference(output_dir: Path, families: Sequence[str], workers: int) -> 
         default_wall = time.perf_counter() - start
         values = np.array([r["value"] for r in default])
         lit = np.flatnonzero(values > LIT_FRACTION * values.max())
+        if len(lit) == 0:
+            raise RuntimeError(
+                f"{family}: profile has no lit pixels (all Phase I reference values <= 0); "
+                "the profile does not cover a lit region, re-pick it via Step 3/4 (--stage locate/profiles)"
+            )
         # the peak and five more lit pixels spread evenly over the lit set
         chosen = sorted({int(np.argmax(values)), *(int(lit[i]) for i in np.linspace(0, len(lit) - 1, REFINED_PIXELS - 1).round().astype(int))})
         start = time.perf_counter()
@@ -538,9 +547,6 @@ def steep_pixels(values: np.ndarray) -> list[int]:
 
 
 def _band_reference_job(args) -> list[dict[str, Any]]:
-    from lumice_integral.path_class import render_class_pixel
-    from lumice_integral.strip_pixel import PixelOptions
-
     family, render, pixels = args
     scene = _class_scene(family, render)
     s = canonical_incident_direction()
@@ -645,14 +651,13 @@ def profile_metrics(
         ref = reference[(row, column)]
         lit = ref > LIT_FRACTION * peak
         k_min = float(acc.k_eff_min_member[0, p])
+        ref_band = band_reference.get((row, column), ref)
         rows.append(
             ProfileMetrics(
                 row, column, float(np.degrees(delta[p])), float(width[p]), int(acc.k[0, p]), int(acc.k_pos[0, p]),
                 kish_k_eff(acc.total[0, p], acc.square[0, p]), k_min if np.isfinite(k_min) else 0.0,
                 float(estimate[p]), ref, bool(lit), (estimate[p] - ref) / ref if lit else float("nan"),
-                band_reference.get((row, column), ref),
-                (estimate[p] - band_reference.get((row, column), ref)) / band_reference.get((row, column), ref)
-                if lit else float("nan"),
+                ref_band, (estimate[p] - ref_band) / ref_band if lit else float("nan"),
             )
         )
     return rows, wall, acc.max_rss_mb_worker
@@ -754,8 +759,8 @@ def stage_render(output_dir: Path, families: Sequence[str], workers: int, store:
 
 
 # ---------------------------------------------------------------- verdict
-BACKEND_N = 1e9  # N_star above this: collapsed (issue: "extrapolated N > 1e9")
-STOP_LOSS_N = 1e10
+BACKEND_N = 1e9  # N_star at or below this: usable as the render backend without a rho-aware store
+STOP_LOSS_N = 1e10  # N_star above this: stop-loss (issue), unusable even if a rho-aware store were tried
 
 
 def stage_verdict(output_dir: Path, families: Sequence[str]) -> None:
@@ -779,14 +784,21 @@ def stage_verdict(output_dir: Path, families: Sequence[str]) -> None:
             verdict["confirmed"] = bool(reached and reached[0] <= BACKEND_N)  # a measured tier <= 1e9 reaches 1e-2
             verdict["robust_to_lost_lattice_gain"] = bool(verdict["N_mc_bound_worst_pixel"] <= BACKEND_N)
         else:
+            # collapsed: N_star > BACKEND_N. Always one of the three-way enum (issue/plan
+            # contract for verdict_<family>.json); rho_aware_attempted distinguishes "tried,
+            # didn't help" from "not tried" without inventing a fourth verdict value.
             importance = output_dir / f"summary_{family}_rho.json"
             if importance.exists():
                 rho = json.loads(importance.read_text())
+                verdict["rho_aware_attempted"] = True
                 verdict["N_star_rho_aware"] = rho["extrapolation"]["N_for_target"]
                 good = verdict["N_star_rho_aware"] is not None and verdict["N_star_rho_aware"] <= BACKEND_N
                 verdict["verdict"] = "needs_rho_aware_store" if good else "unusable"
             else:
-                verdict["verdict"] = "collapsed (rho-aware store not run)"
+                verdict["rho_aware_attempted"] = False
+                # above the hard stop-loss line: unusable outright, no point trying a store;
+                # between BACKEND_N and STOP_LOSS_N: the store is untried but might still help.
+                verdict["verdict"] = "unusable" if n_star is None or n_star > STOP_LOSS_N else "needs_rho_aware_store"
         verdict["created"] = dt.datetime.now().astimezone().isoformat(timespec="seconds")
         write_json(output_dir / f"verdict_{family}.json", verdict)
         print(family, json.dumps(verdict))
