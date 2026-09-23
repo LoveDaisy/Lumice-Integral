@@ -360,6 +360,10 @@ Only after numerical equivalence is established should the project decide
 whether the reduced formulation becomes an optimization backend, a theory and
 diagnostics tool, or the primary renderer.
 
+The level-set integral has two discretisations: tracing the contours
+(section 4.1) and summing precomputed $S^2$ events per deviation band
+(section 4.2). They are two quadratures of one integral, not alternatives.
+
 ### 4.1 Design findings (2026-09-20 discussion, before the Phase II scrum)
 
 These are derived statements, not yet numerically verified unless a test is
@@ -478,6 +482,116 @@ wall in a new place.
 - The Jacobian alignment $1/|\nabla_{S^2} D_P|$ against Phase I's
   $J_\perp$ under the fibration's coordinate change is the cross-validation
   contact point (section 4, third bullet).
+
+### 4.2 Band-sum quadrature (precomputed $S^2$ events)
+
+Source: the Ice Halo Simulation repository,
+`doc/research/inverse-rendering.md` (Chinese: `inverse-rendering_zh.md`),
+"Inverse Rendering via Precomputed Standard Events", after Gislén et al.
+(2004). That note is a design sketch; this section is the authoritative
+statement of the idea for this project, with the corrections below. The probe
+is `scripts/probe_band_sum.py` (task `band-sum-quadrature-probe`).
+
+**Correspondence.** The note's objects are the section 4.1 fields:
+
+| note | this roadmap |
+|---|---|
+| standard event $(\hat a_0, \hat b_0)$ | $(\mathbf u, \Phi_P(\mathbf u))$, $\mathbf u = R^{-1}\mathbf s$ |
+| scattering angle $\omega$ | deviation field $D_P(\mathbf u)$ |
+| event weight $w$ | window field $A_P(\mathbf u)\,T_P(\mathbf u)$, section 4.1(a) |
+| rotation $U$ of eq. 19 | the pose $R(\mathbf u, \psi(\mathbf u,\alpha))$ |
+| $Q(U)$ | $\rho(R)$ relative to Haar probability |
+
+**Coarea equivalence and the normalisation.** Split Haar probability as
+$d\mu_{\mathrm{Haar}} = dA(\mathbf u)/4\pi \cdot d\psi/2\pi$ ($\psi$ the
+twist about $\mathbf s$). The twist moves the outgoing direction rigidly
+about $\mathbf s$, so at fixed $\mathbf u$ the outgoing azimuth is
+$\alpha = \alpha_0(\mathbf u) + \psi$ and $d\psi = d\alpha$, while the
+deviation stays $D_P(\mathbf u)$. Pushing $\rho A_P T_P\, d\mu_{\mathrm{Haar}}$
+forward to the sky and writing $dA(\mathbf d) = \sin\delta\, d\delta\, d\alpha$
+gives the Phase I pixel value (contract section 7, the same $1/(8\pi^2)$) as
+
+$$
+I(\delta,\alpha)\,\sin\delta
+= \frac{1}{8\pi^2}\int_{S^2}\delta_{\mathrm{Dirac}}\big(D_P(\mathbf u)-\delta\big)\,
+  \rho\,A_P T_P\,dA(\mathbf u)
+= \frac{1}{8\pi^2}\int_{D_P=\delta}
+  \frac{\rho\,A_P T_P}{|\nabla_{S^2}D_P|}\,d\ell ,
+$$
+
+which is section 4.1(b) with the proportionality made explicit. There is no
+separate $d\psi/2\pi$ factor at a fixed pixel: $\psi$ is consumed by
+$d\psi = d\alpha$ and $\rho$ is evaluated at the single-valued
+$\psi(\mathbf u,\alpha)$. Integrating over a band
+$\delta' \in [\delta_{\mathrm{lo}}, \delta_{\mathrm{hi}}]$ at the pixel's
+$\alpha$ turns the line integral into an area integral on $S^2$; with $N$
+equal-area points ($4\pi/N$ each) the band sum is
+
+$$
+\hat I(\delta,\alpha)
+= \frac{1}{2\pi N\,\Delta\delta\,\sin\delta}
+  \sum_{i:\,D_P(\mathbf u_i)\in[\delta_{\mathrm{lo}},\delta_{\mathrm{hi}}]}
+  A_P T_P(\mathbf u_i)\;\rho\big(R_i\big),
+\qquad \Delta\delta = \delta_{\mathrm{hi}}-\delta_{\mathrm{lo}},
+$$
+
+an estimate of the band average of $I \sin\delta'$ divided by $\sin\delta$.
+$R_i$ is the unique pose with $R_i\mathbf u_i = \mathbf s$ and
+$R_i\Phi_P(\mathbf u_i)$ at deviation $D_P(\mathbf u_i)$ *and* the pixel's
+azimuth: $R_i = [\mathbf s, \mathbf e, \mathbf s\times\mathbf e]\,
+[\mathbf u_i, \mathbf f_i, \mathbf u_i\times\mathbf f_i]^{\mathsf T}$ with
+$\mathbf e$ the unit azimuth direction of the pixel about $\mathbf s$ and
+$\mathbf f_i$ the unit component of $\Phi_P(\mathbf u_i)$ normal to
+$\mathbf u_i$. This is eq. 19 evaluated at $\omega = D_P(\mathbf u_i)$ (the
+probe checks them equal to `4e-15`), without its $1/\sin^2\omega$. Feeding
+eq. 19 the pixel's own $\delta$ instead, as the note's step 3 reads, gives a
+non-orthogonal matrix whenever $D_P(\mathbf u_i) \ne \delta$
+($\lVert U^{\mathsf T}U - I\rVert_F \approx 6\times10^{-4}$, the size of
+the band width, on the column-126 pixels) and $\rho$ of a non-rotation; the
+event's own deviation is the one the coarea identity asks for. The constant
+$1/(2\pi N)$ matches task 11's convention (explicit Haar $1/(8\pi^2)$, no
+hidden reference area) and is used as derived, never fitted.
+
+**Division of labour.** Contour tracing (section 4.1) owns accuracy and the
+completeness certificate of 4.1(c); the band sum has neither a certificate
+nor a convergence order beyond sampling, but it is one sort, one range query
+and one batched $\rho$ evaluation per pixel: branch-free and `vmap`-able as
+4.1(f) demands, with the event store shared by every pixel, pose density and
+sun elevation (the store is built from $\mathbf u$ in the body frame; a new
+sun direction only changes the rotation per pixel, section 4.1(b)). It suits
+fast rendering, parameter sweeps and independent cross-checks of the contour
+renderer.
+
+**Corrections to the note.**
+1. *Not noise-free.* The band sum is deterministic but carries a
+   discretisation error: about $1/\sqrt{K_{\mathrm{eff}}}$ for scattered
+   points, aliasing for a regular grid (a Fibonacci lattice cut by a thin
+   band behaves like scattered points, measured below). "No match means the
+   true value is dark" fails under a narrow $\rho$: a pixel whose band
+   holds events with $\rho \approx 0$ reads zero whatever the truth.
+2. *Narrow $\rho$ is the structural weak point.* The band's event set is
+   fixed by $\delta$ alone; $\rho$ selects the part of it that contributes,
+   so the effective count $K_{\mathrm{eff}}$ collapses when $\rho$ is
+   non-zero on a short stretch of the contour. Oriented-crystal halos
+   (parhelia, tangent arcs) are the cases of most interest. How far it
+   collapses depends on the pixel, not only on the width of $\rho$: see the
+   measurements.
+3. *Normalisation must be explicit*: $I\sin\delta$, Haar
+   $dA(\mathbf u)/4\pi\cdot d\psi/2\pi$, the constant above; the note's
+   "divide by the number of incident directions" is the $1/N$ of it.
+4. *"Caustics regulate their own brightness"* is subject to 4.1(g): for a
+   random orientation the 22° inner edge may be a finite jump, not a
+   $1/\sqrt{\,}$ profile. An acceptance test, not a premise.
+5. *Organise the store by $\Phi$-class* (4.1(d)), not one array sorted by
+   $\omega$ with `raypath_id` mixed in: members of a $\Phi$-class share
+   $D_P$ and add windows, and symmetry transport acts per class.
+
+**Divergent light (deferred).** The note's ray-marching extension (a nearby
+source; $\omega$ varies along each view ray, one range query per step with
+inverse-square weights) reuses the same event store and fits this project,
+but comes after Phase II. Multiple scattering stays a non-goal (section 8).
+
+**Probe results and verdict.** PENDING_PROBE_RESULTS
 
 ## 5. Proposed Responsibility Boundaries
 
