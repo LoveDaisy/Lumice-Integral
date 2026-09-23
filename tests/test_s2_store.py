@@ -9,7 +9,12 @@ import numpy as np
 import pytest
 
 from lumice_integral import geometry, optics, s2_store
-from lumice_integral.canonical_scene import CANONICAL_REFRACTIVE_INDEX, canonical_crystal, canonical_incident_direction
+from lumice_integral.canonical_scene import (
+    CANONICAL_REFRACTIVE_INDEX,
+    canonical_crystal,
+    canonical_incident_direction,
+    canonical_sun_direction,
+)
 from lumice_integral.s2_store import (
     RandomSphereSampler,
     S2EventStore,
@@ -17,6 +22,7 @@ from lumice_integral.s2_store import (
     align_rotations,
     build_event_store,
     build_or_load,
+    events_from_schema1,
     fibonacci_sphere,
 )
 
@@ -31,7 +37,7 @@ def _build(members=((3, 5),), n: int = SMALL_N, crystal=None, **kwargs) -> S2Eve
         CANONICAL_REFRACTIVE_INDEX,
         members,
         n,
-        incident_direction=canonical_incident_direction(),
+        sun_direction=canonical_sun_direction(),
         **kwargs,
     )
 
@@ -42,10 +48,18 @@ def small_store() -> S2EventStore:
 
 
 def test_events_match_the_batch_evaluators_directly(small_store) -> None:
-    """Oracle: the three production evaluators called here, not through ``evaluate_fields``."""
-    s, crystal, index = canonical_incident_direction(), canonical_crystal(), CANONICAL_REFRACTIVE_INDEX
-    u = fibonacci_sphere(SMALL_N)
-    rotations = align_rotations(u, s)
+    """Oracle: the three production evaluators called here, not through ``evaluate_fields``.
+
+    The store's ``u`` is ``R^-1 s_hat`` with ``s_hat`` toward the sun (above the
+    horizon), on the antipodal Fibonacci lattice; the evaluators take the
+    propagation direction ``s = -s_hat``.
+    """
+    sun, crystal, index = canonical_sun_direction(), canonical_crystal(), CANONICAL_REFRACTIVE_INDEX
+    s = canonical_incident_direction()
+    assert sun[2] > 0.0 and np.array_equal(s, -sun)
+    u = -fibonacci_sphere(SMALL_N)
+    rotations = align_rotations(u, sun)
+    assert np.max(np.abs(np.einsum("nij,nj->ni", rotations, u) - sun)) <= 1e-15  # R u = s_hat
     w = optics.fresnel_transmission_path_batch(rotations, (3, 5), s, index) * geometry.entry_measure_batch(
         rotations, (3, 5), s, crystal, n_ice=index
     )
@@ -56,6 +70,9 @@ def test_events_match_the_batch_evaluators_directly(small_store) -> None:
     ours, theirs = np.lexsort(events.u.T), np.lexsort(u[keep].T)  # both sides in the same u order
     assert np.array_equal(events.u[ours], u[keep][theirs])
     assert np.array_equal(events.w[ours], w[keep][theirs])
+    # D is the angle between the body-frame incoming ray -u and the outgoing phi
+    cosine = np.sum(events.phi * -events.u, axis=1)
+    assert np.max(np.abs(np.cos(events.D) - cosine)) <= 1e-12
     assert events.iw is None
     assert all(a.flags["C_CONTIGUOUS"] for a in events.arrays().values())
     assert small_store.diagnostics["kept_events"] == len(events)
@@ -139,7 +156,7 @@ def _cached(tmp_path: Path, **kwargs) -> S2EventStore:
         [(3, 5)],
         kwargs.pop("n", 5_000),
         base_dir=tmp_path,
-        incident_direction=canonical_incident_direction(),
+        sun_direction=canonical_sun_direction(),
         run_checks=False,
         **kwargs,
     )
@@ -171,11 +188,11 @@ def test_cache_key_separates_parameters(tmp_path) -> None:
     assert sorted(p.name for p in tmp_path.iterdir()) == sorted([a.spec.cache_key(), b.spec.cache_key()])
     spec = a.spec
     for changed in (
-        S2StoreSpec(spec.members, spec.crystal, 1.3110129, spec.incident_direction, spec.n),
-        S2StoreSpec(((3, 7),), spec.crystal, spec.refractive_index, spec.incident_direction, spec.n),
-        S2StoreSpec(spec.members, {"type": "HexPrism", "a": 1.0, "h": 0.1}, spec.refractive_index, spec.incident_direction, spec.n),
-        S2StoreSpec(spec.members, spec.crystal, spec.refractive_index, spec.incident_direction, spec.n, dtype="float32"),
-        S2StoreSpec(spec.members, spec.crystal, spec.refractive_index, spec.incident_direction, spec.n, deviation_window=(0.4, 0.5)),
+        S2StoreSpec(spec.members, spec.crystal, 1.3110129, spec.sun_direction, spec.n),
+        S2StoreSpec(((3, 7),), spec.crystal, spec.refractive_index, spec.sun_direction, spec.n),
+        S2StoreSpec(spec.members, {"type": "HexPrism", "a": 1.0, "h": 0.1}, spec.refractive_index, spec.sun_direction, spec.n),
+        S2StoreSpec(spec.members, spec.crystal, spec.refractive_index, spec.sun_direction, spec.n, dtype="float32"),
+        S2StoreSpec(spec.members, spec.crystal, spec.refractive_index, spec.sun_direction, spec.n, deviation_window=(0.4, 0.5)),
     ):
         assert changed.cache_key() != spec.cache_key()
     assert S2StoreSpec.from_build_parameters(spec.build_parameters()) == spec
@@ -200,6 +217,21 @@ def test_cache_refuses_mismatched_recorded_parameters(tmp_path) -> None:
         _cached(tmp_path)
 
 
+def test_cache_refuses_a_schema_1_store(tmp_path) -> None:
+    """A store recorded with ``u = R^-1 s`` (schema 1, propagation) is refused, never reused or converted."""
+    built = _cached(tmp_path)
+    assert s2_store.SCHEMA_VERSION == 2
+    directory = tmp_path / built.spec.cache_key()
+    provenance_path = directory / "provenance.json"
+    provenance = json.loads(provenance_path.read_text())
+    provenance["build"]["schema_version"] = 1
+    provenance_path.write_text(json.dumps(provenance))
+    with pytest.raises(ValueError, match="schema_version 1"):
+        S2EventStore.load(directory)
+    with pytest.raises(ValueError, match="schema_version 1"):
+        _cached(tmp_path)
+
+
 def test_cache_refuses_an_interrupted_save_and_never_overwrites(tmp_path) -> None:
     built = _cached(tmp_path)
     with pytest.raises(FileExistsError):
@@ -220,12 +252,18 @@ def test_crystal_must_be_an_untransformed_hexprism() -> None:
 # ------------------------------------------------------- task 13 regression
 @pytest.mark.parametrize("n", [1_000_000, pytest.param(10_000_000, marks=pytest.mark.slow)])
 def test_rebuilds_task13_store_bit_for_bit(n: int) -> None:
-    """``scripts/probe_band_sum.py --stage precompute`` output of task ``band-sum-quadrature-probe``."""
+    """``scripts/probe_band_sum.py --stage precompute`` output of task ``band-sum-quadrature-probe``.
+
+    That store is schema 1 (``u = R^-1 s``, propagation): after the named
+    conversion (``u`` negated) every array is equal bit for bit, i.e. the
+    schema 2 build changed the sign convention of ``u`` and nothing else.
+    """
     path = TASK13_ARTIFACTS / f"events_N{n}.npz"
     if not path.exists():
         pytest.skip(f"{path} not present (scratchpad artifact of task 13)")
     store = _build(n=n)
     with np.load(path) as data:
-        assert sorted(store.events.arrays()) == sorted(data.files)
-        for name in data.files:
-            assert np.array_equal(store.events.arrays()[name], data[name]), name
+        legacy = events_from_schema1({name: data[name] for name in data.files})
+    assert sorted(store.events.arrays()) == sorted(legacy)
+    for name, array in legacy.items():
+        assert np.array_equal(store.events.arrays()[name], array), name

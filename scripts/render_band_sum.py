@@ -60,7 +60,7 @@ from lumice_integral.canonical_scene import (
     CANONICAL_RENDER,
     CANONICAL_ZENITH_STD_DEG,
     canonical_crystal,
-    canonical_incident_direction,
+    canonical_sun_direction,
 )
 from lumice_integral.optics import path_id_of
 from lumice_integral.path_class import build_path_class
@@ -180,7 +180,7 @@ def main(argv: list[str] | None = None) -> None:
         path_class=path_class,
         crystal=crystal,
         refractive_index=CANONICAL_REFRACTIVE_INDEX,
-        incident_direction=canonical_incident_direction(),
+        sun_direction=canonical_sun_direction(),
         pose_density=pose_density,
         render=render,
         transport=not args.no_symmetry_transport,

@@ -7,8 +7,9 @@ corners' deviations),
 
     I_hat = sum_{D_i in band} w_i rho(R_i) / (2 pi N (delta_hi - delta_lo) sin(delta))
 
-with ``w_i = A_P(u_i) T_P(u_i)`` from the event store (:mod:`.s2_store`) and
-``R_i`` the pose with ``R_i u_i = s`` and ``R_i Phi_i`` at the event's *own*
+with ``w_i = A_P(u_i) T_P(u_i)`` from the event store (:mod:`.s2_store`,
+``u = R^-1 s_hat`` with ``s_hat`` toward the sun, ``docs/conventions.md``) and
+``R_i`` the pose with ``R_i u_i = s_hat`` and ``R_i phi_i`` at the event's *own*
 deviation ``D_i`` and the pixel's azimuth (:func:`.s2_store.event_rotations`;
 the pixel's ``delta`` in place of ``D_i`` does not give a rotation).  The
 constant is derived, not fitted.  A pixel value is a *band average*, not a
@@ -31,7 +32,7 @@ summed weights, :mod:`.s2_store`), and the ``Phi`` groups by ``D6h``
 elements, proper and improper (:func:`.path_class.path_class_symmetry`):
 a class is one ``D6h`` orbit, so one store serves every group, each through
 its element ``g`` (:func:`.s2_store.transported_rotations`: the poses of
-the events moved to ``(g u, g Phi)``, ``L_g R g^T``; ``D`` and ``w`` are
+the events moved to ``(g u, g phi)``, ``L_g R g^T``; ``D`` and ``w`` are
 invariant).  The class value is the sum of the member contributions.  The
 precomputation view (roadmap section 4.2): the store on all of ``S^2`` is
 the same information as every member's store on a fundamental domain, so
@@ -60,6 +61,11 @@ and render whole columns.  Output (:func:`write_band_sum_strip`) is the
 :mod:`.strip_io` directory layout (``read_strip`` reads it) with a band-sum
 ``pixels.csv`` and ``provenance.json``.
 
+The sun enters as ``s_hat`` (``sun`` / :attr:`BandSumScene.sun_direction`);
+the deviation of a pixel is measured between propagation directions
+(``s = -s_hat`` from :func:`.camera.incident_direction_from_sun`), and the
+Phase I hand-offs (the rank-0 point mass) take that ``s``.
+
 Nothing here imports or calls Lumice.
 """
 
@@ -76,7 +82,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 import numpy as np
 
-from .camera import linear_pixel_outgoing_direction
+from .camera import incident_direction_from_sun, linear_pixel_outgoing_direction
 from .canonical_scene import CANONICAL_RENDER
 from .geometry import HexPrism, halo_map_rank, wedge_angle_deg
 from .optics import normalize_faces, path_id_of
@@ -112,9 +118,14 @@ K_EFF_SEMANTICS = "per_event"
 # ------------------------------------------------------------- estimator
 # Migrated verbatim from scripts/probe_band_sum.py (task band-sum-quadrature-probe).
 def pixel_band(
-    row: int, column: int, s: np.ndarray, render: Mapping[str, Any] = CANONICAL_RENDER
+    row: int, column: int, sun: np.ndarray, render: Mapping[str, Any] = CANONICAL_RENDER
 ) -> tuple[np.ndarray, float, float, float]:
-    """Pixel-centre direction, its deviation, and ``[delta_lo, delta_hi]`` from the four corners."""
+    """Pixel-centre direction, its deviation, and ``[delta_lo, delta_hi]`` from the four corners.
+
+    The deviation is the angle between the incoming ``s = -s_hat`` and the
+    outgoing propagation directions (equal to the sky point's angle from ``s_hat``).
+    """
+    s = incident_direction_from_sun(sun)
     centre = linear_pixel_outgoing_direction(row, column, **render)
     corners = [
         linear_pixel_outgoing_direction(row + dr, column + dc, **render)
@@ -125,31 +136,31 @@ def pixel_band(
     return centre, float(np.arccos(np.clip(centre @ s, -1.0, 1.0))), min(deviations), max(deviations)
 
 
-def band_rotations(events: Mapping[str, np.ndarray], lo: int, hi: int, s: np.ndarray, centre: np.ndarray) -> np.ndarray:
-    """``R_i`` with ``R_i u_i = s`` and ``R_i Phi_i`` at deviation ``D_i``, azimuth of ``centre``."""
-    return event_rotations(events["u"][lo:hi], events["phi"][lo:hi], events["D"][lo:hi], s, centre)
+def band_rotations(events: Mapping[str, np.ndarray], lo: int, hi: int, sun: np.ndarray, centre: np.ndarray) -> np.ndarray:
+    """``R_i`` with ``R_i u_i = s_hat`` and ``R_i phi_i`` at deviation ``D_i``, azimuth of ``centre``."""
+    return event_rotations(events["u"][lo:hi], events["phi"][lo:hi], events["D"][lo:hi], sun, centre)
 
 
 def band_poses(
-    events: Mapping[str, np.ndarray], s: np.ndarray, centre: np.ndarray, lo_d: float, hi_d: float
+    events: Mapping[str, np.ndarray], sun: np.ndarray, centre: np.ndarray, lo_d: float, hi_d: float
 ) -> tuple[np.ndarray, np.ndarray]:
     """The band's poses ``R_i`` and weights ``w_i`` (times ``iw_i`` for a non-uniform store); empty if no event."""
     lo, hi = np.searchsorted(events["D"], [lo_d, hi_d])
     if hi <= lo:
         return np.zeros((0, 3, 3)), np.zeros(0)
-    rotations = band_rotations(events, lo, hi, s, centre)
+    rotations = band_rotations(events, lo, hi, sun, centre)
     weight = events["w"][lo:hi] if "iw" not in events else events["w"][lo:hi] * events["iw"][lo:hi]
     return rotations, weight
 
 
 def band_contributions(
-    events: Mapping[str, np.ndarray], s: np.ndarray, densities: Sequence, centre: np.ndarray, lo_d: float, hi_d: float
+    events: Mapping[str, np.ndarray], sun: np.ndarray, densities: Sequence, centre: np.ndarray, lo_d: float, hi_d: float
 ) -> list[np.ndarray]:
     """Per density, the band's contributions ``w_i rho(R_i)`` (times ``iw_i`` for a non-uniform store).
 
     The rotations are built once and shared by every density.
     """
-    rotations, weight = band_poses(events, s, centre, lo_d, hi_d)
+    rotations, weight = band_poses(events, sun, centre, lo_d, hi_d)
     if len(weight) == 0:
         return [np.zeros(0) for _ in densities]
     return [weight * density.evaluate_batch(rotations) for density in densities]
@@ -166,12 +177,12 @@ def kish_k_eff(total: float, square: float) -> float:
 
 
 def band_sum_pixel(
-    events, s, density, row: int, column: int, n: int, render: Mapping[str, Any] = CANONICAL_RENDER
+    events, sun, density, row: int, column: int, n: int, render: Mapping[str, Any] = CANONICAL_RENDER
 ) -> tuple[float, float, int, int, float, float]:
-    """``(estimate, delta, K, K_rho_pos, K_eff, band_width)`` of one pixel."""
-    centre, delta, lo_d, hi_d = pixel_band(row, column, s, render)
+    """``(estimate, delta, K, K_rho_pos, K_eff, band_width)`` of one pixel (``sun`` = ``s_hat``)."""
+    centre, delta, lo_d, hi_d = pixel_band(row, column, sun, render)
     width = hi_d - lo_d
-    (contribution,) = band_contributions(events, s, [density], centre, lo_d, hi_d)
+    (contribution,) = band_contributions(events, sun, [density], centre, lo_d, hi_d)
     total = float(np.sum(contribution))
     square = float(np.sum(contribution**2))
     return (
@@ -306,7 +317,7 @@ class BandSumPixelResult:
 
 def class_band_sum_pixel(
     stores: Sequence[tuple[Mapping[str, np.ndarray], StoreGroup]],
-    s: np.ndarray,
+    sun: np.ndarray,
     density: PoseDensity,
     row: int,
     column: int,
@@ -326,16 +337,16 @@ def class_band_sum_pixel(
     and one identity transport this is :func:`band_sum_pixel`, value for
     value, except that an empty band is ``0`` also where ``sin(delta) = 0``.
     """
-    centre, delta, lo_d, hi_d = pixel_band(row, column, s, render)
+    centre, delta, lo_d, hi_d = pixel_band(row, column, sun, render)
     width = hi_d - lo_d
     total, square, k, k_pos = 0.0, 0.0, 0, 0
     for events, group in stores:
-        rotations, weight = band_poses(events, s, centre, lo_d, hi_d)
+        rotations, weight = band_poses(events, sun, centre, lo_d, hi_d)
         if len(weight) == 0:
             continue
         per_event = np.zeros(len(weight))
         for t in group.transports:
-            poses = rotations if t.g is None else transported_rotations(rotations, t.g, s, centre)
+            poses = rotations if t.g is None else transported_rotations(rotations, t.g, sun, centre)
             contribution = weight * density.evaluate_batch(poses)
             total += float(np.sum(contribution))
             per_event += contribution
@@ -350,17 +361,25 @@ def class_band_sum_pixel(
 # ---------------------------------------------------------------- scene
 @dataclasses.dataclass(frozen=True)
 class BandSumScene:
-    """What a band-sum render depends on, besides the stores: optics, crystal, camera, density, class."""
+    """What a band-sum render depends on, besides the stores: optics, crystal, camera, density, class.
+
+    ``sun_direction`` is ``s_hat`` (toward the sun); :attr:`incident_direction` the propagation ``-s_hat``.
+    """
 
     path_class: PathClass
     crystal: HexPrism
     refractive_index: float
-    incident_direction: np.ndarray
+    sun_direction: np.ndarray
     pose_density: PoseDensity
     render: Mapping[str, Any]
     transport: bool = True
     rank0_sample_count: int = DEFAULT_SAMPLE_COUNT
     rank0_rng_seed: int = DEFAULT_RNG_SEED
+
+    @property
+    def incident_direction(self) -> np.ndarray:
+        """The propagation direction ``s = -s_hat`` for the Phase I hand-offs."""
+        return incident_direction_from_sun(self.sun_direction)
 
     @property
     def plan(self) -> tuple[StoreGroup, ...]:
@@ -385,7 +404,7 @@ def prepare_stores(
             group.members,
             n,
             base_dir=base_dir,
-            incident_direction=scene.incident_direction,
+            sun_direction=scene.sun_direction,
             run_checks=run_checks,
             log=log,
         )
@@ -434,8 +453,8 @@ def render_pixels(
     scene: BandSumScene, stores: Sequence[tuple[Mapping[str, np.ndarray], StoreGroup]], n: int, pixels: Sequence[tuple[int, int]]
 ) -> list[BandSumPixelResult]:
     """In-process band sums of ``pixels`` (rank-2 classes; the stores' events as ``S2Events.arrays()`` dicts)."""
-    s = np.asarray(scene.incident_direction, dtype=np.float64)
-    return [class_band_sum_pixel(stores, s, scene.pose_density, row, column, n, scene.render) for row, column in pixels]
+    sun = np.asarray(scene.sun_direction, dtype=np.float64)
+    return [class_band_sum_pixel(stores, sun, scene.pose_density, row, column, n, scene.render) for row, column in pixels]
 
 
 _WORKER: dict[str, Any] = {}

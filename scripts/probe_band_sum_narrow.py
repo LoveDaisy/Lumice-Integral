@@ -81,7 +81,8 @@ from probe_band_sum import (
 
 from lumice_integral.band_sum import band_contributions, band_sum_estimate, kish_k_eff, pixel_band
 from lumice_integral.camera import linear_pixel_sky_direction
-from lumice_integral.canonical_scene import canonical_crystal, canonical_incident_direction
+from lumice_integral.camera import incident_direction_from_sun
+from lumice_integral.canonical_scene import canonical_crystal, canonical_sun_direction
 from lumice_integral.optics import path_id_of
 from lumice_integral.path_class import PathClass, build_path_class, canonical_class_scene, render_class_pixel
 from lumice_integral.pose_density import build_pose_density
@@ -150,11 +151,11 @@ def _precompute_member(args) -> dict[str, Any]:
 
 def profile_deviation_window(output_dir: Path) -> tuple[float, float]:
     """Union of the bands of every profile pixel (``profile_windows.json``), in radians."""
-    s = canonical_incident_direction()
+    sun = canonical_sun_direction()
     lo, hi = np.inf, -np.inf
     for spec in json.loads((output_dir / "profile_windows.json").read_text())["families"].values():
         for row, column in spec["pixels"]:
-            _, _, lo_d, hi_d = pixel_band(row, column, s, spec["render"])
+            _, _, lo_d, hi_d = pixel_band(row, column, sun, spec["render"])
             lo, hi = min(lo, lo_d), max(hi, hi_d)
     return float(lo), float(hi)
 
@@ -241,11 +242,11 @@ def member_band_sums(
     events: dict[str, np.ndarray], densities: Sequence, pixels: Sequence[tuple[int, int]], render: Mapping[str, Any]
 ) -> Accumulator:
     """One member's band contributions at every pixel, per density (member ``K_eff`` only where it contributes)."""
-    s = canonical_incident_direction()
+    sun = canonical_sun_direction()
     acc = Accumulator.zeros(len(densities), len(pixels))
     for p, (row, column) in enumerate(pixels):
-        centre, _, lo_d, hi_d = pixel_band(row, column, s, render)
-        for d, contribution in enumerate(band_contributions(events, s, densities, centre, lo_d, hi_d)):
+        centre, _, lo_d, hi_d = pixel_band(row, column, sun, render)
+        for d, contribution in enumerate(band_contributions(events, sun, densities, centre, lo_d, hi_d)):
             total, square = float(np.sum(contribution)), float(np.sum(contribution**2))
             acc.total[d, p], acc.square[d, p] = total, square
             acc.k[d, p], acc.k_pos[d, p] = len(contribution), np.count_nonzero(contribution > 0.0)
@@ -281,8 +282,8 @@ def class_band_sums(
 
 
 def pixel_geometry(pixels: Sequence[tuple[int, int]], render: Mapping[str, Any]) -> tuple[np.ndarray, np.ndarray]:
-    s = canonical_incident_direction()
-    bands = [pixel_band(row, column, s, render) for row, column in pixels]
+    sun = canonical_sun_direction()
+    bands = [pixel_band(row, column, sun, render) for row, column in pixels]
     return np.array([b[1] for b in bands]), np.array([b[3] - b[2] for b in bands])
 
 
@@ -533,10 +534,11 @@ def steep_pixels(values: np.ndarray) -> list[int]:
 def _band_reference_job(args) -> list[dict[str, Any]]:
     family, render, pixels = args
     scene = _class_scene(family, render)
-    s = canonical_incident_direction()
+    sun = canonical_sun_direction()
+    s = incident_direction_from_sun(sun)  # the Phase I target is built from propagation directions
     out = []
     for row, column in pixels:
-        centre, delta, lo_d, hi_d = pixel_band(row, column, s, render)
+        centre, delta, lo_d, hi_d = pixel_band(row, column, sun, render)
         e = centre - (centre @ s) * s
         e /= np.linalg.norm(e)
         nodes = lo_d + (np.arange(BAND_NODES) + 0.5) * (hi_d - lo_d) / BAND_NODES

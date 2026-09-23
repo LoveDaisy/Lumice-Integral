@@ -2,7 +2,7 @@
 
 For a class member reached from the representative by a ``D6h`` element
 ``g``, proper or improper (:func:`.path_class.path_class_symmetry`), the
-member's events are the representative's with ``u' = g u``, ``Phi' = g Phi``
+member's events are the representative's with ``u' = g u``, ``phi' = g phi``
 and ``D``, ``w`` and the valid domain unchanged.  The Fibonacci lattice is not closed under ``g``,
 so the member's own store is built on the ``g``-rotated lattice (the same
 point set the transported events live on) through the production builder,
@@ -27,6 +27,7 @@ from lumice_integral.canonical_scene import (
     CANONICAL_RENDER,
     canonical_crystal,
     canonical_incident_direction,
+    canonical_sun_direction,
 )
 from lumice_integral.geometry import HexPrism
 from lumice_integral.optics import path_id_of
@@ -46,7 +47,8 @@ from lumice_integral.s2_store import (
     build_event_store,
     evaluate_fields,
     event_rotations,
-    fibonacci_sphere,
+    events_from_schema1,
+    store_lattice,
     transported_rotations,
 )
 
@@ -55,17 +57,17 @@ N_EVENTWISE = 1_000_000
 
 
 def transport_events(events: S2Events, g: np.ndarray) -> S2Events:
-    """The member's events: ``u' = g u``, ``Phi' = g Phi``; ``D``, ``w``, ``iw`` unchanged (still sorted)."""
+    """The member's events: ``u' = g u``, ``phi' = g phi``; ``D``, ``w``, ``iw`` unchanged (still sorted)."""
     return S2Events(
         np.einsum("ij,nj->ni", g, events.u), np.einsum("ij,nj->ni", g, events.phi), events.D, events.w, events.iw
     )
 
 
 def rotated_lattice(g: np.ndarray, n: int):
-    """The ``n``-point Fibonacci lattice rotated by ``g`` (a uniform point set, so no inverse weights)."""
+    """The store's ``n``-point (antipodal Fibonacci) lattice rotated by ``g`` (uniform, so no inverse weights)."""
 
     def sampler(first: int, stop: int) -> tuple[np.ndarray, None]:
-        return np.einsum("ij,nj->ni", g, fibonacci_sphere(n, first, stop)), None
+        return np.einsum("ij,nj->ni", g, store_lattice(n, first, stop)), None
 
     return sampler
 
@@ -77,7 +79,7 @@ def build(members, n: int, *, crystal=None, g: np.ndarray | None = None, **kwarg
         CANONICAL_REFRACTIVE_INDEX,
         members,
         n,
-        incident_direction=canonical_incident_direction(),
+        sun_direction=canonical_sun_direction(),
         run_checks=False,
         **extra,
         **kwargs,
@@ -118,24 +120,24 @@ def test_transported_rotations_rebuild_the_transported_events_for_all_24_element
 
     For a proper ``g`` it is the plain pose factor ``R g^T``, bit for bit
     (the task ``band-sum-renderer`` operation); for a mirror the reflection
-    ``L_g`` in the ``(s, centre)`` plane makes it a rotation again.
+    ``L_g`` in the ``(s_hat, centre)`` plane makes it a rotation again.
     """
-    s = canonical_incident_direction()
+    sun = canonical_sun_direction()
     band = representative.band_slice(np.radians(22.0), np.radians(23.0))
     assert len(band) > 1000
     for row, column in ((400, 126), (120, 30), (700, 240)):
         centre = linear_pixel_outgoing_direction(row, column, **CANONICAL_RENDER)
-        poses = event_rotations(band.u, band.phi, band.D, s, centre)
+        poses = event_rotations(band.u, band.phi, band.D, sun, centre)
         for g in hexprism_symmetry_matrices():
             moved = transport_events(band, g)
-            direct = event_rotations(moved.u, moved.phi, moved.D, s, centre)
-            fast = transported_rotations(poses, g, s, centre)
+            direct = event_rotations(moved.u, moved.phi, moved.D, sun, centre)
+            fast = transported_rotations(poses, g, sun, centre)
             assert np.max(np.abs(direct - fast)) <= 1e-13, (row, column, g.round(3).tolist())
             if np.linalg.det(g) > 0.0:
                 np.testing.assert_array_equal(fast, poses @ g.T)
             assert np.max(np.abs(np.linalg.det(fast) - 1.0)) <= 1e-13
             assert np.max(np.abs(np.einsum("nij,nkj->nik", fast, fast) - np.eye(3))) <= 1e-13
-            assert np.max(np.abs(np.einsum("nij,nj->ni", fast, moved.u) - s)) <= 1e-12
+            assert np.max(np.abs(np.einsum("nij,nj->ni", fast, moved.u) - sun)) <= 1e-12  # R u = s_hat
     # The class's own elements are among them.
     _, symmetry = class_3_5
     assert all(np.linalg.det(g) > 0.0 for g in symmetry.values())
@@ -157,15 +159,15 @@ def test_fields_are_equivariant_under_all_24_elements(faces) -> None:
     element, proper ones included.
     """
     crystal = canonical_crystal()
-    s = canonical_incident_direction()
+    sun = canonical_sun_direction()
     normals = _hexprism_normals(crystal)
     u = np.random.default_rng(3).normal(size=(20_000, 3))
     u /= np.linalg.norm(u, axis=1, keepdims=True)
-    base = evaluate_fields(align_rotations(u, s), s, crystal, CANONICAL_REFRACTIVE_INDEX, [faces])
+    base = evaluate_fields(align_rotations(u, sun), sun, crystal, CANONICAL_REFRACTIVE_INDEX, [faces])
     assert 0 < np.count_nonzero(base["valid"])
     for g in hexprism_symmetry_matrices():
         image = _symmetry_image_of_faces(g, faces, normals)
-        moved = evaluate_fields(align_rotations(u @ g.T, s), s, crystal, CANONICAL_REFRACTIVE_INDEX, [image])
+        moved = evaluate_fields(align_rotations(u @ g.T, sun), sun, crystal, CANONICAL_REFRACTIVE_INDEX, [image])
         np.testing.assert_array_equal(moved["valid"], base["valid"])
         valid = base["valid"]
         assert np.max(np.abs(moved["w"] - base["w"])) <= 1e-12, (faces, image)
@@ -195,13 +197,13 @@ def test_improper_member_is_served_by_the_representatives_store() -> None:
     own = build([member], n, crystal=plate, g=g)
     transported = transport_events(representative.events, g)
     assert max(max_event_difference(transported, own.events).values()) <= 1e-12
-    s = canonical_incident_direction()
+    sun = canonical_sun_direction()
     centre = np.array([0.0, 1.0, 0.0])
     events = representative.events
-    poses = event_rotations(events.u, events.phi, events.D, s, centre)
+    poses = event_rotations(events.u, events.phi, events.D, sun, centre)
     assert np.allclose(np.linalg.det(poses @ g.T), -1.0)  # the plain pose factor is not a rotation
-    fast = transported_rotations(poses, g, s, centre)
-    own_poses = event_rotations(own.events.u, own.events.phi, own.events.D, s, centre)
+    fast = transported_rotations(poses, g, sun, centre)
+    own_poses = event_rotations(own.events.u, own.events.phi, own.events.D, sun, centre)
     assert np.max(np.abs(fast - own_poses)) <= 1e-12
     assert np.allclose(np.linalg.det(fast), 1.0)
 
@@ -218,7 +220,10 @@ def test_a_member_outside_the_orbit_is_an_error() -> None:
 
 # ------------------------------------------------- task 14 class regression
 def pixel_band(row: int, column: int, s: np.ndarray, render) -> tuple[np.ndarray, float, float]:
-    """Pixel-centre direction and ``[delta_lo, delta_hi]`` from the four corners (the task 14 pixel band)."""
+    """Pixel-centre direction and ``[delta_lo, delta_hi]`` from the four corners (the task 14 pixel band).
+
+    ``s`` is the propagation direction ``-s_hat``: deviations are angles between propagation directions.
+    """
     centre = linear_pixel_outgoing_direction(row, column, **render)
     deviations = [
         float(np.arccos(np.clip(linear_pixel_outgoing_direction(row + dr, column + dc, **render) @ s, -1.0, 1.0)))
@@ -228,7 +233,7 @@ def pixel_band(row: int, column: int, s: np.ndarray, render) -> tuple[np.ndarray
     return centre, min(deviations), max(deviations)
 
 
-def class_totals(stores, factors, density, pixels, s) -> np.ndarray:
+def class_totals(stores, factors, density, pixels, sun) -> np.ndarray:
     """Per pixel ``sum_members sum_band w rho(R g^T)``; ``stores[k]`` is paired with pose factor ``factors[k]``."""
     totals = np.zeros(len(pixels))
     for store, factor in zip(stores, factors):
@@ -236,7 +241,7 @@ def class_totals(stores, factors, density, pixels, s) -> np.ndarray:
             band = store.band_slice(lo, hi)
             if len(band) == 0:
                 continue
-            poses = event_rotations(band.u, band.phi, band.D, s, centre)
+            poses = event_rotations(band.u, band.phi, band.D, sun, centre)
             totals[p] += float(np.sum(band.w * density.evaluate_batch(poses @ factor.T)))
     return totals
 
@@ -255,7 +260,7 @@ def test_task14_class_band_sums_single_store_equals_twelve_stores(class_3_5) -> 
     if not windows_path.exists():
         pytest.skip(f"{windows_path} not present (scratchpad artifact of task 14)")
     families = json.loads(windows_path.read_text())["families"]
-    s = canonical_incident_direction()
+    sun, s = canonical_sun_direction(), canonical_incident_direction()
     profiles = {
         family: [pixel_band(row, column, s, spec["render"]) for row, column in spec["pixels"]]
         for family, spec in families.items()
@@ -271,8 +276,8 @@ def test_task14_class_band_sums_single_store_equals_twelve_stores(class_3_5) -> 
     report = {}
     for family, pixels in profiles.items():
         density = build_pose_density(family, **families[family]["density"])
-        one = class_totals([single] * len(symmetry), list(symmetry.values()), density, pixels, s)
-        twelve = class_totals(members, [identity] * len(members), density, pixels, s)
+        one = class_totals([single] * len(symmetry), list(symmetry.values()), density, pixels, sun)
+        twelve = class_totals(members, [identity] * len(members), density, pixels, sun)
         lit = twelve > 0.0
         assert np.array_equal(one > 0.0, lit) and np.count_nonzero(lit) > 10, family
         relative = float(np.max(np.abs(one[lit] - twelve[lit]) / twelve[lit]))
@@ -281,9 +286,10 @@ def test_task14_class_band_sums_single_store_equals_twelve_stores(class_3_5) -> 
         if have_artifacts:
             stores = []
             for directory in artifact_dirs:
-                with np.load(directory / f"events_N{n}.npz") as data:
-                    stores.append(S2EventStore(single.spec, S2Events(data["u"], data["phi"], data["D"], data["w"]), {}))
-            task14 = class_totals(stores, [identity] * len(stores), density, pixels, s)
+                with np.load(directory / f"events_N{n}.npz") as data:  # task 14 stores are schema 1
+                    arrays = events_from_schema1({key: data[key] for key in data.files})
+                stores.append(S2EventStore(single.spec, S2Events(arrays["u"], arrays["phi"], arrays["D"], arrays["w"]), {}))
+            task14 = class_totals(stores, [identity] * len(stores), density, pixels, sun)
             del stores
             peak = task14 > 0.1 * task14.max()
             ratio = one[peak] / task14[peak]

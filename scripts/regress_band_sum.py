@@ -76,12 +76,12 @@ from lumice_integral.band_sum import (
 from lumice_integral.canonical_scene import (
     CANONICAL_REFRACTIVE_INDEX,
     canonical_crystal,
-    canonical_incident_direction,
+    canonical_sun_direction,
 )
 from lumice_integral.optics import path_id_of
 from lumice_integral.path_class import build_path_class
 from lumice_integral.pose_density import build_pose_density
-from lumice_integral.s2_store import DEFAULT_CACHE_DIR, RandomSphereSampler, build_event_store, build_or_load
+from lumice_integral.s2_store import DEFAULT_CACHE_DIR, RandomSphereSampler, build_event_store, build_or_load, events_from_schema1
 from lumice_integral.strip_io import read_strip
 
 # Machine-specific default (the main checkout's gitignored strip-full artifact); other environments
@@ -254,7 +254,7 @@ def _band_outside_store(row: int, column: int, provenance: dict[str, Any], d_ran
     """The pixel's band (degrees) and the fraction of it outside the store's deviation range (dark by construction)."""
     render = provenance["scene"]["camera"]["value"]
     render = {k: render[k] for k in ("width", "height", "fov_deg", "view")}
-    _, _, lo, hi = pixel_band(row, column, canonical_incident_direction(), render)
+    _, _, lo, hi = pixel_band(row, column, canonical_sun_direction(), render)
     lo, hi = np.degrees(lo), np.degrees(hi)
     inside = max(0.0, min(hi, d_range[1]) - max(lo, d_range[0]))
     return {"band_deg": [float(lo), float(hi)], "band_fraction_outside_store_D_range": float(1.0 - inside / (hi - lo))}
@@ -262,8 +262,9 @@ def _band_outside_store(row: int, column: int, provenance: dict[str, Any], d_ran
 
 # ----------------------------------------------------------------- class
 def load_task14_member(member, n: int) -> dict[str, np.ndarray]:
+    """A task 14 member store (schema 1, ``u = R^-1 s``) in the current schema (``u = R^-1 s_hat``)."""
     with np.load(TASK14_ARTIFACTS / "members" / path_id_of(member) / f"events_N{n}.npz") as data:
-        return {key: data[key] for key in data.files}
+        return events_from_schema1({key: data[key] for key in data.files})
 
 
 def read_task14_metrics(family: str, n: int) -> dict[tuple[int, int], dict[str, float]]:
@@ -274,15 +275,15 @@ def read_task14_metrics(family: str, n: int) -> dict[tuple[int, int], dict[str, 
         }
 
 
-def pooled_k_eff(stores, s, density, row: int, column: int, render) -> float:
+def pooled_k_eff(stores, sun, density, row: int, column: int, render) -> float:
     """Task ``band-sum-renderer``'s ``K_eff``: Kish size of every ``(event, transport)`` pair (``per_transport_sample``).
 
     Recomputed literally for the comparison table only; the renderer counts distinct events.
     """
-    centre, _, lo, hi = pixel_band(row, column, s, render)
+    centre, _, lo, hi = pixel_band(row, column, sun, render)
     total, square = 0.0, 0.0
     for events, group in stores:
-        rotations, weight = band_poses(events, s, centre, lo, hi)
+        rotations, weight = band_poses(events, sun, centre, lo, hi)
         if len(weight) == 0:
             continue
         for t in group.transports:
@@ -292,25 +293,25 @@ def pooled_k_eff(stores, s, density, row: int, column: int, render) -> float:
     return kish_k_eff(total, square)
 
 
-def single_member_k_eff(stores, s, density, row: int, column: int, n: int, render) -> float:
+def single_member_k_eff(stores, sun, density, row: int, column: int, n: int, render) -> float:
     """``K_eff`` of one member's events: the single transport with the largest contribution (0 if none is lit).
 
     Not the representative's own: under a Lowitz density the representative is dark where another member is lit.
     """
     ((events, group),) = stores
     best = max(
-        (class_band_sum_pixel([(events, StoreGroup(group.members, (t,)))], s, density, row, column, n, render) for t in group.transports),
+        (class_band_sum_pixel([(events, StoreGroup(group.members, (t,)))], sun, density, row, column, n, render) for t in group.transports),
         key=lambda r: r.total,
     )
     return best.K_eff
 
 
 def compare_profile(stores, family: str, spec: dict[str, Any], n: int, probe: dict, *, k_eff_table: bool = False) -> dict[str, Any]:
-    s = canonical_incident_direction()
+    sun = canonical_sun_direction()
     density = build_pose_density(family, **spec["density"])
     worst_rel, worst_counts, count, rows, table = 0.0, 0, 0, [], []
     for row, column in spec["pixels"]:
-        result = class_band_sum_pixel(stores, s, density, row, column, n, spec["render"])
+        result = class_band_sum_pixel(stores, sun, density, row, column, n, spec["render"])
         ref = probe[(row, column)]
         rel = abs(result.value - ref["estimate"]) / abs(ref["estimate"]) if ref["estimate"] else abs(result.value)
         worst_rel = max(worst_rel, rel)
@@ -318,8 +319,8 @@ def compare_profile(stores, family: str, spec: dict[str, Any], n: int, probe: di
         count += 1
         rows.append((result.value, ref["estimate"], result.K_eff, ref["K_eff"]))
         if k_eff_table:
-            one = single_member_k_eff(stores, s, density, row, column, n, spec["render"])
-            table.append((result.K_eff, pooled_k_eff(stores, s, density, row, column, spec["render"]), one, ref["K_eff"]))
+            one = single_member_k_eff(stores, sun, density, row, column, n, spec["render"])
+            table.append((result.K_eff, pooled_k_eff(stores, sun, density, row, column, spec["render"]), one, ref["K_eff"]))
     out = {"pixels": count, "max_rel": worst_rel, "K_or_K_rho_pos_mismatches": worst_counts, "rows": rows}
     if k_eff_table:
         out["k_eff_rows"] = table
@@ -346,7 +347,7 @@ def stage_class(tiers: list[int], store_n: int | None, store_cache_dir: Path) ->
         report["same_points"][str(n)] = block
     if store_n is not None:
         store = build_or_load(
-            crystal, CANONICAL_REFRACTIVE_INDEX, [(3, 5)], store_n, base_dir=store_cache_dir, incident_direction=canonical_incident_direction()
+            crystal, CANONICAL_REFRACTIVE_INDEX, [(3, 5)], store_n, base_dir=store_cache_dir, sun_direction=canonical_sun_direction()
         )
         (plan,) = store_plan(path_class, crystal)
         stores = [(store.events.arrays(), plan)]
@@ -398,18 +399,18 @@ def stage_class(tiers: list[int], store_n: int | None, store_cache_dir: Path) ->
 def stage_k_eff(random_n: int) -> dict[str, Any]:
     """Two i.i.d. stores of class ``[3, 5]`` on task 14's profiles: ``z`` of their difference under each ``K_eff``."""
     crystal = canonical_crystal()
-    s = canonical_incident_direction()
+    sun = canonical_sun_direction()
     path_class = build_path_class(crystal, (3, 5))
     (plan,) = store_plan(path_class, crystal)
     windows = json.loads((TASK14_ARTIFACTS / "profile_windows.json").read_text())["families"]
-    bands = [pixel_band(r, c, s, spec["render"])[2:] for spec in windows.values() for r, c in spec["pixels"]]
+    bands = [pixel_band(r, c, sun, spec["render"])[2:] for spec in windows.values() for r, c in spec["pixels"]]
     window = (min(lo for lo, _ in bands), max(hi for _, hi in bands))
     stores = []
     for seed in (1, 2):
         start = time.perf_counter()
         sampler = RandomSphereSampler(seed)
         store = build_event_store(
-            crystal, CANONICAL_REFRACTIVE_INDEX, [(3, 5)], random_n, incident_direction=s, sampler=sampler,
+            crystal, CANONICAL_REFRACTIVE_INDEX, [(3, 5)], random_n, sun_direction=sun, sampler=sampler,
             sampling=f"{sampler.description}, seed {seed}", deviation_window=window, run_checks=False,
         )
         stores.append([(store.events.arrays(), plan)])
@@ -423,9 +424,9 @@ def stage_k_eff(random_n: int) -> dict[str, Any]:
         density = build_pose_density(family, **spec["density"])
         rows = []
         for row, column in spec["pixels"]:
-            a, b = (class_band_sum_pixel(st, s, density, row, column, random_n, spec["render"]) for st in stores)
-            pa, pb = (pooled_k_eff(st, s, density, row, column, spec["render"]) for st in stores)
-            one = single_member_k_eff(stores[0], s, density, row, column, random_n, spec["render"])
+            a, b = (class_band_sum_pixel(st, sun, density, row, column, random_n, spec["render"]) for st in stores)
+            pa, pb = (pooled_k_eff(st, sun, density, row, column, spec["render"]) for st in stores)
+            one = single_member_k_eff(stores[0], sun, density, row, column, random_n, spec["render"])
             rows.append((a.value, b.value, a.K_eff, b.K_eff, pa, pb, one))
         va, vb, ka, kb, pa, pb, one = (np.array(v) for v in zip(*rows))
         used = (va > 0.0) & (vb > 0.0) & (np.minimum(ka, kb) >= 30.0)
