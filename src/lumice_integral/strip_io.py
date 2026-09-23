@@ -340,6 +340,23 @@ def options_block(options: PixelOptions, prescan: Mapping[str, Any] | None = Non
     }
 
 
+def write_binary_arrays(
+    output_dir: Path, values: np.ndarray, status: np.ndarray, component_count: np.ndarray
+) -> dict[str, Path]:
+    """The four headerless image payloads (float64, float32, status, component count) -> their paths.
+
+    The byte format :func:`read_strip` reads, independent of who computed the
+    values (``write_strip`` and :func:`.band_sum.write_band_sum_strip` share it).
+    """
+    output_dir = Path(output_dir)
+    files = {key: output_dir / FILE_NAMES[key] for key in ("float64", "float32", "status", "component_count")}
+    values.astype("<f8").tofile(files["float64"])
+    values.astype("<f4").tofile(files["float32"])
+    status.astype(np.uint8).tofile(files["status"])
+    component_count.astype(np.uint8).tofile(files["component_count"])
+    return files
+
+
 def write_strip(
     output_dir: Path,
     results: Sequence[PixelResult],
@@ -365,10 +382,7 @@ def write_strip(
     output_dir.mkdir(parents=True, exist_ok=True)
     arrays = assemble_arrays(results, height=height, width=width)
     files = {key: output_dir / name for key, name in FILE_NAMES.items()}
-    arrays.values.astype("<f8").tofile(files["float64"])
-    arrays.values.astype("<f4").tofile(files["float32"])
-    arrays.status.astype(np.uint8).tofile(files["status"])
-    arrays.component_count.astype(np.uint8).tofile(files["component_count"])
+    write_binary_arrays(output_dir, arrays.values, arrays.status, arrays.component_count)
     write_pixel_csv(files["pixels"], results)
 
     rendered = arrays.rendered
@@ -465,6 +479,7 @@ __all__ = [
     "read_strip",
     "scene_block",
     "sha256_of",
+    "write_binary_arrays",
     "write_pixel_csv",
     "write_strip",
 ]

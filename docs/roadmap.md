@@ -857,6 +857,53 @@ scripts' flat `events_N<n>.npz` layout and the library's cache directories
 coexist on purpose (the historical artifacts stay readable); the store
 format itself has one implementation.
 
+**The production renderer (2026-09-23, task `band-sum-renderer`).**
+`lumice_integral.band_sum` holds the estimator (migrated verbatim from the
+task 13 probe, which now imports it: the task 13 column-126 metrics are
+reproduced bit for bit at $N = 10^6, 10^7, 10^8$) and renders a path or a
+PBD class; `scripts/render_band_sum.py` is its CLI (the `strip_io` layout,
+so `read_strip` and `compare_strip_v2.py` read it, plus per-pixel $K$,
+$K_{\rho>0}$ and Kish $K_{\mathrm{eff}}$). A class is grouped by $\Phi$
+first and the $\Phi$ groups by proper orbits (`band_sum.store_plan`), one
+store per orbit with the pose factors $g^{-1}$: `[3,5]` needs one store;
+`[3,1,2,5]` also needs only one, because every mirror-only member shares
+its $\Phi$ group with a member a proper element reaches (the group store
+serves both); `[1,3,5,2]` needs two. A rank-0 class is the task 9 point
+mass on the sun pixel. The stores are built once in the parent, spawned
+workers load them and render whole columns. Evidence (canonical scene):
+
+- *Full image vs `artifacts/strip-full`* ($N = 10^8$, 120 947 lit
+  pixels): median $|\mathrm{rel}|$ `3.6e-3`, p95 `3.3e-2`, RMS `1.5e-2`,
+  log RMS `1.7e-2`, median ratio `0.99997`, lit sum ratio `0.9996`
+  ($N = 10^7$: median `1.9e-2`). Per-column medians range `1.2e-3` (column
+  126, as in task 13) to `1.2e-2`, quartiles `2.7e-3` / `4.6e-3` /
+  `8.7e-3`: columns away from the sun vertical have a smaller
+  $K_{\mathrm{eff}}$. Attribution: every lit pixel either has
+  $|\mathrm{rel}|\sqrt{K_{\mathrm{eff}}} \le 4$ or a reference that
+  changes by more than 10 % to a neighbour; the 27 pixels beyond the noise
+  are all of the latter kind and keep their error from $10^7$ to $10^8$
+  (the band-average pixel model); the worst, row 56 at `-88 %`, has half
+  its band below $\min D_P$ (the inner-edge caustic above). The `+15 %`
+  outliers in the bottom corners are the right tail of a skewed sampling
+  distribution: over the 14 585 lit pixels with $K_{\mathrm{eff}} < 1000$
+  the mean error is `-1.5e-5` and the sum ratio `0.99998`, while the median
+  is `-3.9e-3` (skewness `0.8`).
+- *Task 14's profiles* (class `[3,5]`, plate / Parry / Lowitz, 453
+  pixels): on task 14's own twelve member stores (`--no-symmetry-transport`,
+  the same points) the renderer equals the probe's frozen estimates bit for
+  bit at $N = 10^6, 10^7, 5\times10^7$. With one store and pose factors
+  (different points) at $N = 10^8$ the peak-pixel sum ratios are `0.9998`
+  / `1.0002` / `1.0003`, per pixel `0.979-1.019`.
+- *Cost* (M2 Max, 4 workers, `JAX_PLATFORMS=cpu OMP_NUM_THREADS=1`): the
+  251 × 801 image at $N = 10^8$ in `2.8 min` with the store cached (3.3 ms
+  CPU per pixel, about 1.2 GB per process); building that store `80 s`
+  once. At $N = 10^7$: `35 s`. Phase I: `34.7 min` on 30 workers.
+
+Reports and the three example images (canonical strip; class `[3,5]` with
+plate and with Parry densities):
+`scratchpad/task-band-sum-renderer/artifacts/` (local), from
+`scripts/regress_band_sum.py`.
+
 ## 5. Proposed Responsibility Boundaries
 
 The project will likely need the following conceptual layers, without implying

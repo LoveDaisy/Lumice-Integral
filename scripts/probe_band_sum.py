@@ -57,11 +57,15 @@ import datetime as dt
 import json
 import time
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Sequence
 
 import numpy as np
 
-from lumice_integral.camera import linear_pixel_outgoing_direction
+from lumice_integral.band_sum import (  # the estimator, migrated to src/ (task band-sum-renderer)
+    band_rotations,
+    band_sum_pixel,
+    pixel_band,
+)
 from lumice_integral.canonical_scene import (
     CANONICAL_REFRACTIVE_INDEX,
     CANONICAL_RENDER,
@@ -77,7 +81,6 @@ from lumice_integral.s2_store import (
     ROTATION_PER_POINT,
     PointSampler,
     build_event_store,
-    event_rotations,
     max_rss_mb,
 )
 
@@ -178,25 +181,6 @@ class PixelMetrics:
     rel_error: float
 
 
-def pixel_band(
-    row: int, column: int, s: np.ndarray, render: Mapping[str, Any] = CANONICAL_RENDER
-) -> tuple[np.ndarray, float, float, float]:
-    """Pixel-centre direction, its deviation, and ``[delta_lo, delta_hi]`` from the four corners."""
-    centre = linear_pixel_outgoing_direction(row, column, **render)
-    corners = [
-        linear_pixel_outgoing_direction(row + dr, column + dc, **render)
-        for dr in (-0.5, 0.5)
-        for dc in (-0.5, 0.5)
-    ]
-    deviations = [float(np.arccos(np.clip(c @ s, -1.0, 1.0))) for c in corners]
-    return centre, float(np.arccos(np.clip(centre @ s, -1.0, 1.0))), min(deviations), max(deviations)
-
-
-def band_rotations(events: dict[str, np.ndarray], lo: int, hi: int, s: np.ndarray, centre: np.ndarray) -> np.ndarray:
-    """``R_i`` with ``R_i u_i = s`` and ``R_i Phi_i`` at deviation ``D_i``, azimuth of ``centre``."""
-    return event_rotations(events["u"][lo:hi], events["phi"][lo:hi], events["D"][lo:hi], s, centre)
-
-
 def gislen_eq19(a: np.ndarray, b: np.ndarray, a0: np.ndarray, b0: np.ndarray, omega: np.ndarray) -> np.ndarray:
     """Gislen eq. 19 (inverse-rendering note), batched: ``(a0, b0) -> (a, b)`` at scattering angle ``omega``."""
     c = np.cos(omega)[:, None, None]
@@ -244,50 +228,6 @@ def self_check_rotation(events: dict[str, np.ndarray], s: np.ndarray, rows: list
         },
         "passed": bool(worst_frame_vs_eq19 < 1e-10 and orthogonality_frame < 1e-12),
     }
-
-
-def band_contributions(
-    events: dict[str, np.ndarray], s: np.ndarray, densities: Sequence, centre: np.ndarray, lo_d: float, hi_d: float
-) -> list[np.ndarray]:
-    """Per density, the band's contributions ``w_i rho(R_i)`` (times ``iw_i`` for a non-uniform store).
-
-    The rotations are built once and shared by every density.
-    """
-    lo, hi = np.searchsorted(events["D"], [lo_d, hi_d])
-    if hi <= lo:
-        return [np.zeros(0) for _ in densities]
-    rotations = band_rotations(events, lo, hi, s, centre)
-    weight = events["w"][lo:hi] if "iw" not in events else events["w"][lo:hi] * events["iw"][lo:hi]
-    return [weight * density.evaluate_batch(rotations) for density in densities]
-
-
-def band_sum_estimate(total: float, n: int, width: float, delta: float) -> float:
-    """The section 4.2 band sum ``sum / (2 pi N (delta_hi - delta_lo) sin(delta))`` (derived, not fitted)."""
-    return total / (2.0 * np.pi * n * width * np.sin(delta))
-
-
-def kish_k_eff(total: float, square: float) -> float:
-    """Kish effective sample size ``(sum c)^2 / sum c^2`` of the contributions (0 for an empty band)."""
-    return total * total / square if square > 0.0 else 0.0
-
-
-def band_sum_pixel(
-    events, s, density, row: int, column: int, n: int, render: Mapping[str, Any] = CANONICAL_RENDER
-) -> tuple[float, float, int, int, float, float]:
-    """``(estimate, delta, K, K_rho_pos, K_eff, band_width)`` of one pixel."""
-    centre, delta, lo_d, hi_d = pixel_band(row, column, s, render)
-    width = hi_d - lo_d
-    (contribution,) = band_contributions(events, s, [density], centre, lo_d, hi_d)
-    total = float(np.sum(contribution))
-    square = float(np.sum(contribution**2))
-    return (
-        band_sum_estimate(total, n, width, delta),
-        delta,
-        int(len(contribution)),
-        int(np.count_nonzero(contribution > 0.0)),
-        kish_k_eff(total, square),
-        width,
-    )
 
 
 def scene_pixels(scene: str, column: int) -> list[tuple[int, int]]:
