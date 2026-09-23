@@ -38,7 +38,8 @@ Stages (``--stage``):
 
 The rho-aware store of the plan is only tried for a family whose
 extrapolated ``N`` exceeds ``1e9``; none did (roadmap section 4.2), so it is
-not implemented.  Nothing here imports or calls Lumice; ``src/`` is not modified.
+not implemented.  Nothing here imports or calls Lumice; the stores (and the
+i.i.d. sampler) are ``lumice_integral.s2_store`` via ``probe_band_sum.precompute``.
 Usage (``A`` = the artifacts directory)::
 
     uv run python scripts/probe_band_sum_narrow.py --stage precompute --tiers 10000000 --output-dir $A
@@ -88,6 +89,7 @@ from lumice_integral.optics import path_id_of
 from lumice_integral.path_class import PathClass, build_path_class, canonical_class_scene, render_class_pixel
 from lumice_integral.pose_density import build_pose_density
 from lumice_integral.quadrature import ResampleOptions
+from lumice_integral.s2_store import RandomSphereSampler
 from lumice_integral.strip_pixel import PixelOptions
 
 REPRESENTATIVE = (3, 5)
@@ -135,21 +137,6 @@ def write_json(path: Path, payload: Any) -> None:
 
 
 # ------------------------------------------------------------- precompute
-RANDOM_SEED = 20260923
-
-
-@dataclasses.dataclass(frozen=True)
-class RandomSphereSampler:
-    """i.i.d. uniform points on ``S^2`` (``q = 1 / 4 pi``, so no inverse weights); chunk-seeded, reproducible."""
-
-    seed: int = RANDOM_SEED
-    description = "i.i.d. uniform on S^2 (normalised Gaussian triples, numpy default_rng([seed, first]) per chunk)"
-
-    def __call__(self, first: int, stop: int) -> tuple[np.ndarray, None]:
-        points = np.random.default_rng([self.seed, first]).normal(size=(stop - first, 3))
-        return points / np.linalg.norm(points, axis=1, keepdims=True), None
-
-
 SAMPLERS = {"fibonacci": None, "random": RandomSphereSampler()}
 
 

@@ -21,13 +21,12 @@ frames).  The derived constant is used as is; nothing is fitted.
 
 Stages (``--stage``):
 
-- ``precompute``: Fibonacci points on ``S^2``, one rotation per point
-  (any ``R`` with ``R u = s``: the weights are fields on ``S^2``, section
-  4.1(a), verified first by the psi-invariance self-check), the production
-  batch evaluators (``optics.path_domain_batch``,
-  ``optics.fresnel_transmission_path_batch``, ``geometry.entry_measure_batch``);
-  keeps ``w > 0`` events sorted by ``D``.  One ``events_N<n>.npz`` +
-  ``precompute_N<n>.json`` per ``N``; an existing file is never overwritten.
+- ``precompute``: the event store of :mod:`lumice_integral.s2_store`
+  (Fibonacci points on ``S^2``, one rotation per point, the production batch
+  evaluators, ``w > 0`` events sorted by ``D``; psi-invariance, gate-coverage
+  and Haar-mean self-checks), written in this probe's flat layout: one
+  ``events_N<n>.npz`` + ``precompute_N<n>.json`` per ``N``; an existing file
+  is never overwritten.
 - ``reference``: the random-orientation Phase I reference of scene 2
   (``strip_pixel.render_pixel`` on ``canonical_strip_scene(pose_density=random)``),
   cached in ``reference_random_c<column>.npz``.
@@ -39,7 +38,9 @@ Stages (``--stage``):
 - ``plot``: log-scale figures from ``summary.json`` and the CSVs only
   (needs ``uv run --with matplotlib``).
 
-Nothing here imports or calls Lumice; ``src/`` is not modified.  Usage::
+Nothing here imports or calls Lumice.  The store itself is
+``lumice_integral.s2_store`` (task ``s2-event-store``; this script built it
+before, bit-identically).  Usage::
 
     uv run python scripts/probe_band_sum.py --stage precompute --precompute-n 1000000 10000000 --output-dir <dir>
     uv run python scripts/probe_band_sum.py --stage reference --output-dir <dir>
@@ -54,15 +55,12 @@ import csv
 import dataclasses
 import datetime as dt
 import json
-import platform
-import resource
 import time
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 import numpy as np
 
-from lumice_integral import geometry, optics
 from lumice_integral.camera import linear_pixel_outgoing_direction
 from lumice_integral.canonical_scene import (
     CANONICAL_REFRACTIVE_INDEX,
@@ -73,156 +71,26 @@ from lumice_integral.canonical_scene import (
 )
 from lumice_integral.optics import PATH_3_5_FACES
 from lumice_integral.pose_density import build_pose_density
+from lumice_integral.s2_store import (
+    CHUNK,
+    FIBONACCI_SAMPLING,
+    ROTATION_PER_POINT,
+    PointSampler,
+    build_event_store,
+    event_rotations,
+    max_rss_mb,
+)
 
 DEFAULT_REFERENCE_DIR = Path("/Users/zhangjiajie/Codes/Lumice Integral/artifacts/strip-full")
 DEFAULT_COLUMN = 126
 RANDOM_ROW_STEP = 13  # 801 rows -> 62 pixels (plan default assumption 3)
 SWEEP_COLUMNS = (26, 76, 176, 226)  # generality check of the narrow-rho finding (column 126 is the sun vertical)
 SWEEP_ROW_STEP = 8
-CHUNK = 250_000  # rotations per batch call: ~0.5 GB transient in the eager jax.vmap, far below the 8 GB cap
 LIT_FRACTION = 1e-2  # lit band: reference > LIT_FRACTION * column maximum
 TARGET_ERROR = 1e-2
 
 
-def max_rss_mb() -> float:
-    """Process peak resident set size (macOS reports bytes, Linux kilobytes)."""
-    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    return peak / 2**20 if platform.system() == "Darwin" else peak / 2**10
-
-
-# ---------------------------------------------------------------- geometry
-def fibonacci_sphere(n: int, start: int = 0, stop: int | None = None) -> np.ndarray:
-    """Points ``start:stop`` of the ``n``-point Fibonacci lattice on ``S^2`` (equal-area spiral, ``(k, 3)``)."""
-    i = np.arange(start, n if stop is None else stop, dtype=np.float64) + 0.5
-    z = 1.0 - 2.0 * i / n
-    phi = np.pi * (1.0 + np.sqrt(5.0)) * i
-    r = np.sqrt(np.maximum(0.0, 1.0 - z * z))
-    return np.stack([r * np.cos(phi), r * np.sin(phi), z], axis=1)
-
-
-def _any_perpendicular(v: np.ndarray) -> np.ndarray:
-    """A unit vector perpendicular to each row of ``v`` (cross with the least aligned axis; no degenerate case)."""
-    axis = np.zeros_like(v)
-    axis[np.arange(len(v)), np.argmin(np.abs(v), axis=1)] = 1.0
-    p = np.cross(v, axis)
-    return p / np.linalg.norm(p, axis=1, keepdims=True)
-
-
-def frame(first: np.ndarray, second: np.ndarray) -> np.ndarray:
-    """Orthonormal right-handed frames with columns ``(first, second, first x second)``, ``(n, 3, 3)``."""
-    return np.stack([first, second, np.cross(first, second)], axis=2)
-
-
-def align_rotations(u: np.ndarray, s: np.ndarray) -> np.ndarray:
-    """One rotation per row with ``R u = s`` (the free twist about ``s`` is arbitrary, section 4.1(a))."""
-    s_rows = np.broadcast_to(s, u.shape)
-    return np.einsum("nij,nkj->nik", frame(s_rows, _any_perpendicular(s_rows)), frame(u, _any_perpendicular(u)))
-
-
-def twist_about(axis: np.ndarray, angle: float) -> np.ndarray:
-    a = axis / np.linalg.norm(axis)
-    k = np.array([[0, -a[2], a[1]], [a[2], 0, -a[0]], [-a[1], a[0], 0]])
-    return np.eye(3) + np.sin(angle) * k + (1 - np.cos(angle)) * (k @ k)
-
-
-def evaluate_fields(
-    rotations: np.ndarray, s: np.ndarray, crystal, index: float, faces: Sequence[int] = PATH_3_5_FACES
-) -> dict[str, np.ndarray]:
-    """Production batch evaluators of path ``faces`` at ``rotations``: validity, ``A``, ``T``, body-frame ``Phi`` and ``D``."""
-    check = optics.path_domain_batch(rotations, faces, s, index)
-    transmission = optics.fresnel_transmission_path_batch(rotations, faces, s, index)
-    area = geometry.entry_measure_batch(rotations, faces, s, crystal, n_ice=index)
-    u = np.einsum("nji,j->ni", rotations, s)
-    phi = np.einsum("nji,nj->ni", rotations, check.direction)
-    deviation = np.arccos(np.clip(np.sum(phi * u, axis=1), -1.0, 1.0))
-    return {"valid": check.valid, "A": area, "T": transmission, "phi": phi, "D": deviation, "u": u}
-
-
-# --------------------------------------------------------- self-checks (a02)
-def self_check_psi_invariance(
-    s: np.ndarray, crystal, index: float, sample: int = 4000, faces: Sequence[int] = PATH_3_5_FACES
-) -> dict[str, Any]:
-    """Section 4.1(a): validity, ``A``, ``T``, ``Phi`` and ``D`` do not change under a twist about ``s``."""
-    u = fibonacci_sphere(200_000)[:: 200_000 // sample]
-    base = align_rotations(u, s)
-    reference = evaluate_fields(base, s, crystal, index, faces)
-    worst = {"valid_mismatch": 0, "A": 0.0, "T": 0.0, "phi": 0.0, "D": 0.0}
-    for angle in (0.7, 2.1, -2.9):
-        fields = evaluate_fields(np.einsum("ij,njk->nik", twist_about(s, angle), base), s, crystal, index, faces)
-        both = reference["valid"] & fields["valid"]
-        worst["valid_mismatch"] += int(np.count_nonzero(reference["valid"] != fields["valid"]))
-        worst["A"] = max(worst["A"], float(np.max(np.abs(fields["A"] - reference["A"]))))
-        worst["T"] = max(worst["T"], float(np.max(np.abs(fields["T"] - reference["T"]))))
-        worst["phi"] = max(worst["phi"], float(np.max(np.abs(fields["phi"][both] - reference["phi"][both]))))
-        worst["D"] = max(worst["D"], float(np.max(np.abs(fields["D"][both] - reference["D"][both]))))
-    worst["points"] = int(len(u))
-    worst["valid_points"] = int(np.count_nonzero(reference["valid"]))
-    worst["passed"] = bool(
-        worst["valid_mismatch"] == 0 and max(worst["A"], worst["T"], worst["phi"], worst["D"]) < 1e-10
-    )
-    return worst
-
-
-def self_check_gate_coverage(
-    s: np.ndarray, crystal, index: float, sample: int = 3000, faces: Sequence[int] = PATH_3_5_FACES
-) -> dict[str, int]:
-    """Every ``entry_measure`` failure reason occurs on the sphere (the scalar form reports the reason)."""
-    u = fibonacci_sphere(sample)
-    counts: dict[str, int] = {}
-    for rotation in align_rotations(u, s):
-        status = geometry.entry_measure(rotation, faces, s, crystal, n_ice=index).status
-        counts[status] = counts.get(status, 0) + 1
-    return counts
-
-
-def self_check_haar_mean(
-    s: np.ndarray,
-    crystal,
-    index: float,
-    fibonacci_mean_w: float,
-    n: int = 1_000_000,
-    faces: Sequence[int] = PATH_3_5_FACES,
-) -> dict[str, Any]:
-    """``E_Haar[A T]`` from independent uniform quaternions against the Fibonacci ``sum w / N``.
-
-    Checks the fibration claim ``u = R^-1 s`` is uniform on ``S^2`` under Haar together with
-    the ``4 pi / N`` area element, independently of the ``u`` parametrisation.
-    """
-    rng = np.random.default_rng(20260923)
-    q = rng.normal(size=(n, 4))
-    q /= np.linalg.norm(q, axis=1, keepdims=True)
-    w0, x, y, z = q.T
-    rotations = np.stack(
-        [
-            np.stack([1 - 2 * (y * y + z * z), 2 * (x * y - z * w0), 2 * (x * z + y * w0)], axis=1),
-            np.stack([2 * (x * y + z * w0), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w0)], axis=1),
-            np.stack([2 * (x * z - y * w0), 2 * (y * z + x * w0), 1 - 2 * (x * x + y * y)], axis=1),
-        ],
-        axis=1,
-    )
-    values = []
-    for start in range(0, n, CHUNK):
-        fields = evaluate_fields(rotations[start : start + CHUNK], s, crystal, index, faces)
-        values.append(fields["A"] * fields["T"])
-    w = np.concatenate(values)
-    mean, stderr = float(np.mean(w)), float(np.std(w) / np.sqrt(n))
-    return {
-        "haar_mc_samples": n,
-        "haar_mc_mean_w": mean,
-        "haar_mc_stderr": stderr,
-        "fibonacci_mean_w": fibonacci_mean_w,
-        "z_score": (fibonacci_mean_w - mean) / stderr,
-        "passed": bool(abs(fibonacci_mean_w - mean) < 4.0 * stderr),
-    }
-
-
 # ------------------------------------------------------------- precompute
-# ``sampler(first, stop)`` -> points ``first:stop`` of an ``N``-point set on ``S^2`` and, for a
-# non-uniform set, ``1 / (4 pi q(u))`` per point (``q`` its density w.r.t. area; ``None`` = uniform).
-PointSampler = Callable[[int, int], tuple[np.ndarray, np.ndarray | None]]
-FIBONACCI_SAMPLING = "Fibonacci lattice on S^2 (equal-area spiral, z_i = 1 - (2i+1)/N, golden-angle azimuth)"
-
-
 def precompute(
     n: int,
     output_dir: Path,
@@ -233,83 +101,57 @@ def precompute(
     sampler: PointSampler | None = None,
     sampling: str = FIBONACCI_SAMPLING,
 ) -> dict[str, Any]:
-    """Event store of path ``faces``: ``w = A T > 0`` events sorted by ``D`` (``[lo, hi]`` rad only, if given).
+    """Event store of path ``faces`` (:func:`lumice_integral.s2_store.build_event_store`) in the probe's flat layout.
 
-    ``sampler`` replaces the Fibonacci lattice; its inverse weights are stored as ``iw`` and
-    multiply every contribution (:func:`band_contributions`).
+    ``events_N<n>.npz`` + ``precompute_N<n>.json`` in ``output_dir``, never
+    overwritten.  This layout (one flat directory per store family, tiers by
+    ``N``) predates the library's parameter-hashed cache directories and is
+    kept on purpose so the task 13/14 artifacts stay readable; it is not a
+    second store implementation.
     """
     events_path = output_dir / f"events_N{n}.npz"
     meta_path = output_dir / f"precompute_N{n}.json"
     for path in (events_path, meta_path):
         if path.exists():
             raise FileExistsError(f"{path} exists; refusing to overwrite a precomputed tier")
-    s, crystal, index = canonical_incident_direction(), canonical_crystal(), CANONICAL_REFRACTIVE_INDEX
-    checks: dict[str, Any] = {}
-    if run_checks:
-        checks["psi_invariance"] = self_check_psi_invariance(s, crystal, index, faces=faces)
-        if not checks["psi_invariance"]["passed"]:
-            raise RuntimeError(f"psi-invariance self-check failed: {checks['psi_invariance']}")
-        checks["gate_coverage"] = self_check_gate_coverage(s, crystal, index, faces=faces)
-        print("self-checks:", json.dumps(checks))
-
-    start = time.perf_counter()
-    kept: dict[str, list[np.ndarray]] = {"u": [], "phi": [], "D": [], "w": []}
-    w_sum = 0.0
-    valid_count = 0
-    for first in range(0, n, CHUNK):
-        stop = min(first + CHUNK, n)
-        if sampler is None:
-            u, inverse_weight = fibonacci_sphere(n, first, stop), None
-        else:
-            u, inverse_weight = sampler(first, stop)
-        fields = evaluate_fields(align_rotations(u, s), s, crystal, index, faces)
-        w = fields["A"] * fields["T"]
-        valid_count += int(np.count_nonzero(fields["valid"]))
-        keep = w > 0.0
-        if deviation_window is not None:
-            keep &= (fields["D"] >= deviation_window[0]) & (fields["D"] <= deviation_window[1])
-        w_sum += float(np.sum(w if inverse_weight is None else w * inverse_weight))
-        kept["u"].append(u[keep])
-        kept["phi"].append(fields["phi"][keep])
-        kept["D"].append(fields["D"][keep])
-        kept["w"].append(w[keep])
-        if inverse_weight is not None:
-            kept.setdefault("iw", []).append(inverse_weight[keep])
-    deviation = np.concatenate(kept.pop("D"))
-    order = np.argsort(deviation, kind="stable")
-    events = {"D": deviation[order]}
-    del deviation
-    for key in list(kept):  # one key at a time keeps the peak at about one extra copy of one array
-        events[key] = np.concatenate(kept.pop(key))[order]
-    wall = time.perf_counter() - start
-    np.savez(events_path, **events)
-
-    if run_checks:
-        checks["haar_mean"] = self_check_haar_mean(s, crystal, index, w_sum / n, faces=faces)
-        print("haar mean check:", json.dumps(checks["haar_mean"]))
+    s = canonical_incident_direction()
+    store = build_event_store(
+        canonical_crystal(),
+        CANONICAL_REFRACTIVE_INDEX,
+        [faces],
+        n,
+        incident_direction=s,
+        sampler=sampler,
+        sampling=sampling,
+        deviation_window=deviation_window,
+        run_checks=run_checks,
+        log=print,
+    )
+    np.savez(events_path, **store.events.arrays())
+    diagnostics = store.diagnostics
     meta = {
         "N": n,
         "sampling": sampling,
-        "rotation_per_point": "R = [s, p_s, s x p_s][u, p_u, u x p_u]^T (any R with R u = s; section 4.1(a))",
+        "rotation_per_point": ROTATION_PER_POINT,
         "path": list(faces),
         "deviation_window_rad": None if deviation_window is None else [float(v) for v in deviation_window],
         "crystal": {"type": "hexagonal_column", "height_ratio": 2.0},
-        "refractive_index": index,
+        "refractive_index": CANONICAL_REFRACTIVE_INDEX,
         "incident_direction": s.tolist(),
-        "kept_events": int(len(events["D"])),
-        "valid_domain_points": valid_count,
-        "kept_fraction": len(events["D"]) / n,
-        "fibonacci_mean_w": w_sum / n,
-        "D_range_deg": [float(np.degrees(events["D"][0])), float(np.degrees(events["D"][-1]))] if len(events["D"]) else None,
+        "kept_events": diagnostics["kept_events"],
+        "valid_domain_points": diagnostics["valid_domain_points"],
+        "kept_fraction": diagnostics["kept_fraction"],
+        "fibonacci_mean_w": diagnostics["fibonacci_mean_w"],
+        "D_range_deg": diagnostics["D_range_deg"],
         "dtype": "float64",
-        "wall_clock_s": wall,
+        "wall_clock_s": diagnostics["wall_clock_s"],
         "chunk": CHUNK,
         "max_rss_mb_process": max_rss_mb(),
-        "self_checks": checks,
+        "self_checks": diagnostics["self_checks"],
         "created": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
     }
     meta_path.write_text(json.dumps(meta, indent=2) + "\n")
-    print(f"N={n}: kept {meta['kept_events']} ({meta['kept_fraction']:.4f}), {wall:.1f} s, rss {meta['max_rss_mb_process']:.0f} MB")
+    print(f"N={n}: kept {meta['kept_events']} ({meta['kept_fraction']:.4f}), {meta['wall_clock_s']:.1f} s, rss {meta['max_rss_mb_process']:.0f} MB")
     return meta
 
 
@@ -352,13 +194,7 @@ def pixel_band(
 
 def band_rotations(events: dict[str, np.ndarray], lo: int, hi: int, s: np.ndarray, centre: np.ndarray) -> np.ndarray:
     """``R_i`` with ``R_i u_i = s`` and ``R_i Phi_i`` at deviation ``D_i``, azimuth of ``centre``."""
-    u, phi, deviation = events["u"][lo:hi], events["phi"][lo:hi], events["D"][lo:hi]
-    e = centre - (centre @ s) * s
-    e /= np.linalg.norm(e)
-    f2 = phi - np.cos(deviation)[:, None] * u
-    f2 /= np.linalg.norm(f2, axis=1, keepdims=True)
-    world = np.stack([s, e, np.cross(s, e)], axis=1)
-    return np.einsum("ij,nkj->nik", world, frame(u, f2))
+    return event_rotations(events["u"][lo:hi], events["phi"][lo:hi], events["D"][lo:hi], s, centre)
 
 
 def gislen_eq19(a: np.ndarray, b: np.ndarray, a0: np.ndarray, b0: np.ndarray, omega: np.ndarray) -> np.ndarray:

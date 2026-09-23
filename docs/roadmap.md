@@ -834,6 +834,29 @@ but the band holds enough events. A rho-aware store is not needed for
 these families. Figures and tables:
 `scratchpad/task-narrow-density-band-sum-probe/artifacts/` (local).
 
+**The store is in `src/` (2026-09-23, task `s2-event-store`).**
+`lumice_integral.s2_store` builds, caches (parameter-hashed directory with a
+provenance JSON; a mismatch or a modified file is refused, never silently
+rebuilt or reused) and slices the event store; it rebuilds the task 13
+stores ($N = 10^6, 10^7$) bit for bit, and both probe scripts now call it.
+`path_class.phi_key` groups face sequences by their $\Phi$ (`3-5` and
+`3-1-2-5` share one; a group store sums $w_\Phi = \sum_m w_m$ on the same
+$\mathbf u$), and `path_class.path_class_symmetry` gives each class member
+the proper $D_{6h}$ element $g$ that serves it from the representative's
+store with the pose factor $g^{-1}$ (section 4.1(d)); a member reached only
+by a mirror (half of the 24-member class `[3,1,2,5]`) needs its own store.
+Evidence: transported events equal each `[3,5]` member's own store on the
+$g$-rotated lattice to `5.2e-13` ($N = 10^6$); on the three task 14
+profiles at $N = 10^7$ one store with pose factors equals twelve member
+stores to `6.9e-14` relative. The Fibonacci lattice is not closed under
+$g$, so against task 14's twelve independent lattices the class sums agree
+only at the discretisation level (sum ratio `1.0006` / `1.0015` / `1.0011`,
+per pixel `0.89-1.06`). float32 halves the memory but moves the worst
+column-126 pixel by `5.5e-3`; float64 stays the default. The probe
+scripts' flat `events_N<n>.npz` layout and the library's cache directories
+coexist on purpose (the historical artifacts stay readable); the store
+format itself has one implementation.
+
 ## 5. Proposed Responsibility Boundaries
 
 The project will likely need the following conceptual layers, without implying

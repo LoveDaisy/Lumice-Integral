@@ -145,3 +145,20 @@ def trace_faces(crystal: Polyhedron, origin: Sequence[float], direction: Sequenc
         else:
             d = reflect(d, -n_out)
     return faces
+
+
+# ---- Phi-group key (independent of lumice_integral.path_class.phi_key) ----
+
+
+def phi_group_key(faces: Sequence[int]) -> tuple:
+    """``(M rounded, entry face, face of M^T n_b)`` from the closed-form normals and :func:`path_matrix`.
+
+    Rounding ``M`` to six decimals stands in for ``phi_key``'s match against the
+    ``D6h`` table, so the two keys agree only if they induce the same partition.
+    """
+    faces = [int(f) for f in faces]
+    M = path_matrix(faces)
+    target = M.T @ NORMALS[faces[-1]]
+    exit_face = [k for k, n in NORMALS.items() if np.allclose(n, target, atol=1e-9)]
+    assert len(exit_face) == 1, (faces, exit_face)
+    return tuple(np.round(M, 6).ravel() + 0.0), faces[0], exit_face[0]

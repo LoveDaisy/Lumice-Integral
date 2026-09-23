@@ -20,6 +20,9 @@ uv run pytest -q
 uv run python scripts/inspect_path_3_5.py
 uv run python benchmarks/benchmark_batch.py --dtype float64
 uv run python benchmarks/benchmark_fiber_trace.py
+# S^2 event store regressions at N = 1e7 (task 13 bit-for-bit rebuild, task 14 class symmetry transport; ~3 min,
+# need the task 13/14 scratchpad artifacts, skipped otherwise)
+uv run pytest -m slow tests/test_s2_store.py tests/test_s2_store_symmetry.py
 # the strip's per-pixel ruler: one column single-process, steady-state s/px and XLA compile count
 uv run python benchmarks/benchmark_column_steady_state.py --column 126 --rows 100:160
 # ch06 251 x 801 direct strip: a sub-window smoke on a laptop ...
