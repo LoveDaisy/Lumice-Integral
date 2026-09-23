@@ -2,6 +2,9 @@
 
 Lumice and the writing series are read as evidence only; the few formulas
 used from them are transcribed here with their source, never imported.
+The writing series' pose construction ``column_attitude`` now lives in this
+repository (:mod:`lumice_integral.symmetry.attitude`) and is imported as the
+object under test; the Lumice chain stays transcribed.
 """
 
 from __future__ import annotations
@@ -16,6 +19,7 @@ from lumice_integral.geometry import HexPrism, fold_matrix
 from lumice_integral.path_class import hexprism_symmetry_matrices, phi_key
 from lumice_integral.pose_density import c_axis_roll, c_axis_zenith
 from lumice_integral.s2_store import align_rotations, evaluate_fields, store_lattice
+from lumice_integral.symmetry.attitude import column_attitude
 
 
 def rz(deg: float) -> np.ndarray:
@@ -31,11 +35,6 @@ def ry(deg: float) -> np.ndarray:
 def lumice_chain(az_deg: float, zenith_deg: float, roll_deg: float) -> np.ndarray:
     """Lumice ``doc/coordinate-convention.md`` section 6: ``Rz(az - 180) . Ry(-zenith) . Rz(roll)``."""
     return rz(az_deg - 180.0) @ ry(-zenith_deg) @ rz(roll_deg)
-
-
-def column_attitude(psi_deg: float, theta_deg: float) -> np.ndarray:
-    """Writing series ``halo_notes/math/attitude.py::column_attitude``: ``Rz(psi) . Ry(90) . Rz(theta)``."""
-    return rz(psi_deg) @ ry(90.0) @ rz(theta_deg)
 
 
 # ------------------------------------------------------------ crystal frame
