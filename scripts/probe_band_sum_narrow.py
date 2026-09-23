@@ -7,7 +7,7 @@ member, the class value is the sum of the members' band sums.  Every member shar
 the pixel's band ``[delta_lo, delta_hi]`` and its constant ``2 pi N (delta_hi -
 delta_lo) sin(delta)``, so the class estimate is the band-sum estimate of the pooled
 member contributions (``band_sum_estimate`` of the pooled total, ``kish_k_eff`` of the
-pooled total and square) -- the estimator formulas stay in ``probe_band_sum.py``.
+pooled total and square) -- the estimator formulas are ``lumice_integral.band_sum``'s (migrated from ``probe_band_sum.py``).
 
 Stages (``--stage``):
 
@@ -73,16 +73,13 @@ import numpy as np
 from probe_band_sum import (
     LIT_FRACTION,
     TARGET_ERROR,
-    band_contributions,
-    band_sum_estimate,
-    kish_k_eff,
     load_events,
     max_rss_mb,
-    pixel_band,
     power_law,
     precompute,
 )
 
+from lumice_integral.band_sum import band_contributions, band_sum_estimate, kish_k_eff, pixel_band
 from lumice_integral.camera import linear_pixel_sky_direction
 from lumice_integral.canonical_scene import canonical_crystal, canonical_incident_direction
 from lumice_integral.optics import path_id_of
