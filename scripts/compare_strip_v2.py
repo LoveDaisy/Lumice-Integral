@@ -33,6 +33,17 @@ and every panel is on a log scale.
    the column.  A second independent run (``--lumice-float-run2``) is summed
    into the arbitrating profile and the run-to-run difference is reported as
    the Monte Carlo noise floor of those numbers.
+6. Absolute radiometric scale (``--lumice-float`` only; the ``absolute_scale``
+   block): ``raw[p] / emitted_energy = K_p * V(p)`` with
+   ``K_p = N_sym * ybar(550) * Omega_p / A_eff(p)`` (derivation in
+   ``scripts/probe_absolute_scale.py`` and ``docs/ch06-reference-fixture.md``
+   section 7, stage 4).  Without a probe the block reports the pose-independent
+   part ``N_sym * ybar * Omega_p`` and the ``A_eff`` it implies on the bright
+   band of columns ``106 / 126 / 146``; with ``--absolute-scale-probe`` (that
+   script's output directory, whose ``A_eff`` is computed from first
+   principles on the probed pixels) it reports ``K_p``, the measured ratio
+   ``(raw / E) / V`` and the residual ``measured / K_p - 1`` next to the two
+   terms that may explain it (Monte Carlo noise, point versus pixel-area model).
 
 Inputs are read only; the historical raw and the Lumice PNG live in the
 Writing-Lab project (``--writing-lab-dir``).  The display mapping is the
@@ -53,6 +64,7 @@ and the ``+-20`` columns locally (:data:`LUMICE_FLOAT_EXTRA_ROWS`,
 from __future__ import annotations
 
 import argparse
+import csv
 import datetime as dt
 import json
 from pathlib import Path
@@ -61,6 +73,8 @@ from typing import Any
 import numpy as np
 from scipy.stats import spearmanr
 
+from lumice_integral.camera import camera_rotation, linear_pixel_sky_direction
+from lumice_integral.canonical_scene import CANONICAL_RENDER
 from lumice_integral.strip_io import STATUS_BITS, read_strip
 
 DEFAULT_WRITING_LAB_DIR = Path(
@@ -85,6 +99,12 @@ LUMICE_FLOAT_COLUMN_OFFSETS = (-20, 0, 20)
 # same emitted budget (doc/raypath-symmetry.zh.md of the Ice Halo repository); a denominator
 # bookkeeping, never a per-pixel factor, and only recorded here for the reader to fold by hand
 LUMICE_SYMMETRY_FOLD = {"P": 6, "PBD": 12}
+# absolute_scale block (item 6): the bright-band columns of the issue and the band floor (fraction of the
+# column's merged Lumice maximum); CIE 1931 ybar(550 nm) as Lumice's kCmfY table holds it
+# (src/util/color_data.hpp of the Ice Halo repository; must equal probe_absolute_scale.YBAR_550)
+ABSOLUTE_SCALE_COLUMNS = (106, 126, 146)
+ABSOLUTE_SCALE_BRIGHT_FLOOR = 0.1
+YBAR_550 = 0.9949501
 
 
 # ---------- ch06 display mapping (docs/ch06-reference-fixture.md section 3.2) ----------
@@ -380,6 +400,93 @@ def lumice_float_block(
     }
 
 
+def pixel_cos3(rows: np.ndarray, column: int) -> np.ndarray:
+    """``cos^3`` of the off-axis angle of canonical pixels: a linear-lens pixel subtends ``cos^3 * axis_solid_angle``."""
+    axis = camera_rotation(CANONICAL_RENDER["view"])[:, 2]
+    sky = np.array([linear_pixel_sky_direction(int(r), column, **{k: CANONICAL_RENDER[k] for k in ("width", "height", "fov_deg", "view")}) for r in rows])
+    return (sky @ axis / np.linalg.norm(sky, axis=1)) ** 3
+
+
+def absolute_scale_block(
+    lumf: np.ndarray,
+    source: dict[str, Any],
+    *,
+    ours: np.ndarray,
+    complete: np.ndarray,
+    noise: dict[str, Any],
+    probe_dir: Path | None,
+) -> dict[str, Any]:
+    """``raw / E = K_p V``: pose-independent factor, implied ``A_eff`` and, with a probe, residual (module docstring, item 6)."""
+    fold = source["symmetry_fold_to_single_3_5"]
+    axis_solid_angle = source["runs"][0]["axis_solid_angle"]
+    if fold is None or not axis_solid_angle:
+        return {"available": False, "reason": "symmetry fold or axis_solid_angle unknown (config.json / sidecar missing)"}
+    per_ray = lumf / source["emitted_energy"]
+    probe: dict[int, dict[int, dict[str, str]]] = {}
+    probe_summary: dict[str, Any] | None = None
+    if probe_dir is not None:
+        probe_summary = json.loads((probe_dir / "absolute_scale_summary.json").read_text())
+        with (probe_dir / "absolute_scale_pixels.csv").open() as fh:
+            for rec in csv.DictReader(fh):
+                probe.setdefault(int(rec["column"]), {})[int(rec["row"])] = rec
+    columns: dict[str, Any] = {}
+    for c in ABSOLUTE_SCALE_COLUMNS:
+        lum_c, ours_c = per_ray[:, c], np.nan_to_num(ours[:, c], nan=0.0)
+        bright = complete[:, c] & (ours_c > 0) & (lum_c >= ABSOLUTE_SCALE_BRIGHT_FLOOR * lum_c.max())
+        rows = np.where(bright)[0]
+        if not rows.size:
+            columns[f"column_{c}"] = {"count": 0}
+            continue
+        pose_free = fold * YBAR_550 * axis_solid_angle * pixel_cos3(rows, c)  # N_sym * ybar * Omega_p
+        implied = pose_free * ours_c[rows] / lum_c[rows]  # A_eff that would make raw / E = K_p V exact
+        entry: dict[str, Any] = {
+            "bright_rows": [int(rows.min()), int(rows.max())],
+            "count": int(rows.size),
+            "pose_free_factor_median": float(np.median(pose_free)),
+            "implied_a_eff_median": float(np.median(implied)),
+            "implied_a_eff_p10_p90": [float(np.percentile(implied, 10)), float(np.percentile(implied, 90))],
+            "merged_relative_noise_on_profile": noise.get(f"column_{c}", {}).get("merged_relative_noise"),
+        }
+        probed = [r for r in rows if r in probe.get(c, {})]
+        if probed:
+            k = np.array([float(probe[c][r]["k_pixel"]) for r in probed])
+            measured = np.array([lum_c[r] / ours_c[r] for r in probed])
+            residual = measured / k - 1.0
+            probe_value = np.array([float(probe[c][r]["li_value"]) for r in probed])
+            entry.update(
+                probed_count=len(probed),
+                k_pixel_median=float(np.median(k)),
+                k_pixel_min_max=[float(k.min()), float(k.max())],
+                measured_ratio_median=float(np.median(measured)),
+                residual_median=float(np.median(residual)),
+                residual_standard_error=float(np.std(residual) / np.sqrt(len(probed))),
+                strip_vs_probe_value_max_relative_difference=float(np.max(np.abs(ours_c[probed] / probe_value - 1.0))),
+            )
+        columns[f"column_{c}"] = entry
+    out: dict[str, Any] = {
+        "available": True,
+        "convention": "raw[p] / emitted_energy = K_p * V(p), K_p = N_sym * ybar(550) * Omega_p / A_eff(p); "
+        "V = strip value (length^2 / sr, hexagon edge a = 1), Omega_p = cos^3(theta_p) * axis_solid_angle, "
+        "A_eff = fiber-weighted harmonic mean of the crystal's projected silhouette (Lumice samples poses from rho_pose "
+        "without silhouette weighting), so K_p is not one constant",
+        "symmetry_fold": fold,
+        "ybar_550": YBAR_550,
+        "axis_solid_angle": axis_solid_angle,
+        "bright_floor": ABSOLUTE_SCALE_BRIGHT_FLOOR,
+        "columns": columns,
+    }
+    if probe_summary is not None:
+        subpixel = probe_summary.get("subpixel_check", [])
+        out["probe"] = {
+            "dir": str(probe_dir),
+            "refractive_index": probe_summary.get("refractive_index"),
+            "lumice_refractive_index_550": probe_summary.get("lumice_refractive_index_550"),
+            "point_vs_subpixel_mean_max_abs": max((abs(e["point_over_subpixel_mean"] - 1.0) for e in subpixel), default=None),
+            "point_vs_subpixel_rows": sorted({e["row"] for e in subpixel}),
+        }
+    return out
+
+
 # ---------- figures ----------
 def make_figures(
     out_dir: Path,
@@ -572,9 +679,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--no-figures", action="store_true")
     parser.add_argument("--lumice-float", type=Path, default=None, help="Lumice `--format npy` img_0N.npy (sidecar img_0N.json required) for the radiometric three-way check")
     parser.add_argument("--lumice-float-run2", type=Path, default=None, help="second independent run of the same config; summed into the arbitrating profile, differenced for the noise floor")
+    parser.add_argument("--absolute-scale-probe", type=Path, default=None, help="output directory of scripts/probe_absolute_scale.py: adds K_p and the residual to the absolute_scale block")
     args = parser.parse_args(argv)
     if args.lumice_float_run2 is not None and args.lumice_float is None:
         parser.error("--lumice-float-run2 needs --lumice-float")
+    if args.absolute_scale_probe is not None and args.lumice_float is None:
+        parser.error("--absolute-scale-probe needs --lumice-float")
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     arrays, provenance = read_strip(args.strip_dir)
@@ -653,6 +763,14 @@ def main(argv: list[str] | None = None) -> None:
     }
     if float_runs:
         metrics["lumice_float"] = lumice_float_block(float_runs, hist=hist, ours=ours, rendered=rendered, complete=complete, column=column)
+        metrics["absolute_scale"] = absolute_scale_block(
+            metrics["lumice_float"]["_merged"],
+            metrics["lumice_float"]["source"],
+            ours=ours,
+            complete=complete,
+            noise=metrics["lumice_float"]["noise"],
+            probe_dir=args.absolute_scale_probe,
+        )
     if not args.no_figures:
         metrics["figures"] = make_figures(
             args.output_dir,
@@ -699,6 +817,14 @@ def main(argv: list[str] | None = None) -> None:
         for key, value in lf["inner_edge_offsets"].items():
             for e in value:
                 print(f"edge {key} @{e['threshold']:g}: hist {e['historical_row']} ours {e['ours_row']} lumice-float {e['lumice_row']}")
+        scale = metrics["absolute_scale"]
+        for key, value in scale.get("columns", {}).items():
+            if not value.get("count"):
+                continue
+            line = f"absolute scale {key} rows {value['bright_rows']}: implied A_eff {value['implied_a_eff_median']:.3f}"
+            if "residual_median" in value:
+                line += f", K_p {value['k_pixel_median']:.4e}, (raw/E)/V {value['measured_ratio_median']:.4e}, residual {value['residual_median']:+.4f} +- {value['residual_standard_error']:.4f} (n={value['probed_count']})"
+            print(line)
     print(f"spearman lit-in-both {metrics['spearman_auxiliary']['lit_in_both']['rho']:.4f}")
     print(f"wrote {out}")
 

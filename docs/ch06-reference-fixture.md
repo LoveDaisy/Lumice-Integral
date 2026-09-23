@@ -319,8 +319,8 @@ factors are not in the product.
 | ch06 all-sky Monte Carlo example | Lumice through Writing-Lab validation glue | Supported | Not a Lumice Integral product output. |
 | ch06 pose-fiber geometry | Lumice Integral | Supported for one supplied regular seed/component; seeds for one pixel can come from `lumice_integral.discovery`; continuous-sign unit-quaternion adapters exist (`so3.quaternion_from_rotation` / `continuous_quaternion_signs`, used by `resample.fiber_spline`) | Add C-axis longitude/latitude/spin adapters; the prescan-cloud figure still needs recorded spacing/feasibility output from the discovery scan. |
 | ch06 solver/Jacobian diagnostics | Lumice Integral data; Writing-Lab presentation | Supported as versioned figure data | A production plotting consumer still belongs in Writing-Lab; an independent prototype consumer has been verified. |
-| ch06 named physical-factor curves | Lumice Integral | Supported for `rho_pose`, `entry_measure`, `fresnel_transmission`, `path_validity` on the canonical pixel fiber (section 4.1, figure-data `weight_<name>` arrays); the pointwise final `integrand` curve (product over `J_perp + epsilon`) is exported alongside | `visibility` (finite-face obstruction) and the radiometric factors remain unavailable. |
-| ch06 one-pixel integrand/integral | Lumice Integral | Supported as a `partial` value: resampled fixed-grid line quadrature over the closed canonical fiber with error estimate and grid/retraction evidence (sections 4.1 and 6, `result.quadrature`); single-pixel component discovery is available as a separate primitive (`lumice_integral.discovery`, procedural `completeness` only) | A completeness certificate; pixel averaging (point value only); the missing factors above. |
+| ch06 named physical-factor curves | Lumice Integral | Supported for `rho_pose`, `entry_measure`, `fresnel_transmission`, `path_validity` on the canonical pixel fiber (section 4.1, figure-data `weight_<name>` arrays); the pointwise final `integrand` curve (product over `J_perp + epsilon`) is exported alongside | `visibility` (finite-face obstruction) is not a separate curve because it is not a separate factor: for the convex prism it is contained in `entry_measure`, whose corridor intersection keeps only entry points whose internal segment reaches every next face's finite polygon (`geometry/entry_measure.py` algorithm step 4, `geometry/feasibility.py` `corridor_intersection`); for a convex body that is the same as the next face being the first one hit, and no incoming or outgoing ray can be obstructed; absolute agreement with Lumice ray tracing to `0.3 %` is the evidence (section 7, stage 4, absolute scale). Uncovered: non-convex crystals and shadowing between crystals, both outside the current scene. `source_factor` / `pixel_factor` are not evaluated in code; their conversion to Lumice's `raw / emitted_energy` is derived and checked (section 7, stage 4). |
+| ch06 one-pixel integrand/integral | Lumice Integral | Supported as a `partial` value: resampled fixed-grid line quadrature over the closed canonical fiber with error estimate and grid/retraction evidence (sections 4.1 and 6, `result.quadrature`); single-pixel component discovery is available as a separate primitive (`lumice_integral.discovery`, procedural `completeness` only) | A completeness certificate; pixel averaging (point value only); the radiometric factors above (derived conversion, not evaluated in code). `visibility` is covered for the convex crystal as in the row above. |
 | ch06 single-pixel pipeline (`strip_pixel.render_pixel`) | Lumice Integral | Supported (task-pixel-pipeline-v2, section 7 stage 4): one discovery pass per pixel over the scene prescan table plus the warm seeds of any neighbouring pixels, SO(3)-distance dedup before tracing, one production trace per distinct candidate, closed loops *and* open arcs (forward + backward trace stitched, `resample.OpenArc`) integrated by the resampled quadrature with per-end truncation estimates, linear component sum; `0.07 s` per lit pixel and `0.13 s` per lower-band pixel on the M2 Max | A completeness certificate (`completeness` is procedural); no real open arc exists in the current picture, so the arc path is validated on the analytic two-sided fixture only; the missing factors of the one-pixel row. |
 | ch06 `251 x 801` direct strip | Lumice Integral | Supported as a `partial` physical rerender: `scripts/render_ch06_strip.py` (`lumice_integral.strip_pixel` / `strip_driver` / `strip_io`, format `lumice-integral.strip/v2`) renders any window of the canonical `251 x 801` grid column-wise, each pixel warmed by the one above, and writes float64/float32 raw in the historical layout plus a per-pixel status layer (`has_arc`, `quadrature_unavailable`, ...) and `provenance.json`; pixel model: pixel-centre point value with `epsilon` regularisation (section 7, stage 4); `--workers` is capped at `4` on macOS | A completeness certificate (the status layer is procedural); the missing factors of the one-pixel row; sub-pixel averaging is implemented but off by default (6-10x cost; `O(10-40 %)` effect in the centre-column caustic band, section 7 stage 4); finite-sun averaging. Known limitation on the delivered full image (section 7, stage 4, full rerender): the vertical decay along the centre column was steeper than the historical raw by `3-4x` between rows `150` and `600` (defect 2); with the `h/a = 2` crystal (2026-09-20) the centre column reproduces the historical plateau on rows `150-400` (`0.89-1.06` relative to row `150`), while the height-independent tail below row `400` (`x4` dark by row `600`) and the horizontal narrowness off the centre column (`0.5-0.7x` at `+-20` columns on rows `300-400`) remain against the historical raw, see `scratchpad/scrum-strip-pipeline-v2/task-strip-rerender-and-compare/artifacts/defect2_findings.md` sections 8-9; the `1e9`-ray Lumice float export (section 3.3, task `lumice-raw-profile-oracle`, 2026-09-20) reproduces both, agreeing with the strip at the Monte Carlo noise floor (column log-RMS `0.03` against a `0.04-0.06` run-to-run floor), so they are differences of the historical raw, not of this renderer. |
 | ch10 halo-map/Jacobian/fold figures | Lumice Integral numerical data; Writing-Lab presentation | Partially supported | Target sweeps and singular/fold localization beyond one regular fiber. |
@@ -913,14 +913,73 @@ color-to-factor mapping.
      (`compare/compare_metrics.json`, `compare/strip_profiles_lumice_float.png`,
      `edge-offset-analysis.md`, `lumice-raw/run1|run2/` with `config.json`,
      `img_01.{npy,json}`, `run.log`, and the `probe-*/` runs).
+   - Absolute radiometric scale (task `phase1-closeout-absolute-scale`,
+     2026-09-23). The strip value is `V(w) = (1 / 8 pi^2) int rho A_P T /
+     (J_perp + epsilon) dH^1`, the Haar expectation of `A_P T delta(w -
+     Phi(R))`: power per steradian sent along `3-5` by one crystal of random
+     pose per unit incident irradiance, in crystal `length^2 / sr` (hexagon
+     edge `a = 1`, `h = 2`). Lumice (Ice Halo `src/core/simulator.cpp`, read
+     as evidence, never linked) draws every ray's pose from `rho` alone
+     (`InitRay_rot`), gives it emission weight `1` with no pose factor
+     (`InitRay_d_w_previdx`), and only then picks the entry point with
+     probability proportional to the projected area of each front-facing
+     sub-triangle (`InitRay_p_fid`). An emitted ray therefore enters `3-5`
+     with probability `A_P / A_tot`, where `A_tot` is the projected
+     silhouette, and the pose is *not* weighted by `A_tot`. Fresnel is the
+     same per-interface s/p average on both sides
+     (`src/core/shared/optics_shared.h` `GetReflectRatio`); the Y channel
+     carries `ybar(550) = 0.99495` (`kCmfY`); a linear-lens pixel subtends
+     `Omega_p = cos^3(theta_p) * axis_solid_angle` (`1.7438e-7 sr` on axis,
+     the sidecar value, equal to `1 / scale^2` of `camera.linear_scale`).
+     Under the canonical density (uniform azimuth and roll, zenith symmetric
+     about `90 deg`) all `12` `PBD` images of `[3,5]` have the same sky image
+     in expectation. Hence
+     `raw[p] / emitted_energy = K_p V(w_p)` with
+     `K_p = 12 * ybar(550) * Omega_p / A_eff(w_p)`, where `A_eff = V / V~` is
+     the fiber-weighted harmonic mean of `A_tot`, and `V~` is the same
+     integral with `rho / A_tot` in place of `rho`. `K_p` is not one
+     constant. On the bright band `A_eff` runs over `3.8-4.5 a^2`, and `K_p`
+     over `4.58-5.16e-7` (column medians `4.62 / 4.92 / 4.62e-7` on columns
+     `106 / 126 / 146`). This `~15 %` variation is a modelling difference
+     between the two simulators: Lumice Integral weights poses by their
+     physical cross-section, Lumice gives every pose the same energy. It sits
+     inside the `0.03` log-RMS of the max-normalised comparison above.
+     Check (`scripts/probe_absolute_scale.py`, nothing fitted): one discovery
+     and two quadratures (`rho` and `rho / A_tot`) per probed pixel, every
+     tenth row of columns `106 / 126 / 146`, against the merged `1e9`-ray
+     export. On the bright band (Lumice above `10 %` of the column maximum,
+     rows `60-500`, `39-45` pixels per column) the measured over predicted
+     `raw / E` is `1.013 +- 0.011 / 1.026 +- 0.008 / 1.009 +- 0.011` (median
+     +- standard error) at the canonical `n = 1.31`. At Lumice's own
+     `n(550) = 1.3110129` (`IceRefractiveIndex` Sellmeier,
+     `src/core/optics.cpp`) it is `0.999 +- 0.005 / 0.997 +- 0.010 / 0.998 +-
+     0.005`. On column `126`, `V` rises by `0.17-0.37 %` per `1e-4` of `n`
+     (rows `400` to `150`), so the canonical-`n` residual is the index
+     mismatch. Two terms can explain what remains. Monte Carlo noise: the
+     merged run holds `1.3-1.6 %` per bright pixel, and each column median has
+     a standard error of `0.5-1 %`. Point versus pixel area: the `3 x 3`
+     sub-pixel mean of `V~` at rows `150 / 300 / 450` of each column differs
+     from the point value by at most `0.02 %` off the caustic, while the
+     caustic rows keep the `O(10-40 %)` of the pixel-model probe above (row
+     `60` of column `106` measures `0.58` of its point prediction). The
+     sub-pixel check was measured here because the earlier probe covered only
+     the caustic. No integer or `pi` factor remains. On the delivered strip
+     (`scripts/compare_strip_v2.py --lumice-float ... --absolute-scale-probe`,
+     `absolute_scale` block) the residual is `+1.3 / +3.0 / +0.9 %` (standard
+     error `~1 %`, canonical `n`), with the strip values within `1e-4` of the
+     probe's re-integration. Evidence:
+     `scratchpad/task-phase1-closeout-absolute-scale/artifacts/`
+     (`absolute-scale/`, `absolute-scale-n-lumice/`,
+     `compare/compare_metrics.json`).
    Radiometric normalisation is not aligned in the historical and PNG
    comparisons (the strip is the partial integrand, the historical raw has
    unknown units, the Lumice PNG is tone-mapped 8-bit): the v1 preview
    comparison was morphology only (rank correlation, profiles, side
    agreement), the v2 full-image comparison reports shape-sensitive ratios
    relative to a whole-image median and log-domain profile differences;
-   only the Lumice float comparison of the last bullet is radiometric up to
-   one scale factor. Scripts and JSON
+   the Lumice float comparison is radiometric up to one scale factor, and
+   that factor is derived and checked in absolute terms by the
+   absolute-scale bullet. Scripts and JSON
    of the v1 preview:
    `scratchpad/scrum-ch06-direct-integration/task-strip-image-driver/`
    (`scripts/compare_with_historical.py`, `scripts/cross_check.py`,
