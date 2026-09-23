@@ -20,6 +20,7 @@ from lumice_integral.strip_driver import (
     render_column,
     render_window,
 )
+from lumice_integral.pose_density import build_pose_density, resolve_pose_density_parameters
 from lumice_integral.strip_io import (
     FILE_NAMES,
     FORMAT_VERSION,
@@ -301,6 +302,61 @@ def test_driver_options_validate():
     assert DriverOptions().pixel_model_block()["subpixel_grid"] is None
 
 
+POSE_DENSITY_FIELDS = (
+    "pose_density_family",
+    "pose_density_zenith_mean_deg",
+    "pose_density_zenith_std_deg",
+    "pose_density_roll_mean_deg",
+    "pose_density_roll_std_deg",
+)
+
+
+def test_driver_options_resolve_and_validate_the_pose_density_parameter_set():
+    default = DriverOptions()
+    assert default.pose_density_block() == {
+        "model": "zenith-gaussian column",
+        "zenith_mean_deg": 90.0,
+        "zenith_std_deg": 0.5,
+        "family": "column",
+    }
+    # an explicit family default and an omitted one fingerprint alike
+    assert DriverOptions(pose_density_zenith_mean_deg=None) == default
+    assert DriverOptions(pose_density_zenith_mean_deg=90) == default
+    plate = DriverOptions(pose_density_family="plate", pose_density_zenith_mean_deg=None, pose_density_zenith_std_deg=1.0)
+    assert (plate.pose_density_zenith_mean_deg, plate != default) == (0.0, True)
+    assert plate.pose_density() == build_pose_density("plate", zenith_std_deg=1.0)
+    # the resolver's ValueError propagates unchanged
+    for kwargs in (
+        {"pose_density_family": "random"},  # carries the literal zenith defaults random does not take
+        {"pose_density_family": "parry"},  # no roll width
+        {"pose_density_family": "needle"},
+    ):
+        with pytest.raises(ValueError) as excinfo:
+            DriverOptions(**kwargs)
+        given = {name.removeprefix("pose_density_"): getattr(DriverOptions, name) for name in POSE_DENSITY_FIELDS[1:]}
+        with pytest.raises(ValueError) as expected:
+            resolve_pose_density_parameters(kwargs["pose_density_family"], **given)
+        assert str(excinfo.value) == str(expected.value)
+
+
+def test_load_checkpoints_reuses_a_checkpoint_that_predates_the_pose_density_fields(tmp_path: Path):
+    # Checkpoints of the delivered full image were written before the family
+    # fields existed, all under the canonical column density: they must still
+    # match the default options (literal defaults), and must not match another family.
+    options = DriverOptions()
+    old_options = object.__new__(DriverOptions)
+    old_options.__dict__.update({k: v for k, v in options.__dict__.items() if k not in POSE_DENSITY_FIELDS})
+    payload = {"format": FORMAT_VERSION, "rows": [0, 1], "results": [_pixel(0, 0, 1.0)], "options": old_options}
+    (tmp_path / "column_0000.pkl").write_bytes(pickle.dumps(payload))
+    assert "pose_density_family" not in pickle.loads((tmp_path / "column_0000.pkl").read_bytes())["options"].__dict__
+    window = Window((0, 1), (0, 1))
+    messages: list[str] = []
+    assert sorted(load_checkpoints(tmp_path, window, options, log=messages.append)) == [0] and messages == []
+    other = DriverOptions(pose_density_family="random", pose_density_zenith_mean_deg=None, pose_density_zenith_std_deg=None)
+    assert load_checkpoints(tmp_path, window, other, log=messages.append) == {}
+    assert messages == ["column 0 checkpoint options differ from this run's options; recomputing"]
+
+
 # --- solver-backed window tests ---------------------------------------------------
 
 
@@ -385,6 +441,15 @@ def test_render_window_without_a_scene_builds_the_table_once_from_the_options(sc
     render_window(window, options, workers=1, log=messages.append)
     assert any(m.startswith("prescan table loaded from") for m in messages)
     assert not any("prescan table built" in m for m in messages)
+
+
+def test_render_window_rejects_a_scene_whose_pose_density_is_not_the_options(scene):
+    window = Window((150, 151), (150, 151))
+    parry = DriverOptions(
+        pose_density_family="parry", pose_density_zenith_mean_deg=None, pose_density_zenith_std_deg=1.0, pose_density_roll_std_deg=1.0
+    )
+    with pytest.raises(ValueError, match="does not match"):
+        render_window(window, parry, workers=1, scene=scene)
 
 
 def test_render_window_resume_recomputes_columns_whose_options_changed(scene, tmp_path: Path):

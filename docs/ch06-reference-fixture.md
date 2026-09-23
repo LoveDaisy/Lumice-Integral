@@ -32,6 +32,7 @@ Every recovered value uses one of these labels:
 | `historical-inferred` | Supported by two or more surviving observations but not explicitly serialized by the prototype. |
 | `canonical-new` | Chosen after the prototype was lost to make a reproducible replacement fixture. |
 | `unknown` | No surviving evidence is sufficient. The implementation MUST NOT invent a value silently. |
+| `run-option` | Not a fixture value: a run of the strip renderer chose it (for example `--pose-density-family`); `provenance.json` records it in place of the `canonical-new` value it replaces. |
 
 The 2026 Lumice recreation is an independent validation artifact. Its settings
 are `canonical-new` unless a separate historical source supports them.

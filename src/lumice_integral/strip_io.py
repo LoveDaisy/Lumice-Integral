@@ -266,8 +266,20 @@ def environment_block() -> dict[str, Any]:
     }
 
 
-def scene_block() -> dict[str, Any]:
-    """Canonical scene constants, each tagged with its ``docs/ch06-reference-fixture.md`` provenance."""
+def scene_block(pose_density: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Canonical scene constants, each tagged with its ``docs/ch06-reference-fixture.md`` provenance.
+
+    ``pose_density`` is the flat block of the density the run actually used
+    (:meth:`.strip_driver.DriverOptions.pose_density_block`); ``None`` records
+    the canonical column density.  A non-canonical family is a run option, so
+    it is tagged ``run-option`` instead of ``canonical-new``.
+    """
+    canonical = pose_density_provenance(
+        CANONICAL_POSE_DENSITY_FAMILY,
+        zenith_mean_deg=CANONICAL_ZENITH_MEAN_DEG,
+        zenith_std_deg=CANONICAL_ZENITH_STD_DEG,
+    )
+    density = canonical if pose_density is None else dict(pose_density)
     return {
         "specification": "docs/ch06-reference-fixture.md section 3.3",
         "path": {"value": [3, 5], "provenance": "historical-direct"},
@@ -282,12 +294,8 @@ def scene_block() -> dict[str, Any]:
         "refractive_index": {"value": CANONICAL_REFRACTIVE_INDEX, "provenance": "canonical-new"},
         "wavelength_nm": {"value": CANONICAL_WAVELENGTH_NM, "provenance": "canonical-new"},
         "pose_density": {
-            "value": pose_density_provenance(
-                CANONICAL_POSE_DENSITY_FAMILY,
-                zenith_mean_deg=CANONICAL_ZENITH_MEAN_DEG,
-                zenith_std_deg=CANONICAL_ZENITH_STD_DEG,
-            ),
-            "provenance": "canonical-new",
+            "value": density,
+            "provenance": "canonical-new" if density == canonical else "run-option",
         },
         "camera": {"value": {"lens": "linear", **CANONICAL_RENDER}, "provenance": "canonical-new"},
         "image_shape": {"value": [CANONICAL_RENDER["height"], CANONICAL_RENDER["width"]], "provenance": "historical-direct"},
@@ -344,12 +352,14 @@ def write_strip(
     execution: Mapping[str, Any],
     repo: Path | None = None,
     prescan: Mapping[str, Any] | None = None,
+    pose_density: Mapping[str, Any] | None = None,
 ) -> dict[str, Path]:
     """Write every payload plus ``provenance.json``; returns the file map.
 
     ``prescan`` is the scene-level prescan build record
     (:meth:`.strip_driver.PrescanBuildOptions.as_json`), stored under
-    ``options.discovery.prescan``.
+    ``options.discovery.prescan``; ``pose_density`` the density block of the
+    run (:func:`scene_block`).
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -374,7 +384,7 @@ def write_strip(
             "git_commit": _git_commit(repo),
             "lumice_dependency": "none (independent implementation; Lumice is neither imported nor invoked)",
         },
-        "scene": scene_block(),
+        "scene": scene_block(pose_density),
         "options": options_block(options, prescan),
         "pixel_model": dict(pixel_model),
         "window": window.as_json(),

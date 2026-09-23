@@ -19,6 +19,14 @@ The scene-level prescan table (``--prescan-samples`` Haar poses, ``--rng-seed``)
 is built once in the parent before the workers start and shared with them;
 ``--prescan-cache`` keeps it on disk with a provenance sidecar for reuse.
 
+``--pose-density-family`` replaces the canonical column density (zenith
+Gaussian ``90 +- 0.5 deg``) by another family of ``pose_density.build_pose_density``;
+its parameters are the ``--pose-density-*-deg`` flags, validated by
+``pose_density.resolve_pose_density_parameters`` (whose error message is
+passed through unchanged).  Only the canonical ``column`` family has a default
+width (``0.5 deg``); the family and its resolved parameters are recorded in
+``provenance.json`` under ``scene.pose_density`` and in the resume fingerprint.
+
 Spawned workers get glibc malloc trimming (``strip_driver.WORKER_MALLOC_ENV``)
 unless the variables are already set; without it a Linux worker's RSS grows by
 ~2 GB per column.  ``--workers 1`` renders in-process, so export them yourself
@@ -36,9 +44,10 @@ import platform
 import sys
 from pathlib import Path
 
-from lumice_integral.canonical_scene import CANONICAL_RENDER
+from lumice_integral.canonical_scene import CANONICAL_POSE_DENSITY_FAMILY, CANONICAL_RENDER, CANONICAL_ZENITH_STD_DEG
 from lumice_integral.continuation import ContinuationOptions
 from lumice_integral.quadrature import ResampleOptions
+from lumice_integral.pose_density import POSE_DENSITY_FAMILIES
 from lumice_integral.prescan import DEFAULT_RNG_SEED, DEFAULT_SAMPLE_COUNT
 from lumice_integral.strip_driver import PIXEL_MODELS, DriverOptions, PrescanBuildOptions, render_window
 from lumice_integral.strip_io import Window, write_strip
@@ -91,6 +100,24 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="optional .npz path to cache the prescan table (reused on --resume when its provenance matches)",
     )
+    parser.add_argument(
+        "--pose-density-family",
+        choices=POSE_DENSITY_FAMILIES,
+        default=CANONICAL_POSE_DENSITY_FAMILY,
+        help=f"pose-density family weighting every pixel (default {CANONICAL_POSE_DENSITY_FAMILY!r}, the canonical density)",
+    )
+    parser.add_argument(
+        "--pose-density-zenith-mean-deg", type=float, default=None, help="c-axis zenith mean (family default when omitted)"
+    )
+    parser.add_argument(
+        "--pose-density-zenith-std-deg",
+        type=float,
+        default=None,
+        help=f"c-axis zenith width: {CANONICAL_ZENITH_STD_DEG:g} when omitted for {CANONICAL_POSE_DENSITY_FAMILY!r}, "
+        "required for plate / parry / lowitz, not accepted for random",
+    )
+    parser.add_argument("--pose-density-roll-mean-deg", type=float, default=None, help="roll mean (parry / lowitz; family default when omitted)")
+    parser.add_argument("--pose-density-roll-std-deg", type=float, default=None, help="roll width (required for parry / lowitz)")
     parser.add_argument("--label", default="", help="free-text note stored in provenance.execution")
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args(argv)
@@ -113,15 +140,26 @@ def main(argv: list[str] | None = None) -> None:
             maximum_node_count=args.maximum_node_count,
         ),
     )
-    options = DriverOptions(
-        pixel=pixel_options,
-        prescan=PrescanBuildOptions(
-            sample_count=args.prescan_samples, rng_seed=args.rng_seed, cache_path=args.prescan_cache
-        ),
-        pixel_model=args.pixel_model,
-        subpixel_grid=args.subpixel_grid,
-        subpixel_rows=parse_range(args.subpixel_rows, height) if args.subpixel_rows else None,
-    )
+    zenith_std_deg = args.pose_density_zenith_std_deg
+    if zenith_std_deg is None and args.pose_density_family == CANONICAL_POSE_DENSITY_FAMILY:
+        zenith_std_deg = CANONICAL_ZENITH_STD_DEG
+    try:
+        options = DriverOptions(
+            pixel=pixel_options,
+            prescan=PrescanBuildOptions(
+                sample_count=args.prescan_samples, rng_seed=args.rng_seed, cache_path=args.prescan_cache
+            ),
+            pixel_model=args.pixel_model,
+            subpixel_grid=args.subpixel_grid,
+            subpixel_rows=parse_range(args.subpixel_rows, height) if args.subpixel_rows else None,
+            pose_density_family=args.pose_density_family,
+            pose_density_zenith_mean_deg=args.pose_density_zenith_mean_deg,
+            pose_density_zenith_std_deg=zenith_std_deg,
+            pose_density_roll_mean_deg=args.pose_density_roll_mean_deg,
+            pose_density_roll_std_deg=args.pose_density_roll_std_deg,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
     output_dir: Path = args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -161,6 +199,7 @@ def main(argv: list[str] | None = None) -> None:
         execution=execution,
         repo=Path(__file__).resolve().parent.parent,
         prescan=options.prescan.as_json(),
+        pose_density=options.pose_density_block(),
     )
     unknown = sum(r.completeness != "complete" for r in results)
     lit = sum(r.component_count > 0 for r in results)
