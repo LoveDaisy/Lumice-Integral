@@ -170,12 +170,16 @@ def band_sum_pixel(
 
 
 # ------------------------------------------------------------ store plan
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, eq=False)
 class Transport:
     """A ``Phi`` group served by a store: poses of the store's events are right-multiplied by ``g^T``.
 
     ``g is None`` is the identity (the store's own group; no multiplication,
     so the poses are bit-identical to the untransported ones).
+
+    ``eq=False`` (identity comparison): ``g`` is an ``np.ndarray``, which
+    breaks the dataclass-generated ``__eq__``/``__hash__`` (ambiguous truth
+    value / unhashable) if ever compared or hashed.
     """
 
     members: tuple[Faces, ...]
@@ -188,9 +192,14 @@ class Transport:
         }
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, eq=False)
 class StoreGroup:
-    """One event store (of the ``Phi`` group ``members``) and the groups it serves."""
+    """One event store (of the ``Phi`` group ``members``) and the groups it serves.
+
+    ``eq=False`` for the same reason as :class:`Transport`: it holds
+    ``Transport`` instances (which carry an ``np.ndarray`` field), so
+    identity comparison avoids the same ambiguous-truth-value/unhashable trap.
+    """
 
     members: tuple[Faces, ...]
     transports: tuple[Transport, ...]
@@ -523,7 +532,10 @@ def write_band_sum_strip(
             writer.writerow(r.csv_row())
     rendered = (status & STATUS_RENDERED) != 0
     rendered_values = values[rendered]
-    k_eff = np.array([r.K_eff for r in results if r.value > 0.0])
+    # A rank-0 class is a point mass (task 9), not a band sum: its K_eff is a hardcoded 0.0 placeholder,
+    # not "zero effective samples, high noise" — excluded here so it does not pollute the noise diagnostic.
+    is_rank0 = scene.path_class.halo_map_rank == 0
+    k_eff = np.array([]) if is_rank0 else np.array([r.K_eff for r in results if r.value > 0.0])
     scene_json = scene_block(pose_density_block)
     scene_json["path"] = {"value": list(scene.path_class.representative), "provenance": "run-option"}
     scene_json["camera"] = {"value": {"lens": "linear", **dict(scene.render)}, "provenance": "run-option"}

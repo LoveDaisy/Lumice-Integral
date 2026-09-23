@@ -59,6 +59,8 @@ from lumice_integral.pose_density import build_pose_density
 from lumice_integral.s2_store import DEFAULT_CACHE_DIR, build_or_load
 from lumice_integral.strip_io import read_strip
 
+# Machine-specific default (the main checkout's gitignored strip-full artifact); other environments
+# must pass --reference-dir explicitly, or read_strip will fail to find this path.
 DEFAULT_REFERENCE_DIR = Path("/Users/zhangjiajie/Codes/Lumice Integral/artifacts/strip-full")
 TASK14_ARTIFACTS = Path(__file__).resolve().parents[1] / "scratchpad/task-narrow-density-band-sum-probe/artifacts"
 LIT_FRACTION = 1e-2
@@ -342,7 +344,12 @@ def main() -> None:
     parser.add_argument("--stage", choices=("full", "class", "figure"), required=True)
     parser.add_argument("--band-dir", type=Path, nargs="+")
     parser.add_argument("--coarse-dir", type=Path, default=None)
-    parser.add_argument("--reference-dir", type=Path, default=DEFAULT_REFERENCE_DIR)
+    parser.add_argument(
+        "--reference-dir",
+        type=Path,
+        default=DEFAULT_REFERENCE_DIR,
+        help="strip-full read_strip directory; default is a machine-specific path, pass explicitly on other machines",
+    )
     parser.add_argument("--tiers", type=int, nargs="*", default=[1_000_000, 10_000_000, 50_000_000])
     parser.add_argument("--store-n", type=int, default=None)
     parser.add_argument("--store-cache-dir", type=Path, default=DEFAULT_CACHE_DIR)
