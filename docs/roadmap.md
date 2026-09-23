@@ -118,14 +118,35 @@ The first vertical slice is intentionally narrow:
 - smooth pose density on SO(3);
 - one known image direction whose inverse image is a closed loop.
 
-The milestone is complete when the program can:
+The milestone is complete when the program can (each item done; evidence in
+`docs/phase1-math-contract.md` section 11 and the named tests):
 
-- find one seed without a hand-entered pose;
-- trace the complete known loop with bounded constraint residual;
-- detect closure without closing early;
-- plot the loop in diagnostic SO(3) coordinates;
-- output the Jacobian, pose-density, geometric, and Fresnel factors separately;
-- integrate their product with a numerical convergence report.
+- find one seed without a hand-entered pose — done: `lumice_integral.discovery`
+  seeds every pixel from the scene prescan table
+  (`test_canonical_pixel_has_one_closed_component`,
+  `test_dark_pixel_has_no_admissible_candidate_and_is_procedurally_complete`);
+  the frozen canonical seed is only a fixture constant;
+- trace the complete known loop with bounded constraint residual — done:
+  C05 (`test_synthetic_3_5_trace_matches_independent_direct_ray_oracle`,
+  `test_synthetic_3_5_safe_step_sweep_converges_without_fixed_step_count`);
+- detect closure without closing early — done: C06/C12
+  (`test_analytic_conjugation_loops_shorter_than_pi_close_on_the_first_traversal`,
+  `test_strip_short_loops_close_at_their_single_traversal_length`,
+  `test_incompatible_tangent_cannot_pass_final_closure_correction`);
+- plot the loop in diagnostic SO(3) coordinates — done as versioned figure
+  data (`lumice-integral.figure-data/v3`,
+  `test_figure_data_round_trip_preserves_geometry_and_unavailable_weights`),
+  consumed by an independent prototype that drew the orientation-body-axis
+  projection without importing this package (fixture specification section
+  6); the chapter plotting code belongs to Writing-Lab;
+- output the Jacobian, pose-density, geometric, and Fresnel factors separately —
+  done: C14 (`test_canonical_pixel_fiber_exposes_four_available_factors_pointwise`,
+  `J_perp` and `1 / (8 pi^2)` kept apart in `conventions`);
+- integrate their product with a numerical convergence report — done: C14
+  (`test_default_options_align_with_the_adaptive_reference_within_1e_4`,
+  `test_node_count_doubles_until_the_estimate_meets_the_tolerance`,
+  `test_canonical_pixel_integral_is_invariant_under_tolerance`: resampled
+  fixed-grid quadrature with error estimate and grid evidence).
 
 The surviving chapter-6 artifacts, recovered parameters, canonical replacement
 fixture, and figure-level capability gaps are tracked in the
@@ -187,6 +208,20 @@ evidence is recorded in the
 sections 5 and 7. Component completeness remains procedural, not certified;
 finite solar disk and finite pixel solid angle are still open (the sub-pixel
 model is implemented but costs 6-10x and is off by default).
+Update (2026-09-20 / 2026-09-23): the tail and the off-centre narrowness were
+closed on the historical side by the non-tone-mapped Lumice float export
+(section 3.5 item 2b). **The renderer is delivered, and it agrees with an
+independently converged Lumice Monte Carlo result.** In shape it agrees at
+the Monte Carlo noise floor (lit-band log-RMS `0.03` against a `0.04-0.06`
+run-to-run floor, task `lumice-raw-profile-oracle`). In absolute radiometry
+it agrees with nothing fitted: `raw / emitted_energy = K_p V` with
+`K_p = 12 ybar(550) Omega_p / A_eff`, which gives measured over predicted
+`0.997-0.999` on the bright band of columns `106 / 126 / 146` at matched
+refractive index (task `phase1-closeout-absolute-scale`, fixture
+specification section 7, stage 4). This closes the first image-level target.
+Outside the point-source point-pixel model the remaining open items are
+unchanged: a completeness certificate, finite solar disk, and pixel
+averaging in the caustic band.
 
 ### 3.4 Orientation distributions
 
@@ -278,9 +313,11 @@ order below follows their dependencies, not the solver's own curiosity.
    remaining discrepancies are not traced further; agreement with the
    Lumice Monte Carlo result is the criterion.** The historical raw stays
    in the fixture only as a morphology / provenance record (section 3.3).
-   Still unchecked: the absolute radiometric scale between the two (every
-   profile above is max-normalised; `emitted_energy` bookkeeping, `P x6` /
-   `PBD x12`), recorded in the backlog. Path-class
+   The absolute radiometric scale between the two, unchecked here (every
+   profile above is max-normalised), was checked 2026-09-23 (task
+   `phase1-closeout-absolute-scale`): `PBD x12` is confirmed as one scalar,
+   and Lumice's pose sampling without silhouette weighting adds a
+   pixel-dependent `A_eff` (fixture specification section 7, stage 4). Path-class
    accounting is *not* a suspect here: the `PBD` orbit of `3-5` adds only
    `3-7`, whose image is identical under the zenith-symmetric density (the
    prism's `C2'` rotation maps one to the other), a uniform `x2`; all three
@@ -293,6 +330,26 @@ order below follows their dependencies, not the solver's own curiosity.
    `lumice_integral.geometry`, trace each member and sum. Rank-0 classes
    (`W = 0`: a point mass in the sun direction, estimated from the prescan
    table's Haar samples, never traced) come with it. Independent of defect 2.
+   *Done 2026-09-20* (task `path-class-rendering-unit`, PR #10):
+   `optics` / `prescan` / `discovery` / `weights` take any face sequence, and
+   `lumice_integral.path_class` expands a signature class into its `PBD` orbit
+   with `lumice_integral.geometry`, traces every member and sums, with
+   per-member contributions in provenance. Under the canonical column
+   density the class `[3,5]` has `12` members (`6` rotations each of `3-5`
+   and `3-7`, pointwise identical), and the class value is `12x` the single
+   `3-5` (`11.99982` measured). A tilted Parry density (`roll_mean_deg = 20`)
+   gives the strict counterexample, `3-5` non-zero and `3-7` exactly zero.
+   Rank-0 classes (`1-2`, `3-6`, ...) never enter the fiber pipeline and
+   become a Haar-mean point mass in the sun direction (`0` in the strip,
+   which does not contain the sun). `geometry.unfold.halo_map_rank` and
+   `wedge_angle_deg` are path-level properties. `3-1-2-5` (the `M = I` `60 deg`
+   wedge with one internal reflection) traces an arc at row `651` column `13`
+   whose value is `3.64x` the `3-5` value of the same pixel, and every
+   accepted pose maps to the same target through the `3-5` direction map
+   (residual `< 1e-8`). A one-member class reproduces the single-path `3-5`
+   baseline bit for bit. Not done: a full-image class-level rerender and the
+   notes' full `Phi`-class machinery (34-class table, `D6h` reflection
+   group).
 4. **Phase II as the chapter-10 tool**: `D_P(u)`, its Jacobian and rank, the
    fold caustic and the `I ~ 1 / sqrt(D - D_min)` radial profile are the
    objects chapter 10 needs; section 4's cross-checks against the SO(3) fiber
@@ -311,11 +368,22 @@ order below follows their dependencies, not the solver's own curiosity.
    strip — plate, Parry and Lowitz put their `3-5` light elsewhere on the
    sky (parhelion, upper Parry arc, Lowitz arcs) and are exactly zero on
    column `126`; their strip contributions come from other labelled paths of
-   the class, i.e. item 3. Still open: a family parameter on the production
-   CLI, wrapped (vs single-period) roll Gaussian, Lowitz `zigzag`.
+   the class, i.e. item 3. The family parameter reached the production CLI
+   on 2026-09-23 (`scripts/render_ch06_strip.py --pose-density-family` with
+   the width and mean flags, recorded in `provenance.json`; task
+   `phase1-closeout-absolute-scale`). Still open: wrapped (vs single-period)
+   roll Gaussian, Lowitz `zigzag`.
 
 Deferred unchanged: pixel-space adaptive sampling, GPU kernels, finite solar
 disk (chapter 10's singularity is the point-source one).
+
+**Phase I closed (2026-09-23).** Every section 3.2 milestone is done, and the
+section 3.3 renderer is delivered and agrees with Lumice in shape and in
+absolute scale. Items 1, 2, 3 and 5 above are done; item 4 moves to the
+Phase II scrum. The open items that remain (completeness certificate, finite
+solar disk, caustic-band pixel averaging, the explicit event localisation of
+contract section 12) are recorded, not blocking. Closeout record:
+`scratchpad/task-phase1-closeout-absolute-scale/SUMMARY.md`.
 
 ### 3.6 Writing-project coupling
 

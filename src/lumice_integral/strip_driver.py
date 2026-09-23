@@ -51,7 +51,15 @@ from typing import Any, Callable, Sequence
 
 import numpy as np
 
-from .canonical_scene import CANONICAL_REFRACTIVE_INDEX, canonical_incident_direction
+from .canonical_scene import (
+    CANONICAL_POSE_DENSITY_FAMILY,
+    CANONICAL_REFRACTIVE_INDEX,
+    CANONICAL_ZENITH_MEAN_DEG,
+    CANONICAL_ZENITH_STD_DEG,
+    canonical_incident_direction,
+)
+from .pose_density import PoseDensity, build_pose_density, resolve_pose_density_parameters
+from .pose_density_provenance import pose_density_provenance
 from .prescan import DEFAULT_RNG_SEED, DEFAULT_SAMPLE_COUNT, PrescanTable, build_or_load_prescan_table
 from .strip_io import FORMAT_VERSION, Window
 from .strip_pixel import (
@@ -112,12 +120,55 @@ class DriverOptions:
     pixel_model: str = "point"
     subpixel_grid: int = 3
     subpixel_rows: tuple[int, int] | None = None  # half-open row band; None = every row
+    # The pose-density family and its degree-valued parameters
+    # (:func:`.pose_density.build_pose_density`); the five fields are one
+    # parameter set and must be extended together.  Literal defaults on
+    # purpose, equal to the canonical column density: a checkpoint pickled
+    # before these fields existed was rendered with that density and compares
+    # equal to the defaults (see :func:`load_checkpoints`).  ``__post_init__``
+    # validates the set through ``resolve_pose_density_parameters`` (its
+    # ``ValueError`` propagates unchanged) and stores the resolved values, so
+    # an explicit family default (``zenith_mean_deg=90`` for column) and an
+    # omitted one fingerprint alike; parameters a family does not take must be
+    # ``None`` (``random`` therefore needs ``pose_density_zenith_mean_deg=None,
+    # pose_density_zenith_std_deg=None``).
+    pose_density_family: str = CANONICAL_POSE_DENSITY_FAMILY
+    pose_density_zenith_mean_deg: float | None = CANONICAL_ZENITH_MEAN_DEG
+    pose_density_zenith_std_deg: float | None = CANONICAL_ZENITH_STD_DEG
+    pose_density_roll_mean_deg: float | None = None
+    pose_density_roll_std_deg: float | None = None
 
     def __post_init__(self) -> None:
         if self.pixel_model not in PIXEL_MODELS:
             raise ValueError(f"pixel_model must be one of {PIXEL_MODELS}")
         if self.subpixel_grid < 1:
             raise ValueError("subpixel_grid must be positive")
+        resolved = resolve_pose_density_parameters(
+            self.pose_density_family,  # type: ignore[arg-type]
+            zenith_mean_deg=self.pose_density_zenith_mean_deg,
+            zenith_std_deg=self.pose_density_zenith_std_deg,
+            roll_mean_deg=self.pose_density_roll_mean_deg,
+            roll_std_deg=self.pose_density_roll_std_deg,
+        )
+        for name in ("zenith_mean_deg", "zenith_std_deg", "roll_mean_deg", "roll_std_deg"):
+            object.__setattr__(self, f"pose_density_{name}", resolved.get(name))
+
+    def pose_density_arguments(self) -> dict[str, float | None]:
+        """Keyword arguments of ``build_pose_density`` / ``pose_density_provenance`` (besides the family)."""
+        return {
+            "zenith_mean_deg": self.pose_density_zenith_mean_deg,
+            "zenith_std_deg": self.pose_density_zenith_std_deg,
+            "roll_mean_deg": self.pose_density_roll_mean_deg,
+            "roll_std_deg": self.pose_density_roll_std_deg,
+        }
+
+    def pose_density(self) -> PoseDensity:
+        """The density every pixel of the run is weighted with."""
+        return build_pose_density(self.pose_density_family, **self.pose_density_arguments())  # type: ignore[arg-type]
+
+    def pose_density_block(self) -> dict[str, Any]:
+        """The ``scene.pose_density`` value of ``provenance.json`` for this run's density."""
+        return pose_density_provenance(self.pose_density_family, **self.pose_density_arguments())  # type: ignore[arg-type]
 
     def uses_subpixel(self, row: int) -> bool:
         if self.pixel_model != "subpixel":
@@ -224,7 +275,7 @@ _WORKER_OPTIONS: DriverOptions | None = None
 
 def _init_worker(options: DriverOptions, table: PrescanTable) -> None:
     global _WORKER_SCENE, _WORKER_OPTIONS
-    _WORKER_SCENE = canonical_strip_scene(prescan_table=table)
+    _WORKER_SCENE = canonical_strip_scene(prescan_table=table, pose_density=options.pose_density())
     _WORKER_OPTIONS = options
 
 
@@ -325,12 +376,15 @@ def render_window(
 
     ``workers <= 1`` renders in-process (``scene`` may be supplied, in which
     case its own ``prescan_table`` is used and ``options.prescan`` is not
-    consulted); otherwise ``workers`` spawn processes each take whole
+    consulted; its ``pose_density`` must equal ``options.pose_density()``,
+    which is what provenance records); otherwise ``workers`` spawn processes each take whole
     columns and share the table built here (module docstring).  The table's
     size and build time are reported in the execution record.
     """
     if workers < 1:
         raise ValueError("workers must be positive")
+    if scene is not None and scene.pose_density != options.pose_density():
+        raise ValueError(f"scene pose density {scene.pose_density!r} does not match the options' {options.pose_density()!r}")
     start = time.perf_counter()
     done: dict[int, list[PixelResult]] = {}
     if checkpoint_dir is not None:
@@ -393,7 +447,7 @@ def render_window(
     elif pending:
         if scene is None:
             table, prescan = build_table()
-            scene = canonical_strip_scene(prescan_table=table)
+            scene = canonical_strip_scene(prescan_table=table, pose_density=options.pose_density())
         else:
             prescan = {
                 "source": "scene",
