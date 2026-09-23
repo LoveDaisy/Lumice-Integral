@@ -89,8 +89,8 @@ def class_of_scene() -> PathClass:
     return path_class
 
 
-def member_dir(output_dir: Path, member: Sequence[int]) -> Path:
-    return output_dir / "members" / path_id_of(member)
+def member_dir(output_dir: Path, member: Sequence[int], store: str = "members") -> Path:
+    return output_dir / store / path_id_of(member)
 
 
 def pool(workers: int) -> concurrent.futures.ProcessPoolExecutor:
@@ -104,10 +104,33 @@ def write_json(path: Path, payload: Any) -> None:
 
 
 # ------------------------------------------------------------- precompute
-def _precompute_member(args: tuple[Path, tuple[int, ...], int, bool, tuple[float, float] | None]) -> dict[str, Any]:
-    directory, member, n, run_checks, window = args
+RANDOM_SEED = 20260923
+
+
+@dataclasses.dataclass(frozen=True)
+class RandomSphereSampler:
+    """i.i.d. uniform points on ``S^2`` (``q = 1 / 4 pi``, so no inverse weights); chunk-seeded, reproducible."""
+
+    seed: int = RANDOM_SEED
+    description = "i.i.d. uniform on S^2 (normalised Gaussian triples, numpy default_rng([seed, first]) per chunk)"
+
+    def __call__(self, first: int, stop: int) -> tuple[np.ndarray, None]:
+        points = np.random.default_rng([self.seed, first]).normal(size=(stop - first, 3))
+        return points / np.linalg.norm(points, axis=1, keepdims=True), None
+
+
+SAMPLERS = {"fibonacci": None, "random": RandomSphereSampler()}
+
+
+def _precompute_member(args) -> dict[str, Any]:
+    directory, member, n, run_checks, window, sampling = args
     directory.mkdir(parents=True, exist_ok=True)
-    return precompute(n, directory, run_checks=run_checks, faces=member, deviation_window=window)
+    sampler = SAMPLERS[sampling]
+    if sampler is None:
+        return precompute(n, directory, run_checks=run_checks, faces=member, deviation_window=window)
+    return precompute(
+        n, directory, run_checks=run_checks, faces=member, deviation_window=window, sampler=sampler, sampling=sampler.description
+    )
 
 
 def profile_deviation_window(output_dir: Path) -> tuple[float, float]:
@@ -121,11 +144,14 @@ def profile_deviation_window(output_dir: Path) -> tuple[float, float]:
     return float(lo), float(hi)
 
 
-def stage_precompute(output_dir: Path, tiers: Sequence[int], *, windowed: bool, workers: int, skip_checks: bool) -> None:
+def stage_precompute(
+    output_dir: Path, tiers: Sequence[int], *, windowed: bool, workers: int, skip_checks: bool, sampling: str = "fibonacci"
+) -> None:
     path_class = class_of_scene()
     window = profile_deviation_window(output_dir) if windowed else None
+    store = "members" if sampling == "fibonacci" else f"members_{sampling}"
     jobs = [
-        (member_dir(output_dir, member), member, n, not skip_checks and i == 0 and j == 0, window)
+        (member_dir(output_dir, member, store), member, n, not skip_checks and i == 0 and j == 0, window, sampling)
         for j, n in enumerate(tiers)
         for i, member in enumerate(path_class.members)
     ]
@@ -140,6 +166,8 @@ def stage_precompute(output_dir: Path, tiers: Sequence[int], *, windowed: bool, 
         {
             "tiers": list(tiers),
             "windowed": windowed,
+            "sampling": sampling,
+            "store": store,
             "deviation_window_rad": window,
             "workers": min(workers, MAX_WORKERS),
             "wall_clock_s": wall,
@@ -153,7 +181,7 @@ def stage_precompute(output_dir: Path, tiers: Sequence[int], *, windowed: bool, 
                     "max_rss_mb_process": meta["max_rss_mb_process"],
                     "self_checks": meta["self_checks"],
                 }
-                for (_, member, _, _, _), meta in zip(jobs, metas)
+                for (_, member, *_), meta in zip(jobs, metas)
             },
             "created": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
         }
@@ -172,6 +200,7 @@ class Accumulator:
     k: np.ndarray
     k_pos: np.ndarray
     k_eff_min_member: np.ndarray
+    max_rss_mb_worker: float = 0.0
 
     @classmethod
     def zeros(cls, densities: int, pixels: int) -> Accumulator:
@@ -189,6 +218,7 @@ class Accumulator:
         self.k += other.k
         self.k_pos += other.k_pos
         self.k_eff_min_member = np.minimum(self.k_eff_min_member, other.k_eff_min_member)
+        self.max_rss_mb_worker = max(self.max_rss_mb_worker, other.max_rss_mb_worker)
 
 
 def member_band_sums(
@@ -210,7 +240,9 @@ def member_band_sums(
 
 def _member_band_sums_job(args) -> Accumulator:
     directory, n, families, pixels, render = args
-    return member_band_sums(load_events(directory, n), [family_density(f) for f in families], pixels, render)
+    acc = member_band_sums(load_events(directory, n), [family_density(f) for f in families], pixels, render)
+    acc.max_rss_mb_worker = max_rss_mb()
+    return acc
 
 
 def class_band_sums(
@@ -261,7 +293,14 @@ def stage_locate(output_dir: Path, n: int, workers: int, render: Mapping[str, An
     delta, width = pixel_geometry(pixels, render)
     values = estimates(acc, n, delta, width)
     shape = (int(render["height"]), int(render["width"]))
-    report: dict[str, Any] = {"N": n, "render": dict(render), "wall_clock_s": wall, "max_rss_mb_process": max_rss_mb(), "families": {}}
+    report: dict[str, Any] = {
+        "N": n,
+        "render": dict(render),
+        "wall_clock_s": wall,
+        "max_rss_mb_process": max_rss_mb(),
+        "max_rss_mb_worker": acc.max_rss_mb_worker,
+        "families": {},
+    }
     for f, family in enumerate(FAMILIES):
         image = values[f].reshape(shape)
         k_eff = np.array([kish_k_eff(t, q) for t, q in zip(acc.total[f], acc.square[f])]).reshape(shape)
@@ -459,6 +498,85 @@ def stage_reference(output_dir: Path, families: Sequence[str], workers: int) -> 
         print(family, json.dumps(meta))
 
 
+# The band sum's pixel is the band average of I(delta') sin(delta') / sin(delta) over the pixel's
+# deviation band at the centre azimuth; the Phase I reference is the pixel-centre value.  Where the
+# reference changes by more than STEEP_NEIGHBOUR_CHANGE from a neighbouring pixel the two pixel models
+# differ visibly, and the Phase I band average (BAND_NODES midpoint nodes, render_class_pixel with a
+# target override) is the like-for-like reference.  The criterion reads the reference only.
+STEEP_NEIGHBOUR_CHANGE = 0.1
+BAND_NODES = 8
+
+
+def steep_pixels(values: np.ndarray) -> list[int]:
+    lit = values > LIT_FRACTION * values.max()
+    steep = []
+    for i in np.flatnonzero(lit):
+        change = [abs(values[j] / values[i] - 1.0) for j in (i - 1, i + 1) if 0 <= j < len(values)]
+        if max(change) > STEEP_NEIGHBOUR_CHANGE:
+            steep.append(int(i))
+    return steep
+
+
+def _band_reference_job(args) -> list[dict[str, Any]]:
+    from lumice_integral.path_class import render_class_pixel
+    from lumice_integral.strip_pixel import PixelOptions
+
+    family, render, pixels = args
+    scene = _class_scene(family, render)
+    s = canonical_incident_direction()
+    out = []
+    for row, column in pixels:
+        centre, delta, lo_d, hi_d = pixel_band(row, column, s, render)
+        e = centre - (centre @ s) * s
+        e /= np.linalg.norm(e)
+        nodes = lo_d + (np.arange(BAND_NODES) + 0.5) * (hi_d - lo_d) / BAND_NODES
+        values = [
+            render_class_pixel(scene, row, column, PixelOptions(), target=np.cos(d) * s + np.sin(d) * e).value
+            for d in nodes
+        ]
+        band = float(np.mean(np.array(values) * np.sin(nodes)) / np.sin(delta))
+        out.append({"row": row, "column": column, "reference_band": band, "node_values": values})
+    return out
+
+
+def stage_band_reference(output_dir: Path, families: Sequence[str], workers: int) -> None:
+    for family in families:
+        pixels, render = load_profile(output_dir, family)
+        with (output_dir / f"reference_{family}.csv").open() as handle:
+            point = [float(r["reference"]) for r in csv.DictReader(handle)]
+        chosen = [pixels[i] for i in steep_pixels(np.array(point))]
+        workers_n = min(workers, MAX_WORKERS)
+        start = time.perf_counter()
+        with pool(workers_n) as executor:
+            jobs = [(family, dict(render), chosen[i::workers_n]) for i in range(workers_n) if chosen[i::workers_n]]
+            rows = [r for chunk in executor.map(_band_reference_job, jobs) for r in chunk]
+        wall = time.perf_counter() - start
+        index = {p: i for i, p in enumerate(pixels)}
+        rows.sort(key=lambda r: index[(r["row"], r["column"])])
+        for r in rows:
+            r["pixel_index"] = index[(r["row"], r["column"])]
+            r["reference_point"] = point[r["pixel_index"]]
+            r["band_over_point"] = r["reference_band"] / r["reference_point"]
+        write_json(
+            output_dir / f"reference_band_{family}.json",
+            {
+                "criterion": f"lit and |I(neighbour) / I - 1| > {STEEP_NEIGHBOUR_CHANGE} (reference only)",
+                "band_nodes": BAND_NODES,
+                "rule": "midpoint nodes in [delta_lo, delta_hi] at the centre azimuth, mean of I sin(delta') / sin(delta)",
+                "wall_clock_s": wall,
+                "pixels": rows,
+            },
+        )
+        print(family, len(rows), "steep pixels, band/point:", [round(r["band_over_point"], 4) for r in rows])
+
+
+def load_band_reference(output_dir: Path, family: str) -> dict[tuple[int, int], float]:
+    path = output_dir / f"reference_band_{family}.json"
+    if not path.exists():
+        return {}
+    return {(r["row"], r["column"]): r["reference_band"] for r in json.loads(path.read_text())["pixels"]}
+
+
 def load_reference(output_dir: Path, family: str) -> dict[tuple[int, int], float]:
     with (output_dir / f"reference_{family}.csv").open() as handle:
         return {(int(r["row"]), int(r["column"])): float(r["reference"]) for r in csv.DictReader(handle)}
@@ -481,6 +599,8 @@ class ProfileMetrics:
     reference: float
     lit: bool
     rel_error: float
+    reference_band: float  # band-averaged Phase I on the steep pixels, the point reference elsewhere
+    rel_error_band: float
 
 
 def available_class_tiers(output_dir: Path, store: str = "members") -> list[int]:
@@ -488,9 +608,12 @@ def available_class_tiers(output_dir: Path, store: str = "members") -> list[int]
     return sorted(int(p.stem.removeprefix("events_N")) for p in first.glob("events_N*.npz"))
 
 
-def profile_metrics(output_dir: Path, family: str, n: int, workers: int, store: str) -> tuple[list[ProfileMetrics], float]:
+def profile_metrics(
+    output_dir: Path, family: str, n: int, workers: int, store: str
+) -> tuple[list[ProfileMetrics], float, float]:
     pixels, render = load_profile(output_dir, family)
     reference = load_reference(output_dir, family)
+    band_reference = load_band_reference(output_dir, family)
     start = time.perf_counter()
     acc = class_band_sums(output_dir, n, [family], pixels, render, workers, store)
     wall = time.perf_counter() - start
@@ -507,26 +630,38 @@ def profile_metrics(output_dir: Path, family: str, n: int, workers: int, store: 
                 row, column, float(np.degrees(delta[p])), float(width[p]), int(acc.k[0, p]), int(acc.k_pos[0, p]),
                 kish_k_eff(acc.total[0, p], acc.square[0, p]), k_min if np.isfinite(k_min) else 0.0,
                 float(estimate[p]), ref, bool(lit), (estimate[p] - ref) / ref if lit else float("nan"),
+                band_reference.get((row, column), ref),
+                (estimate[p] - band_reference.get((row, column), ref)) / band_reference.get((row, column), ref)
+                if lit else float("nan"),
             )
         )
-    return rows, wall
+    return rows, wall, acc.max_rss_mb_worker
 
 
-def tier_summary(rows: Sequence[ProfileMetrics], n: int, wall: float) -> dict[str, Any]:
+def tier_summary(rows: Sequence[ProfileMetrics], n: int, wall: float, worker_rss: float) -> dict[str, Any]:
     lit = [r for r in rows if r.lit]
     rel = np.array([r.rel_error for r in lit])
     positive = [r for r in lit if r.estimate > 0]
     log_ratio = np.log([r.estimate / r.reference for r in positive]) if positive else np.array([np.nan])
     k_eff = np.array([r.K_eff for r in lit])
+    rel_band = np.array([r.rel_error_band for r in lit])
     return {
         "pixels": len(rows),
         "lit_pixels": len(lit),
+        # against the like-for-like (band-averaged on steep pixels) reference: the sampling error
+        "band_ref_rms_rel_error": float(np.sqrt(np.mean(rel_band**2))),
+        "band_ref_median_abs_rel_error": float(np.median(np.abs(rel_band))),
+        "band_ref_p95_abs_rel_error": float(np.percentile(np.abs(rel_band), 95)),
+        "band_ref_max_abs_rel_error": float(np.max(np.abs(rel_band))),
+        "band_ref_pixels": int(sum(r.reference_band != r.reference for r in lit)),
         "lit_zero_estimate": len(lit) - len(positive),
         "rms_rel_error": float(np.sqrt(np.mean(rel**2))),
         "median_abs_rel_error": float(np.median(np.abs(rel))),
         "p95_abs_rel_error": float(np.percentile(np.abs(rel), 95)),
         "max_abs_rel_error": float(np.max(np.abs(rel))),
         "log_rms": float(np.sqrt(np.mean(log_ratio**2))),
+        # ~0.67 if the error is sampling noise of size 1/sqrt(K_eff); much larger = systematic
+        "median_abs_rel_times_sqrt_K_eff": float(np.median(np.abs(rel) * np.sqrt(k_eff))),
         "median_ratio": float(np.median([r.estimate / r.reference for r in lit])),
         "sum_ratio": float(sum(r.estimate for r in lit) / sum(r.reference for r in lit)),
         "K_median_lit": float(np.median([r.K for r in lit])),
@@ -538,24 +673,39 @@ def tier_summary(rows: Sequence[ProfileMetrics], n: int, wall: float) -> dict[st
         "render_wall_s": wall,
         "render_s_per_pixel": wall / len(rows),
         "max_rss_mb_process": max_rss_mb(),
+        "max_rss_mb_worker": worker_rss,
     }
 
 
+def n_for_target(fit: Mapping[str, float] | None) -> float | None:
+    if fit is None or fit["slope"] >= 0:
+        return None
+    return float(10 ** ((np.log10(TARGET_ERROR) - fit["log10_C"]) / fit["slope"]))
+
+
 def extrapolate(per_tier: Mapping[str, Mapping[str, float]]) -> dict[str, Any]:
-    """Power laws in ``N`` of the lit RMS error and median ``K_eff``; ``N`` for a ``1e-2`` lit RMS."""
+    """Power laws in ``N`` of the lit RMS errors and median ``K_eff``; ``N`` for a ``1e-2`` lit RMS.
+
+    ``N_for_target`` uses the like-for-like reference (sampling error); ``N_for_target_point_reference``
+    the pixel-centre reference, which also carries the pixel-model difference on steep pixels.
+    """
     ns = sorted(int(n) for n in per_tier)
-    fit = power_law(ns, [per_tier[str(n)]["rms_rel_error"] for n in ns])
-    out: dict[str, Any] = {"tiers": ns, "rms_rel_error_fit": fit, "N_for_target": None}
-    if fit is not None and fit["slope"] < 0:
-        out["N_for_target"] = float(10 ** ((np.log10(TARGET_ERROR) - fit["log10_C"]) / fit["slope"]))
+    fit = power_law(ns, [per_tier[str(n)]["band_ref_rms_rel_error"] for n in ns])
+    point_fit = power_law(ns, [per_tier[str(n)]["rms_rel_error"] for n in ns])
+    out: dict[str, Any] = {
+        "tiers": ns,
+        "band_ref_rms_rel_error_fit": fit,
+        "N_for_target": n_for_target(fit),
+        "rms_rel_error_fit": point_fit,
+        "N_for_target_point_reference": n_for_target(point_fit),
+    }
     out["K_eff_median_fit"] = power_law(ns, [per_tier[str(n)]["K_eff_median_lit"] for n in ns])
-    # shape diagnostic of a (two-point) fit: K_eff ~ N and error ~ N^-1/2 for scattered points
-    out["N_for_target_from_K_eff"] = None
+    # Conservative bound: the error of scattered points is 1/sqrt(K_eff) (the i.i.d. random store
+    # measures |rel| sqrt(K_eff) ~ 0.6); the lattice usually does better but not reliably (aliasing).
+    # K_eff is linear in N, so N = TARGET^-2 / (K_eff / N) at the largest tier.
     last = per_tier[str(ns[-1])]
-    if last["K_eff_median_lit"] > 0:
-        # error ~ c / sqrt(K_eff): the measured c at the largest tier, K_eff linear in N
-        c = last["rms_rel_error"] * np.sqrt(last["K_eff_median_lit"])
-        out["N_for_target_from_K_eff"] = float(ns[-1] * (c / TARGET_ERROR) ** 2 / last["K_eff_median_lit"])
+    out["N_for_target_mc_bound_median_pixel"] = float(TARGET_ERROR**-2 / last["K_eff_per_N_median_lit"])
+    out["N_for_target_mc_bound_worst_pixel"] = float(TARGET_ERROR**-2 * ns[-1] / last["K_eff_min_lit"])
     return out
 
 
@@ -564,12 +714,12 @@ def stage_render(output_dir: Path, families: Sequence[str], workers: int, store:
     for family in families:
         per_tier: dict[str, Any] = {}
         for n in tiers:
-            rows, wall = profile_metrics(output_dir, family, n, workers, store)
+            rows, wall, worker_rss = profile_metrics(output_dir, family, n, workers, store)
             with (output_dir / f"metrics_{family}{tag}_N{n}.csv").open("w", newline="") as handle:
                 writer = csv.DictWriter(handle, fieldnames=[f.name for f in dataclasses.fields(ProfileMetrics)])
                 writer.writeheader()
                 writer.writerows(dataclasses.asdict(r) for r in rows)
-            per_tier[str(n)] = tier_summary(rows, n, wall)
+            per_tier[str(n)] = tier_summary(rows, n, wall, worker_rss)
             print(family + tag, n, json.dumps(per_tier[str(n)]))
         summary = {
             "family": family,
@@ -581,6 +731,45 @@ def stage_render(output_dir: Path, families: Sequence[str], workers: int, store:
         }
         write_json(output_dir / f"summary_{family}{tag}.json", summary)
         print(family + tag, "extrapolation", json.dumps(summary["extrapolation"]))
+
+
+# ---------------------------------------------------------------- verdict
+BACKEND_N = 1e9  # N_star above this: collapsed (issue: "extrapolated N > 1e9")
+STOP_LOSS_N = 1e10
+
+
+def stage_verdict(output_dir: Path, families: Sequence[str]) -> None:
+    """Three-way verdict per family from the uniform-store summary (and the rho-aware one, if run)."""
+    for family in families:
+        summary = json.loads((output_dir / f"summary_{family}.json").read_text())
+        n_star = summary["extrapolation"]["N_for_target"]
+        tiers = summary["tiers"]
+        reached = sorted(int(n) for n in tiers if tiers[n]["band_ref_rms_rel_error"] <= TARGET_ERROR)
+        verdict: dict[str, Any] = {
+            "family": family,
+            "N_star_uniform": n_star,
+            "N_star_uniform_point_reference": summary["extrapolation"]["N_for_target_point_reference"],
+            "N_mc_bound_median_pixel": summary["extrapolation"]["N_for_target_mc_bound_median_pixel"],
+            "N_mc_bound_worst_pixel": summary["extrapolation"]["N_for_target_mc_bound_worst_pixel"],
+            "tiers": sorted(int(n) for n in tiers),
+            "smallest_tier_reaching_target": reached[0] if reached else None,
+        }
+        if n_star is not None and n_star <= BACKEND_N:
+            verdict["verdict"] = "backend"
+            verdict["confirmed"] = bool(reached and reached[0] <= BACKEND_N)  # a measured tier <= 1e9 reaches 1e-2
+            verdict["robust_to_lost_lattice_gain"] = bool(verdict["N_mc_bound_worst_pixel"] <= BACKEND_N)
+        else:
+            importance = output_dir / f"summary_{family}_rho.json"
+            if importance.exists():
+                rho = json.loads(importance.read_text())
+                verdict["N_star_rho_aware"] = rho["extrapolation"]["N_for_target"]
+                good = verdict["N_star_rho_aware"] is not None and verdict["N_star_rho_aware"] <= BACKEND_N
+                verdict["verdict"] = "needs_rho_aware_store" if good else "unusable"
+            else:
+                verdict["verdict"] = "collapsed (rho-aware store not run)"
+        verdict["created"] = dt.datetime.now().astimezone().isoformat(timespec="seconds")
+        write_json(output_dir / f"verdict_{family}.json", verdict)
+        print(family, json.dumps(verdict))
 
 
 # ------------------------------------------------------------------- plot
@@ -623,6 +812,76 @@ def plot_locate(output_dir: Path, plt) -> None:
     plt.close(figure)
 
 
+def read_metrics(path: Path) -> dict[str, np.ndarray]:
+    with path.open() as handle:
+        rows = list(csv.DictReader(handle))
+    return {key: np.array([float(r[key] == "True") if key == "lit" else float(r[key]) for r in rows]) for key in rows[0]}
+
+
+def plot_profiles(output_dir: Path, plt) -> None:
+    windows = json.loads((output_dir / "profile_windows.json").read_text())["families"]
+    for family, spec in windows.items():
+        summary_path = output_dir / f"summary_{family}.json"
+        if not summary_path.exists():
+            continue
+        variants = [("", json.loads(summary_path.read_text()))]
+        if (output_dir / f"summary_{family}_rho.json").exists():
+            variants.append(("_rho", json.loads((output_dir / f"summary_{family}_rho.json").read_text())))
+        figure, axes = plt.subplots(3, 1, figsize=(9, 11), sharex=True)
+        x = None
+        for tag, summary in variants:
+            for n in summary["tiers"]:
+                m = read_metrics(output_dir / f"metrics_{family}{tag}_N{n}.csv")
+                x = np.arange(len(m["estimate"]))
+                label = f"{'rho-aware' if tag else 'uniform'} N={int(n):.0e}"
+                style = "x" if tag else "."
+                axes[0].semilogy(x, np.where(m["estimate"] > 0, m["estimate"], np.nan), style, ms=3, label=label)
+                lit = m["lit"] > 0
+                axes[1].semilogy(x[lit], np.abs(m["rel_error_band"][lit]), style, ms=3, label=label)
+                axes[2].semilogy(x, np.maximum(m["K_eff"], 1e-1), style, ms=3, label=label)
+        axes[0].semilogy(x, np.where(m["reference"] > 0, m["reference"], np.nan), "k-", lw=0.8, label="Phase I reference")
+        steep = m["reference_band"] != m["reference"]
+        axes[0].semilogy(x[steep], m["reference_band"][steep], "k+", ms=6, label="Phase I band average (steep px)")
+        axes[1].semilogy(x[steep], np.abs(m["rel_error"][steep]), "+", color="0.5", ms=6, label="vs point reference (steep px)")
+        axes[0].set_ylabel("I (pixel value)")
+        axes[1].axhline(TARGET_ERROR, color="k", ls="--", lw=0.8)
+        axes[1].set_ylabel("|relative error| (lit, like-for-like ref.)")
+        axes[2].set_ylabel("K_eff (Kish, pooled members)")
+        (e0, a0), (e1, a1) = spec["first_last_pixel_sky_elevation_azimuth_deg"]
+        axes[2].set_xlabel(
+            f"profile pixel ({spec['orientation']}, {PROFILE_PIXEL_DEG} deg/px; el/az {e0:.2f}/{a0:.2f} -> {e1:.2f}/{a1:.2f} deg)"
+        )
+        for axis in axes:
+            axis.legend(fontsize=7)
+            axis.grid(True, which="both", alpha=0.3)
+        figure.suptitle(f"class [3,5] band sum vs Phase I, {family} {FAMILY_PARAMETERS[family]}")
+        figure.tight_layout()
+        figure.savefig(output_dir / f"profile_{family}.png", dpi=130)
+        plt.close(figure)
+
+    figure, axes = plt.subplots(1, 2, figsize=(11, 4.5))
+    for family in windows:
+        colour = {"plate": "C0", "parry": "C1", "lowitz": "C2"}[family]
+        for tag, style in (("", "o-"), ("_random", "^:"), ("_rho", "s--")):
+            path = output_dir / f"summary_{family}{tag}.json"
+            if not path.exists():
+                continue
+            block = json.loads(path.read_text())["tiers"]
+            ns = sorted(int(n) for n in block)
+            name = family + {"": " Fibonacci", "_random": " i.i.d. random", "_rho": " rho-aware"}[tag]
+            axes[0].loglog(ns, [block[str(n)]["band_ref_rms_rel_error"] for n in ns], style, color=colour, label=f"{name} RMS")
+            axes[1].loglog(ns, [block[str(n)]["K_eff_median_lit"] for n in ns], style, color=colour, label=name)
+    axes[0].axhline(TARGET_ERROR, color="k", ls="--", lw=0.8)
+    for axis, label in zip(axes, ("lit RMS relative error (like-for-like ref.)", "median K_eff (lit)")):
+        axis.set_xlabel("N (points on S^2 per member store)")
+        axis.set_ylabel(label)
+        axis.legend(fontsize=7)
+        axis.grid(True, which="both", alpha=0.3)
+    figure.tight_layout()
+    figure.savefig(output_dir / "convergence.png", dpi=130)
+    plt.close(figure)
+
+
 def stage_plot(output_dir: Path) -> None:
     import matplotlib
 
@@ -631,18 +890,21 @@ def stage_plot(output_dir: Path) -> None:
 
     if (output_dir / "locate.json").exists():
         plot_locate(output_dir, plt)
+    if (output_dir / "profile_windows.json").exists():
+        plot_profiles(output_dir, plt)
     print("figures written to", output_dir)
 
 
 # ------------------------------------------------------------------- main
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--stage", choices=("precompute", "locate", "profiles", "reference", "render", "plot"), required=True)
+    parser.add_argument("--stage", choices=("precompute", "locate", "profiles", "reference", "band-reference", "render", "verdict", "plot"), required=True)
     parser.add_argument("--families", nargs="+", default=list(FAMILIES))
     parser.add_argument("--profile", nargs="+", default=[], help="family:elevation:azimuth:row|column:length[:rationale]")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--tiers", type=int, nargs="+", default=[10_000_000])
     parser.add_argument("--windowed", action="store_true", help="precompute only the profiles' deviation window")
+    parser.add_argument("--sampling", choices=tuple(SAMPLERS), default="fibonacci", help="point set of the store (precompute/render)")
     parser.add_argument("--skip-self-checks", action="store_true")
     parser.add_argument("--workers", type=int, default=MAX_WORKERS)
     parser.add_argument("--locate-n", type=int, default=10_000_000)
@@ -653,7 +915,10 @@ def main() -> None:
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     if args.stage == "precompute":
-        stage_precompute(args.output_dir, args.tiers, windowed=args.windowed, workers=args.workers, skip_checks=args.skip_self_checks)
+        stage_precompute(
+            args.output_dir, args.tiers, windowed=args.windowed, workers=args.workers, skip_checks=args.skip_self_checks,
+            sampling=args.sampling,
+        )
     elif args.stage == "locate":
         if args.zoom is None:
             stage_locate(args.output_dir, args.locate_n, args.workers, LOCATE_RENDER)
@@ -665,8 +930,15 @@ def main() -> None:
         stage_profiles(args.output_dir, args.profile)
     elif args.stage == "reference":
         stage_reference(args.output_dir, args.families, args.workers)
+    elif args.stage == "band-reference":
+        stage_band_reference(args.output_dir, args.families, args.workers)
     elif args.stage == "render":
-        stage_render(args.output_dir, args.families, args.workers)
+        if args.sampling == "fibonacci":
+            stage_render(args.output_dir, args.families, args.workers)
+        else:
+            stage_render(args.output_dir, args.families, args.workers, store=f"members_{args.sampling}", tag=f"_{args.sampling}")
+    elif args.stage == "verdict":
+        stage_verdict(args.output_dir, args.families)
     elif args.stage == "plot":
         stage_plot(args.output_dir)
 
