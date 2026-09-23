@@ -43,11 +43,13 @@ Memory layout: every array is C-contiguous, ``u`` / ``phi`` ``(K, 3)``,
 ``D`` / ``w`` (and ``iw`` for a non-uniform sampler) ``(K,)``, in the
 store's ``dtype`` (float64 by default; the fields are always evaluated in
 float64 and cast once after sorting).  :meth:`S2EventStore.band_slice`
-returns views into the store, not copies.  float32 (measured on the task 13
-``3-5`` store at ``N = 1e7``, column 126, 801 pixels): the band-sum estimates
-move by at most ``RELATIVE_FLOAT32_NOTE`` of their float64 values -- see
-``docs/roadmap.md`` section 4.2 for the numbers -- at half the memory; the
-default stays float64.
+returns views into the store, not copies.  float32 halves the memory
+(102.5 -> 51.3 MB for the task 13 ``3-5`` store at ``N = 1e7``); on its
+column 126 (511 lit pixels, canonical density) the band-sum estimates move
+by a median ``4.5e-8`` and an RMS ``3.1e-4`` relative to float64, but by up
+to ``5.5e-3`` on the worst pixel -- comparable to the float64 estimate's own
+median error against the Phase I reference (``7.1e-3``), so float32 is not
+the default (2026-09-23, task ``s2-event-store``).
 
 Disk cache: ``<base_dir>/<cache_key>/events.npz`` + ``provenance.json``.
 The key hashes the build parameters (:meth:`S2StoreSpec.build_parameters`)
