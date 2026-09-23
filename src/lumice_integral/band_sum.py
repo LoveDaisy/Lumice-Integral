@@ -237,11 +237,12 @@ def single_path_class(crystal: HexPrism, faces: Sequence[int]) -> PathClass:
 def store_plan(path_class: PathClass, crystal: HexPrism, *, transport: bool = True) -> tuple[StoreGroup, ...]:
     """Stores of a rank-2 class: ``Phi`` groups, then one store for the ``D6h`` orbit of groups (module docstring).
 
-    Every member is served exactly once (checked); a class is one ``D6h``
+    Every member is served exactly once (checked).  A class is one ``D6h``
     orbit, so with ``transport`` the plan is a single store (the
-    representative's group), else a ``RuntimeError``.  ``transport=False``
-    gives every group its own store.  A rank-0 class has no stores (empty
-    plan).
+    representative's group); a member outside the orbit is a class
+    construction error (``RuntimeError`` from
+    :func:`.path_class.path_class_symmetry`).  ``transport=False`` gives
+    every group its own store.  A rank-0 class has no stores (empty plan).
     """
     if path_class.halo_map_rank == 0:
         return ()

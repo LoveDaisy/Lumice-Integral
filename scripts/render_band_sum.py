@@ -25,10 +25,10 @@ the camera (linear lens).  ``--pose-density-*`` are ``render_ch06_strip.py``'s
 flags with the same validation (``pose_density.resolve_pose_density_parameters``).
 
 Stores: ``--path`` (face sequence, default ``3 5``) alone renders that one
-path; ``--path-class`` expands it to its PBD class, one store per proper orbit
-of ``Phi`` groups with pose factors ``g^-1`` (``band_sum.store_plan``;
-``--no-symmetry-transport`` gives every ``Phi`` group its own store, a
-verification mode).  Stores are built once in the parent (``--store-n``
+path; ``--path-class`` expands it to its PBD class, one store for all its
+``Phi`` groups, each served through a ``D6h`` element, mirrors included
+(``band_sum.store_plan``; ``--no-symmetry-transport`` gives every ``Phi``
+group its own store, a verification mode).  Stores are built once in the parent (``--store-n``
 Fibonacci points, cached under ``--store-cache-dir`` by parameter hash,
 ``s2_store.build_or_load``) before the workers start; a cached store is
 loaded, never rebuilt.  A rank-0 class is the task 9 point mass on the sun
@@ -91,7 +91,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--no-symmetry-transport",
         action="store_true",
-        help="with --path-class: one store per Phi group instead of one per proper orbit (verification mode)",
+        help="with --path-class: one store per Phi group instead of one per class (verification mode)",
     )
     parser.add_argument("--store-cache-dir", type=Path, default=DEFAULT_CACHE_DIR)
     parser.add_argument("--skip-store-self-checks", action="store_true", help="build new stores without the section 4.1(a) checks")

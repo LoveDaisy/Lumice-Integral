@@ -489,7 +489,7 @@ only through $\Phi_P$. Hence:
 |---|---|---|
 | $\Phi$ | the field $D_P$, its contours, $1/\lvert\nabla D_P\rvert$, the correspondence $\psi(\mathbf u,\alpha)$, the critical points | the whole $\Phi$-class, across PBD classes |
 | member | the window field $w_m = A_m T_m$ on $S^2$, additive: $w_\Phi = \sum_m w_m$ | one per face sequence |
-| symmetry | a proper crystal symmetry $g$ moves the map: $D_{gPg^{-1}}(\mathbf u) = D_P(g^{-1}\mathbf u)$, $\mathrm{fiber}(gPg^{-1}) = \mathrm{fiber}(P)\,g^{-1}$ exactly, windows transported alike | only $\rho(Rg^{-1})$ can tell the members apart |
+| symmetry | a proper crystal symmetry $g$ moves the map: $D_{gPg^{-1}}(\mathbf u) = D_P(g^{-1}\mathbf u)$, $\mathrm{fiber}(gPg^{-1}) = \mathrm{fiber}(P)\,g^{-1}$ exactly, windows transported alike; on $S^2$ the whole $D_{6h}$ acts, mirrors included ($w$, $\Phi$ and the valid domain are equivariant; the pose is rebuilt from $(g\mathbf u, g\Phi)$, section 4.2) | only $\rho(Rg^{-1})$ can tell the members apart |
 | $\rho$ | the pose density on the fiber | the *columns* of the writing series' table |
 
 So a $\Phi$-class is one contour family plus one effective window field, and
@@ -498,7 +498,9 @@ families) has the skeleton row $= (D_P, w_\Phi)$, column $= \rho$, cell
 $=$ the line integral. Task 9's `12x` for the column density is the symmetry
 row with a $\rho$ invariant under the $C_6$ rotations and $C_2'$; the tilted
 Parry density breaks it through $\rho$ alone. Improper elements (B/D
-mirrors) do not transport inside SO(3) and are traced separately. The same
+mirrors) do not transport inside SO(3) and are traced separately in Phase
+I; on $S^2$ they transport like rotations (section 4.2, task
+`band-sum-full-symmetry`). The same
 statements hold in Phase I: members with the same $\Phi$ share one SO(3)
 curve (task 9 measured "same direction map, different weight" for `3-1-2-5`
 on row 651), so class rendering should trace once per $\Phi$-group and sum
@@ -842,10 +844,9 @@ stores ($N = 10^6, 10^7$) bit for bit, and both probe scripts now call it.
 `path_class.phi_key` groups face sequences by their $\Phi$ (`3-5` and
 `3-1-2-5` share one; a group store sums $w_\Phi = \sum_m w_m$ on the same
 $\mathbf u$), and `path_class.path_class_symmetry` gives each class member
-the proper $D_{6h}$ element $g$ that serves it from the representative's
-store with the pose factor $g^{-1}$ (section 4.1(d)); a member reached only
-by a mirror (half of the 24-member class `[3,1,2,5]`) needs its own store.
-Evidence: transported events equal each `[3,5]` member's own store on the
+a $D_{6h}$ element $g$, proper or improper, that serves it from the
+representative's store (section 4.1(d); mirrors since task
+`band-sum-full-symmetry`, below). Evidence: transported events equal each `[3,5]` member's own store on the
 $g$-rotated lattice to `5.2e-13` ($N = 10^6$); on the three task 14
 profiles at $N = 10^7$ one store with pose factors equals twelve member
 stores to `6.9e-14` relative. The Fibonacci lattice is not closed under
@@ -863,12 +864,10 @@ task 13 probe, which now imports it: the task 13 column-126 metrics are
 reproduced bit for bit at $N = 10^6, 10^7, 10^8$) and renders a path or a
 PBD class; `scripts/render_band_sum.py` is its CLI (the `strip_io` layout,
 so `read_strip` and `compare_strip_v2.py` read it, plus per-pixel $K$,
-$K_{\rho>0}$ and Kish $K_{\mathrm{eff}}$). A class is grouped by $\Phi$
-first and the $\Phi$ groups by proper orbits (`band_sum.store_plan`), one
-store per orbit with the pose factors $g^{-1}$: `[3,5]` needs one store;
-`[3,1,2,5]` also needs only one, because every mirror-only member shares
-its $\Phi$ group with a member a proper element reaches (the group store
-serves both); `[1,3,5,2]` needs two. A rank-0 class is the task 9 point
+$K_{\rho>0}$ and Kish $K_{\mathrm{eff}}$, counting distinct events since
+task `band-sum-full-symmetry`). A class is grouped by $\Phi$ first, and one
+store serves every $\Phi$ group (`band_sum.store_plan`; the class is one
+$D_{6h}$ orbit, mirrors included, below). A rank-0 class is the task 9 point
 mass on the sun pixel. The stores are built once in the parent, spawned
 workers load them and render whole columns. Evidence (canonical scene):
 
@@ -903,6 +902,74 @@ Reports and the three example images (canonical strip; class `[3,5]` with
 plate and with Parry densities):
 `scratchpad/task-band-sum-renderer/artifacts/` (local), from
 `scripts/regress_band_sum.py`.
+
+**Full $D_{6h}$ and the precomputation view (2026-09-23, task
+`band-sum-full-symmetry`).** The representative's store on all of $S^2$
+is the same information as every member's store on a fundamental domain
+$F = S^2/G$: the representative's field on the block $hF$ is the field of
+the member $h^{-1}Ph$ on $F$. "Transport one event to $|G|$ images" and
+"compute $1/|G|$ of the sphere" are the same thing, so symmetry saves
+repeated evaluation and makes no new samples; the precision is set by the
+number of distinct precomputed events that fall in the band with non-zero
+weight.
+
+- *Mirrors transport on $S^2$.* $w_{gPg^{-1}}(g\mathbf u) = w_P(\mathbf u)$,
+  $\Phi_{gPg^{-1}}(g\mathbf u) = g\,\Phi_P(\mathbf u)$ and the valid domain
+  is the same, for all 24 elements (tested to `1e-12` on `3-5`, `1-3`,
+  `3-1-2-5` at $h/a = 2$). The pose of a transported event is rebuilt from
+  $(g\mathbf u, g\Phi, D)$ by the two frames of `event_rotations`, a
+  rotation whatever $\det g$; "a mirror needs its own store" was the SO(3)
+  restriction of Phase I ($R g^{-1}$ must be a rotation), not an $S^2$ one.
+  On the representative's pose $R$ the rebuild is
+  $L_g R g^{\mathsf T}$, $L_g = I - (1 - \det g)\,\mathbf m\mathbf m^{\mathsf T}$
+  with $\mathbf m$ the normal of the plane of $\mathbf s$ and the pixel
+  centre: the old pose factor for a proper $g$ (bit for bit), times the
+  reflection in that plane for a mirror (`s2_store.transported_rotations`,
+  equal to the literal rebuild to `1e-13` on all 24 elements; calling
+  `event_rotations` per transport would cost `1.9x` on a class pixel).
+  `store_plan` is therefore one store per class: all 2368 rank-2 classes of
+  up to five faces at $h/a = 2$ and $0.3$; `[1,3,5,2]` (four $\Phi$ groups,
+  two reached only by mirrors) went from two stores to one.
+- *$K_{\mathrm{eff}}$ counts distinct events.* Per event the transports are
+  summed first, $c_i = w_i \sum_g \rho(R_i^{(g)})$, and $K$,
+  $K_{\rho>0}$, $K_{\mathrm{eff}}$ are of $\{c_i\}$ (provenance
+  `options.k_eff_semantics = "per_event"`; a render without the field
+  pooled every (event, transport) pair, `per_transport_sample`). Values
+  are unchanged bit for bit: the canonical $N = 10^8$ image including its
+  `pixels.csv`, the class `[3,5]` plate and Parry example images at $10^7$,
+  and task 14's profiles at $10^8$. The pooling overstated
+  $K_{\mathrm{eff}}$ by the number of images with the same $\rho$: on the
+  example images exactly `6x` (plate) and `2x` (Parry) from the 5th to the
+  95th percentile; on task 14's peak pixels at $10^8$ the per-event median
+  is `1956` / `624` / `2961` (plate / Parry / Lowitz), the pooled one
+  `6.0x` / `2.0x` / `1.0x` that -- the author's count of `6/12`, `2/12`,
+  `1/12` images with $\rho(Rg^{-1}) \equiv \rho(R)$. For plate the
+  per-event size equals one member's: the six $\rho$-equal members only
+  scale $c_i$. Task 14's twelve independent member stores do hold `6x` as
+  many independent samples for plate (twelve lattices, twelve times the
+  computation), which is why task `band-sum-renderer`'s single-store plate
+  comparison was noisier than the twelve-store one: unequal computation,
+  not a transport defect.
+- *The ruler.* With two i.i.d. stores (`RandomSphereSampler`, $N = 10^7$,
+  seeds 1 and 2) Kish is the Monte Carlo noise predictor, and
+  $z = (a - b)/\sqrt{a^2/K_a + b^2/K_b}$ on task 14's profiles has RMS
+  `1.20` / `0.85` / `0.93` with the per-event $K_{\mathrm{eff}}$ (plate on
+  seeds 3/4 and 5/6: `1.01`, `0.97`), against `2.94` / `1.21` / `0.93`
+  pooled. On the Fibonacci lattice the class-stage $z$ against task 14
+  (combined noise $\sqrt{1/K_{\mathrm{eff}} + 1/K_{\mathrm{eff},14}}$) is
+  `0.24` / `0.05` / `0.15`: the lattice beats $1/\sqrt{K_{\mathrm{eff}}}$
+  (task 14's `7-9x`), so the `NOISE_Z = 4` attribution with the per-event
+  $K_{\mathrm{eff}}$ is conservative; the threshold is unchanged.
+- *Cost.* Unchanged within noise (canonical $10^8$ image `171.5 s` vs
+  `168.9 s`; the two example images `152 s` / `192 s` vs `162 s` /
+  `192 s`). $\rho$ is `13 %` of a class `[3,5]` pixel (the pose products
+  are most of it), so merging $\rho$-equal images into a multiplicity is
+  not worth doing.
+
+Reports: `scratchpad/task-band-sum-full-symmetry/artifacts/` (local), from
+`scripts/regress_band_sum.py --stage class` / `--stage k-eff`;
+`tests/test_band_sum.py::test_per_event_k_eff_is_the_iid_noise_of_a_class_band_sum`
+(slow) pins the ruler.
 
 ## 5. Proposed Responsibility Boundaries
 
@@ -1071,3 +1138,14 @@ produce plausible but systematically wrong radiance.
   renderer can target all five families of chapter 11 with one uniform
   store per member (measured at sun 15°, class `[3,5]`, one profile per
   family; other classes and elevations are unmeasured).
+- **2026-09-23**: band-sum symmetry by the precomputation view (section
+  4.2, task `band-sum-full-symmetry`): one store on $S^2$ is every member's
+  store on a fundamental domain, so symmetry saves evaluation and makes no
+  samples. All of $D_{6h}$ transports on $S^2$ (mirrors included, pose
+  $L_g R g^{\mathsf T}$), one store per class; $K$ / $K_{\mathrm{eff}}$
+  count distinct events (`k_eff_semantics = "per_event"`, values unchanged
+  bit for bit), which the i.i.d. two-seed test confirms as the noise
+  predictor. Earlier renders' $K_{\mathrm{eff}}$ (no `k_eff_semantics`
+  field) are `per_transport_sample` and not comparable. If more such
+  semantics tags accumulate in the provenance, fold them into one
+  provenance schema version instead of one tag per field.
