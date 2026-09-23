@@ -36,6 +36,7 @@ solver; it may appear only as an external validation oracle.
 | `R in SO(3)` | Active crystal pose mapping body components to world components: `v_W = R v_B`. |
 | `P` | An ordered, fixed ray-path branch, including its face and interaction choices. |
 | `s in S2` | World-space unit propagation direction from the light source toward the crystal. |
+| (boundary note) | `s` is the *opposite* of the writing series' `s` and of Lumice's sun position vector, both of which point toward the sun; the project calls that one `ŝ = -s` (`camera.sun_direction`, Phase II's `u = R^-1 ŝ`). This contract's `s` is unchanged; the one conversion is `camera.incident_direction_from_sun`, and `docs/conventions.md` is the table of all conventions. |
 | `d in S2` | World-space unit propagation direction from the crystal toward the observer. |
 | `F_P(R)` | Outgoing world-space unit direction produced by path `P` at pose `R`. |
 | `V_P` | Open subset on which the selected path branch is feasible and smooth. |

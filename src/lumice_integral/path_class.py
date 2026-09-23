@@ -100,7 +100,13 @@ def hexprism_symmetry_matrices() -> tuple[np.ndarray, ...]:
 
     Generated as the closure of three generators -- the 60-degree rotation
     about z, the vertical mirror ``y -> -y`` and the horizontal mirror
-    ``z -> -z`` -- so the element list is derived, not typed in.
+    ``z -> -z`` -- so the element list is derived, not typed in.  The order
+    is that of the closure, an implementation detail: it is neither the
+    writing series' ``signature.D6H`` order nor its published numbers #1-#12
+    of the fold group ``G`` (``reflection_group``).  Across projects an
+    element is identified by its matrix (``docs/conventions.md`` row 14);
+    task ``symmetry-authority`` replaces this construction by the migrated
+    table.
     """
     angle = np.radians(60.0)
     generators = [
@@ -171,7 +177,9 @@ def phi_key(crystal: Polyhedron, faces: Sequence[int]) -> tuple[int, int, int]:
     triple ``(index of M, face of n_a, face of n_tilde_b)``, matched against
     those finite sets (``RuntimeError`` if a match fails -- the closure
     argument would be broken, not a new key).  ``3-5`` and ``3-1-2-5`` share
-    a key; ``3-5`` and ``3-7`` do not.
+    a key; ``3-5`` and ``3-7`` do not.  The key is compared for equality
+    only: the index of ``M`` is a position in :func:`hexprism_symmetry_matrices`,
+    not a published element number (``docs/conventions.md`` row 14).
     """
     if not isinstance(crystal, HexPrism):
         raise TypeError("phi_key is implemented for the hexagonal prism only")

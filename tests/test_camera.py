@@ -6,17 +6,19 @@ import pytest
 
 from lumice_integral.camera import (
     camera_rotation,
+    incident_direction_from_sun,
     linear_pixel_outgoing_direction,
     linear_pixel_sky_direction,
     linear_scale,
     project_linear,
-    sun_incident_direction,
+    sun_direction,
 )
 from lumice_integral.canonical_scene import (
     CANONICAL_PIXEL_COLUMN,
     CANONICAL_PIXEL_ROW,
     CANONICAL_RENDER,
     canonical_incident_direction,
+    canonical_sun_direction,
     canonical_target_direction,
 )
 from lumice_integral.optics import minimum_deviation_incident, path_3_5
@@ -79,11 +81,23 @@ def test_pixel_center_round_trips_through_the_forward_projection(row, column):
     np.testing.assert_array_equal(outgoing, -direction)
 
 
-def test_sun_incident_direction_travels_away_from_the_sun():
-    incident = sun_incident_direction(15.0, 0.0)
-    np.testing.assert_allclose(incident, [-np.cos(np.radians(15.0)), 0.0, -np.sin(np.radians(15.0))])
+def test_sun_direction_points_toward_the_sun_and_light_travels_away_from_it():
+    """``s_hat`` is the Lumice sun position vector; the solver's ``s`` is ``-s_hat`` (docs/conventions.md)."""
+    sun = sun_direction(15.0, 0.0)
+    np.testing.assert_allclose(sun, [np.cos(np.radians(15.0)), 0.0, np.sin(np.radians(15.0))])
+    assert sun[2] > 0.0  # the sun is above the horizon
+    np.testing.assert_allclose(np.linalg.norm(sun), 1.0, atol=1e-15)
+    incident = incident_direction_from_sun(sun)
     assert incident[2] < 0.0  # sunlight travels downward
-    np.testing.assert_allclose(np.linalg.norm(incident), 1.0, atol=1e-15)
+    for altitude, azimuth in [(0.0, 0.0), (15.0, 0.0), (22.0, 37.0), (90.0, 0.0), (-5.0, 180.0), (45.0, -90.0)]:
+        sun = sun_direction(altitude, azimuth)
+        incident = incident_direction_from_sun(sun)
+        np.testing.assert_array_equal(incident, -sun)
+        # 0.0 - x keeps a zero component +0.0, the bits every fixture was recorded with
+        assert not np.any(np.signbit(incident[incident == 0.0]))
+        np.testing.assert_allclose(np.degrees(np.arcsin(sun[2])), altitude, atol=1e-12)
+        if abs(altitude) < 90.0:
+            np.testing.assert_allclose(np.degrees(np.arctan2(sun[1], sun[0])), azimuth, atol=1e-12)
 
 
 def test_canonical_pixel_direction_regression():
@@ -99,6 +113,7 @@ def test_canonical_pixel_direction_regression():
         rtol=0.0,
         atol=1e-15,
     )
+    np.testing.assert_array_equal(canonical_sun_direction(), -canonical_incident_direction())
 
 
 def test_path_3_5_chirality_is_the_right_hand_side_of_the_sun():
@@ -111,7 +126,7 @@ def test_path_3_5_chirality_is_the_right_hand_side_of_the_sun():
     assert 0.0 < reference_offset < 90.0
 
     # Canonical pixel: its sky direction must sit on the same side of the sun.
-    sun_azimuth = azimuth_deg(-canonical_incident_direction())
+    sun_azimuth = azimuth_deg(canonical_sun_direction())
     pixel_offset = azimuth_deg(-canonical_target_direction()) - sun_azimuth
     assert np.sign(pixel_offset) == np.sign(reference_offset)
     # ... and that side is the right half of the frame.

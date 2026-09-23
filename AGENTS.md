@@ -82,6 +82,7 @@ The authoritative staged design is `docs/roadmap.md`.
 ├── benchmarks/            # Reproducible CPU/GPU probes
 ├── docs/
 │   ├── roadmap.md         # Mathematical model, phased scope, validation
+│   ├── conventions.md     # Every coordinate / sign / symbol convention and its check
 │   └── decisions/         # Accepted architecture decisions
 └── scratchpad/            # Local task management, ignored by git
 ```
@@ -112,7 +113,17 @@ workflows as a black-box Monte Carlo oracle or source of analysis artifacts.
 - Do not design or extract a Lumice API for Lumice Integral. The projects have
   independent implementations and meet only at validation boundaries.
 - Do not let the independent optical equations silently drift from shared
-  physical and coordinate conventions.
+  physical and coordinate conventions. Conventions follow fixed authorities
+  (owner ruling 2026-09-23): coordinates, face numbering, pose chain,
+  azimuth, light source, camera and pixels follow the Lumice documentation
+  (`doc/coordinate-convention.md` first); mathematical notation Lumice does
+  not cover (fiber coordinates, `Phi`, `D`, `M`, `W`, signatures) follows the
+  writing series' `docs/framework.md`; the rest is decided in
+  `docs/conventions.md`, the single table of every convention and its check.
+  Settle any disagreement by these rules instead of case by case. The public
+  sun direction is `s_hat`, toward the sun; the solver's `incident_direction`
+  is the propagation `-s_hat`, converted only by
+  `camera.incident_direction_from_sun`.
 
 ### DO
 
@@ -133,6 +144,7 @@ workflows as a black-box Monte Carlo oracle or source of analysis artifacts.
 
 - `README.md`: project entry point.
 - `docs/roadmap.md`: current design authority and phase boundary.
+- `docs/conventions.md`: convention authority (Lumice / writing series / this project, with checks).
 - `scratchpad/tasks.md`: local task index.
 - `scratchpad/backlog.md`: unstructured ideas awaiting task selection.
 

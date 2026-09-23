@@ -25,7 +25,10 @@ errors and convergence behavior.
 ## 2. Mathematical Model
 
 Fix a crystal, ray path `P`, wavelength, and world-space incident direction
-`s`. A crystal pose is a rotation `R` in SO(3). Ray propagation defines a halo
+`s` (the propagation direction from the sun toward the crystal, contract
+section 2; the direction toward the sun is $\hat{\mathbf s} = -\mathbf s$,
+the writing series' $\mathbf s$ -- `docs/conventions.md` is the authority
+for every sign and symbol convention). A crystal pose is a rotation `R` in SO(3). Ray propagation defines a halo
 map
 
 $$
@@ -400,10 +403,17 @@ contract section 12) are recorded, not blocking. Closeout record:
 The modern halo-theory framework supplies a second formulation. Let
 
 $$
-\mathbf u=R^{-1}\mathbf s,
+\mathbf u=R^{-1}\hat{\mathbf s},
 \qquad
-D_P(\mathbf u)=\angle(\Phi_P(\mathbf u),\mathbf u).
+D_P(\mathbf u)=\angle\big(-\Phi_P(-\mathbf u),\mathbf u\big)
 $$
+
+(framework theorem 8: $\mathbf u$ is the sun in the crystal frame,
+$\Phi_P$ takes the incident *propagation* direction $-\mathbf u$ and
+returns the outgoing one, and $-R\,\Phi_P(-\mathbf u)$ is the light point
+on the sky, so $D_P$ is its angular distance from the sun; before task
+`notation-alignment` this section wrote $\mathbf u = R^{-1}\mathbf s$ with
+the propagation $\mathbf s$, the same field with $\mathbf u$ negated).
 
 For a target direction at angular distance $\delta$ from the source, the SO(3)
 fiber can be related to a scalar level set on the sphere:
@@ -439,19 +449,19 @@ named; the Phase II scrum turns each into a fixture or a design constraint.
 
 **(a) Every geometric and optical weight is a function on $S^2$, not on
 SO(3).** `entry_measure` reduces the pose to `s_body = R.T @ incident`
-$= \mathbf u$ on its first line and uses nothing else; the TIR gates and the
+$= -\mathbf u$ on its first line and uses nothing else; the TIR gates and the
 Fresnel factors depend on the incidence angles, hence on $\mathbf u$ only.
 Rotating the crystal about the sun direction (the fiber coordinate $\psi$)
 changes none of them. So $A_P$, $T_P$, the validity gates and the feasible
 domain $V_P$ are fields on the base $S^2$ of the fibration
-$R \mapsto \mathbf u = R^{-1}\mathbf s$; only $\rho$ sees the full pose.
+$R \mapsto \mathbf u = R^{-1}\hat{\mathbf s}$; only $\rho$ sees the full pose.
 Phase I evaluates them point by point along an SO(3) curve because it cannot
 see this structure; Phase II lives on exactly that $S^2$.
 
 **(b) The domain is a precomputed map, and open arcs are a support
 question.** For one (crystal, path) the pair $(V_P, A_P)$ is computed once
 with the existing `entry_measure` (any $R$ taking $\mathbf u$ to
-$\mathbf s$ will do), independent of pixel and of pose density. The pixel
+$\hat{\mathbf s}$ will do), independent of pixel and of pose density. The pixel
 value is a line integral along the level set of the deviation field
 (coarea on $S^2$, Haar $= dA(\mathbf u)/4\pi \cdot d\psi/2\pi$):
 
@@ -482,7 +492,7 @@ the completeness certificate that Phase I cannot issue (contract C11,
 larger gain of Phase II; the speed is the smaller one.
 
 **(d) Layered invariance (what a halo shares and what varies).** The fiber
-of a pixel, $\{R : R\,\Phi_P(R^{-1}\mathbf s) = x\}$, depends on the path
+of a pixel, $\{R : R\,\Phi_P(-R^{-1}\hat{\mathbf s}) = \mathbf d\}$, depends on the path
 only through $\Phi_P$. Hence:
 
 | layer | object | shared by |
@@ -566,7 +576,7 @@ is `scripts/probe_band_sum.py` (task `band-sum-quadrature-probe`).
 
 | note | this roadmap |
 |---|---|
-| standard event $(\hat a_0, \hat b_0)$ | $(\mathbf u, \Phi_P(\mathbf u))$, $\mathbf u = R^{-1}\mathbf s$ |
+| standard event $(\hat a_0, \hat b_0)$ | the body-frame propagation pair $(-\mathbf u, \Phi_P(-\mathbf u))$, $\mathbf u = R^{-1}\hat{\mathbf s}$ |
 | scattering angle $\omega$ | deviation field $D_P(\mathbf u)$ |
 | event weight $w$ | window field $A_P(\mathbf u)\,T_P(\mathbf u)$, section 4.1(a) |
 | rotation $U$ of eq. 19 | the pose $R(\mathbf u, \psi(\mathbf u,\alpha))$ |
@@ -574,8 +584,9 @@ is `scripts/probe_band_sum.py` (task `band-sum-quadrature-probe`).
 
 **Coarea equivalence and the normalisation.** Split Haar probability as
 $d\mu_{\mathrm{Haar}} = dA(\mathbf u)/4\pi \cdot d\psi/2\pi$ ($\psi$ the
-twist about $\mathbf s$). The twist moves the outgoing direction rigidly
-about $\mathbf s$, so at fixed $\mathbf u$ the outgoing azimuth is
+twist about $\hat{\mathbf s}$; the writing series' $\theta$ of theorem 8,
+`docs/conventions.md` row 10). The twist moves the outgoing direction rigidly
+about $\hat{\mathbf s}$, so at fixed $\mathbf u$ the outgoing azimuth is
 $\alpha = \alpha_0(\mathbf u) + \psi$ and $d\psi = d\alpha$, while the
 deviation stays $D_P(\mathbf u)$. Pushing $\rho A_P T_P\, d\mu_{\mathrm{Haar}}$
 forward to the sky and writing $dA(\mathbf d) = \sin\delta\, d\delta\, d\alpha$
@@ -606,12 +617,12 @@ $$
 $$
 
 an estimate of the band average of $I \sin\delta'$ divided by $\sin\delta$.
-$R_i$ is the unique pose with $R_i\mathbf u_i = \mathbf s$ and
-$R_i\Phi_P(\mathbf u_i)$ at deviation $D_P(\mathbf u_i)$ *and* the pixel's
-azimuth: $R_i = [\mathbf s, \mathbf e, \mathbf s\times\mathbf e]\,
+$R_i$ is the unique pose with $R_i\mathbf u_i = \hat{\mathbf s}$ and
+$R_i\Phi_P(-\mathbf u_i)$ at deviation $D_P(\mathbf u_i)$ *and* the pixel's
+azimuth: $R_i = [\hat{\mathbf s}, \mathbf e, \hat{\mathbf s}\times\mathbf e]\,
 [\mathbf u_i, \mathbf f_i, \mathbf u_i\times\mathbf f_i]^{\mathsf T}$ with
-$\mathbf e$ the unit azimuth direction of the pixel about $\mathbf s$ and
-$\mathbf f_i$ the unit component of $\Phi_P(\mathbf u_i)$ normal to
+$\mathbf e$ the unit azimuth direction of the pixel about $\hat{\mathbf s}$ and
+$\mathbf f_i$ the unit component of $\Phi_P(-\mathbf u_i)$ normal to
 $\mathbf u_i$. This is eq. 19 evaluated at $\omega = D_P(\mathbf u_i)$ (the
 probe checks them equal to `7e-15`), without its $1/\sin^2\omega$. Feeding
 eq. 19 the pixel's own $\delta$ instead, as the note's step 3 reads, gives a
@@ -702,7 +713,7 @@ density (62 rows of column 126, all `complete`).
 - *Narrow $\rho$ is pixel-dependent, and column 126 is its easy case.*
   Refraction by the 3-5 prism wedge preserves the ray component along the
   prism edge, so every pose of a pixel has $\mathbf c \perp
-  (\mathbf b - \mathbf s)$; on the sun's vertical (column 126) this puts the
+  (\mathbf b + \hat{\mathbf s})$; on the sun's vertical (column 126) this puts the
   c axis within about ±1.2° of horizontal along the whole contour, and the
   column density keeps 65 % of the band ($K_{\mathrm{eff}}/K$; random:
   90 %, the rest being the spread of $A_P T_P$). Off the vertical it keeps
@@ -720,7 +731,7 @@ density (62 rows of column 126, all `complete`).
   compute; the 2 h budget and the stop-loss rule (`N > 1e8` for `1e-2`)
   were not reached.
 - *Self-checks.* Validity, $A_P$, $T_P$, $\Phi_P$ and $D_P$ unchanged under
-  three twists about $\mathbf s$ to `1.5e-14` (section 4.1(a)); all three
+  three twists about $\hat{\mathbf s}$ to `1.5e-14` (section 4.1(a)); all three
   `entry_measure` failure reasons occur on the sphere; the Fibonacci mean
   of $A_P T_P$ matches `1e6` independent Haar rotations ($z = 1.35$); the
   frame construction equals eq. 19 at $\omega = D_P$ to `7e-15`.
@@ -922,7 +933,7 @@ weight.
   restriction of Phase I ($R g^{-1}$ must be a rotation), not an $S^2$ one.
   On the representative's pose $R$ the rebuild is
   $L_g R g^{\mathsf T}$, $L_g = I - (1 - \det g)\,\mathbf m\mathbf m^{\mathsf T}$
-  with $\mathbf m$ the normal of the plane of $\mathbf s$ and the pixel
+  with $\mathbf m$ the normal of the plane of $\hat{\mathbf s}$ and the pixel
   centre: the old pose factor for a proper $g$ (bit for bit), times the
   reflection in that plane for a mirror (`s2_store.transported_rotations`,
   equal to the literal rebuild to `1e-13` on all 24 elements; calling
@@ -1111,7 +1122,8 @@ produce plausible but systematically wrong radiance.
   the roll-locked families need the crystal's spin about its c axis, taken
   from the Lumice ZYZ chain with `roll = 0` = face-3 normal in the vertical
   plane through the c axis (this renderer's own reference, not Lumice's mesh
-  numbering). Provenance grows a trailing `family` key; the column block is
+  numbering; corrected 2026-09-24: Lumice numbers the faces the same way,
+  so it is Lumice's roll too, `docs/conventions.md`). Provenance grows a trailing `family` key; the column block is
   otherwise unchanged.
 - **2026-09-20**: defect 2 closed by the Lumice float oracle (section 3.5
   item 2b): this renderer and Lumice agree at the noise floor, the
@@ -1149,3 +1161,24 @@ produce plausible but systematically wrong radiance.
   field) are `per_transport_sample` and not comparable. If more such
   semantics tags accumulate in the provenance, fold them into one
   provenance schema version instead of one tag per field.
+- **2026-09-24**: conventions follow fixed authorities (task
+  `notation-alignment`, owner ruling of 2026-09-23): coordinates, face
+  numbering, pose chain, azimuth, light source, camera and pixels follow the
+  Lumice documentation (`doc/coordinate-convention.md` first); mathematical
+  notation Lumice does not cover follows the writing series'
+  `docs/framework.md`; the rest is decided in `docs/conventions.md`, the
+  single table of every convention with its check. Disagreements are settled
+  by these rules, not item by item. Consequences: the public sun direction is
+  $\hat{\mathbf s}$, toward the sun (`camera.sun_direction`); the solver's
+  propagation direction keeps the contract's `s = -ŝ` and is converted only
+  by `camera.incident_direction_from_sun`; Phase II's $\mathbf u$ is
+  $R^{-1}\hat{\mathbf s}$ (framework theorem 8) and the event store moves to
+  schema 2, whose antipodal default lattice keeps every pose, event and pixel
+  value of schema 1 bit for bit while schema 1 caches are refused. Lumice,
+  Lumice Integral and the writing series' simulation layer share one pose
+  chain and face numbering; the writing series' `column_attitude` is the
+  chapter parametrisation with $\theta = $ roll $- 180°$. The fiber twist
+  keeps its symbol $\psi$ (the writing series' $\theta$ would collide with
+  the zenith), and `D6h` elements are identified across projects by matrix,
+  not by index, until task `symmetry-authority` migrates the published
+  table.

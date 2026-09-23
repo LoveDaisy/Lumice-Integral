@@ -1,11 +1,18 @@
-"""The S^2 event store: per-path weight fields sampled on ``u = R^-1 s`` and sorted by deviation.
+"""The S^2 event store: per-path weight fields sampled on ``u = R^-1 s_hat`` and sorted by deviation.
+
+Convention (``docs/conventions.md``; framework theorem 8 of the writing
+series): ``s_hat`` points *toward* the sun and ``u = R^-1 s_hat`` is the sun
+in the crystal frame.  The optics take the propagation direction
+``-s_hat`` (:func:`.camera.incident_direction_from_sun`, the contract's
+``s``), so the body-frame incoming ray is ``-u``, ``phi`` is the body-frame
+outgoing propagation direction ``Phi_P(-u)`` and the deviation is
+``D = angle(phi, -u) = angle(-Phi_P(-u), u)``, the framework's ``D_P(u)``.
 
 Roadmap section 4.1(a): validity, entry measure ``A``, Fresnel transmission
-``T``, the body-frame outgoing direction ``Phi`` and the deviation
-``D = angle(u, Phi)`` of a fixed ray path depend on the pose ``R`` only
-through ``u = R^-1 s``.  Section 4.2 discretises the level-set integral with
-a store of events on ``S^2``: ``N`` points (Fibonacci lattice by default,
-``4 pi / N`` each), one rotation per point, the production batch evaluators
+``T``, ``phi`` and ``D`` of a fixed ray path depend on the pose ``R`` only
+through ``u``.  Section 4.2 discretises the level-set integral with
+a store of events on ``S^2``: ``N`` points (the antipodal Fibonacci lattice
+by default, :func:`store_lattice`, ``4 pi / N`` each), one rotation per point, the production batch evaluators
 (:func:`.optics.path_domain_batch`, :func:`.optics.fresnel_transmission_path_batch`,
 :func:`.geometry.entry_measure_batch`), only ``w = A T > 0`` events kept,
 sorted by ``D``.  A renderer takes the band ``[delta_lo, delta_hi]`` of a
@@ -17,7 +24,15 @@ Provenance: migrated from ``scripts/probe_band_sum.py`` (task
 ``band-sum-quadrature-probe``) with the numerics unchanged -- ``CHUNK``,
 chunk order, the stable argsort and the float64 evaluation are the ones the
 task 13/14 stores were built with, and ``tests/test_s2_store.py`` pins the
-rebuild of those stores bit for bit.
+rebuild of those stores bit for bit.  Those stores (and ``SCHEMA_VERSION``
+1) recorded ``u = R^-1 s`` with the propagation direction ``s = -s_hat``;
+schema 2 (task ``notation-alignment``) records ``u = R^-1 s_hat``, which is
+the old ``u`` negated.  The default lattice is the antipode of the old one
+and every formula below is the old one with ``(u, s)`` replaced by
+``(-u, -s_hat)``, under which frames, cross and outer products are
+unchanged bit for bit: every pose, ``phi``, ``D``, ``w`` and band sum is
+the schema 1 one exactly, only the sign of the stored ``u`` differs.
+:meth:`S2EventStore.load` refuses a schema 1 store.
 
 Members and ``Phi`` groups.  A store is built for a tuple of ``members``
 (face sequences).  One member is the ordinary per-path store.  Several
@@ -29,16 +44,16 @@ an event is kept where any member has ``w_m > 0``.
 Symmetry transport.  For any crystal symmetry ``g`` of ``D6h``, proper or
 improper, mapping the representative's faces onto a member's
 (:func:`.path_class.path_class_symmetry`), section 4.1(d) gives
-``Phi_member(u) = g Phi_rep(g^-1 u)`` with ``D``, ``w`` and the valid domain
+``Phi_member(-u) = g Phi_rep(-g^-1 u)`` with ``D``, ``w`` and the valid domain
 unchanged: the member's events are the representative's with ``u' = g u``,
-``Phi' = g Phi``.  The pose of a transported event is rebuilt from
-``(g u, g Phi, D)`` and the pixel's azimuth by :func:`event_rotations`,
+``phi' = g phi``.  The pose of a transported event is rebuilt from
+``(g u, g phi, D)`` and the pixel's azimuth by :func:`event_rotations`,
 whose two orthonormal frames always give a rotation, whatever ``det g``
 (a mirror needs no store of its own on ``S^2``; that restriction belongs to
 Phase I, where ``R g^-1`` would have to stay in SO(3)).  The production
 interface is :func:`transported_rotations`, the closed form of that rebuild
 on the representative's poses: ``L_g R g^T`` with ``L_g = I`` for a proper
-``g`` and the reflection in the plane of ``s`` and the pixel centre for an
+``g`` and the reflection in the plane of ``s_hat`` and the pixel centre for an
 improper one (equal to :func:`event_rotations` of the transported events,
 pinned by ``tests/test_s2_store_symmetry.py`` for all 24 elements), so one
 store in memory serves the whole ``D6h`` orbit.  Symmetry saves repeated
@@ -87,18 +102,25 @@ from typing import Any, Callable, Mapping, Sequence
 import numpy as np
 
 from . import geometry, optics
+from .camera import incident_direction_from_sun
 from .geometry import HexPrism, Polyhedron
 from .optics import normalize_faces, path_id_of
 from .path_class import phi_key
 from .provenance import git_commit, sha256_of
 
-SCHEMA_VERSION = 1
+# 2: u = R^-1 s_hat (toward the sun), task notation-alignment; 1: u = R^-1 s (propagation), refused on load.
+SCHEMA_VERSION = 2
 CHUNK = 250_000  # rotations per batch call: ~0.5 GB transient in the eager jax.vmap (task 13/14 value)
 DEFAULT_CACHE_DIR = Path("artifacts/s2-store")
 EVENTS_FILE = "events.npz"
 PROVENANCE_FILE = "provenance.json"
-FIBONACCI_SAMPLING = "Fibonacci lattice on S^2 (equal-area spiral, z_i = 1 - (2i+1)/N, golden-angle azimuth)"
-ROTATION_PER_POINT = "R = [s, p_s, s x p_s][u, p_u, u x p_u]^T (any R with R u = s; section 4.1(a))"
+FIBONACCI_SAMPLING = (
+    "antipodal Fibonacci lattice on S^2 (u_i = -f_i, f_i the equal-area spiral z_i = 1 - (2i+1)/N, "
+    "golden-angle azimuth)"
+)
+ROTATION_PER_POINT = (
+    "R = [s_hat, p_s, s_hat x p_s][u, p_u, u x p_u]^T (any R with R u = s_hat, s_hat toward the sun; section 4.1(a))"
+)
 RANDOM_SEED = 20260923
 DTYPES = ("float64", "float32")
 
@@ -124,16 +146,29 @@ def fibonacci_sphere(n: int, start: int = 0, stop: int | None = None) -> np.ndar
     return np.stack([r * np.cos(phi), r * np.sin(phi), z], axis=1)
 
 
+def store_lattice(n: int, start: int = 0, stop: int | None = None) -> np.ndarray:
+    """The store's default ``u``: points ``start:stop`` of the antipodal Fibonacci lattice, ``-f_i``.
+
+    Schema 1 sampled ``R^-1 s`` (propagation) on the lattice ``f_i``; its
+    antipode keeps every schema 1 pose and event bit for bit (module docstring).
+    """
+    return -fibonacci_sphere(n, start, stop)
+
+
 @dataclasses.dataclass(frozen=True)
 class RandomSphereSampler:
-    """i.i.d. uniform points on ``S^2`` (``q = 1 / 4 pi``, so no inverse weights); chunk-seeded, reproducible."""
+    """i.i.d. uniform points on ``S^2`` (``q = 1 / 4 pi``, so no inverse weights); chunk-seeded, reproducible.
+
+    The points are negated for the same reason as :func:`store_lattice`: the
+    schema 1 draws, antipodal, so the poses are unchanged bit for bit.
+    """
 
     seed: int = RANDOM_SEED
-    description = "i.i.d. uniform on S^2 (normalised Gaussian triples, numpy default_rng([seed, first]) per chunk)"
+    description = "i.i.d. uniform on S^2 (negated normalised Gaussian triples, numpy default_rng([seed, first]) per chunk)"
 
     def __call__(self, first: int, stop: int) -> tuple[np.ndarray, None]:
         points = np.random.default_rng([self.seed, first]).normal(size=(stop - first, 3))
-        return points / np.linalg.norm(points, axis=1, keepdims=True), None
+        return -(points / np.linalg.norm(points, axis=1, keepdims=True)), None
 
 
 def _any_perpendicular(v: np.ndarray) -> np.ndarray:
@@ -149,10 +184,10 @@ def frame(first: np.ndarray, second: np.ndarray) -> np.ndarray:
     return np.stack([first, second, np.cross(first, second)], axis=2)
 
 
-def align_rotations(u: np.ndarray, s: np.ndarray) -> np.ndarray:
-    """One rotation per row with ``R u = s`` (the free twist about ``s`` is arbitrary, section 4.1(a))."""
-    s_rows = np.broadcast_to(s, u.shape)
-    return np.einsum("nij,nkj->nik", frame(s_rows, _any_perpendicular(s_rows)), frame(u, _any_perpendicular(u)))
+def align_rotations(u: np.ndarray, sun: np.ndarray) -> np.ndarray:
+    """One rotation per row with ``R u = s_hat`` (the free twist about ``s_hat`` is arbitrary, section 4.1(a))."""
+    sun_rows = np.broadcast_to(sun, u.shape)
+    return np.einsum("nij,nkj->nik", frame(sun_rows, _any_perpendicular(sun_rows)), frame(u, _any_perpendicular(u)))
 
 
 def twist_about(axis: np.ndarray, angle: float) -> np.ndarray:
@@ -162,60 +197,67 @@ def twist_about(axis: np.ndarray, angle: float) -> np.ndarray:
 
 
 def event_rotations(
-    u: np.ndarray, phi: np.ndarray, deviation: np.ndarray, s: np.ndarray, centre: np.ndarray
+    u: np.ndarray, phi: np.ndarray, deviation: np.ndarray, sun: np.ndarray, centre: np.ndarray
 ) -> np.ndarray:
-    """``R_i`` with ``R_i u_i = s`` and ``R_i Phi_i`` at deviation ``D_i``, azimuth of ``centre``.
+    """``R_i`` with ``R_i u_i = s_hat`` and ``R_i phi_i`` at deviation ``D_i``, azimuth of ``centre``.
 
-    The pose of each event for a pixel whose centre direction is ``centre``
-    (Gislen eq. 19 at ``omega = D_i``, built from two orthonormal frames).
+    The pose of each event for a pixel whose centre (outgoing) direction is
+    ``centre`` (Gislen eq. 19 at ``omega = D_i``, built from two orthonormal
+    frames): ``R = [s_hat, e, s_hat x e][u, f, u x f]^T`` with ``e`` the unit
+    component of ``centre`` normal to ``s_hat`` and ``f`` that of ``phi``
+    normal to ``u`` (``phi . (-u) = cos D``, so ``f ~ phi + cos(D) u``).
     For the events transported by a crystal symmetry ``g`` see
     :func:`transported_rotations` (module docstring).
     """
-    e = centre - (centre @ s) * s
+    e = centre - (centre @ sun) * sun
     e /= np.linalg.norm(e)
-    f2 = phi - np.cos(deviation)[:, None] * u
+    f2 = phi + np.cos(deviation)[:, None] * u
     f2 /= np.linalg.norm(f2, axis=1, keepdims=True)
-    world = np.stack([s, e, np.cross(s, e)], axis=1)
+    world = np.stack([sun, e, np.cross(sun, e)], axis=1)
     return np.einsum("ij,nkj->nik", world, frame(u, f2))
 
 
-def transported_rotations(rotations: np.ndarray, g: np.ndarray, s: np.ndarray, centre: np.ndarray) -> np.ndarray:
-    """:func:`event_rotations` of the events transported by ``g`` (``u' = g u``, ``Phi' = g Phi``), from their poses.
+def transported_rotations(rotations: np.ndarray, g: np.ndarray, sun: np.ndarray, centre: np.ndarray) -> np.ndarray:
+    """:func:`event_rotations` of the events transported by ``g`` (``u' = g u``, ``phi' = g phi``), from their poses.
 
     ``rotations`` are :func:`event_rotations` of the untransported events
-    for the same ``s`` and ``centre``; ``g`` is any orthogonal crystal
+    for the same ``s_hat`` and ``centre``; ``g`` is any orthogonal crystal
     symmetry.  :func:`event_rotations` is ``R = W F^T`` with the world frame
     ``W`` and the event frame ``F`` of ``(u, f)``.  The transported frame is
     ``g F J`` with ``J = diag(1, 1, det g)`` (a cross product changes sign
     under a mirror), so ``R' = W J F^T g^T = L_g R g^T`` with
     ``L_g = W J W^T = I - (1 - det g) m m^T``, ``m = W e_3`` the normal of
-    the plane of ``s`` and ``centre``.  For a proper ``g`` this is ``R g^T``
+    the plane of ``s_hat`` and ``centre``.  For a proper ``g`` this is ``R g^T``
     (``L_g`` skipped: the same floating-point operation as the proper-only
     transport of task ``band-sum-renderer``); for an improper one ``L_g`` is
-    the reflection in the ``(s, centre)`` plane.  The result is a rotation
+    the reflection in the ``(s_hat, centre)`` plane.  The result is a rotation
     either way.
     """
     g = np.asarray(g, dtype=np.float64)
     moved = rotations @ g.T
     if np.linalg.det(g) > 0.0:
         return moved
-    e = centre - (centre @ s) * s
-    m = np.cross(s, e / np.linalg.norm(e))
+    e = centre - (centre @ sun) * sun
+    m = np.cross(sun, e / np.linalg.norm(e))
     return (np.eye(3) - 2.0 * np.outer(m, m)) @ moved
 
 
 def evaluate_fields(
-    rotations: np.ndarray, s: np.ndarray, crystal: Polyhedron, index: float, members: Sequence[Faces]
+    rotations: np.ndarray, sun: np.ndarray, crystal: Polyhedron, index: float, members: Sequence[Faces]
 ) -> dict[str, np.ndarray]:
-    """Production batch evaluators of the ``members`` at ``rotations``.
+    """Production batch evaluators of the ``members`` at ``rotations``, for the sun direction ``s_hat``.
 
     Returns validity (any member), ``A`` and ``T`` per member (``(m, n)``),
-    ``w = sum_m A_m T_m``, body-frame ``Phi``, ``D`` and ``u``.  ``Phi`` is
+    ``w = sum_m A_m T_m``, body-frame ``phi = Phi_P(-u)``, ``D`` and
+    ``u = R^-1 s_hat``.  The evaluators take the propagation direction
+    ``s = -s_hat`` (:func:`.camera.incident_direction_from_sun`, the only
+    place the sign changes).  ``phi`` is
     the first member's direction: members of one ``Phi`` group share the
     closed form of the outgoing direction (entry and exit refraction on the
     same normals, the same fold matrix), so it is the same wherever any of
     them is valid.
     """
+    s = incident_direction_from_sun(sun)
     valid, areas, transmissions = [], [], []
     for index_m, faces in enumerate(members):
         check = optics.path_domain_batch(rotations, faces, s, index)
@@ -227,9 +269,9 @@ def evaluate_fields(
     w = areas[0] * transmissions[0]
     for area, transmission in zip(areas[1:], transmissions[1:]):
         w = w + area * transmission
-    u = np.einsum("nji,j->ni", rotations, s)
+    u = np.einsum("nji,j->ni", rotations, sun)
     phi = np.einsum("nji,nj->ni", rotations, direction)
-    deviation = np.arccos(np.clip(np.sum(phi * u, axis=1), -1.0, 1.0))
+    deviation = np.arccos(np.clip(np.sum(phi * -u, axis=1), -1.0, 1.0))  # angle(phi, -u), -u the incoming ray
     return {
         "valid": np.any(valid, axis=0),
         "A": np.stack(areas),
@@ -243,15 +285,15 @@ def evaluate_fields(
 
 # --------------------------------------------------------- self-checks (a02)
 def self_check_psi_invariance(
-    s: np.ndarray, crystal: Polyhedron, index: float, members: Sequence[Faces], sample: int = 4000
+    sun: np.ndarray, crystal: Polyhedron, index: float, members: Sequence[Faces], sample: int = 4000
 ) -> dict[str, Any]:
-    """Section 4.1(a): validity, ``A``, ``T``, ``Phi`` and ``D`` do not change under a twist about ``s``."""
-    u = fibonacci_sphere(200_000)[:: 200_000 // sample]
-    base = align_rotations(u, s)
-    reference = evaluate_fields(base, s, crystal, index, members)
+    """Section 4.1(a): validity, ``A``, ``T``, ``phi`` and ``D`` do not change under a twist about ``s_hat``."""
+    u = store_lattice(200_000)[:: 200_000 // sample]
+    base = align_rotations(u, sun)
+    reference = evaluate_fields(base, sun, crystal, index, members)
     worst = {"valid_mismatch": 0, "A": 0.0, "T": 0.0, "phi": 0.0, "D": 0.0}
     for angle in (0.7, 2.1, -2.9):
-        fields = evaluate_fields(np.einsum("ij,njk->nik", twist_about(s, angle), base), s, crystal, index, members)
+        fields = evaluate_fields(np.einsum("ij,njk->nik", twist_about(sun, angle), base), sun, crystal, index, members)
         both = reference["valid"] & fields["valid"]
         worst["valid_mismatch"] += int(np.count_nonzero(reference["valid"] != fields["valid"]))
         worst["A"] = max(worst["A"], float(np.max(np.abs(fields["A"] - reference["A"]))))
@@ -267,20 +309,21 @@ def self_check_psi_invariance(
 
 
 def self_check_gate_coverage(
-    s: np.ndarray, crystal: Polyhedron, index: float, members: Sequence[Faces], sample: int = 3000
+    sun: np.ndarray, crystal: Polyhedron, index: float, members: Sequence[Faces], sample: int = 3000
 ) -> dict[str, int]:
     """Every ``entry_measure`` failure reason occurs on the sphere (the scalar form reports the reason)."""
-    u = fibonacci_sphere(sample)
+    u = store_lattice(sample)
+    s = incident_direction_from_sun(sun)
     counts: dict[str, int] = {}
     for faces in members:
-        for rotation in align_rotations(u, s):
+        for rotation in align_rotations(u, sun):
             status = geometry.entry_measure(rotation, faces, s, crystal, n_ice=index).status
             counts[status] = counts.get(status, 0) + 1
     return counts
 
 
 def self_check_haar_mean(
-    s: np.ndarray,
+    sun: np.ndarray,
     crystal: Polyhedron,
     index: float,
     fibonacci_mean_w: float,
@@ -289,7 +332,7 @@ def self_check_haar_mean(
 ) -> dict[str, Any]:
     """``E_Haar[A T]`` from independent uniform quaternions against the Fibonacci ``sum w / N``.
 
-    Checks the fibration claim ``u = R^-1 s`` is uniform on ``S^2`` under Haar together with
+    Checks the fibration claim ``u = R^-1 s_hat`` is uniform on ``S^2`` under Haar together with
     the ``4 pi / N`` area element, independently of the ``u`` parametrisation.
     """
     rng = np.random.default_rng(20260923)
@@ -306,7 +349,7 @@ def self_check_haar_mean(
     )
     values = []
     for start in range(0, n, CHUNK):
-        values.append(evaluate_fields(rotations[start : start + CHUNK], s, crystal, index, members)["w"])
+        values.append(evaluate_fields(rotations[start : start + CHUNK], sun, crystal, index, members)["w"])
     w = np.concatenate(values)
     mean, stderr = float(np.mean(w)), float(np.std(w) / np.sqrt(n))
     return {
@@ -342,7 +385,7 @@ class S2StoreSpec:
     members: tuple[Faces, ...]
     crystal: Mapping[str, Any]
     refractive_index: float
-    incident_direction: tuple[float, float, float]
+    sun_direction: tuple[float, float, float]  # s_hat, toward the sun
     n: int
     sampling: str = FIBONACCI_SAMPLING
     deviation_window: tuple[float, float] | None = None
@@ -360,7 +403,7 @@ class S2StoreSpec:
         object.__setattr__(self, "members", members)
         object.__setattr__(self, "crystal", dict(self.crystal))
         object.__setattr__(self, "refractive_index", float(self.refractive_index))
-        object.__setattr__(self, "incident_direction", tuple(float(v) for v in self.incident_direction))
+        object.__setattr__(self, "sun_direction", tuple(float(v) for v in self.sun_direction))
         object.__setattr__(self, "n", int(self.n))
         object.__setattr__(self, "deviation_window", None if window is None else (float(window[0]), float(window[1])))
 
@@ -375,7 +418,7 @@ class S2StoreSpec:
             "members": [list(m) for m in self.members],
             "crystal": dict(self.crystal),
             "refractive_index": self.refractive_index,
-            "incident_direction": list(self.incident_direction),
+            "sun_direction": list(self.sun_direction),
             "N": self.n,
             "sampling": self.sampling,
             "deviation_window_rad": None if self.deviation_window is None else list(self.deviation_window),
@@ -391,7 +434,7 @@ class S2StoreSpec:
             members=tuple(tuple(m) for m in parameters["members"]),
             crystal=parameters["crystal"],
             refractive_index=parameters["refractive_index"],
-            incident_direction=tuple(parameters["incident_direction"]),
+            sun_direction=tuple(parameters["sun_direction"]),
             n=parameters["N"],
             sampling=parameters["sampling"],
             deviation_window=None if window is None else tuple(window),
@@ -408,6 +451,8 @@ class S2StoreSpec:
 @dataclasses.dataclass(frozen=True)
 class S2Events:
     """Events sorted by ``D`` (or a band of them): ``u``, ``phi`` ``(K, 3)``; ``D``, ``w``, ``iw`` ``(K,)``.
+
+    ``u = R^-1 s_hat`` (toward the sun), ``phi = Phi_P(-u)`` (outgoing propagation), both in the body frame.
 
     ``iw`` (``1 / (4 pi q(u))``) is ``None`` for a uniform point set; a
     contribution is ``w * iw * rho`` otherwise.
@@ -467,9 +512,15 @@ class S2EventStore:
 
     @classmethod
     def load(cls, directory: Path) -> S2EventStore:
-        """Read a saved store; refuses an ``events.npz`` whose SHA-256 differs from the provenance."""
+        """Read a saved store; refuses another ``SCHEMA_VERSION`` and an ``events.npz`` whose SHA-256 differs."""
         directory = Path(directory)
         provenance = json.loads((directory / PROVENANCE_FILE).read_text())
+        schema = provenance["build"].get("schema_version")
+        if schema != SCHEMA_VERSION:
+            raise ValueError(
+                f"{directory}: schema_version {schema} is not {SCHEMA_VERSION} (schema 1 stored u = R^-1 s with the "
+                "propagation direction s, schema 2 u = R^-1 s_hat); rebuild the store, it is not converted silently"
+            )
         events_path = directory / EVENTS_FILE
         digest = sha256_of(events_path)
         if digest != provenance["arrays"]["sha256"]:
@@ -481,13 +532,26 @@ class S2EventStore:
         return cls(spec, events, provenance["diagnostics"])
 
 
+def events_from_schema1(arrays: Mapping[str, np.ndarray]) -> dict[str, np.ndarray]:
+    """Arrays of a schema 1 store (``u = R^-1 s``, ``s`` the propagation direction) in schema 2: ``u`` negated.
+
+    The one named conversion for reading legacy artifacts (the task 13/14
+    flat ``events_N<n>.npz`` files); ``phi``, ``D``, ``w`` and ``iw`` are the
+    same in both schemas.  :meth:`S2EventStore.load` and :func:`build_or_load`
+    never apply it: a schema 1 cache directory is refused, not converted.
+    """
+    out = dict(arrays)
+    out["u"] = -np.asarray(arrays["u"])
+    return out
+
+
 def build_event_store(
     crystal: HexPrism,
     refractive_index: float,
     members: Sequence[Sequence[int]],
     n: int,
     *,
-    incident_direction: np.ndarray,
+    sun_direction: np.ndarray,
     sampler: PointSampler | None = None,
     sampling: str = FIBONACCI_SAMPLING,
     deviation_window: tuple[float, float] | None = None,
@@ -495,9 +559,10 @@ def build_event_store(
     run_checks: bool = True,
     log: Callable[[str], None] | None = None,
 ) -> S2EventStore:
-    """Event store of ``members``: ``w > 0`` events sorted by ``D`` (``[lo, hi]`` rad only, if given).
+    """Event store of ``members`` for the sun direction ``s_hat``: ``w > 0`` events sorted by ``D`` (``[lo, hi]`` rad only, if given).
 
-    ``sampler`` replaces the Fibonacci lattice and must come with its own
+    ``sampler`` replaces :func:`store_lattice`, returns points ``u`` (toward
+    the sun, body frame) and must come with its own
     ``sampling`` description (it enters the cache key); its inverse weights
     are stored as ``iw``.  Several ``members`` must share one
     :func:`.path_class.phi_key`.  ``run_checks`` runs the section 4.1(a)
@@ -506,13 +571,13 @@ def build_event_store(
     """
     if (sampler is None) != (sampling == FIBONACCI_SAMPLING):
         raise ValueError("a custom sampler needs its own sampling description, and the Fibonacci lattice the default one")
-    s = np.asarray(incident_direction, dtype=np.float64)
+    sun = np.asarray(sun_direction, dtype=np.float64)
     index = float(refractive_index)
     spec = S2StoreSpec(
         members=tuple(tuple(m) for m in members),
         crystal=crystal_description(crystal),
         refractive_index=index,
-        incident_direction=tuple(s),
+        sun_direction=tuple(sun),
         n=n,
         sampling=sampling,
         deviation_window=deviation_window,
@@ -524,10 +589,10 @@ def build_event_store(
         raise ValueError(f"members {spec.path_id} do not share one phi_key: {sorted(keys)}")
     checks: dict[str, Any] = {}
     if run_checks:
-        checks["psi_invariance"] = self_check_psi_invariance(s, crystal, index, members)
+        checks["psi_invariance"] = self_check_psi_invariance(sun, crystal, index, members)
         if not checks["psi_invariance"]["passed"]:
             raise RuntimeError(f"psi-invariance self-check failed: {checks['psi_invariance']}")
-        checks["gate_coverage"] = self_check_gate_coverage(s, crystal, index, members)
+        checks["gate_coverage"] = self_check_gate_coverage(sun, crystal, index, members)
         if log is not None:
             log("self-checks: " + json.dumps(checks))
 
@@ -538,10 +603,10 @@ def build_event_store(
     for first in range(0, n, CHUNK):
         stop = min(first + CHUNK, n)
         if sampler is None:
-            u, inverse_weight = fibonacci_sphere(n, first, stop), None
+            u, inverse_weight = store_lattice(n, first, stop), None
         else:
             u, inverse_weight = sampler(first, stop)
-        fields = evaluate_fields(align_rotations(u, s), s, crystal, index, members)
+        fields = evaluate_fields(align_rotations(u, sun), sun, crystal, index, members)
         w = fields["w"]
         valid_count += int(np.count_nonzero(fields["valid"]))
         keep = w > 0.0
@@ -566,7 +631,7 @@ def build_event_store(
     events = S2Events(arrays["u"], arrays["phi"], arrays["D"], arrays["w"], arrays.get("iw"))
 
     if run_checks:
-        checks["haar_mean"] = self_check_haar_mean(s, crystal, index, w_sum / n, members)
+        checks["haar_mean"] = self_check_haar_mean(sun, crystal, index, w_sum / n, members)
         if log is not None:
             log("haar mean check: " + json.dumps(checks["haar_mean"]))
     kept_count = len(events)
@@ -590,7 +655,7 @@ def build_or_load(
     n: int,
     *,
     base_dir: Path = DEFAULT_CACHE_DIR,
-    incident_direction: np.ndarray,
+    sun_direction: np.ndarray,
     sampler: PointSampler | None = None,
     sampling: str = FIBONACCI_SAMPLING,
     deviation_window: tuple[float, float] | None = None,
@@ -600,7 +665,7 @@ def build_or_load(
 ) -> S2EventStore:
     """The cached store of these parameters, built and saved on first use.
 
-    An existing cache directory is loaded (SHA-256 checked) and its recorded
+    An existing cache directory is loaded (schema and SHA-256 checked) and its recorded
     build parameters must equal the request's, else ``ValueError``; a
     directory without its provenance (an interrupted save) is refused too.
     Nothing is rebuilt or overwritten silently.
@@ -609,7 +674,7 @@ def build_or_load(
         members=tuple(tuple(m) for m in members),
         crystal=crystal_description(crystal),
         refractive_index=refractive_index,
-        incident_direction=tuple(np.asarray(incident_direction, dtype=np.float64)),
+        sun_direction=tuple(np.asarray(sun_direction, dtype=np.float64)),
         n=n,
         sampling=sampling,
         deviation_window=deviation_window,
@@ -630,7 +695,7 @@ def build_or_load(
         refractive_index,
         members,
         n,
-        incident_direction=incident_direction,
+        sun_direction=sun_direction,
         sampler=sampler,
         sampling=sampling,
         deviation_window=deviation_window,
@@ -660,12 +725,14 @@ __all__ = [
     "crystal_from_description",
     "evaluate_fields",
     "event_rotations",
+    "events_from_schema1",
     "fibonacci_sphere",
     "frame",
     "max_rss_mb",
     "self_check_gate_coverage",
     "self_check_haar_mean",
     "self_check_psi_invariance",
+    "store_lattice",
     "transported_rotations",
     "twist_about",
 ]

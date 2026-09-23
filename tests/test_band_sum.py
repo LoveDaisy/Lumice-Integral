@@ -1,4 +1,4 @@
-"""The S^2 band-sum renderer (``lumice_integral.band_sum``, roadmap section 4.2).
+"""The SUN^2 band-sum renderer (``lumice_integral.band_sum``, roadmap section 4.2).
 
 Hand-built events pin the estimator's closed form; small real stores pin the
 class aggregation (one store per ``D6h`` orbit, proper and improper
@@ -39,18 +39,18 @@ from lumice_integral.canonical_scene import (
     CANONICAL_REFRACTIVE_INDEX,
     CANONICAL_RENDER,
     canonical_crystal,
-    canonical_incident_direction,
     canonical_pose_density,
+    canonical_sun_direction,
 )
 from lumice_integral.optics import path_id_of
 from lumice_integral.path_class import build_path_class, pixel_solid_angle
 from lumice_integral.pose_density import build_pose_density
 from lumice_integral.pose_density_provenance import pose_density_provenance
-from lumice_integral.s2_store import build_event_store, fibonacci_sphere
+from lumice_integral.s2_store import build_event_store, store_lattice
 from lumice_integral.strip_io import Window, read_strip
 from lumice_integral.strip_pixel import STATUS_HAS_COMPONENT, STATUS_RENDERED
 
-S = canonical_incident_direction()
+SUN = canonical_sun_direction()  # s_hat, toward the sun
 N_SMALL = 100_000
 UNIFORM = build_pose_density("random")
 SUN_WINDOW = {"width": 21, "height": 21, "fov_deg": 6.0, "view": {"azimuth": 0.0, "elevation": 15.0}}
@@ -62,7 +62,7 @@ def identity_group(members) -> StoreGroup:
 
 def rotated_lattice(g: np.ndarray, n: int):
     def sampler(first: int, stop: int):
-        return np.einsum("ij,nj->ni", g, fibonacci_sphere(n, first, stop)), None
+        return np.einsum("ij,nj->ni", g, store_lattice(n, first, stop)), None
 
     return sampler
 
@@ -70,7 +70,7 @@ def rotated_lattice(g: np.ndarray, n: int):
 def build(members, n: int, g: np.ndarray | None = None) -> s2_store.S2EventStore:
     extra = {} if g is None else {"sampler": rotated_lattice(g, n), "sampling": f"Fibonacci lattice rotated by {g.round(12).tolist()}"}
     return build_event_store(
-        canonical_crystal(), CANONICAL_REFRACTIVE_INDEX, members, n, incident_direction=S, run_checks=False, **extra
+        canonical_crystal(), CANONICAL_REFRACTIVE_INDEX, members, n, sun_direction=SUN, run_checks=False, **extra
     )
 
 
@@ -78,23 +78,23 @@ def build(members, n: int, g: np.ndarray | None = None) -> s2_store.S2EventStore
 def test_band_sum_of_hand_built_events_matches_the_closed_form():
     """Events inside ``[delta_lo, delta_hi)`` count with ``w``; ``rho = 1`` makes the sum closed form."""
     row, column = 400, 126
-    centre, delta, lo, hi = pixel_band(row, column, S)
+    centre, delta, lo, hi = pixel_band(row, column, SUN)
     assert lo < delta < hi and np.isclose(hi - lo, 4.4e-4, rtol=0.1)
     d = np.array([lo - 1e-6, lo, 0.5 * (lo + hi), hi - 1e-9, hi, hi + 1e-3])
     w = np.array([10.0, 1.0, 2.0, 3.0, 20.0, 30.0])
-    u = np.tile([1.0, 0.0, 0.0], (6, 1))
-    phi = np.stack([np.cos(d), np.sin(d), np.zeros(6)], axis=1)  # angle(u, phi) = D
+    u = np.tile([-1.0, 0.0, 0.0], (6, 1))
+    phi = np.stack([np.cos(d), np.sin(d), np.zeros(6)], axis=1)  # angle(-u, phi) = D (-u the incoming ray)
     events = {"D": d, "u": u, "phi": phi, "w": w}
     n = 1000
-    value, delta_out, k, k_pos, k_eff, width = band_sum_pixel(events, S, UNIFORM, row, column, n)
+    value, delta_out, k, k_pos, k_eff, width = band_sum_pixel(events, SUN, UNIFORM, row, column, n)
     assert (k, k_pos, delta_out, width) == (3, 3, delta, hi - lo)
     assert value == pytest.approx(6.0 / (2.0 * np.pi * n * (hi - lo) * np.sin(delta)), rel=1e-15)
     assert k_eff == pytest.approx(36.0 / 14.0, rel=1e-15)
-    (contribution,) = band_contributions(events, S, [UNIFORM], centre, lo, hi)
+    (contribution,) = band_contributions(events, SUN, [UNIFORM], centre, lo, hi)
     np.testing.assert_array_equal(contribution, [1.0, 2.0, 3.0])
     # A non-uniform store multiplies by iw; the class path equals the single-path path.
     events["iw"] = np.full(6, 0.5)
-    result = class_band_sum_pixel([(events, identity_group([(3, 5)]))], S, UNIFORM, row, column, n)
+    result = class_band_sum_pixel([(events, identity_group([(3, 5)]))], SUN, UNIFORM, row, column, n)
     assert result.value == pytest.approx(0.5 * value, rel=1e-15) and result.K == 3
     assert kish_k_eff(0.0, 0.0) == 0.0 and band_sum_estimate(0.0, n, 1e-3, 0.3) == 0.0
 
@@ -109,8 +109,8 @@ def test_band_sum_on_a_real_store_is_finite_and_equals_the_class_path(canonical_
     density = canonical_pose_density()
     values = []
     for row in range(0, 801, 40):
-        single = band_sum_pixel(events, S, density, row, 126, N_SMALL)
-        pooled = class_band_sum_pixel([(events, identity_group([(3, 5)]))], S, density, row, 126, N_SMALL)
+        single = band_sum_pixel(events, SUN, density, row, 126, N_SMALL)
+        pooled = class_band_sum_pixel([(events, identity_group([(3, 5)]))], SUN, density, row, 126, N_SMALL)
         assert np.isfinite(single[0]) and single[0] >= 0.0
         assert (pooled.value, pooled.K, pooled.K_rho_pos, pooled.K_eff) == (single[0], single[2], single[3], single[4])
         values.append(single[0])
@@ -176,15 +176,15 @@ def test_class_value_equals_the_sum_over_every_groups_own_store(representative):
     pixels = [(r, 126) for r in range(0, 801, 25)] if representative == (3, 5) else [(r, c) for r in range(0, 41, 4) for c in range(0, 41, 4)]
     lit = 0
     for row, column in pixels:
-        a = class_band_sum_pixel(stores, S, density, row, column, N_SMALL, render)
-        b = class_band_sum_pixel(own, S, density, row, column, N_SMALL, render)
+        a = class_band_sum_pixel(stores, SUN, density, row, column, N_SMALL, render)
+        b = class_band_sum_pixel(own, SUN, density, row, column, N_SMALL, render)
         # Distinct events: one store's band against the groups' own bands, which hold as many events each.
         assert a.K * len(own) == b.K and a.K_rho_pos <= b.K_rho_pos
         assert a.value == pytest.approx(b.value, rel=1e-10, abs=1e-300), (row, column)
         lit += a.value > 0.0
         for transported, mine in per_group:
-            x = class_band_sum_pixel(transported, S, density, row, column, N_SMALL, render)
-            y = class_band_sum_pixel(mine, S, density, row, column, N_SMALL, render)
+            x = class_band_sum_pixel(transported, SUN, density, row, column, N_SMALL, render)
+            y = class_band_sum_pixel(mine, SUN, density, row, column, N_SMALL, render)
             assert x.value == pytest.approx(y.value, rel=1e-10, abs=1e-300), (row, column, mine[0][1].members)
             assert (x.K, x.K_rho_pos) == (y.K, y.K_rho_pos)
             assert x.K_eff == pytest.approx(y.K_eff, rel=1e-8, abs=1e-300)
@@ -200,21 +200,21 @@ def test_k_eff_counts_distinct_events_not_transport_copies():
     double the effective size; per event it is the one-transport size.
     """
     row, column = 400, 126
-    _, delta, lo, hi = pixel_band(row, column, S)
+    _, delta, lo, hi = pixel_band(row, column, SUN)
     d = np.array([lo, 0.5 * (lo + hi), hi - 1e-9])
     w = np.array([1.0, 2.0, 3.0])
-    u = np.tile([1.0, 0.0, 0.0], (3, 1))
+    u = np.tile([-1.0, 0.0, 0.0], (3, 1))  # angle(-u, phi) = D
     events = {"D": d, "u": u, "phi": np.stack([np.cos(d), np.sin(d), np.zeros(3)], axis=1), "w": w}
     mirror = np.diag([1.0, 1.0, -1.0])
     group = StoreGroup(((3, 5),), (Transport(((3, 5),), None), Transport(((3, 7),), mirror)))
-    one = class_band_sum_pixel([(events, identity_group([(3, 5)]))], S, UNIFORM, row, column, 1000)
-    two = class_band_sum_pixel([(events, group)], S, UNIFORM, row, column, 1000)
+    one = class_band_sum_pixel([(events, identity_group([(3, 5)]))], SUN, UNIFORM, row, column, 1000)
+    two = class_band_sum_pixel([(events, group)], SUN, UNIFORM, row, column, 1000)
     assert (two.K, two.K_rho_pos) == (3, 3) and two.value == 2.0 * one.value
     assert two.total == 12.0 and two.square == 4.0 * 14.0
     assert two.K_eff == pytest.approx(36.0 / 14.0, rel=1e-15) == one.K_eff
     # A transport where rho vanishes adds nothing to c_i, so neither to K_rho_pos nor to K_eff.
     zero = type("Zero", (), {"evaluate_batch": staticmethod(lambda r: np.zeros(len(r)))})()
-    assert class_band_sum_pixel([(events, group)], S, zero, row, column, 1000).K_rho_pos == 0
+    assert class_band_sum_pixel([(events, group)], SUN, zero, row, column, 1000).K_rho_pos == 0
 
 
 def test_class_value_is_unchanged_and_k_eff_is_the_single_member_scale(canonical_store):
@@ -233,9 +233,9 @@ def test_class_value_is_unchanged_and_k_eff_is_the_single_member_scale(canonical
     render = {"width": 81, "height": 41, "fov_deg": 60.0, "view": {"azimuth": 0.0, "elevation": 15.0}}
     ratios = []
     for row, column in [(r, c) for r in range(0, 41, 5) for c in range(0, 81, 5)]:
-        new = class_band_sum_pixel([(events, group)], S, density, row, column, N_SMALL, render)
-        centre, delta, lo, hi = pixel_band(row, column, S, render)
-        rotations, weight = band_poses(events, S, centre, lo, hi)
+        new = class_band_sum_pixel([(events, group)], SUN, density, row, column, N_SMALL, render)
+        centre, delta, lo, hi = pixel_band(row, column, SUN, render)
+        rotations, weight = band_poses(events, SUN, centre, lo, hi)
         total, square = 0.0, 0.0
         for t in group.transports:
             contribution = weight * density.evaluate_batch(rotations if t.g is None else rotations @ t.g.T)
@@ -244,7 +244,7 @@ def test_class_value_is_unchanged_and_k_eff_is_the_single_member_scale(canonical
         old = band_sum_estimate(total, N_SMALL, hi - lo, delta) if total != 0.0 else 0.0
         assert new.value == old and new.total == total
         if new.value > 0.0:
-            single = class_band_sum_pixel([(events, identity_group([(3, 5)]))], S, density, row, column, N_SMALL, render)
+            single = class_band_sum_pixel([(events, identity_group([(3, 5)]))], SUN, density, row, column, N_SMALL, render)
             if single.K_eff > 20.0:
                 ratios.append((kish_k_eff(total, square) / single.K_eff, new.K_eff / single.K_eff))
     assert len(ratios) >= 5
@@ -286,12 +286,12 @@ def test_per_event_k_eff_is_the_iid_noise_of_a_class_band_sum():
     families = json.loads(TASK14_WINDOWS.read_text())["families"]
     crystal = canonical_crystal()
     (group,) = store_plan(build_path_class(crystal, (3, 5)), crystal)
-    bands = [pixel_band(r, c, S, spec["render"])[2:] for spec in families.values() for r, c in spec["pixels"]]
+    bands = [pixel_band(r, c, SUN, spec["render"])[2:] for spec in families.values() for r, c in spec["pixels"]]
     window = (min(lo for lo, _ in bands), max(hi for _, hi in bands))
     n = 10_000_000
     stores = [
         build_event_store(
-            crystal, CANONICAL_REFRACTIVE_INDEX, [(3, 5)], n, incident_direction=S, sampler=s2_store.RandomSphereSampler(seed),
+            crystal, CANONICAL_REFRACTIVE_INDEX, [(3, 5)], n, sun_direction=SUN, sampler=s2_store.RandomSphereSampler(seed),
             sampling=f"i.i.d. seed {seed}", deviation_window=window, run_checks=False,
         ).events.arrays()
         for seed in (1, 2)
@@ -301,11 +301,11 @@ def test_per_event_k_eff_is_the_iid_noise_of_a_class_band_sum():
         density = build_pose_density(family, **spec["density"])
         rows = []
         for row, column in spec["pixels"]:
-            a, b = (class_band_sum_pixel([(events, group)], S, density, row, column, n, spec["render"]) for events in stores)
+            a, b = (class_band_sum_pixel([(events, group)], SUN, density, row, column, n, spec["render"]) for events in stores)
             pooled = []
             for events in stores:  # task band-sum-renderer's per_transport_sample count, literally
-                centre, _, lo, hi = pixel_band(row, column, S, spec["render"])
-                rotations, weight = band_poses(events, S, centre, lo, hi)
+                centre, _, lo, hi = pixel_band(row, column, SUN, spec["render"])
+                rotations, weight = band_poses(events, SUN, centre, lo, hi)
                 c = [weight * density.evaluate_batch(rotations if t.g is None else rotations @ t.g.T) for t in group.transports]
                 pooled.append(kish_k_eff(float(sum(x.sum() for x in c)), float(sum((x**2).sum() for x in c))))
             rows.append((a.value, b.value, a.K_eff, b.K_eff, *pooled))
@@ -324,7 +324,7 @@ def scene_of(path_class, render=CANONICAL_RENDER, **kwargs) -> BandSumScene:
         path_class=path_class,
         crystal=canonical_crystal(),
         refractive_index=CANONICAL_REFRACTIVE_INDEX,
-        incident_direction=S,
+        sun_direction=SUN,
         pose_density=canonical_pose_density(),
         render=render,
         **kwargs,

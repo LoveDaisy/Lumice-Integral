@@ -36,7 +36,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from lumice_integral.camera import linear_pixel_outgoing_direction, sun_incident_direction
+from lumice_integral.camera import incident_direction_from_sun, linear_pixel_outgoing_direction, sun_direction
 from lumice_integral.continuation import (
     ContinuationOptions,
     local_residual_jacobian,
@@ -111,7 +111,7 @@ def main() -> None:
     parser.add_argument("--rng-seed", type=int, default=20260916)
     args = parser.parse_args()
 
-    incident = sun_incident_direction(SUN_ALTITUDE_DEG)
+    incident = incident_direction_from_sun(sun_direction(SUN_ALTITUDE_DEG))
     target = linear_pixel_outgoing_direction(args.row, args.column, **CANONICAL_RENDER)
     sky = -target
     print(f"pixel row={args.row} column={args.column}")

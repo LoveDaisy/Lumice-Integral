@@ -99,8 +99,10 @@ def c_axis_roll(rotation: np.ndarray) -> float:
     whenever ``sin(zenith) > 0``.  ``roll = 0`` puts the body ``e1`` (the face-3
     outward normal of ``geometry.core.HexPrism``) in the vertical plane through
     the c axis, on the upper side; for a horizontal c axis face 3 is then the
-    horizontal top face.  This reference is this renderer's own convention and
-    is not tied to Lumice's mesh face numbering.
+    horizontal top face.  Lumice numbers the faces the same way (face 3 = body
+    ``+x``, ``src/core/geo3d_closedform.hpp`` ``kHexFaceCos/Sin``), so this is
+    Lumice's roll too; the writing series' ``column_attitude`` uses
+    ``theta = roll - 180 deg`` (``docs/conventions.md``).
 
     At the gimbal-lock poles (``zenith = 0`` or ``pi``) only ``az +- roll`` is
     defined and the value returned is arbitrary; callers must not rely on it

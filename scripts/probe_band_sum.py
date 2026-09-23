@@ -1,7 +1,7 @@
 """Band-sum quadrature probe (roadmap section 4.2): precomputed S^2 events summed per deviation band.
 
 The band sum is the second discretisation of the Phase II level-set integral
-(roadmap section 4.1(b)).  With ``u = R^-1 s`` and the Haar split
+(roadmap section 4.1(b)).  With ``u = R^-1 s_hat`` (``s_hat`` toward the sun, ``docs/conventions.md``) and the Haar split
 ``d mu_Haar = dA(u) / 4 pi * d psi / 2 pi``, the pixel value of the Phase I
 strip (contract section 7, ``I = (1 / 8 pi^2) int rho A T / J_perp dH^1``)
 satisfies
@@ -15,7 +15,7 @@ With ``N`` equal-area points (``4 pi / N`` each):
     I_hat = sum_{D_i in band} w_i rho(R_i) / (2 pi N (delta_hi - delta_lo) sin(delta))
 
 where ``w_i = A_P(u_i) T_P(u_i)`` and ``R_i`` is the unique pose with
-``R_i u_i = s`` and ``R_i Phi_P(u_i)`` at deviation ``D_i`` and azimuth
+``R_i u_i = s_hat`` and ``R_i Phi_P(-u_i)`` at deviation ``D_i`` and azimuth
 ``alpha`` (Gislen eq. 19 at ``omega = D_i``; built here from two orthonormal
 frames).  The derived constant is used as is; nothing is fitted.
 
@@ -26,7 +26,9 @@ Stages (``--stage``):
   evaluators, ``w > 0`` events sorted by ``D``; psi-invariance, gate-coverage
   and Haar-mean self-checks), written in this probe's flat layout: one
   ``events_N<n>.npz`` + ``precompute_N<n>.json`` per ``N``; an existing file
-  is never overwritten.
+  is never overwritten.  A tier whose JSON lacks ``store_schema_version`` is a
+  task 13/14 schema 1 file (``u = R^-1 s``, propagation); :func:`load_events`
+  converts it with :func:`lumice_integral.s2_store.events_from_schema1`.
 - ``reference``: the random-orientation Phase I reference of scene 2
   (``strip_pixel.render_pixel`` on ``canonical_strip_scene(pose_density=random)``),
   cached in ``reference_random_c<column>.npz``.
@@ -66,12 +68,13 @@ from lumice_integral.band_sum import (  # the estimator, migrated to src/ (task 
     band_sum_pixel,
     pixel_band,
 )
+from lumice_integral.camera import incident_direction_from_sun
 from lumice_integral.canonical_scene import (
     CANONICAL_REFRACTIVE_INDEX,
     CANONICAL_RENDER,
     canonical_crystal,
-    canonical_incident_direction,
     canonical_pose_density,
+    canonical_sun_direction,
 )
 from lumice_integral.optics import PATH_3_5_FACES
 from lumice_integral.pose_density import build_pose_density
@@ -79,8 +82,10 @@ from lumice_integral.s2_store import (
     CHUNK,
     FIBONACCI_SAMPLING,
     ROTATION_PER_POINT,
+    SCHEMA_VERSION,
     PointSampler,
     build_event_store,
+    events_from_schema1,
     max_rss_mb,
 )
 
@@ -117,13 +122,13 @@ def precompute(
     for path in (events_path, meta_path):
         if path.exists():
             raise FileExistsError(f"{path} exists; refusing to overwrite a precomputed tier")
-    s = canonical_incident_direction()
+    sun = canonical_sun_direction()
     store = build_event_store(
         canonical_crystal(),
         CANONICAL_REFRACTIVE_INDEX,
         [faces],
         n,
-        incident_direction=s,
+        sun_direction=sun,
         sampler=sampler,
         sampling=sampling,
         deviation_window=deviation_window,
@@ -134,13 +139,14 @@ def precompute(
     diagnostics = store.diagnostics
     meta = {
         "N": n,
+        "store_schema_version": SCHEMA_VERSION,
         "sampling": sampling,
         "rotation_per_point": ROTATION_PER_POINT,
         "path": list(faces),
         "deviation_window_rad": None if deviation_window is None else [float(v) for v in deviation_window],
         "crystal": {"type": "hexagonal_column", "height_ratio": 2.0},
         "refractive_index": CANONICAL_REFRACTIVE_INDEX,
-        "incident_direction": s.tolist(),
+        "sun_direction": sun.tolist(),
         "kept_events": diagnostics["kept_events"],
         "valid_domain_points": diagnostics["valid_domain_points"],
         "kept_fraction": diagnostics["kept_fraction"],
@@ -159,8 +165,14 @@ def precompute(
 
 
 def load_events(output_dir: Path, n: int) -> dict[str, np.ndarray]:
+    """A tier's arrays in the current schema (a schema 1 tier, no ``store_schema_version``, converted explicitly)."""
+    meta = json.loads((output_dir / f"precompute_N{n}.json").read_text())
+    schema = meta.get("store_schema_version", 1)
+    if schema not in (1, SCHEMA_VERSION):
+        raise ValueError(f"{output_dir}: store_schema_version {schema} is not readable")
     with np.load(output_dir / f"events_N{n}.npz") as data:
-        return {key: data[key] for key in data.files}
+        arrays = {key: data[key] for key in data.files}
+    return events_from_schema1(arrays) if schema == 1 else arrays
 
 
 # ----------------------------------------------------------------- render
@@ -189,21 +201,27 @@ def gislen_eq19(a: np.ndarray, b: np.ndarray, a0: np.ndarray, b0: np.ndarray, om
     return total / (np.sin(omega) ** 2)[:, None, None]
 
 
-def self_check_rotation(events: dict[str, np.ndarray], s: np.ndarray, rows: list[int], column: int) -> dict[str, Any]:
-    """The frame construction equals eq. 19 at ``omega = D_i``; eq. 19 at the pixel's ``delta`` is not a rotation."""
+def self_check_rotation(events: dict[str, np.ndarray], sun: np.ndarray, rows: list[int], column: int) -> dict[str, Any]:
+    """The frame construction equals eq. 19 at ``omega = D_i``; eq. 19 at the pixel's ``delta`` is not a rotation.
+
+    Eq. 19 maps a pair at angle ``omega`` onto a pair at the same angle: the
+    propagation pairs, incoming ``(s, -u)`` with ``s = -s_hat`` and outgoing
+    ``(b, phi)``, whose angle is the deviation ``D``.
+    """
+    s = incident_direction_from_sun(sun)
     worst_frame_vs_eq19, orthogonality_frame, orthogonality_pixel_omega, band_widths = 0.0, 0.0, [], []
     for row in rows:
-        centre, delta, lo_d, hi_d = pixel_band(row, column, s)
+        centre, delta, lo_d, hi_d = pixel_band(row, column, sun)
         lo, hi = np.searchsorted(events["D"], [lo_d, hi_d])
         if hi <= lo:
             continue
-        rotations = band_rotations(events, lo, hi, s, centre)
+        rotations = band_rotations(events, lo, hi, sun, centre)
         deviation = events["D"][lo:hi]
         e = centre - (centre @ s) * s
         e /= np.linalg.norm(e)
         b_i = np.cos(deviation)[:, None] * s + np.sin(deviation)[:, None] * e
         s_rows = np.broadcast_to(s, b_i.shape)
-        eq19 = gislen_eq19(s_rows, b_i, events["u"][lo:hi], events["phi"][lo:hi], deviation)
+        eq19 = gislen_eq19(s_rows, b_i, -events["u"][lo:hi], events["phi"][lo:hi], deviation)
         worst_frame_vs_eq19 = max(worst_frame_vs_eq19, float(np.max(np.abs(eq19 - rotations))))
         eye = np.eye(3)
         orthogonality_frame = max(
@@ -211,7 +229,7 @@ def self_check_rotation(events: dict[str, np.ndarray], s: np.ndarray, rows: list
             float(np.max(np.abs(np.einsum("nji,njk->nik", rotations, rotations) - eye))),
         )
         pixel = gislen_eq19(
-            s_rows, np.broadcast_to(centre, b_i.shape), events["u"][lo:hi], events["phi"][lo:hi], np.full(hi - lo, delta)
+            s_rows, np.broadcast_to(centre, b_i.shape), -events["u"][lo:hi], events["phi"][lo:hi], np.full(hi - lo, delta)
         )
         orthogonality_pixel_omega.append(
             np.linalg.norm(np.einsum("nji,njk->nik", pixel, pixel) - eye, axis=(1, 2))
@@ -314,7 +332,7 @@ def power_law(ns: list[int], values: list[float]) -> dict[str, float] | None:
 
 
 def render(output_dir: Path, reference_dir: Path, column: int, scenes: list[str]) -> dict[str, Any]:
-    s = canonical_incident_direction()
+    sun = canonical_sun_direction()
     tiers = available_tiers(output_dir)
     if not tiers:
         raise FileNotFoundError(f"no events_N*.npz in {output_dir}; run --stage precompute first")
@@ -330,7 +348,7 @@ def render(output_dir: Path, reference_dir: Path, column: int, scenes: list[str]
             start = time.perf_counter()
             rows: list[PixelMetrics] = []
             for row, col in pixels:
-                estimate, delta, k, k_pos, k_eff, width = band_sum_pixel(events, s, density, row, col, n)
+                estimate, delta, k, k_pos, k_eff, width = band_sum_pixel(events, sun, density, row, col, n)
                 ref = reference[(row, col)]
                 lit = ref > LIT_FRACTION * column_max[col]
                 rel = (estimate - ref) / ref if lit else float("nan")
@@ -374,7 +392,7 @@ def render(output_dir: Path, reference_dir: Path, column: int, scenes: list[str]
         summary["scenes"][scene] = {"tiers": per_tier, "extrapolation": extrapolation}
         print(scene, "extrapolation", json.dumps(extrapolation))
     largest = load_events(output_dir, tiers[-1])
-    summary["rotation_self_check"] = self_check_rotation(largest, s, list(range(20, 801, 60)), column)
+    summary["rotation_self_check"] = self_check_rotation(largest, sun, list(range(20, 801, 60)), column)
     print("rotation self-check:", json.dumps(summary["rotation_self_check"]))
     summary["created"] = dt.datetime.now().astimezone().isoformat(timespec="seconds")
     (output_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")

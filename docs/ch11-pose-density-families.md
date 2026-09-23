@@ -81,12 +81,17 @@ checks every `rho_pose` on the diagnostic fibers is finite.
 outward normal of face `3` of `geometry.core.HexPrism` — lies in the vertical
 plane through the c axis, on the upper side; for a horizontal c axis face `3`
 is the horizontal top face (the classical Parry orientation, one prism face
-up). This is this renderer's own reference. Lumice's `roll = 0` refers to
-*its* mesh's face numbering, which is not aligned with ours by any
-requirement (the two implementations are independent, `AGENTS.md`); the
-locked *peak* is the same physical orientation class, but "which labelled
-face is the top one" is a per-renderer labelling choice. Consequences for
-labelled paths are in section 6.
+up). Lumice numbers the faces the same way (face `3` = body `+x`, face
+`3 + i` at `i * 60 deg`: `src/core/geo3d_closedform.hpp` `kHexFaceCos/Sin`,
+read as evidence; `doc/coordinate-convention.md` sections 1 and 5.3), so
+this is also Lumice's `roll = 0`: the same labelled face is on top in both
+renderers (corrected 2026-09-24, task `notation-alignment`; this paragraph
+used to say the numberings were not aligned). The writing series'
+chapter parametrisation `column_attitude(psi, theta)` puts face `3` at the
+bottom for `theta = 0`: `theta = roll - 180 deg`, the same physical pose
+with the labels `3` and `6` swapped (`docs/conventions.md` rows 2-3,
+`tests/test_conventions.py`). Consequences for labelled paths are in
+section 6.
 
 ## 3. Densities and their normalisation
 
