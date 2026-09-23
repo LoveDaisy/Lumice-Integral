@@ -88,6 +88,7 @@ from .strip_pixel import (
     build_strip_scene,
     render_pixel,
 )
+from .symmetry.signature import D6H
 
 Faces = tuple[int, ...]
 Completeness = str  # "complete" | "unknown"
@@ -98,36 +99,17 @@ Completeness = str  # "complete" | "unknown"
 def hexprism_symmetry_matrices() -> tuple[np.ndarray, ...]:
     """The 24 orthogonal matrices of ``D6h`` in the body frame (c axis = +z, face 3 normal = +x).
 
-    Generated as the closure of three generators -- the 60-degree rotation
-    about z, the vertical mirror ``y -> -y`` and the horizontal mirror
-    ``z -> -z`` -- so the element list is derived, not typed in.  The order
-    is that of the closure, an implementation detail: it is neither the
-    writing series' ``signature.D6H`` order nor its published numbers #1-#12
-    of the fold group ``G`` (``reflection_group``).  Across projects an
-    element is identified by its matrix (``docs/conventions.md`` row 14);
-    task ``symmetry-authority`` replaces this construction by the migrated
-    table.
+    This is :data:`.symmetry.signature.D6H`, the repository's only ``D6h``
+    element table (migrated from the writing series, task
+    ``symmetry-authority``): ``Rz(60 k)`` and the vertical mirror
+    ``sxy(30 k)`` interleaved for ``k = 0..5``, then the same twelve
+    premultiplied by the basal mirror ``B = diag(1, 1, -1)``.  The order is
+    that fixed construction order; it is not the published numbering #1-#12
+    of the fold group ``G`` (:mod:`.symmetry.reflection_group`).  Across
+    projects an element is identified by its matrix
+    (``docs/conventions.md`` row 14).
     """
-    angle = np.radians(60.0)
-    generators = [
-        np.array([[np.cos(angle), -np.sin(angle), 0.0], [np.sin(angle), np.cos(angle), 0.0], [0.0, 0.0, 1.0]]),
-        np.diag([1.0, -1.0, 1.0]),
-        np.diag([1.0, 1.0, -1.0]),
-    ]
-    elements: list[np.ndarray] = [np.eye(3)]
-    frontier = [np.eye(3)]
-    while frontier:
-        next_frontier: list[np.ndarray] = []
-        for element in frontier:
-            for generator in generators:
-                candidate = generator @ element
-                if not any(np.allclose(candidate, known, atol=1e-12) for known in elements):
-                    elements.append(candidate)
-                    next_frontier.append(candidate)
-        frontier = next_frontier
-    if len(elements) != 24:
-        raise RuntimeError(f"D6h closure produced {len(elements)} elements, expected 24")
-    return tuple(elements)
+    return D6H
 
 
 _D6H = hexprism_symmetry_matrices()
@@ -180,6 +162,15 @@ def phi_key(crystal: Polyhedron, faces: Sequence[int]) -> tuple[int, int, int]:
     a key; ``3-5`` and ``3-7`` do not.  The key is compared for equality
     only: the index of ``M`` is a position in :func:`hexprism_symmetry_matrices`,
     not a published element number (``docs/conventions.md`` row 14).
+
+    Relation to the writing series' classes (:mod:`.symmetry.signature`):
+    equal keys mean the same ``Phi`` exactly, no quotient taken.  ``D6h``
+    acts on a key as ``(g M g^T, g a, g a~)``, and one orbit of keys is one
+    canonical signature class (``canonical_signature``); a
+    ``symmetry.signature.phi_class`` is a union of such orbits -- one orbit
+    for the 60- and 90-degree wedges, the parallel (0-degree) orbits merged
+    by the conjugacy class of ``M`` (framework theorem 5').  Checked by
+    ``tests/test_path_class_phi_key.py::test_d6h_orbit_of_the_key_is_one_signature_class_and_refines_phi_class``.
     """
     if not isinstance(crystal, HexPrism):
         raise TypeError("phi_key is implemented for the hexagonal prism only")

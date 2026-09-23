@@ -81,3 +81,48 @@ def test_equal_key_means_equal_direction(keys) -> None:
     assert compared > 1000
     assert worst <= 1e-12, worst
     assert worst_weighted <= 1e-12, worst_weighted
+
+
+def test_d6h_orbit_of_the_key_is_one_signature_class_and_refines_phi_class(keys) -> None:
+    """``phi_key`` (exact ``Phi``) vs the writing series' classes (:mod:`lumice_integral.symmetry.signature`).
+
+    ``g`` in ``D6h`` acts on a key ``(M, a, a~)`` as ``(g M g^T, g a, g a~)``;
+    its orbits are exactly the canonical-signature classes, and each lies in
+    one ``phi_class``.  ``phi_class`` equals the signature class off the
+    0-degree wedge (below the TIR limit) and merges parallel paths by the
+    conjugacy class of ``M`` (framework theorem 5').
+    """
+    from lumice_integral.geometry import fold_matrix
+    from lumice_integral.path_class import hexprism_symmetry_matrices
+    from lumice_integral.symmetry.signature import A_MAX_DEG, canonical_signature, face_of, phi_class
+
+    crystal = canonical_crystal()
+    d6h = hexprism_symmetry_matrices()
+
+    def index_of(M):
+        return next(i for i, g in enumerate(d6h) if np.allclose(g, M, atol=1e-9))
+
+    def normal(face):
+        return crystal.normal(crystal.face(face))
+
+    orbit_of: dict = {}
+    by_orbit: dict = defaultdict(set)
+    by_signature: dict = defaultdict(set)
+    phi_of_orbit: dict = defaultdict(set)
+    for faces, (m, a, a_tilde) in keys.items():
+        key = (m, a, a_tilde)
+        if key not in orbit_of:
+            orbit_of[key] = min((index_of(g @ d6h[m] @ g.T), face_of(crystal, g @ normal(a)), face_of(crystal, g @ normal(a_tilde)))
+                                for g in d6h)
+        orbit = orbit_of[key]
+        by_orbit[orbit].add(faces)
+        M = fold_matrix(crystal, faces)
+        by_signature[canonical_signature(crystal, M, faces[0], faces[-1])].add(faces)
+        phi_of_orbit[orbit].add(phi_class(crystal, M, faces[0], faces[-1]))
+    assert {frozenset(g) for g in by_orbit.values()} == {frozenset(g) for g in by_signature.values()}
+    assert all(len(classes) == 1 for classes in phi_of_orbit.values())
+    orbits_of_phi: dict = defaultdict(set)
+    for orbit, (cls,) in phi_of_orbit.items():
+        orbits_of_phi[cls].add(orbit)
+    merged = {cls.wedge_deg for cls, orbits in orbits_of_phi.items() if len(orbits) > 1}
+    assert 0.0 in merged and all(w == 0.0 or w > A_MAX_DEG for w in merged), merged

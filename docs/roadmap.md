@@ -516,6 +516,19 @@ curve (task 9 measured "same direction map, different weight" for `3-1-2-5`
 on row 651), so class rendering should trace once per $\Phi$-group and sum
 the windows — task `path-class-shared-fiber` (tasks.md 12).
 
+In code the $\Phi$ layer is `path_class.phi_key`: equal keys, equal
+$\Phi_P$ exactly, no symmetry quotient. The writing series' classes are
+coarser and live in `lumice_integral.symmetry.signature` (task
+`symmetry-authority`): the $D_{6h}$ orbit of a key $(M, a, \tilde a)$ is one
+canonical signature class $(M, \mathbf n_a, M^{-1}\mathbf n_b)$ modulo
+$D_{6h}$ conjugation, and a `phi_class` is a union of such orbits — exactly
+one for the $60°$ and $90°$ wedges, the parallel ($0°$) orbits merged by the
+conjugacy class of $M$ (framework theorem 5′: 14 signature classes, 6
+$\Phi$ classes). So `phi_key` groups members that share one store, and the
+$D_{6h}$ orbit of that group is what `path_class_symmetry` transports it
+across (test
+`test_path_class_phi_key.py::test_d6h_orbit_of_the_key_is_one_signature_class_and_refines_phi_class`).
+
 **(e) Fixtures this suggests.**
 - *Liljequist* (writing chapter 8): `1-3-2` and `3-5-6-7-3` have the same
   $\Phi$ (the mirror in the plane of faces 3/6; three reflections in planes
