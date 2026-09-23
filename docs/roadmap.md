@@ -586,7 +586,7 @@ is `scripts/probe_band_sum.py` (task `band-sum-quadrature-probe`).
 $d\mu_{\mathrm{Haar}} = dA(\mathbf u)/4\pi \cdot d\psi/2\pi$ ($\psi$ the
 twist about $\hat{\mathbf s}$; the writing series' $\theta$ of theorem 8,
 `docs/conventions.md` row 10). The twist moves the outgoing direction rigidly
-about $\mathbf s$, so at fixed $\mathbf u$ the outgoing azimuth is
+about $\hat{\mathbf s}$, so at fixed $\mathbf u$ the outgoing azimuth is
 $\alpha = \alpha_0(\mathbf u) + \psi$ and $d\psi = d\alpha$, while the
 deviation stays $D_P(\mathbf u)$. Pushing $\rho A_P T_P\, d\mu_{\mathrm{Haar}}$
 forward to the sky and writing $dA(\mathbf d) = \sin\delta\, d\delta\, d\alpha$
@@ -713,7 +713,7 @@ density (62 rows of column 126, all `complete`).
 - *Narrow $\rho$ is pixel-dependent, and column 126 is its easy case.*
   Refraction by the 3-5 prism wedge preserves the ray component along the
   prism edge, so every pose of a pixel has $\mathbf c \perp
-  (\mathbf b - \mathbf s)$; on the sun's vertical (column 126) this puts the
+  (\mathbf b + \hat{\mathbf s})$; on the sun's vertical (column 126) this puts the
   c axis within about ±1.2° of horizontal along the whole contour, and the
   column density keeps 65 % of the band ($K_{\mathrm{eff}}/K$; random:
   90 %, the rest being the spread of $A_P T_P$). Off the vertical it keeps
@@ -731,7 +731,7 @@ density (62 rows of column 126, all `complete`).
   compute; the 2 h budget and the stop-loss rule (`N > 1e8` for `1e-2`)
   were not reached.
 - *Self-checks.* Validity, $A_P$, $T_P$, $\Phi_P$ and $D_P$ unchanged under
-  three twists about $\mathbf s$ to `1.5e-14` (section 4.1(a)); all three
+  three twists about $\hat{\mathbf s}$ to `1.5e-14` (section 4.1(a)); all three
   `entry_measure` failure reasons occur on the sphere; the Fibonacci mean
   of $A_P T_P$ matches `1e6` independent Haar rotations ($z = 1.35$); the
   frame construction equals eq. 19 at $\omega = D_P$ to `7e-15`.
@@ -933,7 +933,7 @@ weight.
   restriction of Phase I ($R g^{-1}$ must be a rotation), not an $S^2$ one.
   On the representative's pose $R$ the rebuild is
   $L_g R g^{\mathsf T}$, $L_g = I - (1 - \det g)\,\mathbf m\mathbf m^{\mathsf T}$
-  with $\mathbf m$ the normal of the plane of $\mathbf s$ and the pixel
+  with $\mathbf m$ the normal of the plane of $\hat{\mathbf s}$ and the pixel
   centre: the old pose factor for a proper $g$ (bit for bit), times the
   reflection in that plane for a mirror (`s2_store.transported_rotations`,
   equal to the literal rebuild to `1e-13` on all 24 elements; calling
