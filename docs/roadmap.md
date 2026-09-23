@@ -397,6 +397,10 @@ contract section 12) are recorded, not blocking. Closeout record:
   JAX eagerly, so that `import lumice_integral.geometry` stays numpy-only.
 - W2: the notes consume figure-data v3 for the chapter-6 state-space figure;
   the chapter-6 strip remake waits for defect 2 and the rerender.
+- W3 (writing repo task 33): the notes import `lumice_integral.symmetry` in
+  place of `halo_notes.math.{group,reflection_group,signature,ground_truth,attitude}`
+  (`sun_vector` becomes `camera.sun_direction`) and reduce their `check_*.py`
+  scripts to thin wrappers. Nothing here waits for it.
 
 ## 4. Phase II: Fiber Reduction
 
@@ -1011,16 +1015,30 @@ that each must become a package immediately:
    multiply, and is the designated authoritative implementation; the writing
    project still carries its own copy until its task
    `geometry-depend-on-lumice-integral` (W1) switches it over (section 3.6).
-2. **Differential evaluator**: derivatives with respect to local SO(3)
+2. **Symmetry and combinatorial classification**: the crystal point groups and
+   what they classify are owned by `lumice_integral.symmetry` (task
+   `symmetry-authority`, 2026-09-24): `D6` as face permutations, the fold
+   group `G` with its published numbers #1–#12, conjugacy and eigenvalue
+   classes, the `D6h` element table `signature.D6H` (the only one in the
+   repository; `path_class.hexprism_symmetry_matrices` returns it), canonical
+   signatures and `Phi` classes (34 on the prism), the chapter-3 ground-truth
+   list and the column attitude. Pure numpy, depending on `geometry` and never
+   the reverse (static test). One cross-subpackage edge is deliberate:
+   `geometry.unfold._wedge_angle_deg_from_normals` exists so that
+   `geometry.wedge_angle_deg` and `symmetry.signature.wedge_angle` share one
+   wedge-angle kernel; it is not a geometry-only helper and must not be
+   removed as unused by geometry. The writing project switches to it in its
+   task 33 (W3, section 3.6).
+3. **Differential evaluator**: derivatives with respect to local SO(3)
    coordinates, preferably from the same equations as the value evaluator.
-3. **Fiber solver**: seed search, predictor-corrector continuation, component
+4. **Fiber solver**: seed search, predictor-corrector continuation, component
    discovery, closure, and diagnostics.
-4. **Integrator**: parameterization-aware line quadrature and error estimates.
-5. **Image driver**: source, spectrum, pose distribution, pixel model, caching,
+5. **Integrator**: parameterization-aware line quadrature and error estimates.
+6. **Image driver**: source, spectrum, pose distribution, pixel model, caching,
    and output assembly.
 
 The boundaries should emerge from the first working slice. They are not a
-request to build five frameworks before tracing one loop.
+request to build six frameworks before tracing one loop.
 
 ## 6. Relationship to Other Projects
 
@@ -1063,6 +1081,15 @@ own its implementation. Lumice Integral should eventually regenerate the
 direct-integration strip and state-space diagnostic from chapter 6, and provide
 numerical evidence for the halo-map, Jacobian, fiber, and caustic discussion in
 later chapters.
+
+Two of the writing project's code layers now live here and are its
+authorities: the crystal geometry (`lumice_integral.geometry`, 2026-09-16)
+and the symmetry and classification layer (`lumice_integral.symmetry`,
+2026-09-24, migrated from `halo_notes.math` with public names kept 1:1). The
+chapter-8 and chapter-9 signature tables recomputed with this package
+reproduce the published CSV files byte for byte
+(`tests/test_symmetry_signature_table_regression.py`, reading the writing
+repository's data files only).
 
 ## 7. Validation Strategy
 
@@ -1195,3 +1222,17 @@ produce plausible but systematically wrong radiance.
   the zenith), and `D6h` elements are identified across projects by matrix,
   not by index, until task `symmetry-authority` migrates the published
   table.
+- **2026-09-24**: the symmetry and combinatorial-classification authority
+  moves from the writing project's `halo_notes.math` into
+  `lumice_integral.symmetry` (task `symmetry-authority`; `group`,
+  `reflection_group`, `signature`, `ground_truth` with its data file, and
+  `attitude` without `sun_vector`, which is `camera.sun_direction`),
+  migrated near-verbatim with public names kept 1:1 and the writing
+  project's tests alongside. The repository now holds one `D6h` table:
+  `path_class.hexprism_symmetry_matrices()` returns `signature.D6H` instead
+  of its own generator closure (same 24 matrices; the order and ten elements'
+  last bits change, no key or cached artifact records either). The only
+  change of arithmetic is the wedge angle, which shares `geometry`'s
+  `atan2` kernel instead of the writing project's `arccos` (no rounded class
+  wedge moves). Dependency direction `symmetry -> geometry` is checked
+  statically; the chapter-8 / chapter-9 tables are reproduced byte for byte.

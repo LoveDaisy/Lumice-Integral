@@ -16,7 +16,8 @@ are renderings of the same cells (the ch9 one also records wall-clock
 timings) and are not compared.
 
 Only the writing repository's data files are read (``tests/_writing_repo.py``);
-none of its code is imported.  About 10 minutes on an M2 Max, hence ``slow``.
+none of its code is imported.  About 14 minutes on an M2 Max (ch8 ~55 s per ratio,
+ch9 75-130 s per tier), hence ``slow``.
 """
 
 from __future__ import annotations
