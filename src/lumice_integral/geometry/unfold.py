@@ -73,7 +73,15 @@ def wedge_angle_deg(crystal: Polyhedron, faces: Sequence[int]) -> float:
     faces = _check_faces(faces)
     n_a = crystal.normal(crystal.face(faces[0]))
     n_b = crystal.normal(crystal.face(faces[-1]))
-    minus_n_tilde_b = -(fold_matrix(crystal, faces).T @ n_b)
+    return _wedge_angle_deg_from_normals(n_a, -(fold_matrix(crystal, faces).T @ n_b))
+
+
+def _wedge_angle_deg_from_normals(n_a: Vec3, minus_n_tilde_b: Vec3) -> float:
+    """``n_a`` 与 ``-n_tilde_b`` 的夹角（度），即楔角 $W$ 的数值实现（唯一一份）。
+
+    跨子包共享实现：除 :func:`wedge_angle_deg` 外，还被 :func:`lumice_integral.symmetry.signature.wedge_angle`
+    （它对任意共轭后的 ``(M, a, b)`` 求楔角，``M`` 不一定来自一条面序列）消费；重命名或删除前先检查该调用点。
+    """
     # atan2 form: arccos loses ~sqrt(eps) near W = 0 (Newell normals put the
     # antipodal pairs 5-8 at 8.5e-7 deg), which is exactly where rank 0 is decided.
     return float(np.degrees(np.arctan2(np.linalg.norm(np.cross(n_a, minus_n_tilde_b)), n_a @ minus_n_tilde_b)))

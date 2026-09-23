@@ -41,7 +41,7 @@ imported from either (`AGENTS.md`).
 | 11 | sun elevation | `altitude` | `Σ` | `altitude_deg` in code, `altitude` in prose (**kept**, see below) | row 4 tests |
 | 12 | column azimuth / spin | `azimuth`, `roll` | `column_attitude(ψ, θ)`: ψ azimuth, θ spin | `azimuth`, `roll` (Lumice names); `pose_density` docstrings call the roll `psi` (**kept**, see below) | row 2 tests |
 | 13 | `Φ_P`, `M`, `W`, `D_P`, `w_P`, signature | — | framework §0 and theorem 4 (§2): `Φ_P = 𝒮_{n_b} ∘ M ∘ 𝒮_{n_a} = M ∘ W`, `𝒮` refraction, `M` fold matrix, `W` unfolded wedge refraction, `ñ_b = M⁻¹ n_b` | the same letters: `geometry.fold_matrix` = `M` (mirrors left-multiplied in encounter order), `path_class.phi_key` = `(M, n_a, M^T n_b)`, `w_P = A_P T_P` | `tests/test_geometry_unfold.py`, `tests/test_path_class_phi_key.py` |
-| 14 | `D6h` / `G` element labels | `raypath-symmetry.md` §2a (`D6h`, P/B/D) | `reflection_group`: the 12 fold matrices `G`, published numbers #1–#12 (`identify(M)`); `signature.D6H`: 24 elements in the order `Rz(60k)`, `sxy(30k)`, then `B·` | `path_class.hexprism_symmetry_matrices()`: 24 elements in generator-closure order; `phi_key(...)[0]` is an **index into that tuple**, not a published number (**interface**, see below) | `test_phi_key_indexes_the_d6h_tuple_by_matrix_not_by_published_number` |
+| 14 | `D6h` / `G` element labels | `raypath-symmetry.md` §2a (`D6h`, P/B/D) | `reflection_group`: the 12 fold matrices `G`, published numbers #1–#12 (`identify(M)`); `signature.D6H`: 24 elements in the order `Rz(60k)`, `sxy(30k)`, then `B·` | the writing series' tables are this repository's `lumice_integral.symmetry` (task 19): `path_class.hexprism_symmetry_matrices()` returns `symmetry.signature.D6H`, the only `D6h` table, in its construction order; `phi_key(...)[0]` is an **index into that tuple**, not a published number (**interface**, see below) | `test_phi_key_indexes_the_d6h_tuple_by_matrix_not_by_published_number`; theorems 1 / 2 / 3 and "five eigenvalue classes" of `G`: `test_symmetry_reflection_group.py::test_closure_is_twelve_with_growth_1_5_10_12_12` / `::test_conjugacy_classes_equal_published_six` / `::test_commuting_with_rz_is_3_4_5_6_11_12` / `::test_eigenvalue_classes_are_five_with_11_merged_into_2`; theorem 5′ (34 = 6 + 12 + 16): `test_symmetry_signature.py::test_phi_class_table_counts_and_ids` |
 | 15 | angle units | degrees in configs | degrees in code, radians in formulas | API arguments with `_deg` are degrees, `_rad` radians; stored `D`, pixel deviations and all Lie-algebra coordinates are radians (contract §2) | — |
 | 16 | pose storage | — | — | `(3, 3)` matrices; quaternions only as an interpolation chart, `(w, x, y, z)` scalar first (`so3`); right-trivialised increments `R exp([δ]×)` (contract §3) | `tests/test_so3.py` |
 
@@ -82,14 +82,17 @@ table is the dictionary: roadmap `ψ` (fiber twist about `ŝ`) = theorem 8 `θ`;
 + 180°; `altitude` = `Σ`. The pixel coordinates `(u, v)` of `camera.py` are
 screen coordinates, unrelated to Phase II's `u`.
 
-**Interface for task 19 (`symmetry-authority`).** Element identity across
-projects is the **matrix**, never an index: `phi_key`'s first entry and the
-order of `hexprism_symmetry_matrices()` are implementation details of the
-generator closure, used only as equality keys (no test or API depends on a
-particular index). When task 19 migrates the writing series' element table,
-it replaces the construction of `hexprism_symmetry_matrices()` and may make
-`phi_key` return the published number; everything keyed by `phi_key` compares
-keys for equality only, so that swap changes no value.
+**Interface settled by task 19 (`symmetry-authority`, 2026-09-24).** Element
+identity across projects is the **matrix**, never an index. The writing
+series' element tables moved into `lumice_integral.symmetry`, and
+`hexprism_symmetry_matrices()` now returns `symmetry.signature.D6H` (the
+generator closure it used to build is gone, so the repository holds one `D6h`
+table). The order changed from closure order to the table's construction
+order, and `phi_key`'s first entry is still an index into it, not a published
+number: every consumer compares keys for equality only (`s2_store` checks that
+members share a key; no cache key, file or provenance records the index), so
+the reordering changes no value. Published numbers #1–#12 of `G` come from
+`symmetry.reflection_group.identify(M)`.
 
 **Camera.** `camera.py` is a transcription of Lumice's linear lens (§9 and the
 source files named in its docstring); the direction toward the sky it computes

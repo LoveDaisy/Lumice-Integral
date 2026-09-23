@@ -23,6 +23,9 @@ uv run python benchmarks/benchmark_fiber_trace.py
 # S^2 event store regressions at N = 1e7 (task 13 bit-for-bit rebuild, task 14 class symmetry transport; ~3 min,
 # need the task 13/14 scratchpad artifacts, skipped otherwise)
 uv run pytest -m slow tests/test_s2_store.py tests/test_s2_store_symmetry.py
+# writing series ch8 / ch9 signature tables recomputed with lumice_integral.symmetry, byte-compared with the
+# published CSVs (reads the writing repo's data read-only, LUMICE_INTEGRAL_WRITING_ROOT; skipped if absent; ~14 min on an M2 Max)
+uv run pytest -m slow tests/test_symmetry_signature_table_regression.py
 # the strip's per-pixel ruler: one column single-process, steady-state s/px and XLA compile count
 uv run python benchmarks/benchmark_column_steady_state.py --column 126 --rows 100:160
 # ch06 251 x 801 direct strip: a sub-window smoke on a laptop ...
@@ -76,8 +79,10 @@ The authoritative staged design is `docs/roadmap.md`.
 ├── README.md              # Concise project identity and navigation
 ├── pyproject.toml         # Python package, dependencies, and test config
 ├── src/lumice_integral/   # Differentiable numerical building blocks
-│   └── geometry/          # Finite-crystal geometry: polyhedra, unfolding, corridor
-│                          # intersection, path enumeration, entry_measure (pure numpy)
+│   ├── geometry/          # Finite-crystal geometry: polyhedra, unfolding, corridor
+│   │                      # intersection, path enumeration, entry_measure (pure numpy)
+│   └── symmetry/          # D6h / G tables, signature and Phi classes, ch3 ground truth,
+│                          # attitude construction (pure numpy, depends on geometry only)
 ├── tests/                 # Analytic and optical regression fixtures
 ├── benchmarks/            # Reproducible CPU/GPU probes
 ├── docs/
