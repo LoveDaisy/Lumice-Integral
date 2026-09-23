@@ -21,7 +21,8 @@ from Lumice ``v4.6.0`` source read as evidence (not linked or imported):
 - ``src/core/lens_proj_build.hpp::ComputeLensScale``:
   ``scale = min(W, H) / 2 / tan(fov / 2)`` for the linear lens.
 - ``src/core/simulator.cpp::SampleRayDir`` and ``geo3d.cpp::SampleSphCapPoint``:
-  the sun ray *travels* along ``-(cos(alt) cos(az), cos(alt) sin(az), sin(alt))``.
+  the sun ray *travels* along ``-(cos(alt) cos(az), cos(alt) sin(az), sin(alt))``,
+  the negative of the sun position vector :func:`sun_direction` returns.
 
 The same chain (minus the linear branch) is already pinned against real
 Lumice renders in the writing project's ``halo_notes/sim/projection.py``
@@ -31,7 +32,11 @@ Contract boundary (``docs/phase1-math-contract.md`` section 2): the solver's
 ``d`` is the propagation direction from the crystal toward the observer, i.e.
 ``d = w = -(sky direction)``.  :func:`linear_pixel_outgoing_direction` performs
 that negation explicitly; :func:`linear_pixel_sky_direction` returns the
-un-negated camera-side vector for projection round trips.
+un-negated camera-side vector for projection round trips.  The same boundary
+on the source side: :func:`sun_direction` is the public ``s_hat`` (toward
+the sun), :func:`incident_direction_from_sun` the solver's propagation
+direction ``s = -s_hat``.  (A pixel's continuous ``(u, v)`` below is a screen
+coordinate, unrelated to Phase II's ``u = R^-1 s_hat``; ``docs/conventions.md``.)
 """
 
 from __future__ import annotations
@@ -79,11 +84,15 @@ def linear_scale(fov_deg: float, width: int, height: int) -> float:
     return min(int(width), int(height)) / 2.0 / np.tan(np.radians(fov_deg) / 2.0)
 
 
-def sun_incident_direction(altitude_deg: float, azimuth_deg: float = 0.0) -> np.ndarray:
-    """World propagation direction ``s`` of sunlight (from the sun toward the crystal)."""
+def sun_direction(altitude_deg: float, azimuth_deg: float = 0.0) -> np.ndarray:
+    """World unit vector ``s_hat`` *toward* the sun (Lumice ``coordinate-convention.md`` section 4).
+
+    The public sun direction of the project (``docs/conventions.md``); the
+    writing series' ``s`` of framework theorem 8, ``u = R^-1 s_hat``.
+    """
     altitude = np.radians(altitude_deg)
     azimuth = np.radians(azimuth_deg)
-    return 0.0 - np.array(
+    return np.array(
         [
             np.cos(altitude) * np.cos(azimuth),
             np.cos(altitude) * np.sin(azimuth),
@@ -91,6 +100,17 @@ def sun_incident_direction(altitude_deg: float, azimuth_deg: float = 0.0) -> np.
         ],
         dtype=np.float64,
     )
+
+
+def incident_direction_from_sun(sun: np.ndarray) -> np.ndarray:
+    """Propagation direction of sunlight (sun -> crystal), ``-s_hat``: the contract's ``s``.
+
+    The one conversion between the public ``s_hat`` and the solver's
+    ``incident_direction`` (``docs/phase1-math-contract.md`` section 2).
+    Written ``0.0 - sun`` so that a zero component stays ``+0.0``, bit for
+    bit the vector every fixture was recorded with.
+    """
+    return 0.0 - np.asarray(sun, dtype=np.float64)
 
 
 def project_linear(

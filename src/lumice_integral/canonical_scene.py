@@ -17,7 +17,7 @@ from typing import Any
 import jax.numpy as jnp
 import numpy as np
 
-from .camera import linear_pixel_outgoing_direction, project_linear, sun_incident_direction
+from .camera import incident_direction_from_sun, linear_pixel_outgoing_direction, project_linear, sun_direction
 from .continuation import FiberProblem
 from .geometry import HexPrism
 from .optics import path_3_5_problem
@@ -70,8 +70,14 @@ def canonical_crystal() -> HexPrism:
     return HexPrism.from_ratio(CANONICAL_HEIGHT_RATIO)
 
 
+def canonical_sun_direction() -> np.ndarray:
+    """``s_hat``, toward the sun (the public convention, ``docs/conventions.md``)."""
+    return sun_direction(CANONICAL_SUN_ALTITUDE_DEG, CANONICAL_SUN_AZIMUTH_DEG)
+
+
 def canonical_incident_direction() -> np.ndarray:
-    return sun_incident_direction(CANONICAL_SUN_ALTITUDE_DEG, CANONICAL_SUN_AZIMUTH_DEG)
+    """The solver's propagation direction ``s = -s_hat`` (contract section 2)."""
+    return incident_direction_from_sun(canonical_sun_direction())
 
 
 def canonical_target_direction() -> np.ndarray:
