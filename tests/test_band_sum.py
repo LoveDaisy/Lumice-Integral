@@ -11,6 +11,7 @@ output.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -262,6 +263,59 @@ def test_transport_and_store_group_compare_by_identity():
     assert group.served_members == ((3, 5), (3, 5))
     plan = store_plan(build_path_class(canonical_crystal(), (3, 5)), canonical_crystal())
     assert plan[0] in plan and plan[0].transports[3] in plan[0].transports
+
+
+TASK14_WINDOWS = Path(__file__).resolve().parents[1] / "scratchpad/task-narrow-density-band-sum-probe/artifacts/profile_windows.json"
+
+
+@pytest.mark.slow
+def test_per_event_k_eff_is_the_iid_noise_of_a_class_band_sum():
+    """The ruler of ``K_eff`` (a16): two i.i.d. stores, task 14's three profiles, ``N = 1e7`` each.
+
+    With i.i.d. points the Kish size predicts the Monte Carlo noise, so
+    ``z = (a - b) / sqrt(a^2 / K_a + b^2 / K_b)`` is standard normal when
+    ``K_eff`` counts independent samples.  Per event it is (``z_rms``
+    1.20 / 0.85 / 0.93 for plate / Parry / Lowitz on seeds 1, 2; 1.01 and
+    0.97 on plate seeds 3, 4 and 5, 6); the pooled count of task
+    ``band-sum-renderer`` gives plate ``z_rms`` 2.9: its six ``rho``-equal
+    transports are one sample, not six.  ``scripts/regress_band_sum.py
+    --stage k-eff`` is the report form of this test.
+    """
+    if not TASK14_WINDOWS.exists():
+        pytest.skip(f"{TASK14_WINDOWS} not present (scratchpad artifact of task 14)")
+    families = json.loads(TASK14_WINDOWS.read_text())["families"]
+    crystal = canonical_crystal()
+    (group,) = store_plan(build_path_class(crystal, (3, 5)), crystal)
+    bands = [pixel_band(r, c, S, spec["render"])[2:] for spec in families.values() for r, c in spec["pixels"]]
+    window = (min(lo for lo, _ in bands), max(hi for _, hi in bands))
+    n = 10_000_000
+    stores = [
+        build_event_store(
+            crystal, CANONICAL_REFRACTIVE_INDEX, [(3, 5)], n, incident_direction=S, sampler=s2_store.RandomSphereSampler(seed),
+            sampling=f"i.i.d. seed {seed}", deviation_window=window, run_checks=False,
+        ).events.arrays()
+        for seed in (1, 2)
+    ]
+    z_rms = {}
+    for family, spec in families.items():
+        density = build_pose_density(family, **spec["density"])
+        rows = []
+        for row, column in spec["pixels"]:
+            a, b = (class_band_sum_pixel([(events, group)], S, density, row, column, n, spec["render"]) for events in stores)
+            pooled = []
+            for events in stores:  # task band-sum-renderer's per_transport_sample count, literally
+                centre, _, lo, hi = pixel_band(row, column, S, spec["render"])
+                rotations, weight = band_poses(events, S, centre, lo, hi)
+                c = [weight * density.evaluate_batch(rotations if t.g is None else rotations @ t.g.T) for t in group.transports]
+                pooled.append(kish_k_eff(float(sum(x.sum() for x in c)), float(sum((x**2).sum() for x in c))))
+            rows.append((a.value, b.value, a.K_eff, b.K_eff, *pooled))
+        va, vb, ka, kb, pa, pb = (np.array(v) for v in zip(*rows))
+        used = (va > 0.0) & (vb > 0.0) & (np.minimum(ka, kb) >= 30.0)
+        assert used.sum() >= 100, family
+        rms = lambda k1, k2: float(np.sqrt(np.mean((va - vb)[used] ** 2 / (va[used] ** 2 / k1[used] + vb[used] ** 2 / k2[used]))))  # noqa: E731
+        z_rms[family] = (rms(ka, kb), rms(pa, pb))
+    assert all(0.75 < per_event < 1.35 for per_event, _ in z_rms.values()), z_rms
+    assert z_rms["plate"][1] > 2.0 and z_rms["parry"][1] > z_rms["parry"][0], z_rms
 
 
 # ----------------------------------------------------------- window + io
