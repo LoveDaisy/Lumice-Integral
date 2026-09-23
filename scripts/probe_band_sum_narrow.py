@@ -16,21 +16,41 @@ Stages (``--stage``):
   ``locate``); with it only events whose deviation lies in the union of the
   profile pixels' bands (``profile_windows.json``), which gives the profile
   pixels bit-identical estimates at a fraction of the memory and disk.
+  ``--sampling random`` builds an i.i.d. uniform store in ``members_random/``
+  instead of the Fibonacci lattice (the ``1 / sqrt(K_eff)`` control).
 - ``locate``: class band sum of the three families on a wide window around
-  the sun (``--locate-n``, default ``1e7``); ``locate_<family>.npz`` /
-  ``locate.json``.
+  the sun (``--locate-n``, default ``1e7``), or on a ``--zoom`` window;
+  ``locate*_<family>.npz`` / ``locate*.json``.
 - ``profiles``: one pixel line per family through its lit region at the ch06
-  pixel scale (``profile_windows.json``).
+  pixel scale (``--profile family:el:az:row|column:length[:rationale]``,
+  ``profile_windows.json``).
 - ``reference``: Phase I ``path_class.render_class_pixel`` on every profile
-  pixel, plus a refined-quadrature recomputation of the brightest pixels
+  pixel, plus a refined-quadrature recomputation of six lit pixels
   (``reference_<family>.csv``).
+- ``band-reference``: on the steep pixels (``STEEP_NEIGHBOUR_CHANGE``), the
+  Phase I band average, the like-for-like reference of a band-sum pixel
+  (``reference_band_<family>.json``).
 - ``render``: the class band sum on the profiles at every precomputed tier
-  (``metrics_<family>_N<n>.csv``, ``summary_<family>.json``, ``verdict_<family>.json``).
-- ``importance``: the rho-aware store of a collapsed family (see
-  ``RhoMarginalSampler``) and its render on the same profile.
+  (``metrics_<family>[_random]_N<n>.csv``, ``summary_<family>[_random].json``).
+- ``verdict``: backend / needs_rho_aware_store / unusable per family
+  (``verdict_<family>.json``).
 - ``plot``: log-scale figures from the files above (``uv run --with matplotlib``).
 
-Nothing here imports or calls Lumice; ``src/`` is not modified.
+The rho-aware store of the plan is only tried for a family whose
+extrapolated ``N`` exceeds ``1e9``; none did (roadmap section 4.2), so it is
+not implemented.  Nothing here imports or calls Lumice; ``src/`` is not modified.
+Usage (``A`` = the artifacts directory)::
+
+    uv run python scripts/probe_band_sum_narrow.py --stage precompute --tiers 10000000 --output-dir $A
+    uv run python scripts/probe_band_sum_narrow.py --stage locate --output-dir $A --workers 3
+    uv run python scripts/probe_band_sum_narrow.py --stage locate --output-dir $A --zoom 15.4 23.4 8.1 81
+    uv run python scripts/probe_band_sum_narrow.py --stage profiles --output-dir $A --profile plate:15.0:24.4:row:121 ...
+    uv run python scripts/probe_band_sum_narrow.py --stage reference --output-dir $A
+    uv run python scripts/probe_band_sum_narrow.py --stage precompute --tiers 1000000 50000000 100000000 --windowed --output-dir $A --workers 3
+    uv run python scripts/probe_band_sum_narrow.py --stage band-reference --output-dir $A
+    uv run python scripts/probe_band_sum_narrow.py --stage render --output-dir $A --workers 3
+    uv run python scripts/probe_band_sum_narrow.py --stage verdict --output-dir $A
+    uv run --with matplotlib python scripts/probe_band_sum_narrow.py --stage plot --output-dir $A
 """
 
 from __future__ import annotations
