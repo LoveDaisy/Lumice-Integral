@@ -43,6 +43,14 @@ pipeline of :mod:`.strip_pixel` once per member:
    (recorded in ``provenance``).  A rank-0 class never enters the fiber
    pipeline: almost every pose is aligned, the "one-dimensional fiber"
    premise is false there.
+5. :func:`phi_key` groups face sequences by their outgoing-direction map
+   ``Phi`` (``3-5`` and ``3-1-2-5`` share one), and
+   :func:`path_class_symmetry` gives each class member the proper ``D6h``
+   element that transports the representative's S^2 event store onto it
+   (:mod:`.s2_store`).  Both are pure combinatorics on the prism's face
+   normals and the ``D6h`` table; the store itself (building, caching,
+   I/O) lives in :mod:`.s2_store`, not here.  Everything in this module is
+   specific to the hexagonal prism.
 
 Nothing here imports or calls Lumice.
 """
@@ -65,7 +73,7 @@ from .canonical_scene import (
     canonical_pose_density,
 )
 from .discovery import ComponentDiscoveryResult, discover_components
-from .geometry import HexPrism, Polyhedron, entry_measure_batch, halo_map_rank, wedge_angle_deg
+from .geometry import HexPrism, Polyhedron, entry_measure_batch, fold_matrix, halo_map_rank, wedge_angle_deg
 from .optics import fresnel_transmission_path_batch, normalize_faces, path_domain_batch, path_id_of
 from .pose_density import PoseDensity
 from .prescan import DEFAULT_BATCH_SIZE, DEFAULT_RNG_SEED, DEFAULT_SAMPLE_COUNT, PrescanTable, haar_rotations
@@ -87,7 +95,7 @@ Completeness = str  # "complete" | "unknown"
 # ---- PBD orbit ---------------------------------------------------------------
 
 
-def _hexprism_symmetry_matrices() -> tuple[np.ndarray, ...]:
+def hexprism_symmetry_matrices() -> tuple[np.ndarray, ...]:
     """The 24 orthogonal matrices of ``D6h`` in the body frame (c axis = +z, face 3 normal = +x).
 
     Generated as the closure of three generators -- the 60-degree rotation
@@ -116,7 +124,25 @@ def _hexprism_symmetry_matrices() -> tuple[np.ndarray, ...]:
     return tuple(elements)
 
 
-_D6H = _hexprism_symmetry_matrices()
+_D6H = hexprism_symmetry_matrices()
+NORMAL_MATCH_ATOL = 1e-9
+
+
+def _hexprism_normals(crystal: HexPrism) -> dict[int, np.ndarray]:
+    return {face.number: crystal.normal(face) for face in crystal.faces}
+
+
+def _face_of_normal(target: np.ndarray, normals: Mapping[int, np.ndarray]) -> int:
+    """The one face whose outward normal is ``target`` (``RuntimeError`` unless exactly one matches)."""
+    matches = [number for number, normal in normals.items() if np.allclose(normal, target, atol=NORMAL_MATCH_ATOL)]
+    if len(matches) != 1:
+        raise RuntimeError(f"normal {target} matched faces {matches}")
+    return matches[0]
+
+
+def _symmetry_image_of_faces(element: np.ndarray, faces: Faces, normals: Mapping[int, np.ndarray]) -> Faces:
+    """Face sequence whose normals are ``element @ n_f`` for each face ``f`` of ``faces``."""
+    return tuple(_face_of_normal(element @ normals[face], normals) for face in faces)
 
 
 def pbd_orbit_hexprism(faces: Sequence[int], crystal: HexPrism | None = None) -> frozenset[Faces]:
@@ -128,19 +154,61 @@ def pbd_orbit_hexprism(faces: Sequence[int], crystal: HexPrism | None = None) ->
     the result does not depend on the prism's aspect ratio.
     """
     faces = normalize_faces(faces)
-    crystal = HexPrism() if crystal is None else crystal
-    normals = {face.number: crystal.normal(face) for face in crystal.faces}
-    orbit: set[Faces] = set()
-    for element in _D6H:
-        image: list[int] = []
-        for face in faces:
-            target = element @ normals[face]
-            matches = [number for number, normal in normals.items() if np.allclose(normal, target, atol=1e-9)]
-            if len(matches) != 1:
-                raise RuntimeError(f"symmetry image of face {face} matched {matches}")
-            image.append(matches[0])
-        orbit.add(tuple(image))
-    return frozenset(orbit)
+    normals = _hexprism_normals(HexPrism() if crystal is None else crystal)
+    return frozenset(_symmetry_image_of_faces(element, faces, normals) for element in _D6H)
+
+
+def phi_key(crystal: Polyhedron, faces: Sequence[int]) -> tuple[int, int, int]:
+    """Hashable key of the outgoing-direction map ``Phi``: equal keys, equal ``Phi(u)`` (and ``D(u)``).
+
+    ``Phi`` of a face sequence is fixed by the fold matrix ``M``
+    (:func:`.geometry.fold_matrix`), the entry normal ``n_a`` and the
+    unfolded exit normal ``n_tilde_b = M^T n_b``: refract in through ``n_a``,
+    refract out through ``n_tilde_b``, apply ``M``.  On the hexagonal prism
+    every mirror is an element of ``D6h`` and ``D6h`` permutes the face
+    normals, so ``M`` is one of :func:`hexprism_symmetry_matrices` and
+    ``n_a``, ``n_tilde_b`` are face normals: the key is the exact integer
+    triple ``(index of M, face of n_a, face of n_tilde_b)``, matched against
+    those finite sets (``RuntimeError`` if a match fails -- the closure
+    argument would be broken, not a new key).  ``3-5`` and ``3-1-2-5`` share
+    a key; ``3-5`` and ``3-7`` do not.
+    """
+    if not isinstance(crystal, HexPrism):
+        raise TypeError("phi_key is implemented for the hexagonal prism only")
+    faces = normalize_faces(faces)
+    normals = _hexprism_normals(crystal)
+    M = fold_matrix(crystal, faces)
+    matches = [i for i, element in enumerate(_D6H) if np.allclose(M, element, atol=NORMAL_MATCH_ATOL)]
+    if len(matches) != 1:
+        raise RuntimeError(f"fold matrix of {path_id_of(faces)} matched D6h elements {matches}")
+    return matches[0], faces[0], _face_of_normal(M.T @ normals[faces[-1]], normals)
+
+
+def path_class_symmetry(
+    path_class: PathClass,
+    crystal: HexPrism | None = None,
+    *,
+    symmetry_elements: Sequence[np.ndarray] | None = None,
+) -> dict[Faces, np.ndarray | None]:
+    """Per member, a *proper* symmetry ``g`` (``det g = +1``) mapping the representative's faces onto it.
+
+    ``g`` maps face ``f`` to the face with normal ``g @ n_f`` (the action of
+    :func:`pbd_orbit_hexprism`), so the member's ``Phi`` and weights are the
+    representative's transported by ``g`` (:mod:`.s2_store`, roadmap section
+    4.1(d)).  A member reached only by improper elements maps to ``None``:
+    it needs its own event store.  The representative maps to the identity.
+    ``symmetry_elements`` (default all 24 of ``D6h``) restricts the search;
+    elements are tried in order and the first proper one wins.
+    """
+    normals = _hexprism_normals(HexPrism() if crystal is None else crystal)
+    elements = _D6H if symmetry_elements is None else tuple(np.asarray(e, dtype=np.float64) for e in symmetry_elements)
+    proper = [e for e in elements if np.linalg.det(e) > 0.0]
+    images = [(_symmetry_image_of_faces(e, path_class.representative, normals), e) for e in proper]
+    out: dict[Faces, np.ndarray | None] = {}
+    for member in path_class.members:
+        found = next((e for image, e in images if image == member), None)
+        out[member] = None if found is None else np.array(found)
+    return out
 
 
 @dataclass(frozen=True)
@@ -692,7 +760,10 @@ __all__ = [
     "canonical_class_scene",
     "discover_class_components",
     "estimate_rank0_contribution",
+    "hexprism_symmetry_matrices",
+    "path_class_symmetry",
     "pbd_orbit_hexprism",
+    "phi_key",
     "pixel_solid_angle",
     "render_class_pixel",
     "sun_pixel",
