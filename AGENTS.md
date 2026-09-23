@@ -39,6 +39,14 @@ uv run --with matplotlib python scripts/compare_strip_v2.py --strip-dir artifact
 # externally; img_01.npy with its img_01.json sidecar; a second seed is summed in and gives the noise floor)
 uv run --with matplotlib python scripts/compare_strip_v2.py --strip-dir artifacts/strip-full --output-dir /tmp/strip-compare \
   --lumice-float <run1>/img_01.npy --lumice-float-run2 <run2>/img_01.npy
+# ... and the absolute scale raw/E = K_p V: the probe predicts Lumice per pixel with nothing fitted (~30 s; add
+# --refractive-index 1.3110129 to match Lumice's own n(550)), its output dir feeds compare_strip_v2's absolute_scale block
+uv run python scripts/probe_absolute_scale.py --lumice-run <run1> --lumice-run <run2> --output-dir /tmp/abs-scale
+uv run --with matplotlib python scripts/compare_strip_v2.py --strip-dir artifacts/strip-full --output-dir /tmp/strip-compare \
+  --lumice-float <run1>/img_01.npy --lumice-float-run2 <run2>/img_01.npy --absolute-scale-probe /tmp/abs-scale
+# a non-canonical pose-density family (recorded in provenance.json and the resume fingerprint)
+uv run python scripts/render_ch06_strip.py --rows 300:302 --columns 126:127 --output-dir /tmp/strip-parry \
+  --pose-density-family parry --pose-density-zenith-std-deg 1 --pose-density-roll-std-deg 1
 # Linux/NVIDIA environment
 uv sync --extra cuda13 --dev
 XLA_PYTHON_CLIENT_PREALLOCATE=false uv run python benchmarks/benchmark_batch.py
