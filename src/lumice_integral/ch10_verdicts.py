@@ -731,6 +731,7 @@ def parhelic_circle(options: ParhelicCircleOptions = ParhelicCircleOptions()) ->
         order = float(np.log(residual_stats[0]["max_abs_relative_residual"] / residual_stats[1]["max_abs_relative_residual"])
                       / np.log(options.plate_widths_deg[0] / options.plate_widths_deg[1]))
 
+    jumps_deg = np.degrees(np.unique(np.round(jump_thetas, 6))).tolist()
     numbers = {
         "path": path_id_of(faces),
         "focusing": label.as_json(),
@@ -738,7 +739,7 @@ def parhelic_circle(options: ParhelicCircleOptions = ParhelicCircleOptions()) ->
         "image_elevation_max_abs_error_rad": elevation_error,
         "dtheta_dphi_range": slope_range,
         "member_window_shift_max_abs_difference": shifts,
-        "window_jump_ring_azimuths_deg": np.degrees(np.unique(np.round(jump_thetas, 6))).tolist(),
+        "window_jump_ring_azimuths_deg": jumps_deg,
         "ring_vs_window": residual_stats,
         "residual_order_in_sigma": order,
     }
@@ -749,8 +750,9 @@ def parhelic_circle(options: ParhelicCircleOptions = ParhelicCircleOptions()) ->
         f"(to {elevation_error:.1e} rad) and its ring azimuth moves at d theta / d phi = 2 (range {slope_range[0]:.9f}-{slope_range[1]:.9f}). "
         f"The elevation-integrated ring brightness from the contour quadrature under plates equals the window-only prediction "
         f"sum w / (2 pi x 2) to {worst['max_abs_relative_residual']:.1e} (max over {worst['compared_thetas']} ring azimuths at "
-        f"sigma = {worst['plate_zenith_std_deg']} deg), shrinking as sigma^{order:.2f}; next to a jump of the window (the TIR-only "
-        "gate) the ring takes the mean of the two sides. The six prism members' windows are one function shifted by 60 deg "
+        f"sigma = {worst['plate_zenith_std_deg']} deg), shrinking as sigma^{order:.2f}; within {options.jump_exclusion_sigmas:g} sigma "
+        f"of a jump of the window (the TIR-only gate, ring azimuth {', '.join(f'{t:.2f}' for t in jumps_deg if t <= 180.0)} deg) the "
+        "ring is that jump smoothed by the plate width and is not compared. The six prism members' windows are one function shifted by 60 deg "
         f"(max difference {max(shifts.values()):.1e}), so under uniform plate azimuth every member draws the same ring."
     )
     arrays = {
