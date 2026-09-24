@@ -242,6 +242,24 @@ Fixtures the structure suggests:
   of the window-sum and transport layers without the Jacobian in the way.
 - *22° halo*: the fold; see section 10.
 
+**Why the completeness certificate rarely needs a saddle branch.** A
+systematic search over hexagonal-prism paths (entry face in `{1, 3}`,
+up to four internal reflections, symmetry-deduplicated, filtered by the
+fold discriminant below) found no interior saddle among the 87 non-empty
+candidates it reached: every one has $U_P$ a topological disk (itself and
+its complement on $S^2$ each connected, checked at two lattice densities),
+so Poincaré–Hopf only forces an interior-critical-point index sum of $1$
+(one non-degenerate minimum already satisfies it) — a saddle is only
+topologically required once $U_P$ stops being simply connected. This does
+not prove no hexagonal-prism path ever has a saddle (longer paths were
+only spot-checked, and the yield of non-empty candidates falls by an order
+of magnitude per added reflection), but it explains why the paths this
+project actually renders are unlikely to need the interval-splitting
+machinery for a saddle branch, and gives `task-dp-field-layer` a
+disk-domain default with an explicit, checkable escape hatch (test $U_P$'s
+own and complementary connectivity before assuming Morse-Bott simplicity).
+Measured record: appendix, "$D_P$ field topology probes".
+
 ## 5. Quadrature B: the band sum
 
 Source: the Ice Halo Simulation repository,
@@ -1028,3 +1046,68 @@ longer in wall clock at the same CPU time).
   scatter, one group `111 / 306 MB`; scatter, twelve groups `119 / 313 MB`;
   the gather's load of all twelve `1285 / 1359 MB`. The peak is that of one
   group (in fact of the chunk temporaries), not the sum.
+
+**$D_P$ field topology probes (2026-09-24, scrum `phase2-contour-quadrature`,
+explores `dp-field-topology`, `dp-field-boundary-corners`,
+`dp-field-boundary-deep-internal-faces`, `dp-field-bigon-other-corner-pair`,
+`dp-field-exit-tir-marching-generalize`, `dp-field-saddle-search`).**
+Scratchpad probes (`src/` untouched) ahead of `task-dp-field-layer`, on the
+`R = I` convention with $D_P(\mathbf u) = \arccos(\Phi_P(-\mathbf u)\cdot(-\mathbf u))$.
+
+- *Fold judgement.* $\mathbf n_a\cdot\tilde{\mathbf n}_b = \pm 1$ (entry
+  normal vs. the unfolded exit normal) $\iff$ $\Phi_P$ collapses globally to
+  a fixed orthogonal map ($D_P(\mathbf u) = \arccos(\mathbf u^{\mathsf T}
+  M\mathbf u)$, tangential gradient norm exactly `2`), a zero-cost
+  pre-branch that skips lattice-seed Newton search entirely for
+  no-interior-fold paths (proved via $\|PM\mathbf u\|^2 = 1-f^2$; `3-5` and
+  the `(1,3)` 90° wedge fold, `3-1-6`/parhelic, `1-3-2`, `3-5-6-7-3` do not).
+- *$\partial U_P$ has more than the entry/exit pair.* Beyond the entry
+  glancing great circle ($\mathbf u\cdot\mathbf n_{\text{entry}} = 0$,
+  closed form) and the exit TIR curve, every internal-reflection face
+  contributes its own glancing (`internal_k_incidence_cosine = 0`) and
+  TIR-broken (`internal_k_tir_discriminant = 0`) candidates. On `3-5-6-7-3`
+  three consecutive internal faces whose prism azimuths form an arithmetic
+  progression (step 60°) give an exact identity between the first and last
+  incidence cosine (max difference `3.3e-16` to `1.2e-15` over $2\times10^4$
+  random directions, both on and off $U_P$) — `internal_3_*` duplicates
+  `internal_1_*` and must be deduplicated before enumeration, not counted
+  as a fourth boundary type. A second, unrelated identity was found on the
+  same path: `exit_snell_discriminant ≡ entry_incidence_cosine` as zero
+  sets (max `6.66e-16` over the whole entry great circle); the mechanism is
+  open (deferred, non-blocking — flagged low priority against the queue).
+- *Corners can have algebraic multiplicity `3` with topological multiplicity
+  `2`.* Both corner pairs on `3-5-6-7-3`'s entry great circle are exact
+  triple points (three margins zero to `≤3.3e-16` by 2D Newton), but the
+  third curve is *transversal* at one pair (cuts into the feasible wedge,
+  forming a bigon with the known long arc) and *tangent* at the other
+  (gradients parallel, `internal_2_incidence_cosine` stays one-signed
+  inside the wedge) — algebraic and topological corner multiplicity must be
+  distinguished by a local transversality check, not inferred from the
+  count of margins vanishing.
+- *Marching.* A predictor-corrector (tangent step + Newton correction) on
+  `*_tir_discriminant = 0` reaches machine-precision residuals
+  (`4e-14`-ish) regardless of target path; a two-stage step law (fixed
+  `0.5°` beyond `0.5°` of the target, geometric slowdown
+  `step = distance × 0.5` inside it) brings the endpoint error from `4e-3`
+  rad down to `<1e-10` rad on four structurally different fixtures (`3-5`,
+  `1-3`, `1-3-2`, `3-1-6`) and three margin kinds, unchanged code, provided
+  the target corner itself is solved to matching precision (an 8-decimal
+  literal from an earlier probe was, at `≈6e-5` rad, imprecise enough to
+  look like marching divergence). `*_incidence_cosine`-type boundaries
+  are themselves closed-form great circles under `R = I` (interior faces
+  included, not only entry) and need no marching at all.
+- *No interior saddle found.* A symmetry-deduplicated, fold-judgement- and
+  lattice-domain-filtered search over hexagonal-prism paths (entry face in
+  `{1, 3}`, up to 4 internal reflections: 7692 distinct classes, 86
+  non-empty after two-stage filtering, all 86 exhaustively Newton-checked;
+  plus an 800-sample spot check at 5 internal reflections, 1 non-empty)
+  found zero interior saddles or multi-critical-point candidates; every
+  non-empty $U_P$ tested is a topological disk (see section 4's structural
+  argument). Longer paths were not exhaustively covered (non-empty yield
+  falls by about one order of magnitude per added reflection); the
+  stronger claim "no hexagonal-prism path ever has an interior saddle" is
+  open.
+
+Scratchpad: `scratchpad/scrum-phase2-contour-quadrature/explore-dp-field-*/`
+(hypothesis.md / experiments.md / insights.md / SUMMARY.md per explore;
+local, not part of the source tree).
