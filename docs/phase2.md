@@ -73,9 +73,17 @@ source**.
 - Consequences: a new sun elevation or azimuth, a new pose density or a new
   camera reuse the store and only re-render; a new wavelength needs its own
   store; a new crystal shape or path needs its own store.
-- Gap: `S2StoreSpec` (schema 2) records `sun_direction` and keys the cache
-  on it, so every sun elevation rebuilds a store (`80 s`, `978 MB` at
-  $N = 10^8$). Task `s2-store-schema-3` removes the field.
+- In production (schema 3, task `s2-store-schema-3`, 2026-09-24):
+  `S2StoreSpec` and the cache key carry no sun direction; the build aligns
+  $R\mathbf u = \hat{\mathbf s}_0$ to one fixed reference direction,
+  numerically the canonical sun so that the schema 2 canonical build is
+  reproduced bit for bit, and one store serves every sun elevation.
+  `tests/test_s2_store.py::test_events_are_independent_of_the_reference_direction`
+  turns the probe into a regression (three directions × `[3,5]`, `[1,3,2]`,
+  `[1,3,5,2]`, the same kept points, $\Phi$, $D$, $w$ within `1e-10`), and
+  `tests/test_band_sum.py::test_one_store_serves_every_sun_altitude` pins
+  that a second altitude does not rebuild. Schema 2 (sun direction in the
+  key, one `events.npz`) was reproduced bit for bit and is refused on load.
 
 The source enters a rendering only through the pose that places an event
 on a pixel and through $\rho$ of that pose.
@@ -405,19 +413,26 @@ The production renderer is a *gather*: per pixel, find the band,
 `searchsorted` the events, rebuild their poses at the pixel azimuth,
 evaluate $\rho$, sum. Jobs are whole columns and a column spans the whole
 $\delta$ range, so every spawned worker loads every store of the plan in full
-(`band_sum._worker_init`), and the store build keeps every $w > 0$ event in
-memory before one `argsort`. The memory ceiling of section 7 is this
-organisation, not the band sum.
+(`band_sum._worker_init`), and the schema 2 store build kept every $w > 0$
+event in memory before one `argsort` (schema 3 buckets it on disk, below).
+The memory ceiling of section 7 is this organisation, not the band sum.
 
 Turning the loops inside out (the author's proposal, 2026-09-24, likened to
 swapping the loop indices of a matrix product) keeps the sum and changes the
 order of work: organise events by deviation, find the pixels a range of
 deviations serves, and let a batch of events scatter into all of them.
 
-**Memory (design; task `s2-store-schema-3` for storage,
-`band-sum-scatter-renderer` for rendering).** One `.npy` per array (a
-`.npz` cannot be mapped partially), opened with `mmap_mode="r"`; a build
-that buckets events by $D$ on disk and sorts per bucket; pixels sorted by
+**Memory (storage in production, task `s2-store-schema-3`; rendering is
+design, `band-sum-scatter-renderer`).** One `.npy` per array (a `.npz`
+cannot be mapped partially), with its SHA-256 and size in the provenance;
+`S2EventStore.load(..., mmap_mode="r")` maps them read-only and checks
+sizes only, `S2EventStore.verify` hashes on demand, the default load still
+hashes everything. The build buckets the kept events by $D$ on disk (1024
+equal-width buckets, a performance knob outside the cache key) and sorts
+per bucket, which is the one global stable sort bit for bit;
+`build_or_load` writes the arrays straight into the cache, so the store is
+never in memory during the build (at $N = 10^8$ the build peak halves,
+appendix). Still design: pixels sorted by
 band centre, the $D$ axis cut into padded segments, one segment per worker
 instead of one column, so the total is about one store rather than one per
 worker; classes accumulated one at a time, so the ceiling is the largest
@@ -559,7 +574,7 @@ needs street-lamp halos (backlog).
 | piece | status | where |
 |---|---|---|
 | band sum, event store, $D_{6h}$ transport, $K_{\mathrm{eff}}$ | measured, in production | appendix; tasks 13-19 |
-| store independent of the source; `.npy` + mmap; bucketed build | design, probe measured | task 21 `s2-store-schema-3` |
+| store independent of the source; `.npy` + mmap; bucketed build | measured, in production | appendix; task 21 `s2-store-schema-3` |
 | band sum by deviation (segments, class accumulation, GEMM) | design | task 22 `band-sum-scatter-renderer` |
 | contour quadrature, critical points, certificate | design | scrum 24 `phase2-contour-quadrature` |
 | Phase I seeds and cross-check from the store | design | scrum 24 sub-task 5 |
@@ -883,3 +898,37 @@ Reports: `scratchpad/task-band-sum-full-symmetry/artifacts/` (local), from
 `scripts/regress_band_sum.py --stage class` / `--stage k-eff`;
 `tests/test_band_sum.py::test_per_event_k_eff_is_the_iid_noise_of_a_class_band_sum`
 (slow) pins the ruler.
+
+**Schema 3: source-independent store, per-array `.npy`, bucketed build
+(2026-09-24, task `s2-store-schema-3`).** One M2 Max, `JAX_PLATFORMS=cpu
+OMP_NUM_THREADS=1`, canonical `[3,5]` with self-checks; the baseline is the
+schema 2 code of the same commit parent rebuilt on the same machine (the
+older `79 s` / `3.2 GB` above is another code version). Peak RSS is the
+build's own `max_rss_mb_process` (`ru_maxrss` at the end of the build, same
+ruler in both), wall clock is scan plus sort (schema 2) or scan plus bucket
+merge (schema 3), self-checks excluded.
+
+| $N$ | schema 2 peak RSS / wall | schema 3 peak RSS / wall |
+|---|---|---|
+| $10^7$ | `1305 MB` / `8.2 s` | `1068 MB` / `10.1 s` |
+| $5\times10^7$ | `2339 MB` / `41.9 s` | `1380 MB` / `50.1 s` |
+| $10^8$ | `2997 MB` / `94.2 s` | `1529 MB` / `90.2 s` |
+
+- *Bit for bit.* The $N = 10^8$ schema 3 arrays `D`, `u`, `phi`, `w` have
+  the SHA-256 of the schema 2 build (1024 buckets; the largest holds
+  `263458` events, `1.6 %` of the `16022326` kept). The canonical
+  $251\times801$ image re-rendered from a schema 3 store
+  (`scripts/render_band_sum.py --store-n 100000000 --workers 4`) equals
+  `artifacts/band-sum-full` byte for byte in `strip_float64.bin`,
+  `strip_float32.bin`, `status_uint8.bin`, `component_count_uint8.bin` and
+  every column of `pixels.csv` (`324 s` wall clock including the `91 s`
+  store build).
+- *What the peak still is.* The remaining growth with $N$ is not the
+  store: `evaluate_fields` alone, keeping nothing, climbs from `362 MB` to
+  `1.3-1.4 GB` over the first 150 chunks of $N = 5\times10^7$ and then
+  flattens, the same curve as the schema 3 build. The store itself adds
+  one bucket (about `19 MB` at $10^8$) instead of all kept events (about
+  `1 GB` plus a sorted copy).
+- *Wall clock.* Even at $10^8$, `20 %` slower at $5\times10^7$ (system time
+  `26 s` vs `15 s`: bucket files appended about 64k times and the data
+  written twice); single runs on one machine.

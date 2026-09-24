@@ -20,7 +20,7 @@ Queue (tasks in `scratchpad/tasks.md`; dispatch order 20 ∥ 21, then 22 ∥ 24,
 | # | task | depends on |
 |---|---|---|
 | 20 | chore `band-sum-small-fixes`: `pixels.csv` value repr, a docstring escape, two missing regression tests | — |
-| 21 | `s2-store-schema-3`: store independent of the source, `.npy` + mmap, bucketed build ([phase2.md](phase2.md) §1.1, §8) | — |
+| 21 | `s2-store-schema-3`: store independent of the source, `.npy` + mmap, bucketed build ([phase2.md](phase2.md) §1.1, §8) — **done 2026-09-24** (schema 3) | — |
 | 22 | `band-sum-scatter-renderer`: band sum organised by deviation, class accumulation, GEMM tiles ([phase2.md](phase2.md) §8) | 21 |
 | 23 | `lumice-area-weighting-recheck`: absolute scale after Lumice's projected-area fix | Ice Halo #597 merged |
 | 24 | scrum `phase2-contour-quadrature` (M2): `dp-field-topology` → `dp-field-layer` → `s2-contour-extraction` → `s2-contour-quadrature` → `phase1-seeds-from-store` → `ch10-numerical-verdicts` | 21 |
@@ -250,3 +250,16 @@ Moved to [overview.md](overview.md) §3.
   records English only), and this file reduced to status, queue, coupling
   and decisions. Content moved verbatim where it is a record; old section
   numbers kept as pointers.
+- **2026-09-24**: the $S^2$ event store moves to schema 3 (task 21
+  `s2-store-schema-3`): no sun direction in `S2StoreSpec` or the cache key
+  (the build aligns to one fixed reference direction, numerically the
+  canonical sun, so the canonical build is the schema 2 one bit for bit);
+  one `.npy` per array with per-array SHA-256 and size, read-only
+  `mmap_mode="r"` loading that checks sizes only plus an explicit
+  `S2EventStore.verify` (the default load still hashes; mapping and a full
+  hash are incompatible, so the hash moved out of the mapped path rather
+  than being dropped); the build buckets events by $D$ on disk and writes
+  straight into the cache, halving the $N = 10^8$ build peak. Schema 1 and 2
+  caches are refused, not converted. Rendering keeps its gather
+  organisation and the workers' hashed full load until task 22.
+  Measurements: [phase2.md](phase2.md) appendix.

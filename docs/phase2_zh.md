@@ -28,7 +28,7 @@ $$
 
 - **实测**（owner 探针，2026-09-24，`scratchpad/task-s2-store-schema-3/owner_probe_sun_indep.py`）：$h/a = 2$、$n = 1.31$、$N = 2\times10^5$，太阳取 (15°, 0°)、(60°, 37°)、(−30°, 200°)；光路 `[3,5]` 与 `[1,3,2]`：事件数相同，$\mathbf u$ 逐位相等，$\Phi$、$D$、$w$ 差在 `1.6e-11` 以内。
 - 推论：换太阳高度或方位、换姿态密度、换相机，都复用仓库、只需重新渲染；换波长要一份新仓库；换晶体形状或光路也要新仓库。
-- 缺口：`S2StoreSpec`（schema 2）记录了 `sun_direction` 并把它放进缓存 key，于是每个太阳高度都要重建仓库（$N = 10^8$ 时 `80 s`、`978 MB`）。任务 `s2-store-schema-3` 去掉这个字段。
+- 已投产（schema 3，任务 `s2-store-schema-3`，2026-09-24）：`S2StoreSpec` 与缓存 key 不再含太阳方向；构建时把 $R\mathbf u = \hat{\mathbf s}_0$ 对齐到一个固定参考方向，其数值取 canonical 太阳，以便逐位复现 schema 2 的 canonical 构建；一份仓库服务所有太阳高度。`tests/test_s2_store.py::test_events_are_independent_of_the_reference_direction` 把探针转成回归（三个方向 × `[3,5]`、`[1,3,2]`、`[1,3,5,2]`，保留的点相同，$\Phi$、$D$、$w$ 差在 `1e-10` 以内），`tests/test_band_sum.py::test_one_store_serves_every_sun_altitude` 钉住换一个太阳高度不重建。schema 2（key 含太阳方向、单个 `events.npz`）已逐位复现，加载时拒绝。
 
 光源进入渲染只有两处：把事件放到某个像素上的那个姿态，以及该姿态下的 $\rho$。
 
@@ -170,11 +170,11 @@ Phase I 也做预计算。`prescan.PrescanTable` 对固定太阳在 $\mathrm{SO}
 
 ## 8. 按偏折角组织带求和
 
-生产渲染器是 *gather* 形态：每个像素找自己的带、`searchsorted` 取事件、在像素方位角处重建姿态、求 $\rho$、求和。任务按整列分配，而一列跨越全部 $\delta$ 范围，所以每个 spawn 出的 worker 都把计划内所有仓库整份加载（`band_sum._worker_init`）；仓库构建时则把所有 $w > 0$ 的事件留在内存里，最后做一次 `argsort`。§7 的内存上限来自这种组织方式，而不是带求和本身。
+生产渲染器是 *gather* 形态：每个像素找自己的带、`searchsorted` 取事件、在像素方位角处重建姿态、求 $\rho$、求和。任务按整列分配，而一列跨越全部 $\delta$ 范围，所以每个 spawn 出的 worker 都把计划内所有仓库整份加载（`band_sum._worker_init`）；schema 2 的仓库构建则把所有 $w > 0$ 的事件留在内存里，最后做一次 `argsort`（schema 3 改为写盘分桶，见下）。§7 的内存上限来自这种组织方式，而不是带求和本身。
 
 把循环内外翻转（作者 2026-09-24 的提议，类比矩阵乘法里交换循环下标）求和不变、只改变工作的顺序：按偏折角组织事件，找出一段偏折角服务哪些像素，让一批事件散射进所有这些像素。
 
-**内存（设计；存储侧为任务 `s2-store-schema-3`，渲染侧为 `band-sum-scatter-renderer`）。** 每个数组一个 `.npy`（`.npz` 不能部分映射），用 `mmap_mode="r"` 打开；构建时按 $D$ 分桶写盘、逐桶排序；像素按带中心排序，$D$ 轴切成留有余量的段，每个 worker 分一段而不是一列，于是总量约为一份仓库而不是每个 worker 一份；光路类逐个累加，上限从「所有类之和」降到「最大的一类」（这正是第 11 章那张表的情形）。剩下的只有带求和本身的成本（像素数 × $K$）和噪声；磁盘 ∝ $N$。
+**内存（存储侧已投产，任务 `s2-store-schema-3`；渲染侧仍是设计，`band-sum-scatter-renderer`）。** 每个数组一个 `.npy`（`.npz` 不能部分映射），provenance 记录各自的 SHA-256 与大小；`S2EventStore.load(..., mmap_mode="r")` 只读映射、只核对大小，`S2EventStore.verify` 按需做全量哈希，默认加载仍整读并校验哈希。构建时按 $D$ 把保留的事件分桶写盘（1024 个等宽桶，性能旋钮，不进缓存 key）、逐桶排序，结果与一次全局稳定排序逐位相同；`build_or_load` 直接写进缓存目录，构建期间整份仓库从不在内存里（$N = 10^8$ 时构建峰值减半，见英文版附录）。仍是设计的部分：像素按带中心排序，$D$ 轴切成留有余量的段，每个 worker 分一段而不是一列，于是总量约为一份仓库而不是每个 worker 一份；光路类逐个累加，上限从「所有类之和」降到「最大的一类」（这正是第 11 章那张表的情形）。剩下的只有带求和本身的成本（像素数 × $K$）和噪声；磁盘 ∝ $N$。
 
 **计算：一个块就是一次矩阵乘法（推导）。** 由环不变性，事件在方位角 $\alpha$ 处的姿态是 $R_i(\alpha) = Q_\alpha R_i(\alpha_0)$。五个姿态密度只通过体轴相对天顶 $\hat{\mathbf z}$ 的关系看姿态：`ZenithGaussianPoseDensity` 看 c 轴，`ZenithRollGaussianPoseDensity` 看 c 轴和一条侧轴（roll）。因此
 
@@ -232,7 +232,7 @@ $R_i$ 按 §5 的方法构造，只是把 $\hat{\mathbf s}$ 换成从 $\mathbf x
 | 部分 | 状态 | 在哪 |
 |---|---|---|
 | 带求和、事件仓库、$D_{6h}$ 搬运、$K_{\mathrm{eff}}$ | 实测，已投产 | 英文版附录；任务 13-19 |
-| 仓库与光源无关；`.npy` + mmap；分桶构建 | 设计，探针已实测 | 任务 21 `s2-store-schema-3` |
+| 仓库与光源无关；`.npy` + mmap；分桶构建 | 实测，已投产 | 英文版附录；任务 21 `s2-store-schema-3` |
 | 按偏折角组织带求和（分段、逐类累加、GEMM） | 设计 | 任务 22 `band-sum-scatter-renderer` |
 | 等值线求积、临界点、证书 | 设计 | scrum 24 `phase2-contour-quadrature` |
 | 由仓库提供 Phase I seed 与交叉检查 | 设计 | scrum 24 子任务 5 |
