@@ -306,7 +306,7 @@ class BandSumPixelResult:
         return {
             "row": self.row,
             "column": self.column,
-            "value": repr(self.value),
+            "value": repr(float(self.value)),
             "delta_deg": repr(float(np.degrees(self.delta))),
             "band_width_rad": repr(self.band_width_rad),
             "K": self.K,
