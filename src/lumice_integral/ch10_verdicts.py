@@ -72,6 +72,8 @@ LEVEL_SET_CHUNK = 64
 # The store only seeds the extraction's independent check (contour module docstring); the tests' size.
 SEED_STORE_N = 200_000
 LATTICE_N = 200_000
+# Smallest ring cross-section window, in units of the plate width (theta -> 0, where the ring is dark anyway).
+CROSS_WIDTH_FLOOR = 1e-2
 
 
 @dataclass(frozen=True, eq=False)
@@ -626,13 +628,15 @@ def window_prediction(window: dict[str, np.ndarray], phi: np.ndarray, thetas: np
     """``L0(theta) = sum_{phi: theta(phi) = theta} w(phi) / (2 pi |d theta / d phi|)``, the ring density with no Jacobian.
 
     Preimages are the sign changes of ``theta(phi) - theta`` (mod ``2 pi``)
-    on the ``phi`` grid, ``w`` and the derivative linearly interpolated there.
+    on the ``phi`` grid (``< 0`` against ``>= 0``), ``w`` and the derivative
+    linearly interpolated there.
     """
     wrapped = np.mod(window["theta"], 2.0 * np.pi)
     out = np.zeros(len(thetas))
     for j, target in enumerate(thetas):
         s = np.mod(wrapped - target + np.pi, 2.0 * np.pi) - np.pi
-        crossing = np.nonzero((np.sign(s[:-1]) != np.sign(s[1:])) & (np.abs(s[:-1]) < 0.5))[0]
+        below = s < 0.0  # half open: a grid point exactly on the target is one crossing, not two
+        crossing = np.nonzero((below[:-1] != below[1:]) & (np.abs(s[:-1]) < 0.5))[0]
         for i in crossing:
             t = s[i] / (s[i] - s[i + 1])
             w = (1.0 - t) * window["w"][i] + t * window["w"][i + 1]
@@ -644,9 +648,17 @@ def window_prediction(window: dict[str, np.ndarray], phi: np.ndarray, thetas: np
 def ring_cross_integral(
     geometry_for: Any, sun: np.ndarray, theta: float, elevation: float, sigma: float, options: ParhelicCircleOptions
 ) -> tuple[float, np.ndarray, np.ndarray]:
-    """``L(theta) = int I(el, theta) cos(el) d el`` across the ring by Gauss-Legendre, and the cross profile ``(el, I)``."""
+    """``L(theta) = int I(el, theta) cos(el) d el`` across the ring by Gauss-Legendre, and the cross profile ``(el, I)``.
+
+    The window is ``+-cross_half_width_sigmas x sigma x 2 sin(|theta| / 2)``:
+    a vertical mirror tilted by ``tau`` moves the image of the sun in
+    elevation by at most ``2 tau sin(theta / 2)`` (the ring is only
+    ``sqrt 2 sin(theta / 2) sigma`` wide in RMS for plates, measured by Monte
+    Carlo: ``0.05 sigma`` at 4 deg), so a window fixed in ``sigma`` would
+    under-resolve the cross-section near the sun.
+    """
     x, weights = np.polynomial.legendre.leggauss(options.cross_nodes)
-    half = options.cross_half_width_sigmas * sigma
+    half = options.cross_half_width_sigmas * sigma * max(2.0 * abs(np.sin(0.5 * theta)), CROSS_WIDTH_FLOOR)
     elevations = elevation + half * x
     azimuth = np.arctan2(sun[1], sun[0]) + theta
     sky = np.stack([np.cos(elevations) * np.cos(azimuth), np.cos(elevations) * np.sin(azimuth), np.sin(elevations)], axis=1)
@@ -851,16 +863,17 @@ def parallel_face(options: ParallelFaceOptions = ParallelFaceOptions()) -> Verdi
     }
     mechanisms = sorted({(row["path"], row["family"], row["mechanism"]) for row in table})
     jacobian_paths = sorted({row["path"] for row in table if row["jacobian_focusing"]})
-    ratio = demo[0]["peak_value"] / demo[-1]["peak_value"]
+    gain = demo[-1]["peak_value"] / demo[0]["peak_value"]
+    narrowing = options.demo_widths_deg[0] / options.demo_widths_deg[-1]
     statement = (
         "Explicit output (lumice_integral.focusing): Jacobian focusing is read off the D_P critical set, dimension collapse off "
         "the density's confined dimensions. On the fixtures "
-        f"{', '.join(path_id_of(f) for f in options.paths)} no critical value focuses "
-        f"({'none' if not jacobian_paths else ', '.join(jacobian_paths)} with Jacobian focusing): 3-5 has a finite jump, the "
+        f"{', '.join(path_id_of(f) for f in options.paths)} "
+        f"{'no critical value focuses' if not jacobian_paths else 'Jacobian focusing on ' + ', '.join(jacobian_paths)}: 3-5 has a finite jump, the "
         "parallel-face (wedge 0, M != I) slabs have |grad D_P| bounded away from 0 (cone points, creases and boundary cusps; "
         "the rotation slab 1-3-5-2 keeps its fold circle outside U_P), and 3-6 is a point mass. Every sharp image of these "
-        "classes is dimension collapse: across the parhelic circle (1-3-2, plates) halving sigma multiplies the peak by "
-        f"{ratio:.3f} while the cross integral stays at {demo[0]['cross_integral']:.6g} / {demo[-1]['cross_integral']:.6g}, and the "
+        f"classes is dimension collapse: across the parhelic circle (1-3-2, plates) narrowing sigma {narrowing:g}-fold multiplies "
+        f"the peak by {gain:.3f} while the cross integral stays at {demo[0]['cross_integral']:.6g} / {demo[-1]['cross_integral']:.6g}, and the "
         f"random-orientation value at the same pixels is smooth ({demo[-1]['random_value_range'][0]:.4g}-{demo[-1]['random_value_range'][1]:.4g})."
     )
     numbers = {
