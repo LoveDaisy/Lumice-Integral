@@ -72,7 +72,8 @@ XLA_PYTHON_CLIENT_PREALLOCATE=false uv run python benchmarks/benchmark_batch.py
 
 ## Architecture and Design
 
-The authoritative staged design is `docs/roadmap.md`.
+The design is `docs/overview.md` (entry), `docs/phase1.md` and `docs/phase2.md`
+(Chinese versions `*_zh.md`); `docs/roadmap.md` holds status, queue and decisions.
 
 ```text
 .
@@ -86,9 +87,11 @@ The authoritative staged design is `docs/roadmap.md`.
 ├── tests/                 # Analytic and optical regression fixtures
 ├── benchmarks/            # Reproducible CPU/GPU probes
 ├── docs/
-│   ├── roadmap.md         # Mathematical model, phased scope, validation
+│   ├── overview.md        # Entry: direct integration vs Monte Carlo, phases, plan (+ _zh)
+│   ├── phase1.md          # Phase I design, pipeline, key turns; measured record (+ _zh)
+│   ├── phase2.md          # Phase II design: S^2 integral, band sum, contours, event store (+ _zh)
+│   ├── roadmap.md         # Status, near-term queue, writing coupling, decisions log
 │   ├── conventions.md     # Every coordinate / sign / symbol convention and its check
-│   ├── s2-precomputation.md # Design note: the S^2 event store, its consumers and costs
 │   └── decisions/         # Accepted architecture decisions
 └── scratchpad/            # Local task management, ignored by git
 ```
@@ -149,9 +152,9 @@ workflows as a black-box Monte Carlo oracle or source of analysis artifacts.
 ## Key Files
 
 - `README.md`: project entry point.
-- `docs/roadmap.md`: current design authority and phase boundary.
+- `docs/overview.md`, `docs/phase1.md`, `docs/phase2.md`: design (overview, then one document per phase).
+- `docs/roadmap.md`: status, near-term queue and decisions log.
 - `docs/conventions.md`: convention authority (Lumice / writing series / this project, with checks).
-- `docs/s2-precomputation.md`: design note for the $S^2$ event store (source independence, its consumers, cost structure, band sum organised by deviation, divergent light).
 - `scratchpad/tasks.md`: local task index.
 - `scratchpad/backlog.md`: unstructured ideas awaiting task selection.
 
@@ -161,4 +164,5 @@ Use Python 3.12 type syntax, four-space indentation, and small pure functions
 that remain compatible with JAX transformations where differentiation or
 batching is required. Use English for code identifiers and comments.
 Documentation may be written in English or Chinese; durable mathematical
-notation and terminology should stay consistent with `docs/roadmap.md`.
+notation and terminology should stay consistent with `docs/conventions.md` and
+the phase documents.
