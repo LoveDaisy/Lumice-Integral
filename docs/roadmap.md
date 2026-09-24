@@ -402,3 +402,40 @@ Moved to [overview.md](overview.md) §3.
   pinned a discovered-seed value to `1e-6`/`1e-9` were re-pinned or moved
   to the quadrature's `1e-4`, and the integrator alignment test now
   freezes the seeds its references were recorded from.
+- **2026-09-25**: the 142° parhelion is class A60-10 (`3-5-6-7`,
+  `3-4-5-7`), not Liljequist. This repository renders none of it because
+  its internal reflections are total-only (task
+  `verify-liljequist-face-numbering`; evidence under its scratchpad
+  `evidence/`). The premise that "142° is a $D_P$ critical value of
+  `1-3-2` / `3-5-6-7-3`" was wrong. The owner and the ch8 author
+  re-established that `3-5-6-7-3` is Liljequist (A0-02, narrow peak, no
+  fold) and that the 142° inner edge is A60-10. Face numbering agrees with
+  Lumice. A60-10 has zero events on every crystal because
+  `optics.path_domain` / `path_domain_batch` require
+  `internal_k_tir_discriminant > 0`: every member needs one partial
+  reflection (face 5 at 30° incidence, $R \approx 2.2\,\%$), while Lumice's
+  Monte Carlo keeps the Fresnel-split branch. With only that gate lifted,
+  the class has events on $h/a = 0.2$ / 1 / 2 and its $A$-weighted $D$
+  histogram peaks at 142°. An independent numpy trace puts a $D_P$ saddle
+  at $141.839300° = 120° + 21.839300°$ on the seam between the two members.
+  An audit of all PBD classes of ≤ 5 faces with a reflection (enumerator
+  reachability, which has no internal-TIR gate, against the TIR test;
+  grid zeros re-checked on `4e5` Haar poses) finds 114 of 137 classes lost
+  and 20 truncated at $h/a = 2$, and 96 of 114 lost at $h/a = 0.2$.
+  Ranked by Fresnel-weighted solid angle, the brightest losses are
+  `3-4-5-7` / `3-5-6-7` at $h/a = 2$ and `1-2-1` at $h/a = 0.2$. The
+  canonical products (`strip-full`, `band-sum-full`,
+  `contour-quadrature-full`) are class `[3,5]` with two-face members only,
+  so they are unaffected. Affected: every path with an internal reflection
+  (`dp_field` fixtures `1-3-2` / `3-5-6-7-3` / `3-1-6`, whose $\partial U_P$
+  includes internal-TIR curves; `contour` / `contour_quadrature` on those
+  paths; `--path-class` renders of reflecting classes). The code has
+  drifted from [phase2.md](phase2.md) §2, which calls internal partial
+  reflection a continuous weight; that section now says so. **Open for
+  the owner, not changed here:** whether to model internal partial
+  reflection. That would mean an internal reflectance factor in $T_P$,
+  dropping the internal TIR gate from validity, and the internal critical
+  angle becoming a weight kink in place of a domain boundary. It is an
+  architecture decision: `AGENTS.md` keeps TIR as an explicit event, and
+  Phase I continuation, `dp_field`'s boundary walk and the store's validity
+  all depend on it. No baseline was re-pinned.

@@ -126,7 +126,10 @@ on every boundary: corridor boundaries (two polygons separating,
 $A_P \to 0$ continuously), the exit-face TIR boundary of the formula domain
 $U_P$ (Fresnel transmittance $\to 0$ at the critical angle); there is no
 critical angle on entry, and partial reflection on internal steps is a
-continuous weight. A contour cut by $\partial V_P$ is traced on $U_P$ and
+continuous weight. (That last clause is the design, not the code yet: the
+implementation admits total internal reflection only, and a partial one
+cuts the path. See the Liljequist fixture in section 4 and
+[roadmap.md](roadmap.md) §9, 2026-09-25.) A contour cut by $\partial V_P$ is traced on $U_P$ and
 $A_P T_P$ removes the infeasible part; Phase I's rule "keep tracing, weight
 to zero" (contract section 6.3) is the same fact placed inside the tracer.
 The remaining non-smoothness is the kinks of $A_P$ (a vertex crossing an
@@ -279,18 +282,35 @@ would reproduce the same wall in a new place.
 
 Fixtures the structure suggests:
 
-- *Liljequist* (writing chapter 8): `1-3-2` and `3-5-6-7-3` have the same
-  $\Phi$ (the mirror in the plane of faces 3/6; three reflections in planes
-  at ±60° compose to one) and different windows. The 142° sharp edge
-  ($= 120° +$ the 21.84° minimum deviation) is a $D_P$ critical value and is
-  shape-independent; the narrow peak is the `3-5-6-7-3` window and moves
-  with the cross-section. Two pictures on one sphere. *Measured (task
-  `dp-field-layer`):* both are slabs with the same $M$, so the fields agree
-  pointwise, but $U_P$ differ and so do the critical values on them:
-  $\{0°, 115.607°\}$ for `1-3-2`, $\{0°, 153.070°, 180°\}$ for
-  `3-5-6-7-3` (normal incidence on face 3 is inside, the backscatter cone
-  point). No 142° value on either with this repository's face numbering;
-  task `verify-liljequist-face-numbering` holds the manual check.
+- *Liljequist and the 142° parhelion* (writing chapter 8; corrected
+  2026-09-25, task `verify-liljequist-face-numbering`). Two classes, not
+  one. The 142° sharp inner edge ($= 120° +$ the 21.84° minimum
+  deviation) belongs to class A60-10, whose typical members are `3-5-6-7`
+  and `3-4-5-7` (a 60° wedge after a 120° fold, $M$ = rotation by 120°
+  about the c-axis). It is a $D_P$ saddle, $D = 141.839300°$
+  ($\partial^2 D/\partial t^2 = +55.3$ in plane, as on `3-5`;
+  $\partial^2 D/\partial\alpha^2 = -290$ in tilt). It sits on the seam of
+  the two members: their in-plane windows meet at the minimum-deviation
+  azimuth, where the internal ray grazes face 6 or face 4. So it is interior
+  to the class union and a boundary point of each member. It is
+  shape-independent. The narrow brighter peak at 152–158° is Liljequist
+  proper, `3-5-6-7-3` (the A0-02 parallel family, same $\Phi$ as `1-3-2`): a
+  slab with no fold, whose window moves with the cross-section.
+  *Measured (task `dp-field-layer`):* $\{0°, 115.607°\}$ for `1-3-2`,
+  $\{0°, 153.070°, 180°\}$ for `3-5-6-7-3` (normal incidence on face 3
+  is inside, the backscatter cone point). Neither has 142°, correctly.
+  **This repository cannot see A60-10 at all.** Each of its members needs one
+  partial internal reflection (face 5 at 30° incidence, $R \approx 2.2\,\%$
+  at the saddle). The internal-reflection gate of `optics.path_domain` and
+  `path_domain_batch` admits total reflection only, so the class has zero
+  events on every crystal. With only that gate lifted (corridor and entry
+  and exit gates unchanged), `3-5-6-7` and `3-4-5-7` have events whose
+  $A$-weighted $D$ histogram peaks in the 142° bin for $h/a = 0.2$, 1
+  and 2. The same gate loses 114 of the 137 PBD classes of ≤ 5 faces with
+  a reflection at $h/a = 2$, and 96 of 114 at $h/a = 0.2$. It truncates
+  `3-5-6-7-3`, `1-3-2` and `3-1-6` to 92–98 % of their Fresnel-weighted
+  windows. The evidence and the decision are in [roadmap.md](roadmap.md)
+  §9, 2026-09-25.
 - *Parhelic circle*: $D_P(\mathbf u) = \angle(M\mathbf u, \mathbf u)$ has
   $\nabla D_P = 0$ only at $\pm\mathbf n_M$ (on `3-1-6` both lie on the entry
   great circle but outside the closure of $U_P$, an internal TIR fails
