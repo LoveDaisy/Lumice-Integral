@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 import dataclasses
+import os
+import shutil
+import time
 from pathlib import Path
 
 import numpy as np
@@ -355,6 +358,63 @@ def test_mmap_load_checks_sizes_only_and_verify_hashes(tmp_path) -> None:
         S2EventStore.load(directory, mmap_mode="r")
     with pytest.raises(ValueError, match="bytes"):
         _cached(tmp_path, mmap_mode="r")
+
+
+def test_sweep_stale_staging_removes_old_but_keeps_fresh(tmp_path) -> None:
+    """code-review-01.md Major 1: a killed ``build_or_load`` leaks its staging dir; age reclaims it."""
+    stale = tmp_path / ".deadkey.building-abc123"
+    stale.mkdir()
+    (stale / "junk.npy").write_bytes(b"x")
+    old = time.time() - s2_store._STAGING_STALE_SECONDS - 60
+    os.utime(stale, (old, old))
+
+    fresh = tmp_path / ".deadkey.building-def456"
+    fresh.mkdir()
+
+    s2_store._sweep_stale_staging(tmp_path)
+
+    assert not stale.exists()  # abandoned past the staleness threshold: reclaimed
+    assert fresh.exists()  # within the threshold: left alone, a concurrent builder may still own it
+
+
+def test_build_or_load_sweeps_a_stale_staging_directory_from_a_prior_run(tmp_path) -> None:
+    """The sweep runs on every ``build_or_load`` call, not just when a build is needed."""
+    orphan = tmp_path / ".some-other-key.building-xyz789"
+    orphan.mkdir()
+    old = time.time() - s2_store._STAGING_STALE_SECONDS - 60
+    os.utime(orphan, (old, old))
+
+    _cached(tmp_path)  # any call sweeps base_dir first, regardless of this spec's own cache key
+
+    assert not orphan.exists()
+
+
+def test_rename_race_with_an_existing_target_loads_the_winners_store(tmp_path, monkeypatch) -> None:
+    """code-review-01.md Minor 2: a ``staging.rename`` failing with ``OSError`` while the target already
+    exists is the code's one documented case for "someone else won the race"; pin that it actually loads
+    that store instead of merely swallowing the exception."""
+    scratch = tmp_path / "scratch"
+    winner_store = _cached(scratch)
+    winner_dir = scratch / winner_store.spec.cache_key()
+    target_dir = tmp_path / winner_store.spec.cache_key()
+
+    real_rename = Path.rename
+
+    def fake_rename(self, target):
+        target = Path(target)
+        if target == target_dir:
+            shutil.copytree(winner_dir, target_dir)  # the "other builder" lands first
+            raise OSError("simulated: another builder already renamed into place")
+        return real_rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", fake_rename)
+
+    loaded = _cached(tmp_path)  # target_dir does not exist yet: build_or_load must attempt to build + rename
+
+    assert loaded.spec == winner_store.spec
+    for name, array in winner_store.events.arrays().items():
+        assert np.array_equal(loaded.events.arrays()[name], array), name
+    assert not any(p.name.startswith(".") for p in tmp_path.iterdir())  # the losing staging dir was cleaned up
 
 
 def test_cache_refuses_mismatched_recorded_parameters(tmp_path) -> None:

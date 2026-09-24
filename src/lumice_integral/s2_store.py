@@ -131,6 +131,7 @@ CHUNK = 250_000  # rotations per batch call: ~0.5 GB transient in the eager jax.
 DEFAULT_CACHE_DIR = Path("artifacts/s2-store")
 DEFAULT_BUCKET_COUNT = 1024  # equal-width D buckets of the build (0.18 deg on [0, pi]); an I/O knob, not in the key
 PROVENANCE_FILE = "provenance.json"
+_STAGING_STALE_SECONDS = 24 * 3600  # builds are documented to take minutes to hours; idle past this is a dead process, not one still writing
 FIBONACCI_SAMPLING = (
     "antipodal Fibonacci lattice on S^2 (u_i = -f_i, f_i the equal-area spiral z_i = 1 - (2i+1)/N, "
     "golden-angle azimuth)"
@@ -608,6 +609,10 @@ def events_from_schema1(arrays: Mapping[str, np.ndarray]) -> dict[str, np.ndarra
     return out
 
 
+# Build pipeline (schema 3): _spec_of builds the cache key -> _build_into does the bucketed scan/merge onto
+# disk (using _bucket_edges, _write_array_file) -> _write_provenance records it -> S2EventStore.save/load and
+# .verify() read it back (_read_provenance, _array_names).  build_event_store and build_or_load both call
+# _build_into so the two entry points share one build implementation (see its docstring for how).
 def _bucket_edges(deviation_window: tuple[float, float] | None, bucket_count: int) -> np.ndarray:
     """``bucket_count + 1`` equal-width edges of the deviation domain (``[0, pi]`` or the window), data independent."""
     lo, hi = (0.0, np.pi) if deviation_window is None else deviation_window
@@ -832,11 +837,18 @@ def build_or_load(
     A missing store is built by :func:`_build_into` straight into a hidden
     staging directory next to it (all events are never in memory at once),
     which is renamed into place once its provenance is written, so an
-    interrupted build leaves no directory under the cache key.  A concurrent
-    builder that renamed first wins: its store is loaded and ours dropped.
+    interrupted build leaves no directory *under the cache key*.  The
+    staging directory itself is cleaned up on the Python exception path;
+    a hard kill (OOM, ``kill -9``, power loss) instead leaves it on disk
+    until a later call's :func:`_sweep_stale_staging` reclaims it once it
+    has been idle past :data:`_STAGING_STALE_SECONDS` (age, not mere
+    existence, is what tells a dead staging directory apart from one a
+    concurrent builder still owns).  A concurrent builder that renamed
+    first wins: its store is loaded and ours dropped.
     """
     spec = _spec_of(crystal, refractive_index, members, n, sampler, sampling, deviation_window, dtype)
     directory = Path(base_dir) / spec.cache_key()
+    _sweep_stale_staging(Path(base_dir))
     if not directory.exists():
         staging = Path(tempfile.mkdtemp(prefix=f".{spec.cache_key()}.building-", dir=_mkdir(Path(base_dir))))
         try:
@@ -863,6 +875,31 @@ def build_or_load(
 def _mkdir(path: Path) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def _sweep_stale_staging(base_dir: Path) -> None:
+    """Remove :func:`build_or_load` staging directories abandoned by a killed builder.
+
+    A normal build cleans up its own staging directory (the ``finally:
+    shutil.rmtree`` in :func:`build_or_load`); that only runs on the Python
+    exception path.  A hard kill (OOM, ``kill -9``, power loss) during a
+    build leaves the staging directory behind: it is named
+    ``.<cache_key>.building-<random>``, never matches a cache key, and no
+    load/verify/build path ever looks for it, so it is a permanent leak
+    without this sweep.  Age is what distinguishes an abandoned staging
+    directory from one a concurrent, still-running builder legitimately
+    owns (builds are documented to take minutes to hours): only directories
+    idle past :data:`_STAGING_STALE_SECONDS` are removed.
+    """
+    for candidate in base_dir.glob(".*building-*"):
+        if not candidate.is_dir():
+            continue
+        try:
+            age = time.time() - candidate.stat().st_mtime
+        except OSError:
+            continue
+        if age > _STAGING_STALE_SECONDS:
+            shutil.rmtree(candidate, ignore_errors=True)
 
 
 def _array_names(directory: Path) -> tuple[str, ...]:
