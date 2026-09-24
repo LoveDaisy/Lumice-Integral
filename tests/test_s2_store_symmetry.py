@@ -79,7 +79,6 @@ def build(members, n: int, *, crystal=None, g: np.ndarray | None = None, **kwarg
         CANONICAL_REFRACTIVE_INDEX,
         members,
         n,
-        sun_direction=canonical_sun_direction(),
         run_checks=False,
         **extra,
         **kwargs,

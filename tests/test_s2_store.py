@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import json
+import dataclasses
+import os
+import shutil
+import time
 from pathlib import Path
 
 import numpy as np
 import pytest
 
 from lumice_integral import geometry, optics, s2_store
+from lumice_integral.camera import sun_direction
 from lumice_integral.canonical_scene import (
     CANONICAL_REFRACTIVE_INDEX,
     canonical_crystal,
@@ -37,7 +42,6 @@ def _build(members=((3, 5),), n: int = SMALL_N, crystal=None, **kwargs) -> S2Eve
         CANONICAL_REFRACTIVE_INDEX,
         members,
         n,
-        sun_direction=canonical_sun_direction(),
         **kwargs,
     )
 
@@ -115,6 +119,62 @@ def test_float32_store_is_the_float64_store_cast(small_store) -> None:
         assert np.array_equal(array, small_store.events.arrays()[name].astype(np.float32)), name
 
 
+def _sorted_all_at_once(members, n: int, **kwargs) -> dict[str, np.ndarray]:
+    """The schema 2 build: every kept row of ``evaluate_fields`` concatenated, one stable argsort on ``D``."""
+    sun, crystal, index = s2_store._REFERENCE_SUN_DIRECTION, canonical_crystal(), CANONICAL_REFRACTIVE_INDEX
+    kept: dict[str, list[np.ndarray]] = {"D": [], "u": [], "phi": [], "w": []}
+    for first in range(0, n, kwargs.get("chunk", s2_store.CHUNK)):
+        u = s2_store.store_lattice(n, first, min(first + kwargs.get("chunk", s2_store.CHUNK), n))
+        fields = s2_store.evaluate_fields(align_rotations(u, sun), sun, crystal, index, members)
+        keep = fields["w"] > 0.0
+        for name in kept:
+            kept[name].append((u if name == "u" else fields[name])[keep])
+    arrays = {name: np.concatenate(parts) for name, parts in kept.items()}
+    order = np.argsort(arrays["D"], kind="stable")
+    return {name: array[order] for name, array in arrays.items()}
+
+
+@pytest.mark.parametrize("bucket_count", [1, 7, s2_store.DEFAULT_BUCKET_COUNT, 100_000])
+def test_bucketed_build_is_the_one_stable_sort(bucket_count: int, monkeypatch) -> None:
+    """Bucket sort in ``D`` = one global stable argsort, bit for bit, for any bucket count (several chunks)."""
+    monkeypatch.setattr(s2_store, "CHUNK", 3_000)  # 7 chunks at SMALL_N: rows of one bucket from many chunks
+    reference = _sorted_all_at_once(((3, 5),), SMALL_N, chunk=3_000)
+    store = _build(bucket_count=bucket_count)
+    assert store.diagnostics["bucket_count"] == bucket_count
+    assert store.diagnostics["largest_bucket_events"] <= len(store.events)
+    assert sorted(store.events.arrays()) == sorted(reference)
+    for name, array in reference.items():
+        assert np.array_equal(store.events.arrays()[name], array), name
+    assert store.spec.cache_key() == _build(n=SMALL_N, bucket_count=1).spec.cache_key()  # not a build parameter
+    assert "bucket_count" not in store.spec.build_parameters()
+
+
+def test_bucket_edges_cover_the_deviation_domain() -> None:
+    edges = s2_store._bucket_edges(None, 16)
+    assert edges[0] == 0.0 and edges[-1] == np.pi and np.all(np.diff(edges) > 0)
+    window = s2_store._bucket_edges((0.4, 0.5), 4)
+    assert window[0] == 0.4 and window[-1] == 0.5 and len(window) == 5
+
+
+def test_inverse_weights_are_stored_and_cached(tmp_path) -> None:
+    """A non-uniform sampler's ``iw`` rides along the sort as its own array and its own ``.npy``."""
+    n = 5_000
+
+    def sampler(first: int, stop: int) -> tuple[np.ndarray, np.ndarray]:
+        return s2_store.store_lattice(n, first, stop), np.linspace(0.5, 1.5, n)[first:stop]
+
+    kwargs = {"sampler": sampler, "sampling": "the store lattice with made-up inverse weights"}
+    weighted, uniform = _build(n=n, bucket_count=5, **kwargs), _build(n=n)
+    for name, array in uniform.events.arrays().items():
+        assert np.array_equal(weighted.events.arrays()[name], array), name
+    expected = dict(zip(map(bytes, s2_store.store_lattice(n)), np.linspace(0.5, 1.5, n)))
+    assert np.array_equal(weighted.events.iw, [expected[bytes(row)] for row in weighted.events.u])
+    cached = _cached(tmp_path, n=n, **kwargs)
+    assert (tmp_path / cached.spec.cache_key() / "iw.npy").exists()
+    assert np.array_equal(cached.events.iw, weighted.events.iw)
+    assert np.array_equal(S2EventStore.load(tmp_path / cached.spec.cache_key(), mmap_mode="r").events.iw, weighted.events.iw)
+
+
 def test_random_sampler_is_reproducible_and_needs_a_description() -> None:
     sampler = RandomSphereSampler()
     first = _build(n=5_000, sampler=sampler, sampling=sampler.description)
@@ -148,6 +208,41 @@ def test_phi_group_sums_member_weights_on_the_same_points() -> None:
         _build(members=((3, 5), (3, 7)))
 
 
+# Sun directions of the owner probe (docs/phase2.md section 1.1): the canonical one, a high sun, one below the horizon.
+REFERENCE_SUNS = ((15.0, 0.0), (60.0, 37.0), (-30.0, 200.0))
+
+
+@pytest.mark.parametrize("members", [((3, 5),), ((1, 3, 2),), ((1, 3, 5, 2),)], ids=["3-5", "1-3-2", "1-3-5-2"])
+def test_events_are_independent_of_the_reference_direction(members) -> None:
+    """Section 4.1(a): the events depend on the pose only through ``u``, whatever ``s_hat`` the build aligns to.
+
+    ``build_event_store`` aligns to one fixed reference direction, so the
+    claim is checked on the two general functions it uses, point by point on
+    the lattice: the same kept points (hence equal event count and ``u`` bit
+    for bit), ``phi`` / ``D`` / ``w`` to ``1e-10``.
+    """
+    crystal, index = canonical_crystal(), CANONICAL_REFRACTIVE_INDEX
+    u = s2_store.store_lattice(200_000)
+    results = []
+    for altitude, azimuth in REFERENCE_SUNS:
+        sun = sun_direction(altitude, azimuth)
+        fields = s2_store.evaluate_fields(align_rotations(u, sun), sun, crystal, index, members)
+        assert np.max(np.abs(fields["u"] - u)) <= 1e-12  # R^-1 s_hat is the lattice point
+        results.append(fields)
+    reference = results[0]
+    keep = reference["w"] > 0.0
+    assert np.count_nonzero(keep) > 0
+    for other in results[1:]:
+        assert np.array_equal(other["w"] > 0.0, keep)
+        for name in ("phi", "D", "w"):
+            assert np.max(np.abs(other[name][keep] - reference[name][keep])) <= 1e-10, name
+
+
+def test_the_build_reference_direction_is_the_canonical_sun_numerically() -> None:
+    """The one fixed ``s_hat`` of every build; equal to the canonical sun only so schema 2 builds stay bit for bit."""
+    assert np.array_equal(s2_store._REFERENCE_SUN_DIRECTION, canonical_sun_direction())
+
+
 # ------------------------------------------------------------------ cache
 def _cached(tmp_path: Path, **kwargs) -> S2EventStore:
     return build_or_load(
@@ -156,7 +251,6 @@ def _cached(tmp_path: Path, **kwargs) -> S2EventStore:
         [(3, 5)],
         kwargs.pop("n", 5_000),
         base_dir=tmp_path,
-        sun_direction=canonical_sun_direction(),
         run_checks=False,
         **kwargs,
     )
@@ -170,11 +264,20 @@ def test_cache_writes_then_hits(tmp_path, monkeypatch) -> None:
     assert provenance["build"]["schema_version"] == s2_store.SCHEMA_VERSION
     assert set(provenance) >= {"git_commit", "arrays", "diagnostics", "cache_key"}
     assert provenance["diagnostics"]["kept_events"] == len(built.events)
+    assert list(provenance["arrays"]) == ["D", "u", "phi", "w"]
+    assert sorted(p.name for p in directory.iterdir()) == ["D.npy", "phi.npy", "provenance.json", "u.npy", "w.npy"]
+    for name, record in provenance["arrays"].items():  # one plain .npy per array, as np.save writes it
+        assert record["file"] == f"{name}.npy" and record["bytes"] == (directory / record["file"]).stat().st_size
+        assert np.array_equal(np.load(directory / record["file"]), built.events.arrays()[name])
+    assert not any(p.name.startswith(".") for p in tmp_path.iterdir())  # no staging directory left behind
+    in_memory = _build(n=5_000)
+    for name, array in in_memory.events.arrays().items():
+        assert np.array_equal(built.events.arrays()[name], array), name
 
     def no_rebuild(*args, **kwargs):
         raise AssertionError("a cache hit must not rebuild")
 
-    monkeypatch.setattr(s2_store, "build_event_store", no_rebuild)
+    monkeypatch.setattr(s2_store, "_build_into", no_rebuild)
     loaded = _cached(tmp_path)
     assert loaded.spec == built.spec
     for name, array in built.events.arrays().items():
@@ -188,23 +291,130 @@ def test_cache_key_separates_parameters(tmp_path) -> None:
     assert sorted(p.name for p in tmp_path.iterdir()) == sorted([a.spec.cache_key(), b.spec.cache_key()])
     spec = a.spec
     for changed in (
-        S2StoreSpec(spec.members, spec.crystal, 1.3110129, spec.sun_direction, spec.n),
-        S2StoreSpec(((3, 7),), spec.crystal, spec.refractive_index, spec.sun_direction, spec.n),
-        S2StoreSpec(spec.members, {"type": "HexPrism", "a": 1.0, "h": 0.1}, spec.refractive_index, spec.sun_direction, spec.n),
-        S2StoreSpec(spec.members, spec.crystal, spec.refractive_index, spec.sun_direction, spec.n, dtype="float32"),
-        S2StoreSpec(spec.members, spec.crystal, spec.refractive_index, spec.sun_direction, spec.n, deviation_window=(0.4, 0.5)),
+        dataclasses.replace(spec, refractive_index=1.3110129),
+        dataclasses.replace(spec, members=((3, 7),)),
+        dataclasses.replace(spec, crystal={"type": "HexPrism", "a": 1.0, "h": 0.1}),
+        dataclasses.replace(spec, n=spec.n + 1),
+        dataclasses.replace(spec, sampling=RandomSphereSampler.description),
+        dataclasses.replace(spec, dtype="float32"),
+        dataclasses.replace(spec, deviation_window=(0.4, 0.5)),
     ):
         assert changed.cache_key() != spec.cache_key()
+    assert "sun_direction" not in spec.build_parameters()  # schema 3: a store serves every sun
     assert S2StoreSpec.from_build_parameters(spec.build_parameters()) == spec
 
 
-def test_cache_refuses_a_modified_events_file(tmp_path) -> None:
+def _tamper(directory: Path, name: str, *, same_size: bool) -> None:
+    """Rewrite ``<name>.npy`` with one value changed (same file size) or one row dropped."""
+    array = np.load(directory / f"{name}.npy")
+    if same_size:
+        array = array.copy()
+        array[len(array) // 2] *= 1.5
+    else:
+        array = array[:-1]
+    np.save(directory / f"{name}.npy", array)
+
+
+@pytest.mark.parametrize("same_size", [True, False])
+def test_cache_refuses_a_modified_array(tmp_path, same_size: bool) -> None:
     built = _cached(tmp_path)
-    events_path = tmp_path / built.spec.cache_key() / "events.npz"
-    arrays = built.events.arrays()
-    np.savez(events_path, **{**arrays, "w": arrays["w"][:-1]})
-    with pytest.raises(ValueError, match="SHA-256"):
+    directory = tmp_path / built.spec.cache_key()
+    _tamper(directory, "w", same_size=same_size)
+    with pytest.raises(ValueError, match="SHA-256 of array 'w'"):
         _cached(tmp_path)
+    with pytest.raises(ValueError, match="SHA-256 of array 'w'"):
+        S2EventStore.verify(directory)
+
+
+def test_mmap_load_maps_the_arrays_and_band_slices_stay_views(tmp_path) -> None:
+    built = _cached(tmp_path)
+    directory = tmp_path / built.spec.cache_key()
+    mapped = S2EventStore.load(directory, mmap_mode="r")
+    assert mapped.spec == built.spec
+    for name, array in mapped.events.arrays().items():
+        assert isinstance(array, np.memmap) and not array.flags.writeable, name
+        assert np.array_equal(array, built.events.arrays()[name]), name
+    lo, hi = np.radians(23.0), np.radians(25.0)
+    band, reference = mapped.band_slice(lo, hi), built.band_slice(lo, hi)
+    assert len(band) == len(reference) > 0
+    for name, array in band.arrays().items():
+        assert np.array_equal(array, reference.arrays()[name]), name
+        assert np.shares_memory(array, mapped.events.arrays()[name]), name  # a view of the mapping
+    with pytest.raises(ValueError, match="mmap_mode"):
+        S2EventStore.load(directory, mmap_mode="r+")
+
+
+def test_mmap_load_checks_sizes_only_and_verify_hashes(tmp_path) -> None:
+    """The documented trade-off: a same-size change passes ``mmap_mode="r"`` and is caught by ``verify``."""
+    built = _cached(tmp_path)
+    directory = tmp_path / built.spec.cache_key()
+    S2EventStore.verify(directory)  # intact
+    _tamper(directory, "phi", same_size=True)
+    S2EventStore.load(directory, mmap_mode="r")
+    with pytest.raises(ValueError, match="SHA-256 of array 'phi'"):
+        S2EventStore.verify(directory)
+    _tamper(directory, "phi", same_size=False)
+    with pytest.raises(ValueError, match="bytes"):
+        S2EventStore.load(directory, mmap_mode="r")
+    with pytest.raises(ValueError, match="bytes"):
+        _cached(tmp_path, mmap_mode="r")
+
+
+def test_sweep_stale_staging_removes_old_but_keeps_fresh(tmp_path) -> None:
+    """code-review-01.md Major 1: a killed ``build_or_load`` leaks its staging dir; age reclaims it."""
+    stale = tmp_path / ".deadkey.building-abc123"
+    stale.mkdir()
+    (stale / "junk.npy").write_bytes(b"x")
+    old = time.time() - s2_store._STAGING_STALE_SECONDS - 60
+    os.utime(stale, (old, old))
+
+    fresh = tmp_path / ".deadkey.building-def456"
+    fresh.mkdir()
+
+    s2_store._sweep_stale_staging(tmp_path)
+
+    assert not stale.exists()  # abandoned past the staleness threshold: reclaimed
+    assert fresh.exists()  # within the threshold: left alone, a concurrent builder may still own it
+
+
+def test_build_or_load_sweeps_a_stale_staging_directory_from_a_prior_run(tmp_path) -> None:
+    """The sweep runs on every ``build_or_load`` call, not just when a build is needed."""
+    orphan = tmp_path / ".some-other-key.building-xyz789"
+    orphan.mkdir()
+    old = time.time() - s2_store._STAGING_STALE_SECONDS - 60
+    os.utime(orphan, (old, old))
+
+    _cached(tmp_path)  # any call sweeps base_dir first, regardless of this spec's own cache key
+
+    assert not orphan.exists()
+
+
+def test_rename_race_with_an_existing_target_loads_the_winners_store(tmp_path, monkeypatch) -> None:
+    """code-review-01.md Minor 2: a ``staging.rename`` failing with ``OSError`` while the target already
+    exists is the code's one documented case for "someone else won the race"; pin that it actually loads
+    that store instead of merely swallowing the exception."""
+    scratch = tmp_path / "scratch"
+    winner_store = _cached(scratch)
+    winner_dir = scratch / winner_store.spec.cache_key()
+    target_dir = tmp_path / winner_store.spec.cache_key()
+
+    real_rename = Path.rename
+
+    def fake_rename(self, target):
+        target = Path(target)
+        if target == target_dir:
+            shutil.copytree(winner_dir, target_dir)  # the "other builder" lands first
+            raise OSError("simulated: another builder already renamed into place")
+        return real_rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", fake_rename)
+
+    loaded = _cached(tmp_path)  # target_dir does not exist yet: build_or_load must attempt to build + rename
+
+    assert loaded.spec == winner_store.spec
+    for name, array in winner_store.events.arrays().items():
+        assert np.array_equal(loaded.events.arrays()[name], array), name
+    assert not any(p.name.startswith(".") for p in tmp_path.iterdir())  # the losing staging dir was cleaned up
 
 
 def test_cache_refuses_mismatched_recorded_parameters(tmp_path) -> None:
@@ -217,18 +427,21 @@ def test_cache_refuses_mismatched_recorded_parameters(tmp_path) -> None:
         _cached(tmp_path)
 
 
-def test_cache_refuses_a_schema_1_store(tmp_path) -> None:
-    """A store recorded with ``u = R^-1 s`` (schema 1, propagation) is refused, never reused or converted."""
+@pytest.mark.parametrize("schema", [1, 2])
+def test_cache_refuses_an_older_schema(tmp_path, schema: int) -> None:
+    """Schema 1 (``u = R^-1 s``, propagation) and schema 2 (sun direction in the key) are refused, never converted."""
     built = _cached(tmp_path)
-    assert s2_store.SCHEMA_VERSION == 2
+    assert s2_store.SCHEMA_VERSION == 3
     directory = tmp_path / built.spec.cache_key()
     provenance_path = directory / "provenance.json"
     provenance = json.loads(provenance_path.read_text())
-    provenance["build"]["schema_version"] = 1
+    provenance["build"]["schema_version"] = schema
+    if schema == 2:
+        provenance["build"]["sun_direction"] = canonical_sun_direction().tolist()
     provenance_path.write_text(json.dumps(provenance))
-    with pytest.raises(ValueError, match="schema_version 1"):
+    with pytest.raises(ValueError, match=f"schema_version {schema}"):
         S2EventStore.load(directory)
-    with pytest.raises(ValueError, match="schema_version 1"):
+    with pytest.raises(ValueError, match=f"schema_version {schema}"):
         _cached(tmp_path)
 
 

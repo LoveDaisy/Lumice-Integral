@@ -404,7 +404,7 @@ def prepare_stores(
             group.members,
             n,
             base_dir=base_dir,
-            sun_direction=scene.sun_direction,
+            mmap_mode="r",  # the parent needs the count and diagnostics only; each worker loads with the hash check
             run_checks=run_checks,
             log=log,
         )

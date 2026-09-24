@@ -11,6 +11,7 @@ output.
 from __future__ import annotations
 
 import csv
+import dataclasses
 import json
 from pathlib import Path
 
@@ -43,6 +44,7 @@ from lumice_integral.canonical_scene import (
     canonical_pose_density,
     canonical_sun_direction,
 )
+from lumice_integral.camera import sun_direction
 from lumice_integral.optics import path_id_of
 from lumice_integral.path_class import build_path_class, pixel_solid_angle
 from lumice_integral.pose_density import build_pose_density
@@ -71,7 +73,7 @@ def rotated_lattice(g: np.ndarray, n: int):
 def build(members, n: int, g: np.ndarray | None = None) -> s2_store.S2EventStore:
     extra = {} if g is None else {"sampler": rotated_lattice(g, n), "sampling": f"Fibonacci lattice rotated by {g.round(12).tolist()}"}
     return build_event_store(
-        canonical_crystal(), CANONICAL_REFRACTIVE_INDEX, members, n, sun_direction=SUN, run_checks=False, **extra
+        canonical_crystal(), CANONICAL_REFRACTIVE_INDEX, members, n, run_checks=False, **extra
     )
 
 
@@ -292,7 +294,7 @@ def test_per_event_k_eff_is_the_iid_noise_of_a_class_band_sum():
     n = 10_000_000
     stores = [
         build_event_store(
-            crystal, CANONICAL_REFRACTIVE_INDEX, [(3, 5)], n, sun_direction=SUN, sampler=s2_store.RandomSphereSampler(seed),
+            crystal, CANONICAL_REFRACTIVE_INDEX, [(3, 5)], n, sampler=s2_store.RandomSphereSampler(seed),
             sampling=f"i.i.d. seed {seed}", deviation_window=window, run_checks=False,
         ).events.arrays()
         for seed in (1, 2)
@@ -337,18 +339,38 @@ def test_window_render_workers_agree_and_the_cache_is_reused(tmp_path, monkeypat
     window = Window((395, 400), (124, 129))
     one, execution = render_band_sum_window(scene, window, N_SMALL, workers=1, base_dir=tmp_path, run_checks=False)
     assert len(one) == 25 and len(execution["stores"]) == 1
-    assert (tmp_path / execution["stores"][0]["cache_key"] / "events.npz").exists()
+    assert (tmp_path / execution["stores"][0]["cache_key"] / "D.npy").exists()
 
     def no_rebuild(*args, **kwargs):
         raise AssertionError("the cached store must be loaded, not rebuilt")
 
-    monkeypatch.setattr(s2_store, "build_event_store", no_rebuild)
+    monkeypatch.setattr(s2_store, "_build_into", no_rebuild)
     two, _ = render_band_sum_window(scene, window, N_SMALL, workers=2, base_dir=tmp_path, run_checks=False)
     key = lambda r: (r.row, r.column)  # noqa: E731
     assert [(r.row, r.column, r.value, r.K, r.K_eff) for r in sorted(one, key=key)] == [
         (r.row, r.column, r.value, r.K, r.K_eff) for r in sorted(two, key=key)
     ]
     assert any(r.value > 0.0 for r in one)
+
+
+def test_one_store_serves_every_sun_altitude(tmp_path, monkeypatch):
+    """Schema 3: the store key has no sun, so another sun altitude reuses the cached store instead of rebuilding."""
+    scene = scene_of(single_path_class(canonical_crystal(), (3, 5)))
+    higher = dataclasses.replace(scene, sun_direction=sun_direction(25.0, 0.0))
+    window = Window((395, 400), (124, 129))
+    first, first_execution = render_band_sum_window(scene, window, N_SMALL, base_dir=tmp_path / "shared", run_checks=False)
+    fresh, _ = render_band_sum_window(higher, window, N_SMALL, base_dir=tmp_path / "fresh", run_checks=False)
+
+    def no_rebuild(*args, **kwargs):
+        raise AssertionError("a store serves every sun direction; another altitude must not rebuild it")
+
+    monkeypatch.setattr(s2_store, "_build_into", no_rebuild)
+    second, second_execution = render_band_sum_window(higher, window, N_SMALL, base_dir=tmp_path / "shared", run_checks=False)
+    assert second_execution["stores"][0]["cache_key"] == first_execution["stores"][0]["cache_key"]
+    assert [p.name for p in (tmp_path / "shared").iterdir()] == [first_execution["stores"][0]["cache_key"]]
+    key = lambda r: (r.row, r.column)  # noqa: E731
+    assert [(r.value, r.K) for r in sorted(second, key=key)] == [(r.value, r.K) for r in sorted(fresh, key=key)]
+    assert len(second) == 25 and any(r.value > 0.0 for r in first)
 
 
 def test_output_is_readable_by_read_strip(tmp_path):
