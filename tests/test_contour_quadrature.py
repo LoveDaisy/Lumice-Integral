@@ -25,6 +25,7 @@ from lumice_integral.quadrature import ResampleOptions, integrate_fiber_resample
 from lumice_integral.s2_store import align_rotations, build_event_store, evaluate_fields, event_rotations
 
 INDEX = CANONICAL_REFRACTIVE_INDEX
+TIGHT = cq.QuadratureOptions(relative_tolerance=1e-11)
 STORE_N = 200_000
 
 
@@ -44,7 +45,7 @@ def canonical(field, store):
     sun = canonical_sun_direction()
     centre, delta, _, _ = pixel_band(150, 150, sun)
     (level_set,) = extract_level_sets(field, [delta], store)
-    return sun, centre, level_set, cq.LevelSetGeometry.build(field, level_set)
+    return sun, centre, level_set, cq.LevelSetGeometry.build(field, [level_set], TIGHT)
 
 
 def _centre_at(sun: np.ndarray, delta: float, azimuth: float) -> np.ndarray:
@@ -88,7 +89,8 @@ def test_points_on_level_set_with_own_deviation(canonical) -> None:
 def test_geometry_weights_are_the_store_weights(field, canonical) -> None:
     """The geometric integrand's ``w`` is :func:`.s2_store.evaluate_fields`' (the event store's weight), not a second implementation."""
     _, _, level_set, geometry = canonical
-    rows = cq._evaluate_points(field, level_set.delta, geometry.panels.a, geometry.panels.b, geometry.panels.t[:, 2], 8)
+    panels = geometry.panels
+    rows = cq._evaluate_points(field, panels.delta, panels.a, panels.b, panels.t[:, 2], 8)
     fields = evaluate_fields(align_rotations(rows["q"], cq._PROBE_SUN), cq._PROBE_SUN, field.crystal, INDEX, [(3, 5)])
     np.testing.assert_array_equal(rows["phi"], fields["phi"])
     np.testing.assert_array_equal(rows["d"], fields["D"])
@@ -98,13 +100,13 @@ def test_geometry_weights_are_the_store_weights(field, canonical) -> None:
 def test_canonical_pixel_matches_dense_chord_rule(field, canonical) -> None:
     """An independent rule sharing only the level-set points: trapezoid on geodesic chords, ``M`` points per panel, ``O(M^-2)``."""
     sun, centre, level_set, geometry = canonical
-    value = geometry.integrate(sun, centre, canonical_pose_density()).value
+    value = geometry.integrate(sun, [centre], canonical_pose_density())[0].value
     density = canonical_pose_density()
     points = level_set.components[0].points
     estimates = []
     for m in (32, 64):
         t = np.tile(np.arange(m) / m, len(points))
-        rows = cq._evaluate_points(field, level_set.delta, np.repeat(points, m, axis=0), np.repeat(np.roll(points, -1, axis=0), m, axis=0), t, 8)
+        rows = cq._evaluate_points(field, np.full(len(t), level_set.delta), np.repeat(points, m, axis=0), np.repeat(np.roll(points, -1, axis=0), m, axis=0), t, 8)
         q = rows["q"]
         rho = density.evaluate_batch(event_rotations(q, rows["phi"], rows["d"], sun, centre))
         w = evaluate_fields(align_rotations(q, cq._PROBE_SUN), cq._PROBE_SUN, field.crystal, INDEX, [(3, 5)])["w"]
@@ -126,7 +128,7 @@ def test_canonical_pixel_against_phase1(canonical) -> None:
     restores (then ``<= 1e-7``); ``docs/phase2.md`` section 4.
     """
     sun, centre, _, geometry = canonical
-    value = geometry.integrate(sun, centre, canonical_pose_density()).value
+    value = geometry.integrate(sun, [centre], canonical_pose_density())[0].value
     problem = canonical_pixel_problem(with_weights=True)
     phase1 = integrate_fiber_resampled(
         problem, trace_fiber(problem), ResampleOptions(epsilon=1e-12, relative_tolerance=1e-9, maximum_node_count=262145)
@@ -138,8 +140,8 @@ def test_canonical_pixel_against_phase1(canonical) -> None:
 def test_tighter_tolerance_stays_within_the_error_estimate(field, canonical) -> None:
     sun, centre, level_set, geometry = canonical
     density = canonical_pose_density()
-    loose = cq.LevelSetGeometry.build(field, level_set, cq.QuadratureOptions(relative_tolerance=1e-6)).integrate(sun, centre, density)
-    tight = geometry.integrate(sun, centre, density)
+    loose = cq.LevelSetGeometry.build(field, [level_set], cq.QuadratureOptions(relative_tolerance=1e-6)).integrate(sun, [centre], density)[0]
+    tight = geometry.integrate(sun, [centre], density)[0]
     assert loose.error_estimate < 1e-6 * loose.value
     assert abs(loose.value - tight.value) < 20.0 * loose.error_estimate + 1e-12 * tight.value
     assert tight.error_estimate < 1e-9 * tight.value
@@ -149,9 +151,9 @@ def test_tighter_tolerance_stays_within_the_error_estimate(field, canonical) -> 
 def test_kinks_are_reported_and_depth_limit_is_not_hidden(field, canonical) -> None:
     """``A_P`` kinks on the canonical loop lower the local order (``low_order_splits``); ``max_depth = 0`` reports exhaustion."""
     sun, centre, level_set, geometry = canonical
-    assert geometry.low_order_splits > 0
-    shallow = cq.LevelSetGeometry.build(field, level_set, cq.QuadratureOptions(max_depth=0))
-    result = shallow.integrate(sun, centre, canonical_pose_density())
+    assert geometry.low_order_splits[0] > 0
+    shallow = cq.LevelSetGeometry.build(field, [level_set], cq.QuadratureOptions(max_depth=0))
+    result = shallow.integrate(sun, [centre], canonical_pose_density())[0]
     assert result.exhausted_panels > 0 and np.isfinite(result.value)
 
 
@@ -159,7 +161,8 @@ def test_random_density_value_depends_on_delta_only(canonical) -> None:
     """AC7: with ``rho = 1`` the pixel value is a function of ``delta`` alone (any azimuth, bit for bit)."""
     sun, _, level_set, geometry = canonical
     random = build_pose_density("random")
-    values = {geometry.integrate(sun, _centre_at(sun, level_set.delta, a), random).value for a in (0.1, 1.3, 2.9, -2.0)}
+    centres = [_centre_at(sun, level_set.delta, a) for a in (0.1, 1.3, 2.9, -2.0)]
+    values = {r.value for r in geometry.integrate(sun, centres, random, [0, 0, 0, 0])}
     assert len(values) == 1
     (value,) = values
     assert value > 0.0
@@ -170,8 +173,8 @@ def test_open_arcs_integrate(field, store) -> None:
     sun = canonical_sun_direction()
     (level_set,) = extract_level_sets(field, [np.radians(45.0)], store)
     assert (level_set.n_closed, level_set.n_open) == (0, 2)
-    geometry = cq.LevelSetGeometry.build(field, level_set)
-    result = geometry.integrate(sun, _centre_at(sun, level_set.delta, 0.4), build_pose_density("random"))
+    geometry = cq.LevelSetGeometry.build(field, [level_set])
+    (result,) = geometry.integrate(sun, [_centre_at(sun, level_set.delta, 0.4)], build_pose_density("random"))
     assert result.value > 0.0 and all(v > 0.0 for v in result.component_values)
     assert result.non_finite_points == 0 and result.exhausted_panels == 0
     assert result.error_estimate < 1e-8 * result.value
@@ -181,3 +184,16 @@ def test_critical_delta_is_flagged(field) -> None:
     minimum = float(field.interval_partition()[0].lower)
     assert cq.critical_delta(field, minimum + 1e-9)
     assert not cq.critical_delta(field, minimum + 1e-3)
+
+
+def test_level_sets_and_pixels_batched_together_match_one_at_a_time(field, store) -> None:
+    """Units are independent: several level sets and pixels in one adaptive run give each one's own value."""
+    sun = canonical_sun_direction()
+    density = canonical_pose_density()
+    bands = [pixel_band(row, 150, sun) for row in (120, 150, 400)]
+    level_sets = extract_level_sets(field, [b[1] for b in bands], store)
+    together = cq.LevelSetGeometry.build(field, level_sets).integrate(sun, [b[0] for b in bands], density)
+    for level_set, band, batched in zip(level_sets, bands, together):
+        (alone,) = cq.LevelSetGeometry.build(field, [level_set]).integrate(sun, [band[0]], density)
+        assert batched.panels == alone.panels and batched.evaluations == alone.evaluations
+        assert abs(batched.value / alone.value - 1.0) < 1e-12

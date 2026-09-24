@@ -54,6 +54,7 @@ from lumice_integral.so3 import exp, vee  # noqa: E402
 from lumice_integral.strip_pixel import PixelOptions, canonical_strip_scene, pixel_target  # noqa: E402
 
 DEFAULT_PIXELS = ((150, 150), (150, 126), (300, 126), (450, 126), (600, 126))
+PHASE2_OPTIONS = QuadratureOptions(relative_tolerance=1e-11)
 PHASE1_OPTIONS = Q.ResampleOptions(epsilon=1e-12, relative_tolerance=1e-9, maximum_node_count=262145)
 CORRECTED_NODE_COUNTS = (4097, 16385, 65537)
 NU_DIFFERENCE_STEP = 1e-5
@@ -102,8 +103,8 @@ def compare_pixel(scene, field, store, row: int, column: int) -> dict:
     centre, delta, _, _ = pixel_band(row, column, sun)
     start = time.perf_counter()
     (level_set,) = extract_level_sets(field, [delta], store)
-    geometry = LevelSetGeometry.build(field, level_set, QuadratureOptions())
-    phase2 = geometry.integrate(sun, centre, canonical_pose_density())
+    geometry = LevelSetGeometry.build(field, [level_set], PHASE2_OPTIONS)
+    (phase2,) = geometry.integrate(sun, [centre], canonical_pose_density())
     phase2_s = time.perf_counter() - start
 
     start = time.perf_counter()
