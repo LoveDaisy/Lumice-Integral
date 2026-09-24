@@ -74,7 +74,8 @@ $D_P(\mathbf u)$. Two quadratures of it:
 - the **band sum** (in production since 2026-09-23): precompute $N$ events
   on $S^2$ once per crystal, path and wavelength, independent of the light
   source, and sum those in each pixel's deviation band. The canonical strip
-  takes `169 s` on four Mac workers against Phase I's `34.7 min` on 30;
+  takes `31 s` on four Mac workers (scatter form, 2026-09-24; `169 s` before)
+  against Phase I's `34.7 min` on 30;
 - the **contour method** (milestone M2, in preparation): trace the level
   sets and integrate along them; with the critical points of $D_P$ it
   certifies that every component was found, which Phase I cannot.

@@ -21,7 +21,7 @@ Queue (tasks in `scratchpad/tasks.md`; dispatch order 20 ∥ 21, then 22 ∥ 24,
 |---|---|---|
 | 20 | chore `band-sum-small-fixes`: `pixels.csv` value repr, a docstring escape, two missing regression tests | — |
 | 21 | `s2-store-schema-3`: store independent of the source, `.npy` + mmap, bucketed build ([phase2.md](phase2.md) §1.1, §8) — **done 2026-09-24** (schema 3) | — |
-| 22 | `band-sum-scatter-renderer`: band sum organised by deviation, class accumulation, GEMM tiles ([phase2.md](phase2.md) §8) | 21 |
+| 22 | `band-sum-scatter-renderer`: band sum organised by deviation, class accumulation, GEMM tiles ([phase2.md](phase2.md) §8) — **done 2026-09-24** (canonical strip `30.8 s`, was `169 s`) | 21 |
 | 23 | `lumice-area-weighting-recheck`: absolute scale after Lumice's projected-area fix | Ice Halo #597 merged |
 | 24 | scrum `phase2-contour-quadrature` (M2): `dp-field-topology` → `dp-field-layer` → `s2-contour-extraction` → `s2-contour-quadrature` → `phase1-seeds-from-store` → `ch10-numerical-verdicts` | 21 |
 
@@ -96,7 +96,9 @@ constraints → §4; (g) open points → §10.
 
 [phase2.md](phase2.md) §5 (correspondence with the Ice Halo note,
 estimator, pose rebuild, corrections, pixel model, division of labour), §3.3
-(precomputation view, mirrors, $K_{\mathrm{eff}}$), §9 (divergent light);
+(precomputation view, mirrors, $K_{\mathrm{eff}}$), §8 (the production
+renderer's scatter form: deviation segments, mapped stores, matrix-product
+tiles), §9 (divergent light);
 the dated probe and production records are the appendix of phase2.md,
 verbatim.
 
@@ -263,3 +265,23 @@ Moved to [overview.md](overview.md) §3.
   caches are refused, not converted. Rendering keeps its gather
   organisation and the workers' hashed full load until task 22.
   Measurements: [phase2.md](phase2.md) appendix.
+- **2026-09-24**: the band-sum renderer is organised by deviation (task 22
+  `band-sum-scatter-renderer`, [phase2.md](phase2.md) §8). The pose splits
+  as $R_i = W F_i^{\mathsf T}$ (pixel frame × event frame) and every pose
+  density reads only the body axes' zenith components, so a pixel block ×
+  event chunk is one matrix product per body axis and transport, with no
+  reference azimuth; `pose_density` gains `axis_zeniths` /
+  `evaluate_axis_zeniths`, `evaluate_batch` stays the oracle, and a $D_{6h}$
+  transport is the fixed event-side map $g F J$. Workers take one deviation
+  segment each (pixels ordered by band centre, equal work) instead of whole
+  columns, and map every store read-only one store group at a time, so the
+  memory is one store group's stretch plus page cache, not every store per
+  worker; the content is hashed once in the parent. "Accumulated per path
+  class" is per store group of the plan (the issue's own gloss), not a new
+  multi-class orchestration API. The gather (`class_band_sum_pixel`) stays
+  as the test oracle only (a56: one rendering path); `camera_rotation` is
+  cached per view (same arithmetic). Measured on the canonical strip at
+  $N = 10^8$: `30.8 s` on four Mac workers (was `168.9 s`), every $K$ and
+  $K_{\rho>0}$ equal, values within `7.9e-15`; twelve store groups peak at
+  one group's memory. A GPU back end stays deferred: on the CPU the
+  elementwise $\rho$, not the product, dominates.

@@ -50,8 +50,9 @@ uv run --with matplotlib python scripts/compare_strip_v2.py --strip-dir artifact
 uv run python scripts/probe_absolute_scale.py --lumice-run <run1> --lumice-run <run2> --output-dir /tmp/abs-scale
 uv run --with matplotlib python scripts/compare_strip_v2.py --strip-dir artifacts/strip-full --output-dir /tmp/strip-compare \
   --lumice-float <run1>/img_01.npy --lumice-float-run2 <run2>/img_01.npy --absolute-scale-probe /tmp/abs-scale
-# S^2 band-sum renderer (roadmap 4.2): the same strip layout in minutes on a Mac. N = 1e8 full image:
-# 2.8 min on 4 workers with the store cached under artifacts/s2-store (first build ~80 s); N = 1e7: 35 s
+# S^2 band-sum renderer (docs/phase2.md sections 5, 8; scatter form, one deviation segment per worker over
+# read-only mapped stores): the same strip layout on a Mac. N = 1e8 full image: 31 s on 4 workers, 74 s on one,
+# with the store cached under artifacts/s2-store (first build ~80 s)
 JAX_PLATFORMS=cpu OMP_NUM_THREADS=1 \
   uv run python scripts/render_band_sum.py --store-n 100000000 --workers 4 --output-dir artifacts/band-sum-full
 # ... a path class with a narrow family and its own camera (one store per class, D6h transports incl. mirrors)
@@ -62,6 +63,10 @@ uv run python scripts/render_band_sum.py --store-n 10000000 --path 3 5 --path-cl
 uv run python scripts/regress_band_sum.py --stage full --band-dir artifacts/band-sum-full --output /tmp/regression_full.json
 # ... the K_eff ruler: two i.i.d. stores of class [3,5] on task 14's profiles (z of their difference, ~1 min)
 uv run python scripts/regress_band_sum.py --stage k-eff --random-n 10000000 --output /tmp/regression_k_eff.json
+# ... the scatter renderer against the gather it replaced: two renders pixel by pixel (K exact, values <= 1e-12),
+# or class [1,3,5] and task 14's profiles rendered both ways (~2 min with the N = 1e7 stores cached)
+uv run python scripts/regress_band_sum.py --stage scatter --band-dir artifacts/band-sum-full-new --baseline-dir artifacts/band-sum-full --output /tmp/regression_scatter.json
+uv run python scripts/regress_band_sum.py --stage scatter --random-n 10000000 --workers 4 --output /tmp/regression_scatter_windows.json
 # a non-canonical pose-density family (recorded in provenance.json and the resume fingerprint)
 uv run python scripts/render_ch06_strip.py --rows 300:302 --columns 126:127 --output-dir /tmp/strip-parry \
   --pose-density-family parry --pose-density-zenith-std-deg 1 --pose-density-roll-std-deg 1
