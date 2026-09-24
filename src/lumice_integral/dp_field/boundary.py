@@ -392,14 +392,13 @@ def _start_point(walker: _Walker, lattice_n: int) -> tuple[np.ndarray, str]:
         raise ValueError(f"U_P of {optics.path_id_of(walker.faces)} has no point on a {lattice_n}-point lattice")
     if valid.all():
         raise ValueError("U_P covers the whole lattice: no boundary")
-    tree = cKDTree(lattice)
-    _, neighbours = tree.query(lattice[valid], k=7)
-    inside_points = lattice[valid]
-    for row, candidates in enumerate(neighbours):
-        outside = [c for c in candidates[1:] if not valid[c]]
-        if outside:
-            inside, out = inside_points[row], lattice[outside[0]]
-            break
+    _, neighbours = cKDTree(lattice).query(lattice, k=7)
+    rows = np.flatnonzero(valid & np.any(~valid[neighbours[:, 1:]], axis=1))
+    if len(rows) == 0:
+        raise ValueError(f"U_P of {optics.path_id_of(walker.faces)} has no lattice point next to its boundary")
+    row = rows[0]
+    inside = lattice[row]
+    out = lattice[next(c for c in neighbours[row, 1:] if not valid[c])]
     for _ in range(200):
         mid = _unit(inside + out)
         if not walker.violated(mid, set()):
@@ -429,11 +428,9 @@ def _walk_piece(
     u = start
     for _ in range(MAX_WALK_STEPS):
         tangent = walker.direction(u, name)
-        if stop_at is not None and len(points) > 1 and _angle(u, stop_at) <= 2.0 * step:
-            to_stop = stop_at - u
-            if to_stop @ tangent > 0.0 and _angle(u, stop_at) <= step:
-                points.append(stop_at)
-                return points, None, coincident
+        if stop_at is not None and len(points) > 1 and _angle(u, stop_at) <= step and (stop_at - u) @ tangent > 0.0:
+            points.append(stop_at)
+            return points, None, coincident
         nxt = walker.advance(u, name, tangent, step)
         bad = walker.violated(nxt, excluded)
         if not bad:
@@ -537,10 +534,10 @@ def _plateau_extrema(values: np.ndarray, atol: float = EXTREMUM_ATOL) -> list[tu
         runs.append((i, float(values[i])))
     if len(runs) > 1 and abs(runs[0][1] - runs[-1][1]) <= atol:
         runs.pop()
-    out = []
     r = len(runs)
-    if r < 3:
-        return [(runs[0][0], "minimum")] if r == 1 else [(runs[0][0], "minimum" if runs[0][1] < runs[1][1] else "maximum"), (runs[1][0], "maximum" if runs[0][1] < runs[1][1] else "minimum")]
+    if r == 1:
+        raise RuntimeError("D_P is constant along the whole boundary loop")
+    out = []
     for j in range(r):
         prev_v, v, next_v = runs[j - 1][1], runs[j][1], runs[(j + 1) % r][1]
         if v < prev_v and v < next_v:

@@ -34,8 +34,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import partial
-from typing import Sequence
-
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -385,7 +383,3 @@ def interior_critical_points(
             value = float(d_p_batch(point[None, :], faces, index, screen.fold_matrix)[0])
             points.append(InteriorCriticalPoint(point, value, np.full(2, np.nan), "degenerate", None, 0.0))
     return tuple(points), fold_set
-
-
-def as_faces(faces: Sequence[int]) -> Faces:
-    return optics.normalize_faces(faces)
