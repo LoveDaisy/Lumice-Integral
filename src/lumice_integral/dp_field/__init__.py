@@ -47,6 +47,8 @@ from .field import (
     gradient_batch,
     hessian_tangent_batch,
     interior_critical_points,
+    margins_batch,
+    valid_batch,
 )
 
 __all__ = ["DPField", "TopologyEscape"]
@@ -93,6 +95,14 @@ class DPField:
 
     def hessian_tangent_batch(self, u: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         return hessian_tangent_batch(u, self.faces, self.index, self.slab)
+
+    def margins_batch(self, u: np.ndarray) -> np.ndarray:
+        """Every margin of :func:`.optics.domain_margin_names` at each row of ``u`` (positive inside ``U_P``)."""
+        return margins_batch(u, self.faces, self.index)
+
+    def valid_batch(self, u: np.ndarray) -> np.ndarray:
+        """``u in U_P`` for each row (:func:`.optics.path_domain_batch`, the single authority of the gates)."""
+        return valid_batch(u, self.faces, self.index)
 
     # -- layers (cached)
     @cached_property
