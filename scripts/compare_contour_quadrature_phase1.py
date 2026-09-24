@@ -24,6 +24,7 @@ of column 126) this reports
 Usage::
 
     uv run python scripts/compare_contour_quadrature_phase1.py --output /tmp/contour-phase1.json
+    uv run python scripts/compare_contour_quadrature_phase1.py --pose-density-family random --output /tmp/contour-phase1-random.json
 """
 
 from __future__ import annotations
@@ -49,6 +50,7 @@ from lumice_integral.contour_quadrature import LevelSetGeometry, QuadratureOptio
 from lumice_integral.discovery import discover_components, retarget_problem  # noqa: E402
 from lumice_integral.dp_field import DPField  # noqa: E402
 from lumice_integral.resample import fiber_spline, resample_spline, uniform_parameters  # noqa: E402
+from lumice_integral.pose_density import build_pose_density  # noqa: E402
 from lumice_integral.s2_store import build_event_store  # noqa: E402
 from lumice_integral.so3 import exp, vee  # noqa: E402
 from lumice_integral.strip_pixel import PixelOptions, canonical_strip_scene, pixel_target  # noqa: E402
@@ -98,13 +100,13 @@ def corrected_phase1(problem, result) -> dict:
     }
 
 
-def compare_pixel(scene, field, store, row: int, column: int) -> dict:
+def compare_pixel(scene, field, store, row: int, column: int, density) -> dict:
     sun = canonical_sun_direction()
     centre, delta, _, _ = pixel_band(row, column, sun)
     start = time.perf_counter()
     (level_set,) = extract_level_sets(field, [delta], store)
     geometry = LevelSetGeometry.build(field, [level_set], PHASE2_OPTIONS)
-    (phase2,) = geometry.integrate(sun, [centre], canonical_pose_density())
+    (phase2,) = geometry.integrate(sun, [centre], density)
     phase2_s = time.perf_counter() - start
 
     start = time.perf_counter()
@@ -147,17 +149,20 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--pixel", type=int, nargs=2, action="append", metavar=("ROW", "COLUMN"))
     parser.add_argument("--store-n", type=int, default=200_000, help="event store of the level-set seed check")
+    parser.add_argument("--pose-density-family", choices=("column", "random"), default="column",
+                        help="column: the canonical density (0.5 deg); random: Haar")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     pixels = [tuple(p) for p in args.pixel] if args.pixel else list(DEFAULT_PIXELS)
-    scene = canonical_strip_scene()
+    density = canonical_pose_density() if args.pose_density_family == "column" else build_pose_density("random")
+    scene = canonical_strip_scene(pose_density=density)
     field = DPField.build(canonical_crystal(), (3, 5), CANONICAL_REFRACTIVE_INDEX)
     store = build_event_store(canonical_crystal(), CANONICAL_REFRACTIVE_INDEX, [(3, 5)], args.store_n, run_checks=False)
-    report = {"phase1_options": {"epsilon": PHASE1_OPTIONS.epsilon, "relative_tolerance": PHASE1_OPTIONS.relative_tolerance,
+    report = {"pose_density_family": args.pose_density_family, "phase1_options": {"epsilon": PHASE1_OPTIONS.epsilon, "relative_tolerance": PHASE1_OPTIONS.relative_tolerance,
                                  "maximum_node_count": PHASE1_OPTIONS.maximum_node_count},
               "pixels": []}
     for row, column in pixels:
-        entry = compare_pixel(scene, field, store, row, column)
+        entry = compare_pixel(scene, field, store, row, column, density)
         report["pixels"].append(entry)
         print(f"({row}, {column}) delta {entry['delta_deg']:.4f} deg: phase2 {entry['phase2']['value']:.12g} "
               f"(err {entry['phase2']['error_estimate']:.1e}); production phase1 rel {entry['relative_difference_production']:+.2e}; "
