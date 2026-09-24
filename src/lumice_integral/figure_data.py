@@ -347,3 +347,61 @@ def export_fiber_figure_data(
     )
     temporary_metadata.replace(metadata_path)
     return FigureDataFiles(metadata_path, arrays_path)
+
+
+# Chapter-10 verdicts (task ch10-numerical-verdicts): a schema of its own, not a v4 of the fiber schema --
+# a verdict is a statement with its numbers and arrays, not a FiberResult.
+VERDICT_SCHEMA_VERSION = "lumice-integral.ch10-verdict/v1"
+
+
+def export_verdict_figure_data(
+    verdict: Any,
+    output_directory: Path | str,
+    *,
+    provenance: Mapping[str, Any] | None = None,
+) -> FigureDataFiles:
+    """Write one :class:`.ch10_verdicts.Verdict` as ``metadata.json`` plus ``arrays.npz`` (same file discipline as fibers).
+
+    The metadata holds the verdict's name, status, statement, numbers and
+    parameters, the caller's ``provenance`` and the payload's SHA-256 with
+    each array's shape, dtype and note.
+    """
+    output_directory = Path(output_directory)
+    output_directory.mkdir(parents=True, exist_ok=True)
+    arrays_path = output_directory / "arrays.npz"
+    metadata_path = output_directory / "metadata.json"
+    arrays = {name: np.asarray(array) for name, array in verdict.arrays.items()}
+    missing = sorted(set(arrays) - set(verdict.array_notes))
+    if missing:
+        raise ValueError(f"verdict {verdict.name!r} has arrays without a note: {missing}")
+
+    temporary_arrays = output_directory / ".arrays.npz.tmp"
+    with temporary_arrays.open("wb") as stream:
+        np.savez_compressed(stream, **arrays)
+    temporary_arrays.replace(arrays_path)
+    array_sha256 = sha256(arrays_path.read_bytes()).hexdigest()
+
+    metadata = {
+        "schema": VERDICT_SCHEMA_VERSION,
+        "verdict": verdict.name,
+        "status": verdict.status,
+        "statement": verdict.statement,
+        "numbers": verdict.numbers,
+        "parameters": verdict.parameters,
+        "provenance": provenance or {},
+        "payload": {
+            "file": arrays_path.name,
+            "sha256": array_sha256,
+            "arrays": {
+                name: {"shape": list(array.shape), "dtype": str(array.dtype), "note": verdict.array_notes[name]}
+                for name, array in arrays.items()
+            },
+        },
+    }
+    temporary_metadata = output_directory / ".metadata.json.tmp"
+    temporary_metadata.write_text(
+        json.dumps(_json_value(metadata), allow_nan=False, ensure_ascii=True, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    temporary_metadata.replace(metadata_path)
+    return FigureDataFiles(metadata_path, arrays_path)
