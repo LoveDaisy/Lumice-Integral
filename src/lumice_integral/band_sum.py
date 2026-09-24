@@ -107,6 +107,7 @@ from .prescan import DEFAULT_RNG_SEED, DEFAULT_SAMPLE_COUNT
 from .provenance import git_commit, sha256_of
 from .s2_store import (
     DEFAULT_CACHE_DIR,
+    S2Events,
     S2EventStore,
     build_or_load,
     event_frames,
@@ -544,7 +545,7 @@ class ScatterSums:
 
 
 def scatter_store(
-    events,
+    events: S2Events,
     group: StoreGroup,
     density: PoseDensity,
     bands: PixelBands,

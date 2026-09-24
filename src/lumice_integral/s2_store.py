@@ -234,8 +234,22 @@ def event_rotations(
     normal to ``u`` (``phi . (-u) = cos D``, so ``f ~ phi + cos(D) u``).
     For the events transported by a crystal symmetry ``g`` see
     :func:`transported_rotations` (module docstring).
+
+    Deliberately not built from :func:`pixel_world_frame`/:func:`event_frames`
+    (its `W`/`F` factors, task ``band-sum-scatter-renderer``): this is the
+    kept-as-oracle gather path (module docstring, ``docs/phase2.md`` §8), and
+    its value as an independent check on the scatter production path
+    (:func:`.band_sum.scatter_store`) requires it not share a failure mode
+    with the factors that path is built from. See
+    ``test_axis_zeniths_split_into_a_pixel_and_an_event_factor_for_all_24_elements``
+    for the cross-check between the two.
     """
-    return np.einsum("ij,nkj->nik", pixel_world_frame(sun, centre), event_frames(u, phi, deviation))
+    e = centre - (centre @ sun) * sun
+    e /= np.linalg.norm(e)
+    f2 = phi + np.cos(deviation)[:, None] * u
+    f2 /= np.linalg.norm(f2, axis=1, keepdims=True)
+    world = np.stack([sun, e, np.cross(sun, e)], axis=1)
+    return np.einsum("ij,nkj->nik", world, frame(u, f2))
 
 
 def pixel_world_frame(sun: np.ndarray, centre: np.ndarray) -> np.ndarray:
