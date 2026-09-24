@@ -44,6 +44,7 @@ import platform
 import sys
 from pathlib import Path
 
+from lumice_integral.band_sum import single_path_class
 from lumice_integral.canonical_scene import (
     CANONICAL_POSE_DENSITY_FAMILY,
     CANONICAL_REFRACTIVE_INDEX,
@@ -58,7 +59,6 @@ from lumice_integral.contour_quadrature import (
     render_contour_quadrature_window,
     write_contour_quadrature_strip,
 )
-from lumice_integral.geometry import halo_map_rank
 from lumice_integral.optics import path_id_of
 from lumice_integral.pose_density import POSE_DENSITY_FAMILIES, build_pose_density
 from lumice_integral.pose_density_provenance import pose_density_provenance
@@ -150,10 +150,11 @@ def main(argv: list[str] | None = None) -> None:
         parser.error(str(exc))
     crystal = canonical_crystal()
     try:
-        if halo_map_rank(crystal, args.path) == 0:
-            parser.error(f"--path {path_id_of(args.path)} has halo-map rank 0: a point mass, not a level-set integral")
+        path = single_path_class(crystal, args.path)  # render_band_sum.py's validation of --path
     except (ValueError, KeyError, IndexError) as exc:
         parser.error(f"--path {' '.join(map(str, args.path))}: {exc}")
+    if path.halo_map_rank == 0:
+        parser.error(f"--path {path_id_of(path.representative)} has halo-map rank 0: a point mass, not a level-set integral")
     output_dir: Path = args.output_dir
     if output_dir.exists() and any(output_dir.iterdir()) and not args.overwrite:
         parser.error(f"{output_dir} exists and is not empty; pass --overwrite to replace its files")
@@ -165,7 +166,7 @@ def main(argv: list[str] | None = None) -> None:
         "view": {"azimuth": args.view_azimuth, "elevation": args.view_elevation},
     }
     scene = ContourQuadratureScene(
-        faces=tuple(args.path),
+        faces=path.representative,
         crystal=crystal,
         refractive_index=CANONICAL_REFRACTIVE_INDEX,
         sun_direction=canonical_sun_direction(),
