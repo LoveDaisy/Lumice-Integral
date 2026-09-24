@@ -92,6 +92,9 @@ uv run python scripts/regress_band_sum.py --stage contour --band-dir artifacts/b
   --coarse-dir artifacts/band-sum-full-N1e7 --contour-dir artifacts/contour-quadrature-band \
   --contour-point-dir artifacts/contour-quadrature-full --reference-dir artifacts/strip-full --output /tmp/regression_contour.json
 uv run python benchmarks/benchmark_contour_quadrature.py
+# chapter-10 numerical verdicts as figure data (lumice_integral.ch10_verdicts on the contour quadrature: 22 deg inner
+# edge, Liljequist, parhelic circle, focusing labels; one metadata.json + arrays.npz per verdict)
+uv run python scripts/ch10_numerical_verdicts.py --output-dir /tmp/ch10-verdicts
 # Phase I seed-store density survey: the 32 strip pixels over store N x band half-width, plus the
 # completeness cross-check (discovery.check_band_coverage) on the production store (minutes; the N = 1e8
 # store is ~1 GB under artifacts/s2-store)
@@ -121,7 +124,9 @@ The design is `docs/overview.md` (entry), `docs/phase1.md` and `docs/phase2.md`
 │   ├── dp_field/          # Phase II D_P field layer: evaluation, critical points, dU_P walk,
 │   │                      # delta-interval partition (public: DPField)
 │   ├── contour.py         # level sets {D_P = delta} in U_P, certified against the partition
-│   └── contour_quadrature.py  # line integrals on them: Phase II pixel values, the precision authority
+│   ├── contour_quadrature.py  # line integrals on them: Phase II pixel values, the precision authority
+│   ├── focusing.py        # explicit label: Jacobian focusing (D_P critical set) vs dimension collapse (rho)
+│   └── ch10_verdicts.py   # the chapter-10 numerical verdicts, measured on the chains above
 ├── tests/                 # Analytic and optical regression fixtures
 ├── benchmarks/            # Reproducible CPU/GPU probes
 ├── docs/

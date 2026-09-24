@@ -295,7 +295,7 @@ Fixtures the structure suggests:
   to the class union and a boundary point of each member. It is
   shape-independent. The narrow brighter peak at 152–158° is Liljequist
   proper, `3-5-6-7-3` (the A0-02 parallel family, same $\Phi$ as `1-3-2`): a
-  slab with no fold, whose window moves with the cross-section.
+  slab with no fold, whose window changes with the cross-section.
   *Measured (task `dp-field-layer`):* $\{0°, 115.607°\}$ for `1-3-2`,
   $\{0°, 153.070°, 180°\}$ for `3-5-6-7-3` (normal incidence on face 3
   is inside, the backscatter cone point). Neither has 142°, correctly.
@@ -311,6 +311,14 @@ Fixtures the structure suggests:
   `3-5-6-7-3`, `1-3-2` and `3-1-6` to 92–98 % of their Fresnel-weighted
   windows. The evidence and the decision are in [roadmap.md](roadmap.md)
   §9, 2026-09-25.
+  *Measured (task `ch10-numerical-verdicts`, section 10):* `1-3-2` and
+  `3-5-6-7-3` have one field, $D_P = 2\arcsin|\mathbf u\cdot\mathbf n_3|$
+  (to `8.9e-16` rad), $|\nabla D_P| = 2$ on $U_P$, and critical values
+  independent of $h/a$ (`5.7e-14`° over 0.2 / 1 / 2). The Liljequist peak
+  does not move: it sits at the boundary critical value 153.0697° for every
+  $h/a$, finite, approached from below as $\varepsilon^{0.49}$ (a restricted
+  extremum on $\partial U_P$); the window sets its width and the profile below
+  it (half maximum 153.0–158.8° at $h/a = 0.2$, 150.7–157.05° at 2).
 - *Parhelic circle*: $D_P(\mathbf u) = \angle(M\mathbf u, \mathbf u)$ has
   $\nabla D_P = 0$ only at $\pm\mathbf n_M$ (on `3-1-6` both lie on the entry
   great circle but outside the closure of $U_P$, an internal TIR fails
@@ -319,7 +327,23 @@ Fixtures the structure suggests:
   the ring azimuth is linear in the crystal azimuth, so the profile is a sum
   of shifted copies of one window (three mirror planes of the prism): a test
   of the window-sum and transport layers without the Jacobian in the way.
-- *22° halo*: the fold; see section 10.
+  *Measured (task `ch10-numerical-verdicts`, section 10):* the ring member
+  for plates is `1-3-2` (top face in, a prism face reflects, bottom face
+  out: mirror normal horizontal, $|\nabla D_P| = 2$ on $U_P$). `3-1-6`
+  reflects on a basal face (mirror normal $\mathbf z$); under plates
+  $\mathbf u\cdot\mathbf z$ is fixed and its image is one deviation, $2e$,
+  not a ring. For exactly vertical plates the `1-3-2` image stays at the
+  sun's elevation (to `3e-16` rad) and its ring azimuth moves at
+  $d\theta/d\phi = 2$ (to `1e-9`). The contour quadrature's elevation-integrated
+  ring under plates equals the window-only prediction
+  $\sum_\phi w(\phi)/(2\pi\cdot 2)$ to `3.4e-4` ($\sigma = 0.5°$) and `8.6e-5`
+  ($\sigma = 0.25°$), order $\sigma^{2.00}$, on 61 ring azimuths up to 120°,
+  away from the window's jump at 122.34° (the TIR-only gate). The six prism
+  members' windows are one function shifted by 60° (to `1e-16`), so under a
+  uniform plate azimuth the "shifted copies" coincide: every member draws
+  the same ring.
+- *22° halo*: a finite jump for random orientation, $1/\sqrt{\ }$ only
+  through the column density; section 10.
 
 **Why the completeness certificate rarely needs a saddle branch.** A
 systematic search over hexagonal-prism paths (entry face in `{1, 3}`,
@@ -895,20 +919,38 @@ needs street-lamp halos (backlog).
 
 ## 10. Open questions and where they are settled
 
-- **22° inner edge** (writing chapter 10). For a random orientation the
-  minimum of $D_P$ on $S^2$ is isolated and non-degenerate, and
-  $\int d\ell/\lvert\nabla D\rvert$ near a two-dimensional minimum is finite:
-  the inner edge would be a finite jump, and the
-  $I \sim 1/\sqrt{D - D_{\min}}$ profile would belong to families that
-  confine $\mathbf u$ to a curve (columns, tangent arcs). Chapter 10's
-  statement should be an acceptance test, not a premise. M2 sub-task
-  `ch10-numerical-verdicts`.
-- **Rank-deficient maps.** $W = 0$ classes are point masses in the source
-  direction (task `path-class-rendering-unit`); the degenerate images of
-  parallel-face classes ($M \ne I$, $W = I$) come from $\rho$ confining
-  $\mathbf u$, not from $\Phi$, and need their own accounting ("dimension
-  collapse" vs "Jacobian focusing", as an explicit solver output).
-  `ch10-numerical-verdicts`.
+- **22° inner edge** (writing chapter 10). *Settled (task
+  `ch10-numerical-verdicts`, `lumice_integral.ch10_verdicts.inner_edge`;
+  measured record: appendix, "Chapter-10 verdicts").* For a random
+  orientation the minimum of $D_P$ is isolated and non-degenerate
+  (Hessian `[0.33757, 0.96457]`, AD against finite differences `8e-8`), and
+  the level-set integral tends to $w^*\,2\pi/\sqrt{\det H}$: the inner edge is
+  a finite jump to $I = 0.541535$ (canonical crystal and sun), reached as
+  $1 - 1.956\sqrt\varepsilon$ ($\varepsilon = \delta - D_{\min}$; the kinks of
+  $A_P$ at the minimum-deviation point predict `1.945`), ratio `0.99805` at
+  $\varepsilon = 10^{-6}$, extrapolated `1.000023`. The
+  $I \sim 1/\sqrt{D - D_{\min}}$ profile belongs to the column density, at the
+  ring azimuth where its orientation ridge passes through the minimum (the
+  tangent-arc contact): local slope within `0.1` of $-1/2$ from a cap
+  crossover $\varepsilon_c \propto \sigma^{1.97}$ up to `3e-3` rad, finite below
+  $\varepsilon_c$ (cap $\times\,\sigma$ roughly constant); at the canonical
+  $\sigma = 0.5°$ only `[1e-3, 3e-3]`. Tests: `tests/test_ch10_verdicts.py`
+  (`test_inner_edge_*`), `tests/test_focusing.py::test_3_5_minimum_is_a_finite_jump`.
+- **Rank-deficient maps.** $M = I$, $W = I$ classes (wedge angle 0,
+  `geometry.halo_map_rank` 0) are point masses in the source direction (task
+  `path-class-rendering-unit`). The degenerate images of parallel-face
+  classes ($M \ne I$, $W = I$: wedge angle 0) come from $\rho$ confining
+  $\mathbf u$, not from $\Phi$. *Settled (task `ch10-numerical-verdicts`):*
+  `lumice_integral.focusing` labels a (path, density) pair explicitly:
+  Jacobian focusing is read off the critical set of $D_P$ (finite jump,
+  log, $1/\sqrt{\ }$ fold curve, cone point, crease, boundary cusp), dimension
+  collapse off the density's confined dimensions (random 0, column / plate
+  1, Parry / Lowitz 2); rank 0 is `point_mass`. On `3-5`, `1-3-2`,
+  `3-5-6-7-3`, `3-1-6`, `1-3-5-2` no critical value focuses: the mirror slabs
+  have $|\nabla D_P| = 2$ exactly, the rotation slab `1-3-5-2` keeps its fold
+  circle ($D = 120°$) outside $U_P$. Across the parhelic circle of `1-3-2`
+  under plates, halving $\sigma$ doubles the peak at a fixed cross integral:
+  dimension collapse. Tests: `tests/test_focusing.py`.
 - **Non-uniform $\rho$.** $\psi(\mathbf u,\alpha)$ is single-valued, so $\rho$
   is evaluated pointwise; only the "convolution on the sky" reading of
   chapter 11 needs a uniform $\rho$.
@@ -929,7 +971,7 @@ needs street-lamp halos (backlog).
 | critical points, certificate (field layer), contour extraction | measured, in production | appendix; tasks `dp-field-layer`, `s2-contour-extraction` |
 | contour quadrature (precision authority), Phase I and band-sum alignment | measured, in production | section 4, appendix; task `s2-contour-quadrature` |
 | Phase I seeds and cross-check from the store | design | scrum 24 sub-task 5 |
-| chapter-10 verdicts | open | scrum 24 sub-task 6 |
+| chapter-10 verdicts (inner edge, Liljequist, parhelic circle, focusing labels) | measured; Liljequist (i), the A60-10 142° edge, blocked on internal partial reflection | section 10, appendix; task `ch10-numerical-verdicts` |
 | divergent light | derived | backlog |
 
 ## Appendix: measured record
@@ -1575,3 +1617,79 @@ scene, $n = 1.31$, M2 Max.
   production evaluators' batches to powers of two a column spent `18 s` of
   `45 s` compiling; before merging the extraction's nodes into first panels
   of up to 1° a level set took 2800-5400 geometry points.
+
+**Chapter-10 verdicts (2026-09-25, task `ch10-numerical-verdicts`,
+`lumice_integral.ch10_verdicts`, `lumice_integral.focusing`).**
+`scripts/ch10_numerical_verdicts.py --output-dir artifacts/ch10-verdicts`
+writes one `metadata.json` + `arrays.npz` per verdict (schema
+`lumice-integral.ch10-verdict/v1`, statement, numbers, parameters, SHA-256,
+the last commit of every source module) and a top-level `provenance.json`;
+`9.6 min` on an M2 Max, one process. Every pixel value is the contour
+quadrature's (`rtol = 1e-8`), every Hessian and critical value the field
+layer's; seed-check stores `N = 2e5`.
+
+- *22° inner edge, random orientation* (canonical crystal, $n = 1.31$, sun
+  at 15°). Minimum $D_{\min} = 21.839300°$, Riemannian Hessian
+  `[0.337575, 0.964567]`; finite differences of $D_P$ along geodesics
+  (step `1e-4`) agree to `8.2e-8`. $w^* = 1.444561$,
+  $2\pi/\sqrt{\det H} = 11.011045$, so $\int w/|\nabla D|\,d\ell \to 15.906128$
+  and the pixel value to $0.541535$. On $\varepsilon = 10^{-1}\ldots10^{-6}$
+  (quarter decades) the ratio to that limit rises monotonically to `0.99805`;
+  fitted on $\varepsilon \le 10^{-3}$ it is $c - a\sqrt\varepsilon - b\varepsilon$ with
+  $c = 1.000023$, $a = 1.956$. The $\sqrt\varepsilon$ comes from kinks of
+  $w = A_PT_P$ at the minimum-deviation point: $A_P$ depends on $|u_z|$ there
+  (one-sided slopes `-0.827` both ways) and in plane the corridor switches its
+  bounding vertex (`-2.363` / `-0.970`); the mean of $w$ over the ellipse
+  gives $a = \frac{2\sqrt2}{\pi}\sum_i \kappa_i/\sqrt{\lambda_i} = 1.945$.
+- *22° inner edge, column family.* The orientation ridge of the column
+  density passes through the minimum only at the top and bottom of the ring
+  (azimuth 90° / 270°, sky elevation $36.84°$ / $-6.84°$: the tangent-arc
+  contacts); at the top, with first panels of $2\sigma$: local slope within
+  `0.1` of $-1/2$ on `[1e-3, 3.2e-3]` for $\sigma = 0.5°$, `[5.6e-6, 3.2e-3]`
+  for 0.1°, and down to the grid's `3.2e-7` for 0.02° and 0.005°; cap
+  crossover (slope back through $-1/4$) at `6.9e-5` and `2.9e-6` for 0.5° and
+  0.1° ($\varepsilon_c \propto \sigma^{1.97}$); cap $\times\,\sigma$ `0.431` /
+  `0.419` rad. Just above the crossover the slope overshoots to `-0.59`.
+  Above `3e-3` the slope steepens (`-0.7` at `2e-2`, `-1.5` at `1e-1`): the
+  arc leaves the ring. The panel size does not change the values (first
+  panels of $2\sigma$, $\sigma/2$, $\sigma/8$: identical to all printed digits).
+- *Liljequist.* (i) A60-10: `3-5-6-7` and `3-4-5-7` have 0 of `2e5` lattice
+  points in $U_P$; `11083` and `20959` pass every gate except the internal
+  TIR discriminants. Blocked, not computed. (ii) `1-3-2` / `3-5-6-7-3` on
+  $h/a = 0.2$, 1, 2: one field (`8.9e-16` rad), $|\nabla D_P| = 2$ to `1e-15`,
+  critical values spread `5.7e-14`° over $h/a$. Random-orientation profiles
+  on quarter-degree grids: `1-3-2` peaks at 19.25° / 72.25° / 73.5°;
+  `3-5-6-7-3` at 153.25° for all three, and on a 0.05° grid at 153.10°,
+  half maximum 153.00–158.80°, 151.65–157.30°, 150.70–157.05°. At the
+  critical value 153.0697°: from above the value changes by less than
+  `1e-2` relative over $\varepsilon = 10^{-2}\ldots10^{-6}$ rad; from below
+  the gap closes as $\varepsilon^{0.48}$, $\varepsilon^{0.49}$, $\varepsilon^{0.49}$.
+  Max error estimate `1.7e-9` relative; up to `920` exhausted panels per
+  profile (reported, next to the arcs' ends on $\partial U_P$).
+- *Parhelic circle* (`1-3-2`, $h/a = 0.2$, sun at 15°). Exactly vertical
+  plates on a 72000-point azimuth grid: image elevation equals the sun's to
+  `3.3e-16` rad, $d\theta/d\phi = 2$ to `1e-9`; the window jumps once, at
+  ring azimuth 122.34° (the TIR-only gate). Ring cross integrals by 48-point
+  Gauss–Legendre over $\pm 8\sigma\cdot 2\sin(|\theta|/2)$ in elevation (the
+  ring is $\sqrt2\sin(\theta/2)\,\sigma$ wide in RMS by Monte Carlo, `0.05σ` at
+  4°), ring azimuths $-4°\ldots126°$ every 2°: against
+  $\sum w/(2\pi\cdot2)$, max relative residual `3.4e-4` / `8.6e-5` for
+  $\sigma = 0.5°$ / 0.25°, median `1.8e-4` / `4.6e-5`. A 2e6-pose Monte Carlo
+  of tilted plates ($\sigma = 0.1°$, 0.5° bins; a one-off probe, not in the
+  repository) agrees with the prediction at 4°–14° to `1e-2`. The members `1-k-2`, $k = 4\ldots8$: windows equal to
+  `1-3-2`'s shifted by $60°(k-3)$ to `1.1e-16`.
+- *Focusing labels.* Fixtures `3-5`, `1-3-2`, `3-5-6-7-3`, `3-1-6`,
+  `1-3-5-2`, `3-6` × random, column, plate, Parry, Lowitz: no Jacobian
+  focusing on any fixture; `3-5` finite jump (measure limit `11.011045`),
+  `3-5-6-7-3` cone point at 180° (slope 2), the rotation slab `1-3-5-2`
+  cone point at 0° with slope $\sqrt3 = 2\sin60°$ and a lattice $|\nabla D_P|$
+  in `[0.78, 1.73]`, its fold circle ($D = 120°$) outside $U_P$ (max
+  $D_P$ 115.6°); `3-6` point mass. Collapse across the parhelic circle
+  (`1-3-2`, ring azimuth 110°): peak `×1.988` from $\sigma = 0.5°$ to 0.25°,
+  cross integral `0.0022774` / `0.0022776`; the random-orientation value at
+  the same pixels `6.5e-4`–`6.6e-4`.
+- *Limitation found, not changed here.* On `1-3-2` the extraction's
+  critical-data seeds find no component, every $\delta$ relies on the
+  fallback seeds (at most `32 × 6` new components per call), and one call
+  with ~180 deviations raises; `ch10_verdicts` extracts 64 at a time.
+  Backlog.

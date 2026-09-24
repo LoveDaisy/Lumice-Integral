@@ -27,7 +27,7 @@ Queue (tasks in `scratchpad/tasks.md`; dispatch order 20 ∥ 21, then 22 ∥ 24,
 
 | 22 | `band-sum-scatter-renderer`: band sum organised by deviation, class accumulation, GEMM tiles ([phase2.md](phase2.md) §8) | 21 |
 | 23 | `lumice-area-weighting-recheck`: absolute scale after Lumice's projected-area fix | Ice Halo #597 merged |
-| 24 | scrum `phase2-contour-quadrature` (M2): `dp-field-topology` → `dp-field-layer` → `s2-contour-extraction` → `s2-contour-quadrature` → `phase1-seeds-from-store` → `ch10-numerical-verdicts` — `dp-field-layer` **done 2026-09-24** (`lumice_integral.dp_field`, [phase2.md](phase2.md) §3.1); `s2-contour-extraction` **done 2026-09-24** (`lumice_integral.contour`, [phase2.md](phase2.md) §4); `s2-contour-quadrature` **done 2026-09-25** (`lumice_integral.contour_quadrature`, [phase2.md](phase2.md) §4); `phase1-seeds-from-store` **done 2026-09-25** (`s2_store.StoreSeeds`, `discovery.check_band_coverage`; `prescan` deleted; [phase1.md](phase1.md) §5) | 21 |
+| 24 | scrum `phase2-contour-quadrature` (M2): `dp-field-topology` → `dp-field-layer` → `s2-contour-extraction` → `s2-contour-quadrature` → `phase1-seeds-from-store` → `ch10-numerical-verdicts` — `dp-field-layer` **done 2026-09-24** (`lumice_integral.dp_field`, [phase2.md](phase2.md) §3.1); `s2-contour-extraction` **done 2026-09-24** (`lumice_integral.contour`, [phase2.md](phase2.md) §4); `s2-contour-quadrature` **done 2026-09-25** (`lumice_integral.contour_quadrature`, [phase2.md](phase2.md) §4); `phase1-seeds-from-store` **done 2026-09-25** (`s2_store.StoreSeeds`, `discovery.check_band_coverage`; `prescan` deleted; [phase1.md](phase1.md) §5); `ch10-numerical-verdicts` **done 2026-09-25** (`lumice_integral.ch10_verdicts`, `lumice_integral.focusing`, [phase2.md](phase2.md) §10; Liljequist (i), the A60-10 142° edge, blocked on internal partial reflection) | 21 |
 
 Deferred: the chapter-11 table (path classes × pose families) after 22 and
 M2; divergent light ([phase2.md](phase2.md) §9, backlog); finite solar disk;
@@ -95,8 +95,22 @@ Moved to [phase2.md](phase2.md).
 integral and boundaries → §2 (the level sets themselves, extracted: §4,
 "Implemented: contour extraction"); (c) topology and completeness → §3.1
 (the certificate checked on extracted components: §4); (d)
-layered invariance → §3.2 (symmetry: §3.3); (e) fixtures → §4; (f) design
-constraints → §4; (g) open points → §10.
+layered invariance → §3.2 (symmetry: §3.3); (e) fixtures → §4, measured
+(task `ch10-numerical-verdicts`): Liljequist is one mirror-slab field for
+`1-3-2` / `3-5-6-7-3`, $|\nabla D_P| = 2$, critical values independent of
+$h/a$ to `6e-14`°, the peak pinned at the boundary critical value 153.0697°
+and approached as $\varepsilon^{0.49}$; A60-10 (142°) blocked, 0 valid poses;
+the parhelic circle of plates (`1-3-2`) is the window with $d\theta/d\phi = 2$,
+to `8.6e-5` at $\sigma = 0.25°$ (`tests/test_ch10_verdicts.py::test_liljequist_*`,
+`test_a60_10_is_blocked_by_the_internal_tir_gate`, `test_parhelic_circle_*`);
+(f) design constraints → §4; (g) open points → §10: the 22° inner edge is a
+finite jump for random orientation (limit $w^*2\pi/\sqrt{\det H}$, pixel
+value `0.541535`, reached to `0.99805` at $\varepsilon = 10^{-6}$, extrapolated
+`1.000023`), $1/\sqrt{\ }$ only through the column density between
+$\varepsilon_c \propto \sigma^{1.97}$ and `3e-3` rad
+(`test_inner_edge_*`); the two kinds of focusing are an explicit label,
+`lumice_integral.focusing` (`tests/test_focusing.py`), and no fixture has
+Jacobian focusing.
 
 ### 4.2 Band-sum quadrature (precomputed $S^2$ events)
 
@@ -439,3 +453,30 @@ Moved to [overview.md](overview.md) §3.
   architecture decision: `AGENTS.md` keeps TIR as an explicit event, and
   Phase I continuation, `dp_field`'s boundary walk and the store's validity
   all depend on it. No baseline was re-pinned.
+- **2026-09-25**: the chapter-10 verdicts are measurements on the Phase II
+  chains (task `ch10-numerical-verdicts`; [phase2.md](phase2.md) §4, §10 and
+  appendix "Chapter-10 verdicts"; figure data by
+  `scripts/ch10_numerical_verdicts.py`, schema `lumice-integral.ch10-verdict/v1`).
+  (1) The random-orientation 22° inner edge is a finite jump, not a
+  $1/\sqrt{\ }$ divergence; the $1/\sqrt{\ }$ profile belongs to the column
+  density at the tangent-arc contact and is capped at
+  $\varepsilon_c \propto \sigma^2$ (at the canonical $0.5°$ it spans only
+  `[1e-3, 3e-3]` rad). (2) Liljequist item (i), the 142° A60-10 edge, stays
+  **blocked**: `tests/test_ch10_verdicts.py::test_a60_10_is_blocked_by_the_internal_tir_gate`
+  locks the current state (0 valid poses; part of the sphere passes every
+  gate but internal TIR), so the owner decision of the previous entry is
+  the unblocking condition; no number was taken from the scratchpad probe.
+  Item (ii): the Liljequist peak does not move with $h/a$; it is pinned to a
+  shape-independent boundary critical value and the window shapes it (the
+  premise "the window moves with the cross-section" is corrected in
+  phase2.md §4). (3) The parhelic circle's fixture is `1-3-2`, not
+  `3-1-6` (a basal-face mirror: one deviation under plates). (4) "Dimension
+  collapse vs Jacobian focusing" is an explicit output,
+  `lumice_integral.focusing.classify(crystal, faces, density)`: profiles from
+  the $D_P$ critical set, confined dimensions from the density's type (no
+  width threshold). The label is derived from the same critical data and
+  densities the renderers use; the renderers' values are unchanged. In
+  phase2.md §10 "$W = 0$ classes are point masses" now reads $M = I$,
+  $W = I$ ($W$ the unfolded wedge refraction, `docs/conventions.md` row 13).
+  Found, not changed: `contour.extract_level_sets` needs chunking on paths
+  whose critical-data seeds are empty (`1-3-2`); backlog.
