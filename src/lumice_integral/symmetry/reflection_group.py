@@ -206,7 +206,7 @@ def path_matrix(faces: Sequence[int]) -> np.ndarray:
 
 
 def refraction_cancels(faces: Sequence[int]) -> bool:
-    """「平行光路」的精确判据：出射面法向 $n_{out} = -M\,n_{in}$（$M$ = 内反射镜面连乘）。
+    r"""「平行光路」的精确判据：出射面法向 $n_{out} = -M\,n_{in}$（$M$ = 内反射镜面连乘）。
 
     首尾面字面平行（同面或对面）只是 $M n_{in} = \pm n_{in}$ 的特例；ch3 笔记的典型光路里 ``3-1-5-7-4``、``3-4-5`` 等
     10 条首尾面并不平行，但入射 / 出射两次折射同样精确抵消（$M$ 是正交阵、把入射面法向搬到出射面法向的反向，

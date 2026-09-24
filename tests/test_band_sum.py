@@ -10,6 +10,7 @@ output.
 
 from __future__ import annotations
 
+import csv
 import json
 from pathlib import Path
 
@@ -378,6 +379,24 @@ def test_output_is_readable_by_read_strip(tmp_path):
     header = files["pixels"].read_text().splitlines()[0].split(",")
     assert tuple(header) == PIXEL_CSV_COLUMNS
     assert len(files["pixels"].read_text().splitlines()) == 1 + window.pixel_count
+
+
+def test_pixels_csv_columns_are_float_parseable(tmp_path):
+    """``csv_row`` must stay ``float()``-parseable even where the source is a numpy scalar (``band_sum_estimate``)."""
+    scene = scene_of(single_path_class(canonical_crystal(), (3, 5)))
+    window = Window((395, 400), (124, 129))
+    results, execution = render_band_sum_window(scene, window, N_SMALL, base_dir=tmp_path / "stores", run_checks=False)
+    assert any(r.value > 0.0 for r in results)  # exercises band_sum_estimate, not just the total == 0.0 shortcut
+    files = write_band_sum_strip(
+        tmp_path / "out", results, scene=scene, n=N_SMALL, window=window,
+        pose_density_block=pose_density_provenance("column", zenith_std_deg=0.5), execution=execution,
+    )
+    with files["pixels"].open(newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    assert rows
+    for row in rows:
+        for name in PIXEL_CSV_COLUMNS:
+            float(row[name])
 
 
 def test_rank0_class_puts_the_task9_point_mass_on_the_sun_pixel_only(tmp_path):
