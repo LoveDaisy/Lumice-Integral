@@ -1,6 +1,7 @@
 """The SUN^2 band-sum renderer (``lumice_integral.band_sum``, roadmap section 4.2).
 
 Hand-built events pin the estimator's closed form; small real stores pin the
+scatter form of the window renderer against the per-pixel gather (the oracle), the
 class aggregation (one store per ``D6h`` orbit, proper and improper
 transports, against every ``Phi`` group's own store on the ``g``-moved
 lattice, the same points), the per-event ``K`` / ``K_eff``, the rank-0
@@ -23,6 +24,7 @@ from lumice_integral.band_sum import (
     K_EFF_SEMANTICS,
     PIXEL_CSV_COLUMNS,
     BandSumScene,
+    ScatterSums,
     StoreGroup,
     Transport,
     band_contributions,
@@ -32,7 +34,10 @@ from lumice_integral.band_sum import (
     class_band_sum_pixel,
     kish_k_eff,
     pixel_band,
+    pixel_bands,
     render_band_sum_window,
+    scatter_results,
+    scatter_store,
     single_path_class,
     store_plan,
     write_band_sum_strip,
@@ -49,7 +54,7 @@ from lumice_integral.optics import path_id_of
 from lumice_integral.path_class import build_path_class, pixel_solid_angle
 from lumice_integral.pose_density import build_pose_density
 from lumice_integral.pose_density_provenance import pose_density_provenance
-from lumice_integral.s2_store import build_event_store, store_lattice
+from lumice_integral.s2_store import S2Events, build_event_store, store_lattice
 from lumice_integral.strip_io import Window, read_strip
 from lumice_integral.strip_pixel import STATUS_HAS_COMPONENT, STATUS_RENDERED
 
@@ -321,6 +326,110 @@ def test_per_event_k_eff_is_the_iid_noise_of_a_class_band_sum():
     assert z_rms["plate"][1] > 2.0 and z_rms["parry"][1] > z_rms["parry"][0], z_rms
 
 
+# -------------------------------------------------- scatter vs gather oracle
+FAMILIES = {
+    "random": {},
+    "column": {"zenith_std_deg": 0.5},
+    "plate": {"zenith_std_deg": 1.0},
+    "parry": {"zenith_std_deg": 1.0, "roll_std_deg": 1.0},
+    "lowitz": {"zenith_std_deg": 1.0, "roll_std_deg": 1.0},
+}
+WIDE_RENDER = {"width": 41, "height": 41, "fov_deg": 150.0, "view": {"azimuth": 0.0, "elevation": 15.0}}
+PARHELIA_RENDER = {"width": 81, "height": 41, "fov_deg": 60.0, "view": {"azimuth": 0.0, "elevation": 15.0}}
+
+
+def scatter(stores, density, pixels, sun=SUN, render=CANONICAL_RENDER, **kwargs):
+    bands = pixel_bands(pixels, sun, render)
+    sums = ScatterSums.zeros(len(bands))
+    for events, group in stores:
+        scatter_store(events, group, density, bands, sums, **kwargs)
+    return scatter_results(bands, sums, N_SMALL)
+
+
+def assert_scatter_equals_gather(scattered, gathered, *, rel=1e-12, k_eff_rel=1e-12):
+    """Same band (bit for bit: delta, width, K, K_rho_pos), value and K_eff to round-off (summation order).
+
+    The pose enters as ``W[2, :] . F_i[j, :]`` instead of the third row of
+    ``W F_i^T``: the same three products, rounded differently.  A narrow
+    density amplifies that: ``d log rho = (theta - mean) / std^2 d theta``,
+    and the roll ``atan2(-e2, e1)`` of a nearly vertical c axis (Lowitz) has
+    ``d psi ~ eps / sin(theta)``.  A value is a sum over many events and
+    keeps ``1e-12``; a ``K_eff`` near 1 is one or two events' ratio and
+    carries their error undiluted (``k_eff_rel``).
+    """
+    lit = 0
+    for a, b in zip(scattered, gathered, strict=True):
+        assert (a.row, a.column, a.delta, a.band_width_rad, a.K, a.K_rho_pos) == (
+            b.row, b.column, b.delta, b.band_width_rad, b.K, b.K_rho_pos
+        )
+        assert (a.value == 0.0) == (b.value == 0.0)
+        assert a.value == pytest.approx(b.value, rel=rel, abs=0.0), (a.row, a.column)
+        assert a.K_eff == pytest.approx(b.K_eff, rel=k_eff_rel, abs=0.0), (a.row, a.column, a.K_eff)
+        lit += b.value > 0.0
+    return lit
+
+
+@pytest.fixture(scope="module")
+def class_stores():
+    """Class ``[3,5]`` (12 proper transports) and ``[1,3,5,2]`` (improper ones), one store each; ``[3,5]`` per group too."""
+    crystal = canonical_crystal()
+    out = {}
+    for representative in ((3, 5), (1, 3, 5, 2)):
+        (group,) = store_plan(build_path_class(crystal, representative), crystal)
+        out[representative] = [(build(group.members, N_SMALL).events, group)]
+    per_group = store_plan(build_path_class(crystal, (3, 5)), crystal, transport=False)
+    out["3-5 per group"] = [(build(group.members, N_SMALL).events, group) for group in per_group]
+    return out
+
+
+@pytest.mark.parametrize("family", sorted(FAMILIES))
+@pytest.mark.parametrize("case", [(3, 5), (1, 3, 5, 2), "3-5 per group"])
+def test_scatter_form_equals_the_gather_oracle(class_stores, family, case):
+    """``scatter_store`` against ``class_band_sum_pixel`` on every family, proper and improper transports, many stores.
+
+    Small chunks and blocks put chunk and block edges inside most bands;
+    rows 40-60 of the canonical camera cover the inner-edge caustic.
+    """
+    stores = class_stores[case]
+    density = build_pose_density(family, **FAMILIES[family])
+    arrays = [(events.arrays(), group) for events, group in stores]
+    if case == (1, 3, 5, 2):
+        views = [(WIDE_RENDER, [(r, c) for r in range(0, 41, 3) for c in range(0, 41, 4)])]
+    else:  # the canonical camera (the columns are dark under plate and Lowitz densities) and one about the parhelia
+        views = [
+            (CANONICAL_RENDER, [(r, c) for c in (0, 126, 250) for r in [*range(40, 61), *range(61, 801, 53)]]),
+            (PARHELIA_RENDER, [(r, c) for r in range(0, 41, 5) for c in range(0, 81, 5)]),
+        ]
+    lit = 0
+    for render, pixels in views:
+        scattered = scatter(stores, density, pixels, render=render, event_chunk=257, pixel_block=19)
+        gathered = [class_band_sum_pixel(arrays, SUN, density, r, c, N_SMALL, render) for r, c in pixels]
+        lit += assert_scatter_equals_gather(scattered, gathered, k_eff_rel=1e-12 if family != "lowitz" else 1e-10)
+    assert lit >= 5
+
+
+def test_scatter_band_edges_are_the_gathers_left_closed_right_open():
+    """Hand-built events on and next to both band ends: the same ``K`` and value as the gather, bit for bit."""
+    row, column = 400, 126
+    _, delta, lo, hi = pixel_band(row, column, SUN)
+    d = np.array([lo - 1e-6, np.nextafter(lo, -1.0), lo, 0.5 * (lo + hi), np.nextafter(hi, -1.0), hi, hi + 1e-3])
+    w = np.arange(1.0, 8.0)
+    u = np.tile([-1.0, 0.0, 0.0], (len(d), 1))
+    events = S2Events(u, np.stack([np.cos(d), np.sin(d), np.zeros(len(d))], axis=1), d, w)
+    group = identity_group([(3, 5)])
+    for density in (UNIFORM, canonical_pose_density()):
+        for chunk in (1, 2, 3, 4096):
+            (a,) = scatter([(events, group)], density, [(row, column)], event_chunk=chunk, pixel_block=1)
+            b = class_band_sum_pixel([(events.arrays(), group)], SUN, density, row, column, N_SMALL)
+            assert (a.K, a.K_rho_pos, a.total) == (b.K, b.K_rho_pos, b.total) == (3, a.K_rho_pos, b.total)
+    (a,) = scatter([(events, group)], UNIFORM, [(row, column)])
+    assert a.total == 3.0 + 4.0 + 5.0
+    # A band with no event, and pixels that share no event with the chunk walk, stay exactly 0.
+    empty = S2Events(u[:1], events.phi[:1], np.array([hi + 1.0]), w[:1])
+    (z,) = scatter([(empty, group)], UNIFORM, [(row, column)])
+    assert (z.value, z.K, z.K_rho_pos, z.K_eff) == (0.0, 0, 0, 0.0)
+
+
 # ----------------------------------------------------------- window + io
 def scene_of(path_class, render=CANONICAL_RENDER, **kwargs) -> BandSumScene:
     return BandSumScene(
@@ -345,12 +454,19 @@ def test_window_render_workers_agree_and_the_cache_is_reused(tmp_path, monkeypat
         raise AssertionError("the cached store must be loaded, not rebuilt")
 
     monkeypatch.setattr(s2_store, "_build_into", no_rebuild)
-    two, _ = render_band_sum_window(scene, window, N_SMALL, workers=2, base_dir=tmp_path, run_checks=False)
-    key = lambda r: (r.row, r.column)  # noqa: E731
-    assert [(r.row, r.column, r.value, r.K, r.K_eff) for r in sorted(one, key=key)] == [
-        (r.row, r.column, r.value, r.K, r.K_eff) for r in sorted(two, key=key)
-    ]
+    two, execution_two = render_band_sum_window(scene, window, N_SMALL, workers=2, base_dir=tmp_path, run_checks=False)
+    # Column by column, rows within a column (the order does not depend on the deviation segments).
+    assert [(r.row, r.column) for r in one] == [(r.row, r.column) for r in two] == [(r, c) for c in range(124, 129) for r in range(395, 400)]
+    # Another segmentation groups other pixels into a block: the sums agree to round-off, the bands exactly.
+    assert_scatter_equals_gather(two, one, rel=1e-13)
     assert any(r.value > 0.0 for r in one)
+    assert len(execution["segments"]) == 1 and len(execution_two["segments"]) == 2
+    assert sum(s["pixels"] for s in execution_two["segments"]) == 25
+    # The gather oracle, pixel for pixel.
+    events = s2_store.S2EventStore.load(tmp_path / execution["stores"][0]["cache_key"]).events.arrays()
+    (group,) = scene.plan
+    gathered = [class_band_sum_pixel([(events, group)], SUN, scene.pose_density, r.row, r.column, N_SMALL) for r in one]
+    assert_scatter_equals_gather(one, gathered)
 
 
 def test_one_store_serves_every_sun_altitude(tmp_path, monkeypatch):
@@ -371,6 +487,13 @@ def test_one_store_serves_every_sun_altitude(tmp_path, monkeypatch):
     key = lambda r: (r.row, r.column)  # noqa: E731
     assert [(r.value, r.K) for r in sorted(second, key=key)] == [(r.value, r.K) for r in sorted(fresh, key=key)]
     assert len(second) == 25 and any(r.value > 0.0 for r in first)
+    # Both altitudes from the one store against the gather oracle at that altitude.
+    events = s2_store.S2EventStore.load(tmp_path / "shared" / first_execution["stores"][0]["cache_key"]).events.arrays()
+    (group,) = scene.plan
+    for rendered, sun in ((first, scene.sun_direction), (second, higher.sun_direction)):
+        gathered = [class_band_sum_pixel([(events, group)], sun, scene.pose_density, r.row, r.column, N_SMALL) for r in rendered]
+        assert_scatter_equals_gather(rendered, gathered)
+    assert [r.K for r in first] != [r.K for r in second]
 
 
 def test_output_is_readable_by_read_strip(tmp_path):
