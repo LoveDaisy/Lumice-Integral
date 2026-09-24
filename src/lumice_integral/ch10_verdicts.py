@@ -339,10 +339,11 @@ def inner_edge(options: InnerEdgeOptions = InnerEdgeOptions()) -> Verdict:
     statement = (
         f"Random orientation: finite jump at D_min = {np.degrees(d_min):.6f} deg. The level-set integral tends to "
         f"w* 2 pi / sqrt(det H) (pixel value {pixel_limit:.6g}); at eps = {eps_r[-1]:.0e} rad the ratio is {ratio[-1]:.5f}, "
-        f"approached as 1 - {a:.3f} sqrt(eps) (the |u_z| kink of the entry area predicts {predicted_sqrt_coefficient:.3f}), "
+        f"approached as 1 - {a:.3f} sqrt(eps) (the kinks of w = A_P T_P at the minimum predict {predicted_sqrt_coefficient:.3f}), "
         f"extrapolated {c:.6f}. Column family at the tangent-arc contact (ring azimuth {np.degrees(azimuth):.1f} deg, the top): "
         f"I ~ eps^(-1/2) (local slope within {options.power_law_band} of -1/2) only between a cap crossover "
-        f"eps_c ~ sigma^{crossover_exponent:.2f} and {max(p['power_law_window_eps'][1] for p in per_width if p['power_law_window_eps']):.1e} rad, "
+        f"eps_c ~ sigma^{'?' if crossover_exponent is None else f'{crossover_exponent:.2f}'} "
+        f"(from {len(crossovers)} widths) and {max(p['power_law_window_eps'][1] for p in per_width if p['power_law_window_eps']):.1e} rad, "
         f"finite below eps_c (cap x sigma roughly constant); at the canonical sigma = {canonical['zenith_std_deg']} deg the "
         f"window is {_window_text(canonical['power_law_window_eps'])} and the cap is {canonical['value_at_smallest_eps']:.4g}."
     )
