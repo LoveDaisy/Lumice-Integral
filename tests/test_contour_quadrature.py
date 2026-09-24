@@ -86,6 +86,23 @@ def test_points_on_level_set_with_own_deviation(canonical) -> None:
     np.testing.assert_allclose(np.einsum("nij,nj->ni", rotations, q), np.broadcast_to(sun, q.shape), atol=1e-13)
 
 
+def test_max_residual_is_surfaced_on_the_pixel_result(canonical) -> None:
+    """``max_residual`` reaches ``ContourQuadratureResult``/``ContourPixelResult``, not just ``LevelSetGeometry`` (code-review round 1 Major).
+
+    Nothing downstream of :meth:`LevelSetGeometry.build` used to read its
+    ``max_residual``; a non-canonical render had no way to notice a
+    non-converged Newton panel short of a one-off probe script.
+    """
+    sun, centre, _, geometry = canonical
+    (result,) = geometry.integrate(sun, [centre], canonical_pose_density())
+    assert result.max_residual == geometry.residual_by_unit[0] == geometry.max_residual
+    assert result.max_residual < 1e-12
+    pixel = cq._combine(150, 150, result.delta, 0.0, np.ones(1), [result], 1.0)
+    assert pixel.max_residual == result.max_residual
+    assert "max_residual" in cq.PIXEL_CSV_COLUMNS
+    assert pixel.csv_row()["max_residual"] == repr(float(pixel.max_residual))
+
+
 def test_geometry_weights_are_the_store_weights(field, canonical) -> None:
     """The geometric integrand's ``w`` is :func:`.s2_store.evaluate_fields`' (the event store's weight), not a second implementation."""
     _, _, level_set, geometry = canonical

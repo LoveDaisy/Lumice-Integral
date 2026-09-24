@@ -77,3 +77,21 @@ def test_small_window(cli, tmp_path, band_nodes) -> None:
     if band_nodes == 0:
         # the canonical pixel's row: (150, 150) at 1e-9 (tests/test_contour_quadrature.py holds it at 1e-11)
         assert abs(arrays.values[150, 150] / 6.58152199151 - 1.0) < 1e-8
+
+
+def test_small_window_multi_worker(cli, tmp_path) -> None:
+    """``--workers 2`` exercises the ``spawn`` pool (``_worker_init``/``_worker_column``), not just the single-process path.
+
+    Production renders (``AGENTS.md``) always run with ``--workers > 1``; the
+    default single-process test above never pickles ``ContourQuadratureScene``
+    across a process boundary or rebuilds ``DPField`` in a worker, so it would
+    not catch a future non-picklable change there.
+    """
+    out = tmp_path / "render-multi-worker"
+    cli.main(["--rows", "150:152", "--columns", "150:151", "--store-n", "20000", "--store-cache-dir", str(tmp_path / "stores"),
+              "--skip-store-self-checks", "--workers", "2", "--output-dir", str(out), "--quiet"])
+    arrays, provenance = read_strip(out)
+    assert provenance["execution"]["workers"] == 2
+    lit = arrays.values[150:152, 150]
+    assert np.all(lit > 0.0) and arrays.rendered.sum() == 2
+    assert abs(arrays.values[150, 150] / 6.58152199151 - 1.0) < 1e-8

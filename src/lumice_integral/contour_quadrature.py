@@ -41,6 +41,13 @@ with ``c(t)`` the great-circle arc from ``a`` to ``b``, ``n`` the arc's pole and
 D_s``, both by ``jax.jvp``).  So every quadrature point is on the level set to
 round-off and the chord never stands in for the arc
 (``scratchpad/learnings``: a chord parametrisation lowers Simpson's order).
+The Newton residual is not asserted at build time (a non-convergent panel
+still yields a finite, if wrong, point); it is instead carried through as
+``max_residual`` on :class:`ContourQuadratureResult` / :class:`ContourPixelResult`
+and rolled up in ``provenance.json``'s ``summary.max_residual_rad`` /
+``summary.residual_exceeded_pixels`` (against ``EXTREMUM_ATOL``), so a render
+on a non-canonical crystal or an extreme-kink geometry carries evidence of
+this invariant rather than only the canonical fixture's unit test.
 
 Quadrature.  Simpson on five points of ``t`` per panel (``N``) against its
 three-point subset (``N / 2``): ``|S_N - S_{N/2}| / 15`` is the panel's error
@@ -112,6 +119,9 @@ from .band_sum import pixel_band
 from .contour import LevelSet, extract_level_sets
 from .dp_field import DPField
 from .dp_field.boundary import EXTREMUM_ATOL
+# Non-underscore dp_field/dp_field.boundary symbols (d_value, margin_vector, EXTREMUM_ATOL) are the
+# package's ordinary public surface and are imported directly; only genuinely private names (leading
+# underscore, e.g. dp_field.field._PROBE_SUN above) get an independent declaration instead.
 from .dp_field.field import d_value, margin_vector
 from .quadrature import HAAR_TO_DVOL_G_FACTOR
 from .geometry import HexPrism
@@ -510,8 +520,12 @@ class ContourQuadratureResult:
     above their tolerance (the value is reported as is, not as converged);
     ``low_order_splits`` see the module docstring; ``non_finite_points`` had
     ``w > 0`` but a non-finite point or speed (integrand ``0``, counted).
-    ``status`` is ``"integrated"``, ``"empty"`` (no component) or
-    ``"critical_delta"`` (``delta`` at a critical value; not integrated).
+    ``max_residual`` is the worst ``|D_P(q) - delta]`` among this level set's
+    accepted panel points (should be at round-off; surfaced so a future
+    non-canonical render can be checked against ``EXTREMUM_ATOL`` without a
+    one-off probe script). ``status`` is ``"integrated"``, ``"empty"`` (no
+    component) or ``"critical_delta"`` (``delta`` at a critical value; not
+    integrated).
     """
 
     delta: float
@@ -529,6 +543,7 @@ class ContourQuadratureResult:
     exhausted_panels: int
     low_order_splits: int
     non_finite_points: int
+    max_residual: float = 0.0
     status: str = "integrated"
 
 
@@ -544,8 +559,9 @@ class LevelSetGeometry:
     index in ``level_sets``, ``slot`` = its component numbered across all of
     them, ``slot_offsets[j]`` the first slot of level set ``j``); the arrays
     ``evaluations`` / ``low_order_splits`` / ``exhausted_panels`` /
-    ``max_depth`` are per level set.  Build with :meth:`build`, integrate
-    pixels with :meth:`integrate`.
+    ``max_depth`` / ``residual_by_unit`` are per level set; ``max_residual``
+    is their overall worst case.  Build with :meth:`build`, integrate pixels
+    with :meth:`integrate`.
     """
 
     field: DPField
@@ -557,6 +573,7 @@ class LevelSetGeometry:
     low_order_splits: np.ndarray
     exhausted_panels: np.ndarray
     max_residual: float
+    residual_by_unit: np.ndarray
 
     @classmethod
     def build(cls, field: DPField, level_sets: Sequence[LevelSet], options: QuadratureOptions = QuadratureOptions()) -> "LevelSetGeometry":
@@ -566,10 +583,19 @@ class LevelSetGeometry:
         assert leaves is not None
         order = np.argsort(leaves.unit, kind="stable")
         leaves = leaves.take(order)
-        residual = float(np.max(np.abs(field.d_p_batch(leaves.q.reshape(-1, 3)) - np.repeat(leaves.delta, 5)))) if len(leaves) else 0.0
+        if len(leaves):
+            node_residual = np.abs(field.d_p_batch(leaves.q.reshape(-1, 3)) - np.repeat(leaves.delta, 5)).reshape(-1, 5)
+            leaf_residual = node_residual.max(axis=1)
+        else:
+            leaf_residual = np.zeros(0)
+        residual = float(leaf_residual.max()) if len(leaf_residual) else 0.0
+        residual_by_unit = np.zeros(len(level_sets))
+        if len(leaves):
+            np.maximum.at(residual_by_unit, leaves.unit, leaf_residual)
         offsets = np.r_[0, np.cumsum(np.bincount(slot_unit, minlength=len(level_sets)))]
         evaluations = 5 * np.bincount(nodes.unit, minlength=len(level_sets)) + 4 * tally.splits
-        return cls(field, level_sets, options, leaves, offsets, evaluations, tally.low_order_splits, tally.exhausted, residual)
+        return cls(field, level_sets, options, leaves, offsets, evaluations, tally.low_order_splits, tally.exhausted, residual,
+                   residual_by_unit)
 
     def integrate(
         self, sun: np.ndarray, centres: Sequence[np.ndarray] | np.ndarray, density, level_set_index: Sequence[int] | None = None
@@ -630,6 +656,7 @@ class LevelSetGeometry:
                 exhausted_panels=int(self.exhausted_panels[group] + tally.exhausted[job]),
                 low_order_splits=int(self.low_order_splits[group] + tally.low_order_splits[job]),
                 non_finite_points=int(np.sum(self.panels.bad[bounds[group]:bounds[group + 1]])),
+                max_residual=float(self.residual_by_unit[group]),
                 status="integrated" if level_set.components else "empty",
             ))
         return results
@@ -643,7 +670,7 @@ def critical_delta(field: DPField, delta: float) -> bool:
 
 def not_integrated(delta: float, status: str) -> ContourQuadratureResult:
     """The record of a pixel that was not integrated (``status`` says why); value ``0``."""
-    return ContourQuadratureResult(delta, 0.0, 0.0, 0.0, 0.0, (), 0, 0, 0, 0, 0, 0, 0, 0, 0, status)
+    return ContourQuadratureResult(delta, 0.0, 0.0, 0.0, 0.0, (), 0, 0, 0, 0, 0, 0, 0, 0, 0, status=status)
 
 
 # ---- rendering ----------------------------------------------------------------------------------------
@@ -652,7 +679,7 @@ FORMAT_VERSION = "lumice-integral.contour-quadrature/v1"
 PIXEL_CSV_COLUMNS = (
     "row", "column", "value", "error_estimate", "delta_deg", "band_width_rad", "status", "n_closed", "n_open",
     "level_sets", "panels", "geometry_evaluations", "pixel_evaluations", "max_depth", "exhausted_panels",
-    "low_order_splits", "non_finite_points",
+    "low_order_splits", "non_finite_points", "max_residual",
 )
 
 
@@ -697,6 +724,10 @@ class ContourPixelResult:
     ``status`` is ``"integrated"``, ``"empty"`` (no component: dark) or
     ``"critical_delta"`` (the centre ``delta`` of a point pixel within
     ``EXTREMUM_ATOL`` of a critical value: not integrated, value ``0``).
+    ``max_residual`` is the worst level-set point residual among the pixel's
+    deviations (see :class:`ContourQuadratureResult`); a non-canonical render
+    should compare it against ``EXTREMUM_ATOL`` (``provenance.json``'s
+    ``summary.max_residual_rad`` / ``summary.residual_exceeded_pixels``).
     """
 
     row: int
@@ -716,6 +747,7 @@ class ContourPixelResult:
     exhausted_panels: int
     low_order_splits: int
     non_finite_points: int
+    max_residual: float = 0.0
 
     def csv_row(self) -> dict[str, Any]:
         row = dataclasses.asdict(self)
@@ -723,6 +755,7 @@ class ContourPixelResult:
         row["error_estimate"] = repr(float(self.error_estimate))
         row["delta_deg"] = repr(float(np.degrees(row.pop("delta"))))
         row["band_width_rad"] = repr(float(self.band_width_rad))
+        row["max_residual"] = repr(float(self.max_residual))
         return row
 
 
@@ -757,6 +790,7 @@ def _combine(row: int, column: int, delta: float, width: float, weights: np.ndar
         geometry_evaluations=sum(r.geometry_evaluations for r in results), pixel_evaluations=sum(r.evaluations for r in results),
         max_depth=max((r.max_depth for r in results), default=0), exhausted_panels=sum(r.exhausted_panels for r in results),
         low_order_splits=sum(r.low_order_splits for r in results), non_finite_points=sum(r.non_finite_points for r in results),
+        max_residual=max((r.max_residual for r in results), default=0.0),
     )
 
 
@@ -991,6 +1025,9 @@ def write_contour_quadrature_strip(
             "value_mean": float(rendered_values.mean()) if rendered_values.size else None,
             "relative_error_estimate_max_lit": float(relative_error.max()) if relative_error.size else None,
             "relative_error_estimate_median_lit": float(np.median(relative_error)) if relative_error.size else None,
+            "residual_tolerance_rad": EXTREMUM_ATOL,
+            "max_residual_rad": max((r.max_residual for r in results), default=0.0),
+            "residual_exceeded_pixels": int(sum(r.max_residual > EXTREMUM_ATOL for r in results)),
         },
         "execution": dict(execution),
         "environment": environment_block(),
