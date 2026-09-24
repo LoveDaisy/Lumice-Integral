@@ -10,37 +10,38 @@ over the Haar probability measure: the power per steradian that one crystal of
 random pose sends along path ``P`` into direction ``w``, per unit incident
 irradiance.  ``A_P`` is the *absolute* entry cross-section (``entry_measure``).
 
-Lumice (Ice Halo repository ``src/core/simulator.cpp``, read as evidence,
-never linked) samples every ray's crystal pose from ``rho`` alone
+Lumice (Ice Halo repository at ``2056f699``, ``src/core/simulator.cpp``, read
+as evidence, never linked) samples every ray's crystal pose from ``rho`` alone
 (``InitRay_rot``), gives it the emission weight of its wavelength
-(``InitRay_d_w_previdx``: weight 1 here, no pose-dependent factor), and only
-then picks the entry point with probability proportional to the projected area
-of each front-facing sub-triangle (``InitRay_p_fid``:
-``max(-d . n, 0) * area``).  One emitted ray therefore enters path ``P`` with
-probability ``A_P(R) / A_tot(R)``, ``A_tot`` being the crystal's whole projected
-silhouette; the orientation is *not* weighted by ``A_tot``.  With Fresnel
-factors identical on both sides (per-interface s/p average,
+(``InitRay_d_w_previdx``: weight 1 here), and at entry (``InitRay_p_fid``)
+multiplies that weight by ``A_tot(R) / (S / 2)`` (``lm_pcg::entry_weight``,
+``src/core/shared/pcg_shared.h``; ``A_tot`` the crystal's projected silhouette
+along the ray, ``S`` its total surface area) before picking the entry
+sub-triangle with probability ``max(-d . n, 0) * area / A_tot``.  The weight a
+ray loses at entry still counts toward ``emitted_energy`` (``doc/configuration.md``).
+One emitted ray therefore lands on path ``P`` with expected weight
+``(A_tot / (S/2)) (A_P / A_tot) = A_P / (S/2)``: ``A_tot`` cancels.  With
+Fresnel factors identical on both sides (per-interface s/p average,
 ``optics_shared.h::GetReflectRatio`` vs ``optics.fresnel_transmission_path``)
 the expected Lumice pixel is
 
-    raw[p] / E = N_sym * ybar(550) * Omega_p * V~(w_p),
-    V~(w) = (1 / 8 pi^2) int rho (A_P / A_tot) T / J_perp dH^1
+    raw[p] / E = K_p * V(w_p),  K_p = N_sym * ybar(550) * Omega_p / (S / 2)
 
 with ``N_sym`` the number of symmetry-equivalent raypaths the ``[3, 5]``
 filter admits (``PBD``: 12; under the canonical density -- uniform azimuth
 and roll, zenith symmetric about 90 deg -- every equivalent raypath has the
 same sky image in expectation, so the fold is one scalar), ``ybar(550)`` the
-CIE 1931 Y matching function Lumice multiplies into the Y channel, and
-``Omega_p`` the pixel's solid angle (linear lens: ``cos^3(theta) / scale^2``).
-Hence the conversion
+CIE 1931 Y matching function Lumice multiplies into the Y channel, ``Omega_p``
+the pixel's solid angle (linear lens: ``cos^3(theta) / scale^2``) and ``S``
+in the strip's length unit (hexagon edge ``a = 1``; the ratio ``A_tot / (S/2)``
+is scale-free, so Lumice's equal-surface-area crystal size convention only
+matters between crystals).  ``K_p`` depends on the pixel through ``Omega_p``
+alone; nothing is fitted.  The remaining differences are Monte Carlo noise and
+the point (pixel-centre) versus pixel-area model.
 
-    raw[p] / E = K_p * V(w_p),  K_p = N_sym * ybar * Omega_p / A_eff(w_p),
-
-with ``A_eff = V / V~`` the fiber-weighted harmonic mean of ``A_tot`` (crystal
-length^2).  ``V~`` is computed here on the very components ``V`` is (one
-discovery, two quadratures), with ``rho / A_tot`` as the pose weight; nothing
-is fitted.  The remaining differences are Monte Carlo noise and the point
-(pixel-centre) versus pixel-area model.
+Lumice before ``6fc48bb4`` did not apply the entry weight; its conversion
+carried the fiber-weighted harmonic mean ``A_eff`` of ``A_tot`` instead of
+``S / 2`` (``docs/ch06-reference-fixture.md`` section 7, stage 4, history).
 
 Nothing here imports or calls Lumice; ``src/`` is not modified.  Usage::
 
@@ -54,7 +55,6 @@ import csv
 import datetime as dt
 import json
 import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -70,7 +70,6 @@ from lumice_integral.canonical_scene import (
 )
 from lumice_integral.discovery import discover_components, retarget_problem
 from lumice_integral.geometry import HexPrism
-from lumice_integral.pose_density import PoseDensity
 from lumice_integral.quadrature import integrate_fiber_resampled
 from lumice_integral.optics import PATH_3_5_FACES
 from lumice_integral.strip_pixel import PixelOptions, StripScene, build_strip_scene, pixel_target, subpixel_targets
@@ -84,40 +83,23 @@ LUMICE_SYMMETRY_FOLD = {"P": 6, "PBD": 12}
 DEFAULT_COLUMNS = (106, 126, 146)
 
 
-def silhouette_area(crystal: HexPrism, s_body: np.ndarray) -> np.ndarray:
-    """Projected area ``sum_f max(-s . n_f, 0) area_f`` of a convex crystal for body-frame directions ``(N, 3)``.
+def total_surface_area(crystal: HexPrism) -> float:
+    """Total surface area ``S`` of the crystal: the sum of its face areas (Newell), ``6 a h + 3 sqrt(3) a^2`` for a prism.
 
-    The same sum Lumice's ``InitRay_p_fid`` normalises its entry-point sampling by.
+    ``S / 2`` is the entry-weight denominator of Lumice's ``lm_pcg::entry_weight`` (``s_total`` summed
+    over the entry sub-triangles, i.e. over every face).
     """
-    normals = []
-    areas = []
+    total = 0.0
     for face in crystal.faces:
         v = crystal.vertices[list(face.vertex_ids)]
         newell = np.sum(np.cross(v, np.roll(v, -1, axis=0)), axis=0)  # 2 x vector area of the planar polygon
-        normals.append(crystal.normal(face))
-        areas.append(0.5 * float(np.linalg.norm(newell)))
-    n = np.asarray(normals)
-    a = np.asarray(areas)
-    return np.maximum(-(np.asarray(s_body) @ n.T), 0.0) @ a
+        total += 0.5 * float(np.linalg.norm(newell))
+    return total
 
 
-@dataclass(frozen=True)
-class PerSilhouetteDensity:
-    """``rho(R) / A_tot(R)``: Lumice's per-ray pose weight (duck-typed :data:`PoseDensity`)."""
-
-    base: PoseDensity
-    crystal: HexPrism
-    incident_direction: np.ndarray
-    unit: str = "1 / crystal length^2"
-    normalization: str = "rho_pose divided by the crystal's projected silhouette area along the incident direction"
-
-    def evaluate_batch(self, rotations: np.ndarray) -> np.ndarray:
-        rotations = np.asarray(rotations, dtype=np.float64)
-        s_body = np.einsum("nji,j->ni", rotations, self.incident_direction)  # R^T s
-        return np.asarray(self.base.evaluate_batch(rotations), dtype=np.float64) / silhouette_area(self.crystal, s_body)
-
-    def __call__(self, rotation: np.ndarray) -> float:
-        return float(self.evaluate_batch(np.asarray(rotation)[None])[0])
+def pixel_constant(row: int, column: int, render: dict[str, Any], *, n_sym: int, surface_area: float) -> float:
+    """``K_p = N_sym * ybar(550) * Omega_p / (S / 2)`` of one pixel (module docstring)."""
+    return n_sym * YBAR_550 * pixel_solid_angle(row, column, render) / (0.5 * surface_area)
 
 
 def pixel_solid_angle(row: int, column: int, render: dict[str, Any]) -> float:
@@ -142,14 +124,12 @@ def integrate(scene: StripScene, target: np.ndarray, component: Any, options: Pi
     return float(q.value) if q.status == "available" else float("nan")
 
 
-def pixel_values(scene: StripScene, scene_lumice: StripScene, target: np.ndarray, options: PixelOptions, warm: tuple[np.ndarray, ...]) -> tuple[float, float, Any]:
-    """``(V, V~, discovery)`` of one target: one discovery, the two quadratures on its components."""
+def pixel_value(scene: StripScene, target: np.ndarray, options: PixelOptions, warm: tuple[np.ndarray, ...]) -> tuple[float, Any]:
+    """``(V, discovery)`` of one target: one discovery, one quadrature per component."""
     found = discover_components(
         target, scene.crystal, scene.prescan_table, template=scene.discovery_template, extra_seeds=warm, **options.discovery_kwargs()
     )
-    value = sum(integrate(scene, target, c, options) for c in found.components)
-    value_lumice = sum(integrate(scene_lumice, target, c, options) for c in found.components)
-    return float(value), float(value_lumice), found
+    return float(sum(integrate(scene, target, c, options) for c in found.components)), found
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -181,14 +161,14 @@ def main(argv: list[str] | None = None) -> None:
     per_ray = merged / emitted
 
     crystal = canonical_crystal()
-    incident = canonical_incident_direction()
-    common = dict(incident_direction=incident, refractive_index=args.refractive_index, crystal=crystal, render=CANONICAL_RENDER)
-    scene = build_strip_scene(PATH_3_5_FACES, pose_density=canonical_pose_density(), **common)
-    scene_lumice = build_strip_scene(
+    surface_area = total_surface_area(crystal)
+    scene = build_strip_scene(
         PATH_3_5_FACES,
-        pose_density=PerSilhouetteDensity(scene.pose_density, crystal, incident),
-        prescan_table=scene.prescan_table,
-        **common,
+        pose_density=canonical_pose_density(),
+        incident_direction=canonical_incident_direction(),
+        refractive_index=args.refractive_index,
+        crystal=crystal,
+        render=CANONICAL_RENDER,
     )
     options = PixelOptions()
     render = dict(CANONICAL_RENDER)
@@ -201,13 +181,13 @@ def main(argv: list[str] | None = None) -> None:
         rows = [r for r in range(0, render["height"], args.row_step) if col[r] >= args.lit_floor * col.max()]
         warm: tuple[np.ndarray, ...] = ()
         for row in rows:
-            value, value_lumice, found = pixel_values(scene, scene_lumice, pixel_target(render, row, column), options, warm)
+            value, found = pixel_value(scene, pixel_target(render, row, column), options, warm)
             warm = tuple(c.seed for c in found.components)
             omega = pixel_solid_angle(row, column, render)
-            a_eff = value / value_lumice if value_lumice > 0 else float("nan")
-            k_pixel = n_sym * YBAR_550 * omega / a_eff if value_lumice > 0 else float("nan")
-            predicted = n_sym * YBAR_550 * omega * value_lumice
+            k_pixel = pixel_constant(row, column, render, n_sym=n_sym, surface_area=surface_area)
+            predicted = k_pixel * value
             run_values = [float(y[row, column] / m["emitted_energy"]) for y, m, _ in runs]
+            measured = float(per_ray[row, column])
             records.append(
                 {
                     "row": row,
@@ -215,39 +195,39 @@ def main(argv: list[str] | None = None) -> None:
                     "components": len(found.components),
                     "complete": found.incomplete_count == 0,
                     "li_value": value,
-                    "li_value_per_silhouette": value_lumice,
-                    "a_eff": a_eff,
                     "pixel_solid_angle": omega,
                     "k_pixel": k_pixel,
-                    "lumice_per_ray": float(per_ray[row, column]),
+                    # the area that would make raw / E = N_sym ybar Omega_p V / area exact; S / 2 predicted
+                    "implied_entry_area": n_sym * YBAR_550 * omega * value / measured if measured > 0 else float("nan"),
+                    "lumice_per_ray": measured,
                     "lumice_per_ray_runs": run_values,
                     "predicted_lumice_per_ray": predicted,
-                    "measured_over_predicted": float(per_ray[row, column] / predicted) if predicted > 0 else float("nan"),
+                    "measured_over_predicted": measured / predicted if predicted > 0 else float("nan"),
                 }
             )
             r = records[-1]
-            print(f"col {column} row {row}: V {value:.4e} A_eff {a_eff:.4f} lumice/pred {r['measured_over_predicted']:.4f}")
-    # point (pixel-centre) versus pixel-area model away from the caustic: the sub-pixel mean of V~
+            print(f"col {column} row {row}: V {value:.4e} implied area {r['implied_entry_area']:.4f} lumice/pred {r['measured_over_predicted']:.4f}")
+    # point (pixel-centre) versus pixel-area model away from the caustic: the sub-pixel mean of V
     subpixel: list[dict[str, Any]] = []
     for column in args.columns:
         for row in args.subpixel_rows:
             point = next((r for r in records if r["row"] == row and r["column"] == column), None)
-            if point is None or not point["li_value_per_silhouette"] > 0:
+            if point is None or not point["li_value"] > 0:
                 continue
             warm = ()
             values = []
             for target in subpixel_targets(render, row, column, args.subpixel_grid):
-                _, v_lumice, found = pixel_values(scene, scene_lumice, target, options, warm)
+                v, found = pixel_value(scene, target, options, warm)
                 warm = tuple(c.seed for c in found.components)
-                values.append(v_lumice)
+                values.append(v)
             mean = float(np.mean(values))
             subpixel.append(
                 {
                     "row": row,
                     "column": column,
                     "grid": args.subpixel_grid,
-                    "point_over_subpixel_mean": point["li_value_per_silhouette"] / mean,
-                    "measured_over_predicted_subpixel": point["lumice_per_ray"] / (n_sym * YBAR_550 * point["pixel_solid_angle"] * mean),
+                    "point_over_subpixel_mean": point["li_value"] / mean,
+                    "measured_over_predicted_subpixel": point["lumice_per_ray"] / (point["k_pixel"] * mean),
                 }
             )
             print(f"subpixel col {column} row {row}: point/mean {subpixel[-1]['point_over_subpixel_mean']:.4f}")
@@ -273,6 +253,9 @@ def main(argv: list[str] | None = None) -> None:
         "axis_solid_angle": axis_solid_angle,
         "axis_solid_angle_sidecar": runs[0][1]["axis_solid_angle"],
         "crystal": {"a": crystal.a, "h": crystal.h},
+        "surface_area": surface_area,
+        "entry_area": 0.5 * surface_area,
+        "convention": "raw[p] / emitted_energy = K_p * V(p), K_p = N_sym * ybar(550) * Omega_p / (S / 2)",
         "elapsed_s": elapsed,
         "subpixel_check": subpixel,
         "columns": {},
@@ -280,7 +263,7 @@ def main(argv: list[str] | None = None) -> None:
     for column in args.columns:
         sel = [r for r in records if r["column"] == column and np.isfinite(r["measured_over_predicted"])]
         ratio = np.array([r["measured_over_predicted"] for r in sel])
-        a_eff = np.array([r["a_eff"] for r in sel])
+        implied = np.array([r["implied_entry_area"] for r in sel])
         runs_arr = np.array([r["lumice_per_ray_runs"] for r in sel])
         noise = None
         if runs_arr.shape[1] >= 2:
@@ -288,6 +271,7 @@ def main(argv: list[str] | None = None) -> None:
             noise = float(np.std(rel) / 2.0)  # merged relative noise, see compare_strip_v2.merge_lumice_float
         lumice = np.array([r["lumice_per_ray"] for r in sel])
         bright = lumice >= args.bright_floor * lumice.max()
+        k_bright = np.array([r["k_pixel"] for r, b in zip(sel, bright) if b])
         summary["columns"][str(column)] = {
             "pixels": len(sel),
             "bright_band": {
@@ -296,16 +280,24 @@ def main(argv: list[str] | None = None) -> None:
                 "pixels": int(bright.sum()),
                 "measured_over_predicted_median": float(np.median(ratio[bright])),
                 "measured_over_predicted_standard_error": float(np.std(ratio[bright]) / np.sqrt(bright.sum())),
-                "k_pixel_median": float(np.median([r["k_pixel"] for r, b in zip(sel, bright) if b])),
-                "a_eff_min_max": [float(a_eff[bright].min()), float(a_eff[bright].max())],
+                "k_pixel_median": float(np.median(k_bright)),
+                # K_p varies with Omega_p only; the implied area carries every pose-dependent residual
+                "k_pixel_relative_span": float(k_bright.max() / k_bright.min() - 1.0),
+                "implied_entry_area_median": float(np.median(implied[bright])),
+                "implied_entry_area_min_max": [float(implied[bright].min()), float(implied[bright].max())],
+                "implied_entry_area_relative_std": float(np.std(implied[bright]) / np.mean(implied[bright])),
             },
             "measured_over_predicted_median": float(np.median(ratio)),
             "measured_over_predicted_p10_p90": [float(np.percentile(ratio, 10)), float(np.percentile(ratio, 90))],
-            "a_eff_median": float(np.median(a_eff)),
-            "a_eff_min_max": [float(a_eff.min()), float(a_eff.max())],
+            "implied_entry_area_median": float(np.median(implied)),
             "merged_relative_noise_per_pixel": noise,
         }
-        print(f"column {column}: measured/predicted median {summary['columns'][str(column)]['measured_over_predicted_median']:.4f}, A_eff {a_eff.min():.3f}..{a_eff.max():.3f}, noise {noise}")
+        c = summary["columns"][str(column)]
+        print(
+            f"column {column}: measured/predicted median {c['measured_over_predicted_median']:.4f}, "
+            f"bright implied area {c['bright_band']['implied_entry_area_min_max'][0]:.3f}..{c['bright_band']['implied_entry_area_min_max'][1]:.3f} "
+            f"(S/2 {0.5 * surface_area:.3f}), noise {noise}"
+        )
     (args.output_dir / "absolute_scale_summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     print(f"wrote {args.output_dir}")
 

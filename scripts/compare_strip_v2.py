@@ -35,15 +35,17 @@ and every panel is on a log scale.
    the Monte Carlo noise floor of those numbers.
 6. Absolute radiometric scale (``--lumice-float`` only; the ``absolute_scale``
    block): ``raw[p] / emitted_energy = K_p * V(p)`` with
-   ``K_p = N_sym * ybar(550) * Omega_p / A_eff(p)`` (derivation in
-   ``scripts/probe_absolute_scale.py`` and ``docs/ch06-reference-fixture.md``
-   section 7, stage 4).  Without a probe the block reports the pose-independent
-   part ``N_sym * ybar * Omega_p`` and the ``A_eff`` it implies on the bright
-   band of columns ``106 / 126 / 146``; with ``--absolute-scale-probe`` (that
-   script's output directory, whose ``A_eff`` is computed from first
-   principles on the probed pixels) it reports ``K_p``, the measured ratio
-   ``(raw / E) / V`` and the residual ``measured / K_p - 1`` next to the two
-   terms that may explain it (Monte Carlo noise, point versus pixel-area model).
+   ``K_p = N_sym * ybar(550) * Omega_p / (S / 2)``, ``S`` the crystal's total
+   surface area (Lumice >= ``6fc48bb4`` weighs every ray by ``A_tot / (S/2)``
+   at entry; derivation in ``scripts/probe_absolute_scale.py`` and
+   ``docs/ch06-reference-fixture.md`` section 7, stage 4).  Without a probe
+   the block reports the pose-independent part ``N_sym * ybar * Omega_p`` and
+   the entry area it implies on the bright band of columns
+   ``106 / 126 / 146`` (predicted: ``S / 2``, one constant); with
+   ``--absolute-scale-probe`` (that script's output directory) it reports
+   ``K_p``, the measured ratio ``(raw / E) / V`` and the residual
+   ``measured / K_p - 1`` next to the two terms that may explain it (Monte
+   Carlo noise, point versus pixel-area model).
 
 Inputs are read only; the historical raw and the Lumice PNG live in the
 Writing-Lab project (``--writing-lab-dir``).  The display mapping is the
@@ -416,7 +418,7 @@ def absolute_scale_block(
     noise: dict[str, Any],
     probe_dir: Path | None,
 ) -> dict[str, Any]:
-    """``raw / E = K_p V``: pose-independent factor, implied ``A_eff`` and, with a probe, residual (module docstring, item 6)."""
+    """``raw / E = K_p V``: pose-independent factor, implied entry area and, with a probe, residual (module docstring, item 6)."""
     fold = source["symmetry_fold_to_single_3_5"]
     axis_solid_angle = source["runs"][0]["axis_solid_angle"]
     if fold is None or not axis_solid_angle:
@@ -438,13 +440,13 @@ def absolute_scale_block(
             columns[f"column_{c}"] = {"count": 0}
             continue
         pose_free = fold * YBAR_550 * axis_solid_angle * pixel_cos3(rows, c)  # N_sym * ybar * Omega_p
-        implied = pose_free * ours_c[rows] / lum_c[rows]  # A_eff that would make raw / E = K_p V exact
+        implied = pose_free * ours_c[rows] / lum_c[rows]  # the entry area that would make raw / E = K_p V exact (S / 2 predicted)
         entry: dict[str, Any] = {
             "bright_rows": [int(rows.min()), int(rows.max())],
             "count": int(rows.size),
             "pose_free_factor_median": float(np.median(pose_free)),
-            "implied_a_eff_median": float(np.median(implied)),
-            "implied_a_eff_p10_p90": [float(np.percentile(implied, 10)), float(np.percentile(implied, 90))],
+            "implied_entry_area_median": float(np.median(implied)),
+            "implied_entry_area_p10_p90": [float(np.percentile(implied, 10)), float(np.percentile(implied, 90))],
             "merged_relative_noise_on_profile": noise.get(f"column_{c}", {}).get("merged_relative_noise"),
         }
         probed = [r for r in rows if r in probe.get(c, {})]
@@ -465,10 +467,10 @@ def absolute_scale_block(
         columns[f"column_{c}"] = entry
     out: dict[str, Any] = {
         "available": True,
-        "convention": "raw[p] / emitted_energy = K_p * V(p), K_p = N_sym * ybar(550) * Omega_p / A_eff(p); "
+        "convention": "raw[p] / emitted_energy = K_p * V(p), K_p = N_sym * ybar(550) * Omega_p / (S / 2); "
         "V = strip value (length^2 / sr, hexagon edge a = 1), Omega_p = cos^3(theta_p) * axis_solid_angle, "
-        "A_eff = fiber-weighted harmonic mean of the crystal's projected silhouette (Lumice samples poses from rho_pose "
-        "without silhouette weighting), so K_p is not one constant",
+        "S = the crystal's total surface area (Lumice >= 6fc48bb4 weighs each ray by its projected area over S / 2 at entry), "
+        "so the implied entry area is one constant; Lumice before 6fc48bb4 implied a pixel-dependent A_eff instead",
         "symmetry_fold": fold,
         "ybar_550": YBAR_550,
         "axis_solid_angle": axis_solid_angle,
@@ -821,7 +823,7 @@ def main(argv: list[str] | None = None) -> None:
         for key, value in scale.get("columns", {}).items():
             if not value.get("count"):
                 continue
-            line = f"absolute scale {key} rows {value['bright_rows']}: implied A_eff {value['implied_a_eff_median']:.3f}"
+            line = f"absolute scale {key} rows {value['bright_rows']}: implied entry area {value['implied_entry_area_median']:.3f}"
             if "residual_median" in value:
                 line += f", K_p {value['k_pixel_median']:.4e}, (raw/E)/V {value['measured_ratio_median']:.4e}, residual {value['residual_median']:+.4f} +- {value['residual_standard_error']:.4f} (n={value['probed_count']})"
             print(line)
