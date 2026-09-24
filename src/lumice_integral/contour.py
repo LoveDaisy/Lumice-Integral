@@ -389,6 +389,20 @@ def _bucket(n: int) -> int:
     return max(8, 1 << (n - 1).bit_length())
 
 
+def _in_buckets(kernel, *arrays):
+    """``kernel(*arrays)`` with every array padded along axis 0 to :func:`_bucket` rows (row 0 repeated), cut back after.
+
+    Every batched call here gets a data-dependent row count; unpadded, each
+    new count would be one more XLA compilation.
+    """
+    n = len(arrays[0])
+    extra = _bucket(n) - n
+    out = kernel(*(np.concatenate([a, np.repeat(a[:1], extra, axis=0)]) for a in map(np.asarray, arrays)))
+    if isinstance(out, tuple):
+        return tuple(np.asarray(o)[:n] for o in out)
+    return np.asarray(out)[:n]
+
+
 def _walk(field: DPField, seeds: np.ndarray, deltas: np.ndarray, signs: np.ndarray) -> list[_Walk]:
     """Walk every ``(seed, delta, sign)`` in lockstep until it closes, ends on ``dU_P`` or stalls."""
     k = len(seeds)
@@ -566,10 +580,10 @@ def _boundary_seeds(field: DPField, deltas: np.ndarray) -> tuple[np.ndarray, np.
         rows = np.flatnonzero(todo)
         if len(rows) == 0:
             break
-        seeds[rows] = np.asarray(_boundary_bisection(
-            jnp.asarray(a[item][rows]), jnp.asarray(b[item][rows]), jnp.asarray(k[rows]), jnp.asarray(deltas[j][rows]),
-            jnp.asarray(sign_a[rows]), field.faces, jnp.float64(field.index), slab, jnp.float64(target),
-        ))
+        seeds[rows] = _in_buckets(
+            lambda a_, b_, k_, d_, s_: _boundary_bisection(a_, b_, k_, d_, s_, field.faces, jnp.float64(field.index), slab, jnp.float64(target)),
+            a[item][rows], b[item][rows], k[rows], deltas[j][rows], sign_a[rows],
+        )
         todo[rows] = ~_seeds_inside(field, seeds[rows])
     return seeds[~todo], j[~todo]
 
@@ -582,7 +596,8 @@ def _seeds_inside(field: DPField, seeds: np.ndarray) -> np.ndarray:
     out = np.zeros(len(seeds), dtype=bool)
     rows = np.flatnonzero(finite)
     if len(rows):
-        out[rows] = np.asarray(_inside_batch(jnp.asarray(seeds[rows]), field.faces, jnp.float64(field.index))) & field.valid_batch(seeds[rows])
+        inside = _in_buckets(lambda u: _inside_batch(jnp.asarray(u), field.faces, jnp.float64(field.index)), seeds[rows])
+        out[rows] = inside & _in_buckets(field.valid_batch, seeds[rows])
     return out
 
 
@@ -617,7 +632,7 @@ def _extremum_seeds(field: DPField, deltas: np.ndarray) -> tuple[np.ndarray, np.
         below = sign[0, j]
         for _ in range(BISECTION_ITERATIONS):
             mid = 0.5 * (lo + hi)
-            same = np.sign(field.d_p_batch(ray(mid)) - deltas[j]) == below
+            same = np.sign(_in_buckets(field.d_p_batch, ray(mid)) - deltas[j]) == below
             lo, hi = np.where(same, mid, lo), np.where(same, hi, mid)
         out_seeds.append(ray(0.5 * (lo + hi)))
         out_j.append(j)
@@ -641,9 +656,9 @@ def _grid_seeds(field: DPField, deltas: np.ndarray, grid: int) -> tuple[np.ndarr
     u = x[..., None] * e1 + y[..., None] * e2 + np.sqrt(np.clip(height2, 0.0, None))[..., None] * n_a
     value = np.full((grid, grid), np.nan)
     flat = u[on_chart]
-    inside = field.valid_batch(flat)
+    inside = _in_buckets(field.valid_batch, flat)
     value_flat = np.full(len(flat), np.nan)
-    value_flat[inside] = field.d_p_batch(flat[inside])
+    value_flat[inside] = _in_buckets(field.d_p_batch, flat[inside])
     value[on_chart] = value_flat
     seeds, j_all, lengths = [], [], []
     for a, b, va, vb in (
@@ -673,7 +688,7 @@ def _band_seeds(field: DPField, store: S2EventStore, deltas: np.ndarray, halfwid
     seeds_all, j_all = np.vstack(seeds), np.concatenate(js)
     if len(seeds_all) == 0:
         return seeds_all, j_all
-    keep = field.valid_batch(seeds_all)
+    keep = _in_buckets(field.valid_batch, seeds_all)
     return seeds_all[keep], j_all[keep]
 
 
@@ -682,10 +697,10 @@ def _refine(field: DPField, seeds: np.ndarray, deltas: np.ndarray) -> tuple[np.n
     if len(seeds) == 0:
         return seeds, np.zeros(0, dtype=bool)
     slab = None if field.slab is None else jnp.asarray(field.slab)
-    points = np.asarray(_project_batch(
-        jnp.asarray(seeds), jnp.asarray(deltas), field.faces, jnp.float64(field.index), slab,
-        SEED_NEWTON_ITERATIONS, jnp.float64(SEED_NEWTON_MAX_STEP_RAD),
-    ))
+    points = _in_buckets(
+        lambda u, d: _project_batch(u, d, field.faces, jnp.float64(field.index), slab, SEED_NEWTON_ITERATIONS, jnp.float64(SEED_NEWTON_MAX_STEP_RAD)),
+        seeds, deltas,
+    )
     finite = np.all(np.isfinite(points), axis=1)
     good = finite.copy()
     if np.any(finite):
@@ -696,8 +711,7 @@ def _refine(field: DPField, seeds: np.ndarray, deltas: np.ndarray) -> tuple[np.n
 
 def _residuals(field: DPField, points: np.ndarray, deltas: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     slab = None if field.slab is None else jnp.asarray(field.slab)
-    residual, tolerance = _residual_batch(jnp.asarray(points), jnp.asarray(deltas), field.faces, jnp.float64(field.index), slab)
-    return np.asarray(residual), np.asarray(tolerance)
+    return _in_buckets(lambda u, d: _residual_batch(u, d, field.faces, jnp.float64(field.index), slab), points, deltas)
 
 
 # ---- components ---------------------------------------------------------------------------------------
@@ -789,17 +803,30 @@ def _interval_of(partition: Sequence[DeviationInterval], delta: float) -> Deviat
     return None
 
 
-def _component(field: DPField, delta: float, kind: str, points: np.ndarray) -> ContourComponent:
-    residual, _ = _residuals(field, points, np.full(len(points), delta))
-    if kind == "closed":
-        return ContourComponent(delta, kind, points, residual)
+def _components(field: DPField, deltas: np.ndarray, found: list[list[tuple[str, np.ndarray]]]) -> list[tuple[ContourComponent, ...]]:
+    """:class:`ContourComponent` records of every ``delta``: residuals and end margins in one batch each."""
+    flat = [(float(delta), kind, points) for delta, components in zip(deltas, found) for kind, points in components]
+    if not flat:
+        return [() for _ in deltas]
+    lengths = [len(points) for _, _, points in flat]
+    residuals, _ = _residuals(field, np.vstack([p for _, _, p in flat]), np.repeat([d for d, _, _ in flat], lengths))
+    residuals = np.split(residuals, np.cumsum(lengths)[:-1])
+    ends = _in_buckets(field.margins_batch, np.vstack([p[[0, -1]] for _, _, p in flat])).reshape(len(flat), 2, -1)
     names = optics.domain_margin_names(field.faces)
-    margins = field.margins_batch(points[[0, -1]])
-    k = np.argmin(margins, axis=1)
-    return ContourComponent(
-        delta, kind, points, residual,
-        names[k[0]], float(margins[0, k[0]]), names[k[1]], float(margins[1, k[1]]),
-    )
+    records = []
+    for (delta, kind, points), residual, margins in zip(flat, residuals, ends):
+        if kind == "closed":
+            records.append(ContourComponent(delta, kind, points, residual))
+            continue
+        k = np.argmin(margins, axis=1)
+        records.append(ContourComponent(
+            delta, kind, points, residual, names[k[0]], float(margins[0, k[0]]), names[k[1]], float(margins[1, k[1]]),
+        ))
+    out, at = [], 0
+    for components in found:
+        out.append(tuple(records[at : at + len(components)]))
+        at += len(components)
+    return out
 
 
 def extract_level_sets(
@@ -833,8 +860,8 @@ def extract_level_sets(
     found = _extract_unique(field, unique, store, grid, band_halfwidth)
     level_sets = []
     mismatches = []
-    for delta, interval, components in zip(unique, intervals, found):
-        level_set = LevelSet(float(delta), tuple(_component(field, float(delta), kind, points) for kind, points in components), interval)
+    for delta, interval, components in zip(unique, intervals, _components(field, unique, found)):
+        level_set = LevelSet(float(delta), components, interval)
         expected = (0, 0) if interval is None else (int(interval.n_closed), int(interval.n_open))
         if (level_set.n_closed, level_set.n_open) != expected:
             mismatches.append(f"delta = {float(delta)!r}: predicted (closed, open) = {expected}, extracted "
