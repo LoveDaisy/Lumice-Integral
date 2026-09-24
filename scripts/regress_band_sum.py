@@ -81,6 +81,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -761,7 +762,7 @@ def main() -> None:
     parser.add_argument(
         "--reference-dir",
         type=Path,
-        default=DEFAULT_REFERENCE_DIR,
+        default=None,
         help="strip-full read_strip directory; default is a machine-specific path, pass explicitly on other machines",
     )
     parser.add_argument("--contour-dir", type=Path, default=None, help="--stage contour: a band-average contour render")
@@ -775,6 +776,9 @@ def main() -> None:
     parser.add_argument("--title", default="band-sum renderer (log scale, 4 decades)")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    reference_dir_explicit = args.reference_dir is not None
+    if args.reference_dir is None:
+        args.reference_dir = DEFAULT_REFERENCE_DIR
     if args.stage == "figure":
         stage_figure(args.band_dir, args.output, args.title)
         return
@@ -784,7 +788,12 @@ def main() -> None:
     elif args.stage == "contour":
         if args.contour_dir is None:
             parser.error("--stage contour needs --contour-dir")
-        reference = args.reference_dir if args.contour_point_dir is not None and args.reference_dir.exists() else None
+        reference = None
+        if args.contour_point_dir is not None:
+            if args.reference_dir.exists():
+                reference = args.reference_dir
+            elif reference_dir_explicit:
+                print(f"warning: --reference-dir {args.reference_dir} does not exist; skipping phase1_strip_vs_contour_point", file=sys.stderr)
         report = stage_contour(args.band_dir[0], args.contour_dir, args.coarse_dir, args.contour_point_dir, reference)
         print(json.dumps({k: v for k, v in report.items() if k != "worst_pixels_by_abs_z"}, indent=1))
     elif args.stage == "k-eff":

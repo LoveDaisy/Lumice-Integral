@@ -103,6 +103,37 @@ def test_max_residual_is_surfaced_on_the_pixel_result(canonical) -> None:
     assert pixel.csv_row()["max_residual"] == repr(float(pixel.max_residual))
 
 
+def test_stage_two_split_residual_reaches_max_residual(canonical, monkeypatch) -> None:
+    """A Newton residual on a stage-two (rho-driven) split panel must not be dropped (code-review round 3 Major).
+
+    ``LevelSetGeometry.build`` (stage one) only refines on the geometric
+    integrand ``g``; a pixel's own :meth:`LevelSetGeometry.integrate` call
+    (stage two) refines further on ``g * rho`` and used to throw its
+    ``_adapt`` tally away (``tally, _ = _adapt(...)``), so a non-converged
+    Newton point introduced only by that refinement never reached
+    ``max_residual``.  The canonical pixel already exercises stage-two
+    splitting (``result.evaluations > 0`` below, from a real ``_split`` call,
+    not a synthetic panel); this test spikes the residual ``_evaluate_points``
+    reports from that point on and checks the spike surfaces, without
+    disturbing the already-built stage-one ``residual_by_unit``.
+    """
+    sun, centre, _, geometry = canonical
+    stage_one_residual = float(geometry.residual_by_unit[0])
+    assert stage_one_residual < 1e-12
+    original_evaluate_points = cq._evaluate_points
+
+    def spiked_evaluate_points(field, delta, a, b, t, iterations):
+        rows = dict(original_evaluate_points(field, delta, a, b, t, iterations))
+        rows["residual"] = np.where(np.isfinite(rows["residual"]), rows["residual"] + 1e-3, rows["residual"])
+        return rows
+
+    monkeypatch.setattr(cq, "_evaluate_points", spiked_evaluate_points)
+    (result,) = geometry.integrate(sun, [centre], canonical_pose_density())
+    assert result.evaluations > 0, "stage-two must have split at least once for the spike to be exercised"
+    assert result.max_residual >= 1e-3
+    assert float(geometry.residual_by_unit[0]) == stage_one_residual
+
+
 def test_geometry_weights_are_the_store_weights(field, canonical) -> None:
     """The geometric integrand's ``w`` is :func:`.s2_store.evaluate_fields`' (the event store's weight), not a second implementation."""
     _, _, level_set, geometry = canonical

@@ -265,10 +265,12 @@ class _Panels:
     five Simpson points in the first panel ``a -> b`` (``theta`` its angle);
     ``q``/``phi`` ``(P, 5, 3)`` the level-set points and ``Phi_P(-q)``; ``d``
     ``(P, 5)`` their own deviation; ``g`` ``(P, 5)`` the geometric integrand
-    ``w / |grad D| |dq/dt|`` (``0`` outside the weight's support); ``bad``
-    non-finite points with ``w > 0`` (integrand ``0``, counted); ``depth``
-    halvings so far, ``parent_error`` the parent's estimate (``inf`` for a
-    panel not split in the current stage).
+    ``w / |grad D| |dq/dt|`` (``0`` outside the weight's support);
+    ``residual`` ``(P, 5)`` the Newton residual ``D_P(q) - delta`` at each
+    point (``nan`` where non-finite); ``bad`` non-finite points with
+    ``w > 0`` (integrand ``0``, counted); ``depth`` halvings so far,
+    ``parent_error`` the parent's estimate (``inf`` for a panel not split in
+    the current stage).
     """
 
     unit: np.ndarray
@@ -282,6 +284,7 @@ class _Panels:
     phi: np.ndarray
     d: np.ndarray
     g: np.ndarray
+    residual: np.ndarray
     bad: np.ndarray
     depth: np.ndarray
     parent_error: np.ndarray
@@ -339,7 +342,7 @@ def _evaluate_points(field: DPField, delta: np.ndarray, a: np.ndarray, b: np.nda
 def _empty_panels() -> _Panels:
     z = np.zeros
     return _Panels(z(0, dtype=int), z(0, dtype=int), z(0), z((0, 3)), z((0, 3)), z(0), z((0, 5)), z((0, 5, 3)), z((0, 5, 3)),
-                   z((0, 5)), z((0, 5)), z((0, 5), dtype=bool), z(0, dtype=int), z(0))
+                   z((0, 5)), z((0, 5)), z((0, 5)), z((0, 5), dtype=bool), z(0, dtype=int), z(0))
 
 
 @partial(jax.jit, static_argnums=1)
@@ -417,7 +420,7 @@ def _node_panels(field: DPField, level_sets: Sequence[LevelSet], options: Quadra
     rows = _evaluate_points(field, np.repeat(delta, 5), np.repeat(a, 5, axis=0), np.repeat(b, 5, axis=0), t.reshape(-1), iterations)
     shape = lambda x: x.reshape(p, 5, *x.shape[1:])  # noqa: E731
     panels = _Panels(unit, slot, delta, a, b, theta, t, shape(rows["q"]), shape(rows["phi"]), shape(rows["d"]), shape(rows["g"]),
-                     shape(rows["bad"]), np.zeros(p, dtype=int), np.full(p, np.inf))
+                     shape(rows["residual"]), shape(rows["bad"]), np.zeros(p, dtype=int), np.full(p, np.inf))
     return panels, slot_unit
 
 
@@ -440,7 +443,7 @@ def _split(field: DPField, panels: _Panels, error: np.ndarray, iterations: int) 
     twice = lambda x: np.concatenate([x, x])  # noqa: E731
     return _Panels(
         twice(panels.unit), twice(panels.slot), twice(panels.delta), twice(panels.a), twice(panels.b), twice(panels.theta),
-        children("t"), children("q"), children("phi"), children("d"), children("g"), children("bad"),
+        children("t"), children("q"), children("phi"), children("d"), children("g"), children("residual"), children("bad"),
         twice(panels.depth + 1), twice(error),
     )
 
@@ -455,7 +458,12 @@ def _simpson(panels: _Panels, f: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
 @dataclasses.dataclass
 class _Tally:
-    """Per-slot values and per-unit diagnostics of one adaptive run."""
+    """Per-slot values and per-unit diagnostics of one adaptive run.
+
+    ``max_residual`` is the worst Newton residual (``|D_P(q) - delta|``)
+    among every panel point evaluated in this run, stage-one or stage-two,
+    accepted leaf or later superseded by a split.
+    """
 
     value: np.ndarray
     error: np.ndarray
@@ -463,11 +471,12 @@ class _Tally:
     low_order_splits: np.ndarray
     exhausted: np.ndarray
     max_depth: np.ndarray
+    max_residual: np.ndarray
 
     @classmethod
     def zeros(cls, n_slots: int, n_units: int) -> "_Tally":
         z = lambda dtype: np.zeros(n_units, dtype=dtype)  # noqa: E731
-        return cls(np.zeros(n_slots), z(float), z(int), z(int), z(int), z(int))
+        return cls(np.zeros(n_slots), z(float), z(int), z(int), z(int), z(int), z(float))
 
 
 def _adapt(field: DPField, panels: _Panels, integrand: Callable[[_Panels], np.ndarray], slot_unit: np.ndarray, n_units: int,
@@ -484,6 +493,10 @@ def _adapt(field: DPField, panels: _Panels, integrand: Callable[[_Panels], np.nd
     # only splits made here pair up (i, i + m); panels carried over from an earlier stage are no one's children
     active = panels.replace(parent_error=np.full(len(panels), np.inf))
     while len(active):
+        abs_residual = np.where(np.isnan(active.residual), -np.inf, np.abs(active.residual))
+        panel_residual = np.max(abs_residual, axis=1)
+        panel_residual = np.where(np.isneginf(panel_residual), 0.0, panel_residual)
+        np.maximum.at(tally.max_residual, active.unit, panel_residual)
         f = integrand(active)
         fine, coarse = _simpson(active, f)
         error = np.abs(fine - coarse) / 15.0
@@ -532,12 +545,13 @@ class ContourQuadratureResult:
     above their tolerance (the value is reported as is, not as converged);
     ``low_order_splits`` see the module docstring; ``non_finite_points`` had
     ``w > 0`` but a non-finite point or speed (integrand ``0``, counted).
-    ``max_residual`` is the worst ``|D_P(q) - delta]`` among this level set's
-    accepted panel points (should be at round-off; surfaced so a future
-    non-canonical render can be checked against ``EXTREMUM_ATOL`` without a
-    one-off probe script). ``status`` is ``"integrated"``, ``"empty"`` (no
-    component) or ``"critical_delta"`` (``delta`` at a critical value; not
-    integrated).
+    ``max_residual`` is the worst ``|D_P(q) - delta|`` among every panel
+    point evaluated for this pixel's level set, its geometry (stage one) and
+    its own rho-driven refinement (stage two) alike (should be at round-off;
+    surfaced so a future non-canonical render can be checked against
+    ``EXTREMUM_ATOL`` without a one-off probe script). ``status`` is
+    ``"integrated"``, ``"empty"`` (no component) or ``"critical_delta"``
+    (``delta`` at a critical value; not integrated).
     """
 
     delta: float
@@ -595,15 +609,8 @@ class LevelSetGeometry:
         assert leaves is not None
         order = np.argsort(leaves.unit, kind="stable")
         leaves = leaves.take(order)
-        if len(leaves):
-            node_residual = np.abs(field.d_p_batch(leaves.q.reshape(-1, 3)) - np.repeat(leaves.delta, 5)).reshape(-1, 5)
-            leaf_residual = node_residual.max(axis=1)
-        else:
-            leaf_residual = np.zeros(0)
-        residual = float(leaf_residual.max()) if len(leaf_residual) else 0.0
-        residual_by_unit = np.zeros(len(level_sets))
-        if len(leaves):
-            np.maximum.at(residual_by_unit, leaves.unit, leaf_residual)
+        residual_by_unit = tally.max_residual
+        residual = float(residual_by_unit.max()) if len(residual_by_unit) else 0.0
         offsets = np.r_[0, np.cumsum(np.bincount(slot_unit, minlength=len(level_sets)))]
         evaluations = 5 * np.bincount(nodes.unit, minlength=len(level_sets)) + 4 * tally.splits
         return cls(field, level_sets, options, leaves, offsets, evaluations, tally.low_order_splits, tally.exhausted, residual,
@@ -668,7 +675,7 @@ class LevelSetGeometry:
                 exhausted_panels=int(self.exhausted_panels[group] + tally.exhausted[job]),
                 low_order_splits=int(self.low_order_splits[group] + tally.low_order_splits[job]),
                 non_finite_points=int(np.sum(self.panels.bad[bounds[group]:bounds[group + 1]])),
-                max_residual=float(self.residual_by_unit[group]),
+                max_residual=float(max(self.residual_by_unit[group], tally.max_residual[job])),
                 status="integrated" if level_set.components else "empty",
             ))
         return results
@@ -682,7 +689,11 @@ def critical_delta(field: DPField, delta: float) -> bool:
 
 def not_integrated(delta: float, status: str) -> ContourQuadratureResult:
     """The record of a pixel that was not integrated (``status`` says why); value ``0``."""
-    return ContourQuadratureResult(delta, 0.0, 0.0, 0.0, 0.0, (), 0, 0, 0, 0, 0, 0, 0, 0, 0, status=status)
+    return ContourQuadratureResult(
+        delta=delta, value=0.0, error_estimate=0.0, raw_value=0.0, raw_error_estimate=0.0, component_values=(),
+        n_closed=0, n_open=0, panels=0, evaluations=0, geometry_evaluations=0, max_depth=0, exhausted_panels=0,
+        low_order_splits=0, non_finite_points=0, max_residual=0.0, status=status,
+    )
 
 
 # ---- rendering ----------------------------------------------------------------------------------------
