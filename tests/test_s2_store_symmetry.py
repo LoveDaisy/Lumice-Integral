@@ -21,7 +21,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from lumice_integral.camera import linear_pixel_outgoing_direction
+from lumice_integral.camera import linear_pixel_outgoing_direction, sun_direction
 from lumice_integral.canonical_scene import (
     CANONICAL_REFRACTIVE_INDEX,
     CANONICAL_RENDER,
@@ -46,9 +46,12 @@ from lumice_integral.s2_store import (
     align_rotations,
     build_event_store,
     evaluate_fields,
+    event_frames,
     event_rotations,
     events_from_schema1,
+    pixel_world_frame,
     store_lattice,
+    transported_frames,
     transported_rotations,
 )
 
@@ -140,6 +143,27 @@ def test_transported_rotations_rebuild_the_transported_events_for_all_24_element
     # The class's own elements are among them.
     _, symmetry = class_3_5
     assert all(np.linalg.det(g) > 0.0 for g in symmetry.values())
+
+
+def test_axis_zeniths_split_into_a_pixel_and_an_event_factor_for_all_24_elements(representative) -> None:
+    """``R_i[2, j] = W[2, :] . F_i[j, :]`` (task ``band-sum-scatter-renderer``), untransported and transported.
+
+    The scatter renderer's matrix product of pixel and event vectors against
+    the gather oracle (:func:`event_rotations`, :func:`transported_rotations`),
+    for three pixels, two sun altitudes and every ``D6h`` element.
+    """
+    band = representative.band_slice(np.radians(22.0), np.radians(23.0))
+    frames = event_frames(band.u, band.phi, band.D)
+    for sun in (canonical_sun_direction(), sun_direction(32.0, 10.0)):
+        for row, column in ((400, 126), (120, 30), (700, 240)):
+            centre = linear_pixel_outgoing_direction(row, column, **CANONICAL_RENDER)
+            a = pixel_world_frame(sun, centre)[2]
+            poses = event_rotations(band.u, band.phi, band.D, sun, centre)
+            np.testing.assert_array_equal(poses, np.einsum("ij,nkj->nik", pixel_world_frame(sun, centre), frames))
+            assert np.max(np.abs(frames @ a - poses[:, 2, :])) <= 1e-15
+            for g in hexprism_symmetry_matrices():
+                oracle = transported_rotations(poses, g, sun, centre)[:, 2, :]
+                assert np.max(np.abs(transported_frames(frames, g) @ a - oracle)) <= 1e-15, g.round(3).tolist()
 
 
 def test_none_is_not_a_transport(class_3_5, representative) -> None:

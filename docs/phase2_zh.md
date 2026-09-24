@@ -128,7 +128,7 @@ $$
 
 **像素模型。** 带求和的像素在 $\delta$ 方向是带平均、在 $\alpha$ 方向是点值；Phase I 和等值线法给的是点值。在陡边上两者的差别来自像素模型而不是采样误差（M1 回归里最差的像素在 22° 内缘焦散处，它们的带有一部分落在 $\min D_P$ 之下）。交叉验证要在同一口径下比较。
 
-**分工。** 等值线法负责精度和完整性证书；带求和两者都没有，除采样外也没有收敛阶，但它无分支、可 `vmap`，一份仓库被所有像素、姿态密度和光源方向共享。它是快速渲染器、参数扫描工具和独立的交叉检查。生产模块：`lumice_integral.s2_store`（构建、缓存、provenance、带切片、$D_{6h}$ 搬运）与 `lumice_integral.band_sum`（估计量、光路与类渲染；CLI `scripts/render_band_sum.py`）。$N = 10^8$ 的 canonical 条带：Mac 4 个 worker `169 s`，Phase I 在 `home-wsl` 30 个 worker 上 `34.7 min`（见附录）。
+**分工。** 等值线法负责精度和完整性证书；带求和两者都没有，除采样外也没有收敛阶，但它无分支、可 `vmap`，一份仓库被所有像素、姿态密度和光源方向共享。它是快速渲染器、参数扫描工具和独立的交叉检查。生产模块：`lumice_integral.s2_store`（构建、缓存、provenance、带切片、$D_{6h}$ 搬运）与 `lumice_integral.band_sum`（估计量、光路与类渲染；CLI `scripts/render_band_sum.py`）。$N = 10^8$ 的 canonical 条带：Mac 4 个 worker `30.8 s`（§8 的 scatter 形态之前为 `169 s`），Phase I 在 `home-wsl` 30 个 worker 上 `34.7 min`（见附录）。
 
 ## 6. 一份预计算，三个用户
 
@@ -158,31 +158,44 @@ Phase I 也做预计算。`prescan.PrescanTable` 对固定太阳在 $\mathrm{SO}
 | 路线 | 一次性、与分辨率无关 | 每个 $\delta$ 环 | 每个像素 | 精度 |
 |---|---|---|---|---|
 | Phase I | 预扫表 | — | 发现、追踪、积分：`0.1-0.3 s`（实测） | 逐点，自适应误差估计 |
-| 带求和 | $N$ 个事件的仓库（$10^8$ 时 `80 s`，实测） | — | 带内 $K$ 个事件：姿态 + $\rho$，CPU `3.3 ms`（实测） | $\delta$ 方向带平均；约 $1/\sqrt{K_{\mathrm{eff}}}$ |
+| 带求和 | $N$ 个事件的仓库（$10^8$ 时 `80 s`，实测） | — | 带内 $K$ 个事件：矩阵乘积后求 $\rho$，CPU `0.31 ms`（scatter，§8；gather `3.3 ms`，实测） | $\delta$ 方向带平均；约 $1/\sqrt{K_{\mathrm{eff}}}$ |
 | 等值线（设计） | $D_P$ 场与临界点 | 提取并细化水平集 | 沿已存节点求 $\rho$ | 逐点、确定性、高阶 |
 
 随分辨率的变化：
 
 - Phase I：像素数 × 一个大常数。
-- 带求和：像素数 × $K_{\mathrm{target}}$（小常数）。带宽跟着像素走，线分辨率翻倍时要保持 $K_{\mathrm{eff}}$ 就需要两倍的 $N$：仓库随分辨率线性增长（按现在的渲染器是占内存，做完 §8 之后是占磁盘）。
+- 带求和：像素数 × $K_{\mathrm{target}}$（小常数）。带宽跟着像素走，线分辨率翻倍时要保持 $K_{\mathrm{eff}}$ 就需要两倍的 $N$：仓库随分辨率线性增长，占的是磁盘（渲染器按需映射，§8）。
 - 等值线：昂贵的部分 ∝ 环数 ∝ 线分辨率，而且是批量的场计算；只有最后的线积分 ∝ 像素数；没有采样噪声，也没有随分辨率增长的仓库（仓库只提供 seed）。每像素常数有多大，由 M2 实测。
 - 若 $\rho$ 绕 $\hat{\mathbf s}$ 不变（random 密度），像素值只依赖 $\delta$：两条 Phase II 路线都只需每环一个数。第 11 章其余四族以 c 轴为参照，除非光源在天顶，否则绕 $\hat{\mathbf s}$ 不对称。
 
 ## 8. 按偏折角组织带求和
 
-生产渲染器是 *gather* 形态：每个像素找自己的带、`searchsorted` 取事件、在像素方位角处重建姿态、求 $\rho$、求和。任务按整列分配，而一列跨越全部 $\delta$ 范围，所以每个 spawn 出的 worker 都把计划内所有仓库整份加载（`band_sum._worker_init`）；schema 2 的仓库构建则把所有 $w > 0$ 的事件留在内存里，最后做一次 `argsort`（schema 3 改为写盘分桶，见下）。§7 的内存上限来自这种组织方式，而不是带求和本身。
+在任务 `band-sum-scatter-renderer` 之前，生产渲染器是 *gather* 形态：每个像素找自己的带、`searchsorted` 取事件、在像素方位角处重建姿态、求 $\rho$、求和。任务按整列分配，而一列跨越全部 $\delta$ 范围，所以每个 spawn 出的 worker 都把计划内所有仓库整份加载；schema 2 的仓库构建则把所有 $w > 0$ 的事件留在内存里，最后做一次 `argsort`。§7 的内存上限来自这种组织方式，而不是带求和本身。
 
-把循环内外翻转（作者 2026-09-24 的提议，类比矩阵乘法里交换循环下标）求和不变、只改变工作的顺序：按偏折角组织事件，找出一段偏折角服务哪些像素，让一批事件散射进所有这些像素。
+把循环内外翻转（作者 2026-09-24 的提议，类比矩阵乘法里交换循环下标）求和不变、只改变工作的顺序：按偏折角顺序遍历事件，让每一块事件散射进它所碰到的每个像素带。gather（`band_sum.class_band_sum_pixel`）保留为测试 oracle，不再是第二条渲染路径。
 
-**内存（存储侧已投产，任务 `s2-store-schema-3`；渲染侧仍是设计，`band-sum-scatter-renderer`）。** 每个数组一个 `.npy`（`.npz` 不能部分映射），provenance 记录各自的 SHA-256 与大小；`S2EventStore.load(..., mmap_mode="r")` 只读映射、只核对大小，`S2EventStore.verify` 按需做全量哈希，默认加载仍整读并校验哈希。构建时按 $D$ 把保留的事件分桶写盘（1024 个等宽桶，性能旋钮，不进缓存 key）、逐桶排序，结果与一次全局稳定排序逐位相同；`build_or_load` 直接写进缓存目录，构建期间整份仓库从不在内存里（$N = 10^8$ 时构建峰值减半，见英文版附录）。仍是设计的部分：像素按带中心排序，$D$ 轴切成留有余量的段，每个 worker 分一段而不是一列，于是总量约为一份仓库而不是每个 worker 一份；光路类逐个累加，上限从「所有类之和」降到「最大的一类」（这正是第 11 章那张表的情形）。剩下的只有带求和本身的成本（像素数 × $K$）和噪声；磁盘 ∝ $N$。
+**存储（任务 `s2-store-schema-3`）。** 每个数组一个 `.npy`（`.npz` 不能部分映射），provenance 记录各自的 SHA-256 与大小；`S2EventStore.load(..., mmap_mode="r")` 只读映射、只核对大小，`S2EventStore.verify` 按需做全量哈希，默认加载仍整读并校验哈希。构建时按 $D$ 把保留的事件分桶写盘（1024 个等宽桶，性能旋钮，不进缓存 key）、逐桶排序，结果与一次全局稳定排序逐位相同；`build_or_load` 直接写进缓存目录，构建期间整份仓库从不在内存里（$N = 10^8$ 时构建峰值减半，见英文版附录）。
 
-**计算：一个块就是一次矩阵乘法（推导）。** 由环不变性，事件在方位角 $\alpha$ 处的姿态是 $R_i(\alpha) = Q_\alpha R_i(\alpha_0)$。五个姿态密度只通过体轴相对天顶 $\hat{\mathbf z}$ 的关系看姿态：`ZenithGaussianPoseDensity` 看 c 轴，`ZenithRollGaussianPoseDensity` 看 c 轴和一条侧轴（roll）。因此
+**姿态拆成像素因子与事件因子。** §5 的姿态是 $R_i = W F_i^{\mathsf T}$，像素标架 $W = [\hat{\mathbf s}, \mathbf e, \hat{\mathbf s}\times\mathbf e]$，事件标架 $F_i = [\mathbf u_i, \mathbf f_i, \mathbf u_i\times\mathbf f_i]$（`s2_store.pixel_world_frame`、`s2_store.event_frames`）；$F_i$ 与像素、太阳都无关。五个姿态密度只通过体轴的天顶分量（$R_i$ 的第三行）看姿态（`ZenithGaussianPoseDensity` 看 c 轴，`ZenithRollGaussianPoseDensity` 看 c 轴与 roll $\operatorname{atan2}(-e_2, e_1)$，random 什么都不看）。因此
 
 $$
-\rho\big(Q_\alpha R_i\big) = f\big((Q_\alpha^{\mathsf T}\hat{\mathbf z})\cdot(R_i\hat{\mathbf c}),\ \dots\big),
+\big(R_i\big)_{3j} = \hat{\mathbf z}\cdot R_i\mathbf e_j
+= \big(W^{\mathsf T}\hat{\mathbf z}\big)\cdot\big(F_i^{\mathsf T}\big)_{\cdot j}
+= \mathbf a_{\mathrm{pixel}}\cdot\mathbf b_{ij},
 $$
 
-即一个像素向量与一个事件向量的点积。对 $M$ 个像素和 $K$ 个事件，全部贡献就是一次 $(M\times 3)(3\times K)$ 乘积、逐元素的 $f$、带掩膜、再按 $w$ 加权归约（GEMM 接 GEMV；roll 族两次乘积）。事件按 $D$ 排序、像素按 $\delta$ 排序，掩膜就是带状的，工作可按（偏折角段 × 相交的像素块）分块。$D_{6h}$ 搬运 $L_g R g^{\mathsf T}$ 对体轴是线性的，可以并进同样的乘积；random 密度的 $f$ 是常数，每环一个直方图值。尚不知道的：实际加速比；`pose_density` 需要的轴向量接口（它的 `evaluate_batch` 仍是定义性的 oracle）；焦散处掩膜与 `pixel_band` 的逐位一致性。今天的 canonical 条带（`169 s`、约 `6 GB`）没有内存问题；这是为第 11 章那张表、多个光源方向，以及全天或更细的图准备的。
+即一个像素向量（$W[2, :]$）与一个事件向量（$F_i[j, :]$）的点积，不需要参考方位角，也不需要旋转 $Q_\alpha$。对 $M$ 个像素和 $K$ 个事件，每条被密度读取的体轴就是一次 $(M\times 3)(3\times K)$ 乘积。`pose_density` 以 `axis_zeniths`（该族读取的分量：`()`、`("e3",)` 或 `("e1", "e2", "e3")`）和 `evaluate_axis_zeniths(e1=, e2=, e3=)`（任意形状数组）提供这一接口；`evaluate_batch` 仍是定义性的 oracle（五族上两者一致到 `1e-13`，有测试）。§3.3 的 $D_{6h}$ 搬运 $L_g R g^{\mathsf T}$ 等于 $W (g F_i J)^{\mathsf T}$，$J = \operatorname{diag}(1, 1, \det g)$：只作用在事件侧的固定线性变换（`s2_store.transported_frames`），像素向量不变。
+
+**渲染器**（`band_sum.render_band_sum_window`、`scatter_store`）。
+
+1. worker 先算出每个像素的带（`pixel_band`，按列分任务；运算相同，所以 $\delta$、带与带宽与 gather 逐位相同）。
+2. 父进程按带中心排序像素，切成每个 worker 一段、工作量（事件 × transport，由映射的 `D` 数组算出）大致相等。一段的事件在每个仓库里都是一段连续区间。
+3. 每个 worker 依次只读映射计划内的每个仓库（`mmap_mode="r"`，一次一个 store group，处理完释放再映射下一个；内容由父进程统一哈希一次），以 1024 个事件为一块遍历自己的区间。每块的事件标架及其搬运只算一次；带与该块相交的像素按 32 个一组做上面的乘积、逐元素求 $\rho$、带掩膜、对事件求和。像素的带是下标区间 `searchsorted(D, [lo, hi])`，与 gather 同样左闭右开，所以 $K$ 完全相同。
+4. 每个事件先把各 transport 的贡献加起来再平方（每个 transport 先算 $w\rho$ 再相加，与 gather 同序：接近下溢的乘积舍入方式也相同），所以 $K_{\rho>0}$ 与 $K_{\mathrm{eff}}$ 保持 §3.3 的按事件计语义。
+
+数值上与 gather 的差别只在求和次序，以及 $\mathbf a\cdot\mathbf b$ 三个乘积的舍入方式。窄密度会放大后者（$d\log\rho = (\theta - \bar\theta)/\sigma^2\,d\theta$；Lowitz 在 c 轴近竖直时 roll 的 $d\psi \sim \epsilon / \sin\theta$）：像素值保持在 `1e-12` 以内；$K_{\mathrm{eff}}$ 接近 1 的像素（由一两个事件主导）误差不被平均，单测中最坏 `3e-12`。遍历里没有把「一个像素 = 一个 $\delta$ 带」写死：像素是有序仓库上的一个下标区间，§9 发散光的形式（$D \ge \theta$）只是另一种区间。
+
+**实测**（英文版附录）。$N = 10^8$ 的 canonical 条带：Mac 4 个 worker `30.8 s`（gather `168.9 s`），单进程 `73.7 s`；worker RSS `441 MB`（所在段映射进来的那部分仓库，属于共享页缓存），gather 时每个 worker `1175 MB`；每个像素的 $K$、$K_{\rho>0}$ 相同，值的差 ≤ `7.9e-15`。多 store group 时峰值不再相加：12 个 $\Phi$ 组各一个仓库，物理 footprint 峰值 `119 MB`，只有一组时 `111 MB`，而按 gather 的方式全部加载需 `1285 MB`。稀疏像素集（单像素宽的剖面，各带不重叠）是 gather 的最佳情形，两者速度相当；scatter 的收益在像素共享事件的地方。GPU 后端不在范围内；CPU 上乘积（内维 3）相对逐元素的 $\rho$ 很便宜，进一步的加速要从 $\rho$ 本身找，而不是从乘积找。
 
 ## 9. 发散光
 

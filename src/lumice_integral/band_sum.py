@@ -54,12 +54,27 @@ is the point mass of task 9 (:func:`.path_class.render_class_pixel` on the
 one pixel containing the sun, ``m / pixel_solid_angle``, ``0`` elsewhere; the
 Haar-stream estimate of :func:`.path_class.estimate_rank0_contribution`).
 
-Rendering (:func:`render_band_sum_window`).  The parent builds or loads every
-store of the plan once (:func:`.s2_store.build_or_load`) before any worker
-starts; spawned workers load the saved stores (SHA-256 checked, no rebuild)
-and render whole columns.  Output (:func:`write_band_sum_strip`) is the
-:mod:`.strip_io` directory layout (``read_strip`` reads it) with a band-sum
-``pixels.csv`` and ``provenance.json``.
+Rendering (:func:`render_band_sum_window`) is the *scatter* form of the sum
+(task ``band-sum-scatter-renderer``, ``docs/phase2.md`` section 8): the
+same estimator with the loops exchanged.  A pose splits into a pixel factor
+and an event factor, ``R_i = W F_i^T`` (:func:`.s2_store.pixel_world_frame`,
+:func:`.s2_store.event_frames`), and every density reads only the zenith
+components of the body axes, ``R_i[2, j] = W[2, :] . F_i[j, :]``
+(:attr:`.pose_density.PoseDensity.axis_zeniths`), so a block of pixels and
+a chunk of events take one matrix product per body axis and transport
+(:func:`scatter_store`; a transport is ``g F J`` on the event side,
+:func:`.s2_store.transported_frames`).  The parent builds or loads every
+store of the plan once (:func:`.s2_store.build_or_load`, SHA-256 checked
+once); the workers compute the pixels' bands (columns), the parent cuts the
+pixels ordered by deviation into one segment per worker, and each worker
+maps every store read-only in turn (``mmap_mode="r"``) and walks the events
+of its segment's bands: one store group at a time, the stores shared as
+page cache instead of loaded per worker.  The per-pixel gather
+(:func:`class_band_sum_pixel`, :func:`render_pixels`) is the same sum pixel
+by pixel; it is kept as the test oracle and no longer renders windows.
+Output (:func:`write_band_sum_strip`) is the :mod:`.strip_io` directory
+layout (``read_strip`` reads it) with a band-sum ``pixels.csv`` and
+``provenance.json``.
 
 The sun enters as ``s_hat`` (``sun`` / :attr:`BandSumScene.sun_direction`);
 the deviation of a pixel is measured between propagation directions
@@ -92,10 +107,14 @@ from .prescan import DEFAULT_RNG_SEED, DEFAULT_SAMPLE_COUNT
 from .provenance import git_commit, sha256_of
 from .s2_store import (
     DEFAULT_CACHE_DIR,
+    S2Events,
     S2EventStore,
     build_or_load,
+    event_frames,
     event_rotations,
     max_rss_mb,
+    pixel_world_frame,
+    transported_frames,
     transported_rotations,
 )
 from .strip_io import FILE_NAMES, Window, environment_block, scene_block, write_binary_arrays
@@ -404,12 +423,14 @@ def prepare_stores(
             group.members,
             n,
             base_dir=base_dir,
-            mmap_mode="r",  # the parent needs the count and diagnostics only; each worker loads with the hash check
+            mmap_mode="r",  # the parent needs the count and diagnostics only
             run_checks=run_checks,
             log=log,
         )
         key = store.spec.cache_key()
         directory = Path(base_dir) / key
+        # The content guarantee, once: the workers map the arrays read-only (size check only).
+        S2EventStore.verify(directory)
         record = {
             "cache_key": key,
             "directory": str(directory),
@@ -452,25 +473,216 @@ def _rank0_values(scene: BandSumScene, pixels: Sequence[tuple[int, int]]) -> tup
 def render_pixels(
     scene: BandSumScene, stores: Sequence[tuple[Mapping[str, np.ndarray], StoreGroup]], n: int, pixels: Sequence[tuple[int, int]]
 ) -> list[BandSumPixelResult]:
-    """In-process band sums of ``pixels`` (rank-2 classes; the stores' events as ``S2Events.arrays()`` dicts)."""
+    """In-process gather band sums of ``pixels`` (rank-2 classes; the stores' events as ``S2Events.arrays()`` dicts).
+
+    The oracle of the scatter renderer (:func:`render_band_sum_window`), not a second rendering path.
+    """
     sun = np.asarray(scene.sun_direction, dtype=np.float64)
     return [class_band_sum_pixel(stores, sun, scene.pose_density, row, column, n, scene.render) for row, column in pixels]
+
+
+# --------------------------------------------------------------- scatter
+# Events per chunk and pixels per block of the scatter form: a (block x chunk) float64 grid is 256 kB, small
+# enough for the allocator to reuse (8 MB grids were mapped and zero-filled afresh: 2x the system time).
+SCATTER_EVENT_CHUNK = 1024
+SCATTER_PIXEL_BLOCK = 32
+_AXIS_INDEX = {"e1": 0, "e2": 1, "e3": 2}
+
+
+@dataclasses.dataclass(frozen=True, eq=False)
+class PixelBands:
+    """The pixel side of the scatter form, one entry per pixel (:func:`pixel_bands`).
+
+    ``zenith`` is ``W[2, :]`` of :func:`.s2_store.pixel_world_frame`: the
+    zenith components of the body axes of every event pose at this pixel are
+    ``F_i @ zenith`` (:func:`.s2_store.event_frames`).
+    """
+
+    rows: np.ndarray
+    columns: np.ndarray
+    delta: np.ndarray
+    lo: np.ndarray
+    hi: np.ndarray
+    zenith: np.ndarray
+
+    def __len__(self) -> int:
+        return len(self.rows)
+
+    def take(self, index: np.ndarray) -> PixelBands:
+        return PixelBands(*(getattr(self, f.name)[index] for f in dataclasses.fields(self)))
+
+    @staticmethod
+    def concatenate(parts: Sequence[PixelBands]) -> PixelBands:
+        return PixelBands(*(np.concatenate([getattr(p, f.name) for p in parts]) for f in dataclasses.fields(PixelBands)))
+
+
+def pixel_bands(pixels: Sequence[tuple[int, int]], sun: np.ndarray, render: Mapping[str, Any] = CANONICAL_RENDER) -> PixelBands:
+    """:func:`pixel_band` of every pixel (the same per-pixel arithmetic, so the bands are bit-identical)."""
+    count = len(pixels)
+    delta, lo, hi, zenith = np.zeros(count), np.zeros(count), np.zeros(count), np.zeros((count, 3))
+    # The sun pixel's centre may be s_hat itself (e = 0): its band is empty or its value NaN, as in the gather.
+    with np.errstate(invalid="ignore", divide="ignore"):
+        for index, (row, column) in enumerate(pixels):
+            centre, delta[index], lo[index], hi[index] = pixel_band(row, column, sun, render)
+            zenith[index] = pixel_world_frame(sun, centre)[2]
+    rows = np.array([r for r, _ in pixels], dtype=np.int64)
+    columns = np.array([c for _, c in pixels], dtype=np.int64)
+    return PixelBands(rows, columns, delta, lo, hi, zenith)
+
+
+@dataclasses.dataclass(eq=False)
+class ScatterSums:
+    """Per-pixel accumulators of the scatter form, aligned with a :class:`PixelBands`."""
+
+    total: np.ndarray
+    square: np.ndarray
+    k: np.ndarray
+    k_pos: np.ndarray
+
+    @classmethod
+    def zeros(cls, count: int) -> ScatterSums:
+        return cls(np.zeros(count), np.zeros(count), np.zeros(count, dtype=np.int64), np.zeros(count, dtype=np.int64))
+
+
+def scatter_store(
+    events: S2Events,
+    group: StoreGroup,
+    density: PoseDensity,
+    bands: PixelBands,
+    sums: ScatterSums,
+    *,
+    event_chunk: int = SCATTER_EVENT_CHUNK,
+    pixel_block: int = SCATTER_PIXEL_BLOCK,
+) -> None:
+    """Add one store's band sums over ``bands`` into ``sums``: the scatter form of :func:`class_band_sum_pixel`.
+
+    ``events`` is an :class:`.s2_store.S2Events` (a ``mmap_mode="r"`` store:
+    only the chunks read are paged in).  The band of every pixel is the index
+    range ``searchsorted(D, [lo, hi])``, the same left-closed right-open
+    comparison as :func:`band_poses`, so ``K`` is identical.  The events of
+    all bands are walked in chunks of ``event_chunk``; per chunk the event
+    frames (and their transports, ``g F J``) are built once, and every pixel
+    whose band meets the chunk takes, per block of ``pixel_block`` pixels, a
+    matrix product ``zenith @ F[:, j, :]^T`` per body axis ``j`` the density
+    reads (:attr:`.pose_density.PoseDensity.axis_zeniths`), ``rho`` element
+    by element, the band mask and a sum over the events.  The per-event
+    contribution ``c_i = w_i sum_t rho(R_i^(t))`` is formed before squaring,
+    so ``K_rho_pos`` and ``K_eff`` keep ``K_EFF_SEMANTICS``.  The value
+    differs from the gather's only in summation order (round-off).
+    """
+    first = np.searchsorted(events.D, bands.lo)
+    stop = np.maximum(np.searchsorted(events.D, bands.hi), first)
+    sums.k += stop - first
+    order = np.argsort(first, kind="stable")
+    first_sorted = first[order]
+    begin, end = int(first.min(initial=0)), int(stop.max(initial=0))
+    axes = density.axis_zeniths
+    transports = [None if t.g is None else np.asarray(t.g, dtype=np.float64) for t in group.transports]
+    live = np.zeros(0, dtype=np.int64)  # pixels (indices into bands) whose band may meet the chunk, by first index
+    admitted = 0
+    for c0 in range(begin, end, event_chunk):
+        c1 = min(c0 + event_chunk, end)
+        grow = int(np.searchsorted(first_sorted, c1, side="left"))
+        live = np.concatenate([live, order[admitted:grow]])
+        admitted = grow
+        live = live[stop[live] > c0]
+        if len(live) == 0:
+            continue
+        weight = np.asarray(events.w[c0:c1], dtype=np.float64)
+        if events.iw is not None:
+            weight = weight * np.asarray(events.iw[c0:c1], dtype=np.float64)
+        frames = event_frames(
+            np.asarray(events.u[c0:c1], dtype=np.float64),
+            np.asarray(events.phi[c0:c1], dtype=np.float64),
+            np.asarray(events.D[c0:c1], dtype=np.float64),
+        )
+        vectors = [
+            {name: (frames if g is None else transported_frames(frames, g))[:, _AXIS_INDEX[name], :].T for name in axes}
+            for g in transports
+        ]
+        for b0 in range(0, len(live), pixel_block):
+            block = live[b0 : b0 + pixel_block]
+            lo = np.clip(first[block] - c0, 0, c1 - c0)
+            hi = np.clip(stop[block] - c0, 0, c1 - c0)
+            k0, k1 = int(lo.min()), int(hi.max())
+            if k1 <= k0:
+                continue
+            zenith = bands.zenith[block]
+            per_event = np.zeros((len(block), k1 - k0))
+            for vector in vectors:
+                # w rho per transport, then summed: the gather's order (a product can underflow either way)
+                per_event += weight[k0:k1] * density.evaluate_axis_zeniths(**{name: zenith @ v[:, k0:k1] for name, v in vector.items()})
+            index = np.arange(k0, k1)
+            inside = (index >= lo[:, None]) & (index < hi[:, None])
+            per_event = np.where(inside, per_event, 0.0)
+            sums.total[block] += per_event.sum(axis=1)
+            sums.square[block] += np.square(per_event).sum(axis=1)
+            sums.k_pos[block] += np.count_nonzero(per_event > 0.0, axis=1)
+
+
+def scatter_results(bands: PixelBands, sums: ScatterSums, n: int) -> list[BandSumPixelResult]:
+    """:class:`BandSumPixelResult` per pixel from the accumulated sums (the finishing step of :func:`class_band_sum_pixel`)."""
+    out = []
+    for i in range(len(bands)):
+        total, square, delta, width = float(sums.total[i]), float(sums.square[i]), float(bands.delta[i]), float(bands.hi[i] - bands.lo[i])
+        # An empty band is 0 even where the constant is singular (the pixel containing delta = 0, i.e. the sun).
+        value = band_sum_estimate(total, n, width, delta) if total != 0.0 else 0.0
+        out.append(
+            BandSumPixelResult(
+                int(bands.rows[i]), int(bands.columns[i]), value, delta, width,
+                int(sums.k[i]), int(sums.k_pos[i]), kish_k_eff(total, square), total, square,
+            )
+        )
+    return out
+
+
+def deviation_segments(bands: PixelBands, work: np.ndarray, count: int) -> list[np.ndarray]:
+    """Split the pixels, ordered by band centre, into at most ``count`` runs of about equal ``work`` (empty runs dropped).
+
+    Neighbouring deviations share events, so a run's events are one
+    contiguous stretch of every store: the worker of a segment pages in that
+    stretch only.
+    """
+    order = np.argsort(0.5 * (bands.lo + bands.hi), kind="stable")
+    cumulative = np.cumsum(np.asarray(work, dtype=np.float64)[order] + 1.0)  # + 1: pixel overhead, and no zero-work ties
+    cuts = np.searchsorted(cumulative, cumulative[-1] * np.arange(1, count) / count, side="right") if len(order) else []
+    return [part for part in np.split(order, cuts) if len(part)]
 
 
 _WORKER: dict[str, Any] = {}
 
 
 def _worker_init(scene: BandSumScene, directories: Sequence[tuple[Path, StoreGroup]], n: int) -> None:
+    """Record the scene and the store directories; nothing is loaded until a segment maps its events."""
     _WORKER["scene"] = scene
     _WORKER["n"] = n
-    _WORKER["stores"] = [(S2EventStore.load(d).events.arrays(), group) for d, group in directories]
+    _WORKER["directories"] = list(directories)
 
 
-def _worker_column(job: tuple[int, Sequence[int]]) -> tuple[list[BandSumPixelResult], float, float]:
-    column, rows = job
+def _worker_bands(pixels: Sequence[tuple[int, int]]) -> PixelBands:
+    scene = _WORKER["scene"]
+    return pixel_bands(pixels, np.asarray(scene.sun_direction, dtype=np.float64), scene.render)
+
+
+def _worker_segment(bands: PixelBands) -> tuple[list[BandSumPixelResult], float, float]:
+    """One deviation segment: every store group in turn, mapped read-only, then released."""
     start = time.perf_counter()
-    results = render_pixels(_WORKER["scene"], _WORKER["stores"], _WORKER["n"], [(row, column) for row in rows])
-    return results, time.perf_counter() - start, max_rss_mb()
+    scene = _WORKER["scene"]
+    sums = ScatterSums.zeros(len(bands))
+    for directory, group in _WORKER["directories"]:
+        store = S2EventStore.load(directory, mmap_mode="r")
+        scatter_store(store.events, group, scene.pose_density, bands, sums)
+        del store
+    return scatter_results(bands, sums, _WORKER["n"]), time.perf_counter() - start, max_rss_mb()
+
+
+def _band_work(bands: PixelBands, directories: Sequence[tuple[Path, StoreGroup]]) -> np.ndarray:
+    """Events times transports per pixel over the plan (the segment balance), from the mapped ``D`` arrays."""
+    work = np.zeros(len(bands))
+    for directory, group in directories:
+        d = S2EventStore.load(directory, mmap_mode="r").events.D
+        work += (np.searchsorted(d, bands.hi) - np.searchsorted(d, bands.lo)).clip(min=0) * len(group.transports)
+    return work
 
 
 def render_band_sum_window(
@@ -483,10 +695,20 @@ def render_band_sum_window(
     run_checks: bool = True,
     log: Callable[[str], None] | None = None,
 ) -> tuple[list[BandSumPixelResult], dict[str, Any]]:
-    """Render every pixel of ``window``: stores built or loaded first, then columns across ``workers``.
+    """Render every pixel of ``window``: stores built or loaded first, then deviation segments across ``workers``.
 
-    Returns the pixel results and an execution record (store records, wall
-    clocks, per-pixel time, peak RSS of the parent and of the workers).
+    The scatter form (:func:`scatter_store`, ``docs/phase2.md`` section 8):
+    the pixels' bands are computed (columns across the workers), ordered by
+    deviation and cut into ``workers`` segments of about equal work; each
+    worker maps every store of the plan read-only in turn and adds the
+    events of its segment's bands, so a worker holds one store group's
+    stretch of events at a time and the stores are shared page cache, not
+    per-worker copies.  :func:`class_band_sum_pixel` is the gather form of
+    the same sum, kept as the test oracle.
+
+    Returns the pixel results (column by column, rows within a column) and
+    an execution record (store records, wall clocks, per-pixel time, peak
+    RSS of the parent and of the workers, the segments).
     """
     if workers < 1:
         raise ValueError("workers must be positive")
@@ -506,38 +728,62 @@ def render_band_sum_window(
     execution["stores"] = [record for _, _, record in prepared]
     execution["stores_wall_clock_s"] = stores_s
     directories = [(d, group) for d, group, _ in prepared]
-    jobs = [(column, list(window.row_range)) for column in window.column_range]
+    column_jobs = [[(row, column) for row in window.row_range] for column in window.column_range]
     render_start = time.perf_counter()
+    segment_records: list[dict[str, Any]] = []
     results: list[BandSumPixelResult] = []
-    column_seconds: list[float] = []
     worker_rss = 0.0
+
+    def run(map_function) -> None:
+        nonlocal worker_rss
+        bands = PixelBands.concatenate(list(map_function(_worker_bands, column_jobs)))
+        bands_s = time.perf_counter() - render_start
+        work = _band_work(bands, directories)
+        indices = deviation_segments(bands, work, workers)
+        segments = [bands.take(index) for index in indices]
+        if log is not None:
+            log(f"{len(bands)} pixel bands in {bands_s:.1f} s; {len(segments)} deviation segments")
+        execution["pixel_bands_wall_clock_s"] = bands_s
+        for index, (segment, pixel_index, (chunk, seconds, rss)) in enumerate(
+            zip(segments, indices, map_function(_worker_segment, segments))
+        ):
+            results.extend(chunk)
+            worker_rss = max(worker_rss, rss)
+            segment_records.append(
+                {
+                    "pixels": len(segment),
+                    "delta_range_rad": [float(segment.lo.min()), float(segment.hi.max())],
+                    "events_x_transports": int(work[pixel_index].sum()),
+                    "seconds": seconds,
+                    "max_rss_mb": rss,
+                }
+            )
+            if log is not None:
+                log(f"segment {index + 1}/{len(segments)}: {len(segment)} pixels, {seconds:.1f} s")
+
     if workers == 1:
         _worker_init(scene, directories, n)
-        load_s = time.perf_counter() - render_start
-        for job in jobs:
-            chunk, seconds, rss = _worker_column(job)
-            results.extend(chunk)
-            column_seconds.append(seconds)
-            worker_rss = max(worker_rss, rss)
-        _WORKER.clear()
-        execution["in_process_store_load_s"] = load_s
+        try:
+            run(map)
+        finally:
+            _WORKER.clear()
     else:
         context = multiprocessing.get_context("spawn")
         with concurrent.futures.ProcessPoolExecutor(
             max_workers=workers, mp_context=context, initializer=_worker_init, initargs=(scene, directories, n)
         ) as executor:
-            for index, (chunk, seconds, rss) in enumerate(executor.map(_worker_column, jobs)):
-                results.extend(chunk)
-                column_seconds.append(seconds)
-                worker_rss = max(worker_rss, rss)
-                if log is not None and (index + 1) % 25 == 0:
-                    log(f"{index + 1}/{len(jobs)} columns, {time.perf_counter() - render_start:.1f} s")
+            run(executor.map)
+    position = {pixel: index for index, pixel in enumerate(pixels)}
+    results.sort(key=lambda r: position[(r.row, r.column)])
     render_s = time.perf_counter() - render_start
+    segment_seconds = sum(r["seconds"] for r in segment_records)
     execution.update(
+        renderer="scatter (deviation segments x event chunks; docs/phase2.md section 8)",
+        segments=segment_records,
         render_wall_clock_s=render_s,
         wall_clock_s=time.perf_counter() - start,
-        pixel_cpu_seconds=float(sum(column_seconds)),
-        per_pixel_mean_s=float(sum(column_seconds)) / max(len(pixels), 1),
+        pixel_cpu_seconds=float(segment_seconds),
+        per_pixel_mean_s=float(segment_seconds) / max(len(pixels), 1),
         max_rss_mb_parent=max_rss_mb(),
         max_rss_mb_worker=worker_rss,
     )
@@ -662,6 +908,10 @@ __all__ = [
     "PIXEL_CSV_COLUMNS",
     "BandSumPixelResult",
     "BandSumScene",
+    "PixelBands",
+    "SCATTER_EVENT_CHUNK",
+    "SCATTER_PIXEL_BLOCK",
+    "ScatterSums",
     "StoreGroup",
     "Transport",
     "band_contributions",
@@ -670,11 +920,15 @@ __all__ = [
     "band_sum_estimate",
     "band_sum_pixel",
     "class_band_sum_pixel",
+    "deviation_segments",
     "kish_k_eff",
     "pixel_band",
+    "pixel_bands",
     "prepare_stores",
     "render_band_sum_window",
     "render_pixels",
+    "scatter_results",
+    "scatter_store",
     "single_path_class",
     "store_plan",
     "write_band_sum_strip",

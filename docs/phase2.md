@@ -328,8 +328,9 @@ is the fast renderer, parameter-sweep tool and independent cross-check.
 Production modules: `lumice_integral.s2_store` (build, cache, provenance,
 band slices, $D_{6h}$ transport) and `lumice_integral.band_sum` (estimator,
 path and class rendering; CLI `scripts/render_band_sum.py`). Canonical
-strip at $N = 10^8$: `169 s` on four Mac workers against Phase I's
-`34.7 min` on 30 `home-wsl` workers (appendix).
+strip at $N = 10^8$: `30.8 s` on four Mac workers (`169 s` before the
+scatter form of section 8) against Phase I's `34.7 min` on 30 `home-wsl`
+workers (appendix).
 
 ## 6. One precomputation, three consumers
 
@@ -388,7 +389,7 @@ works pixel by pixel on $\mathrm{SO}(3)$.
 | route | once, resolution-independent | per $\delta$ ring | per pixel | accuracy |
 |---|---|---|---|---|
 | Phase I | prescan table | — | discovery, trace, integrate: `0.1-0.3 s` (measured) | pointwise, adaptive error estimate |
-| band sum | store of $N$ events (`80 s` at $10^8$, measured) | — | $K$ band events: pose + $\rho$, `3.3 ms` CPU (measured) | band average in $\delta$; $\sim 1/\sqrt{K_{\mathrm{eff}}}$ |
+| band sum | store of $N$ events (`80 s` at $10^8$, measured) | — | $K$ band events: $\rho$ of a matrix product, `0.31 ms` CPU (scatter, section 8; gather `3.3 ms`, measured) | band average in $\delta$; $\sim 1/\sqrt{K_{\mathrm{eff}}}$ |
 | contour (design) | $D_P$ field and critical points | extract and refine the level set | $\rho$ along stored nodes | pointwise, deterministic, high order |
 
 Scaling with resolution:
@@ -397,7 +398,7 @@ Scaling with resolution:
 - Band sum: pixels × $K_{\mathrm{target}}$, a small constant. The band
   follows the pixel, so keeping $K_{\mathrm{eff}}$ when the linear
   resolution doubles needs twice the $N$: the store grows linearly with
-  resolution (in memory with the current renderer, on disk after section 8).
+  resolution, on disk (the renderer maps it, section 8).
 - Contour: the expensive part ∝ rings ∝ linear resolution, as a batched
   field computation; only the final line integral ∝ pixels; no sampling
   noise and no store that grows with resolution (the store only seeds).
@@ -409,21 +410,22 @@ Scaling with resolution:
 
 ## 8. Organising the band sum by deviation
 
-The production renderer is a *gather*: per pixel, find the band,
-`searchsorted` the events, rebuild their poses at the pixel azimuth,
-evaluate $\rho$, sum. Jobs are whole columns and a column spans the whole
-$\delta$ range, so every spawned worker loads every store of the plan in full
-(`band_sum._worker_init`), and the schema 2 store build kept every $w > 0$
-event in memory before one `argsort` (schema 3 buckets it on disk, below).
-The memory ceiling of section 7 is this organisation, not the band sum.
+Until task `band-sum-scatter-renderer` the production renderer was a
+*gather*: per pixel, find the band, `searchsorted` the events, rebuild their
+poses at the pixel azimuth, evaluate $\rho$, sum. Jobs were whole columns and
+a column spans the whole $\delta$ range, so every spawned worker loaded every
+store of the plan in full, and the schema 2 store build kept every $w > 0$
+event in memory before one `argsort`. The memory ceiling of section 7 was
+that organisation, not the band sum.
 
 Turning the loops inside out (the author's proposal, 2026-09-24, likened to
 swapping the loop indices of a matrix product) keeps the sum and changes the
-order of work: organise events by deviation, find the pixels a range of
-deviations serves, and let a batch of events scatter into all of them.
+order of work: walk the events in deviation order and let each chunk of
+events scatter into every pixel whose band it meets. The gather
+(`band_sum.class_band_sum_pixel`) is kept as the test oracle, not as a
+second rendering path.
 
-**Memory (storage in production, task `s2-store-schema-3`; rendering is
-design, `band-sum-scatter-renderer`).** One `.npy` per array (a `.npz`
+**Storage (task `s2-store-schema-3`).** One `.npy` per array (a `.npz`
 cannot be mapped partially), with its SHA-256 and size in the provenance;
 `S2EventStore.load(..., mmap_mode="r")` maps them read-only and checks
 sizes only, `S2EventStore.verify` hashes on demand, the default load still
@@ -432,38 +434,84 @@ equal-width buckets, a performance knob outside the cache key) and sorts
 per bucket, which is the one global stable sort bit for bit;
 `build_or_load` writes the arrays straight into the cache, so the store is
 never in memory during the build (at $N = 10^8$ the build peak halves,
-appendix). Still design: pixels sorted by
-band centre, the $D$ axis cut into padded segments, one segment per worker
-instead of one column, so the total is about one store rather than one per
-worker; classes accumulated one at a time, so the ceiling is the largest
-class rather than the sum of all (the case that matters for chapter 11's
-table). What remains is the band sum's own cost (pixels × $K$) and noise;
-disk ∝ $N$.
+appendix).
 
-**Compute: the block is a matrix product (derived).** By ring invariance an
-event's pose at azimuth $\alpha$ is $R_i(\alpha) = Q_\alpha R_i(\alpha_0)$.
-The five pose densities see the pose only through body axes measured
-against the zenith $\hat{\mathbf z}$: `ZenithGaussianPoseDensity` through the
-c axis, `ZenithRollGaussianPoseDensity` through the c axis and one side axis
-(the roll). Hence
+**The pose splits into a pixel and an event factor.** The pose of section
+5 is $R_i = W F_i^{\mathsf T}$ with the pixel frame
+$W = [\hat{\mathbf s}, \mathbf e, \hat{\mathbf s}\times\mathbf e]$ and the
+event frame $F_i = [\mathbf u_i, \mathbf f_i, \mathbf u_i\times\mathbf f_i]$
+(`s2_store.pixel_world_frame`, `s2_store.event_frames`); $F_i$ depends on
+neither the pixel nor the sun. The five pose densities see the pose only
+through the zenith components of the body axes, the third row of $R_i$
+(`ZenithGaussianPoseDensity` the c axis, `ZenithRollGaussianPoseDensity`
+the c axis and the roll $\operatorname{atan2}(-e_2, e_1)$; the random
+density none). So
 
 $$
-\rho\big(Q_\alpha R_i\big) = f\big((Q_\alpha^{\mathsf T}\hat{\mathbf z})\cdot(R_i\hat{\mathbf c}),\ \dots\big),
+\big(R_i\big)_{3j} = \hat{\mathbf z}\cdot R_i\mathbf e_j
+= \big(W^{\mathsf T}\hat{\mathbf z}\big)\cdot\big(F_i^{\mathsf T}\big)_{\cdot j}
+= \mathbf a_{\mathrm{pixel}}\cdot\mathbf b_{ij},
 $$
 
-a dot product between a pixel vector and an event vector. For $M$ pixels
-and $K$ events the contributions are one $(M\times 3)(3\times K)$ product,
-an elementwise $f$, the band mask and a weighted reduction with $w$ (GEMM
-then GEMV; two products for the roll families). Events sorted by $D$ and
-pixels by $\delta$ make the mask banded, so the work tiles into
-(deviation segment × intersecting pixel block). The $D_{6h}$ transport
-$L_g R g^{\mathsf T}$ is linear in the body axes and folds into the same
-products; the random density has $f \equiv$ const, one histogram value per
-ring. Not yet known: the speed-up, the axis-vector interface `pose_density`
-needs (its `evaluate_batch` stays the defining oracle), and the mask's
-bit-level agreement with `pixel_band` at the caustic. Today's canonical
-strip (`169 s`, about `6 GB`) has no memory problem; this is for chapter
-11's table, many source directions, and full-sky or finer images.
+a dot product of a pixel vector ($W[2, :]$) and an event vector
+($F_i[j, :]$), with no reference azimuth and no rotation $Q_\alpha$ needed.
+For $M$ pixels and $K$ events this is one $(M\times 3)(3\times K)$ product
+per body axis the density reads. `pose_density` exposes it as
+`axis_zeniths` (the components a family reads: `()`, `("e3",)` or
+`("e1", "e2", "e3")`) and `evaluate_axis_zeniths(e1=, e2=, e3=)` on arrays
+of any shape; `evaluate_batch` stays the defining oracle (the two agree to
+`1e-13` on every family, test). The $D_{6h}$ transport
+$L_g R g^{\mathsf T}$ of section 3.3 is $W (g F_i J)^{\mathsf T}$ with
+$J = \operatorname{diag}(1, 1, \det g)$: a fixed linear map of the event
+side only (`s2_store.transported_frames`), the pixel vector unchanged.
+
+**The renderer** (`band_sum.render_band_sum_window`, `scatter_store`).
+
+1. The workers compute every pixel's band (`pixel_band`, columns as jobs;
+   the same arithmetic, so $\delta$, the band and its width are bit for bit
+   the gather's).
+2. The parent orders the pixels by band centre and cuts them into one
+   segment per worker of about equal work (events × transports, from the
+   mapped `D` arrays). A segment's events are one contiguous stretch of
+   each store.
+3. Each worker maps every store of the plan read-only in turn
+   (`mmap_mode="r"`, one store group at a time, released before the next;
+   the content was hashed once by the parent), and walks the events of its
+   stretch in chunks of 1024. Per chunk the event frames and their
+   transports are built once; the pixels whose band meets the chunk take,
+   in blocks of 32, the matrix products above, $\rho$ elementwise, the band
+   mask and a sum over the events. The band of a pixel is the index range
+   `searchsorted(D, [lo, hi])`, the gather's left-closed right-open
+   comparison, so $K$ is identical.
+4. Per event the contributions of its transports are summed before
+   squaring ($w\rho$ per transport, then summed, the gather's order: a
+   product next to underflow rounds the same way), so $K_{\rho>0}$ and
+   $K_{\mathrm{eff}}$ keep the per-event semantics of section 3.3.
+
+The value differs from the gather's only in summation order and in how the
+three products of $\mathbf a\cdot\mathbf b$ are rounded. A narrow density
+amplifies the latter ($d\log\rho = (\theta - \bar\theta)/\sigma^2\,d\theta$;
+Lowitz's roll of a nearly vertical c axis has $d\psi \sim \epsilon /
+\sin\theta$): a value keeps `1e-12`, a $K_{\mathrm{eff}}$ near one (one or
+two events) carries that error undiluted, `3e-12` at worst in the unit
+tests. Nothing here writes "a pixel is one $\delta$ band" into the walk:
+a pixel is an index range of a sorted store, so the divergent-light form of
+section 9 ($D \ge \theta$) is another range.
+
+**Measured** (appendix). The canonical strip at $N = 10^8$: `30.8 s` on four
+Mac workers (gather `168.9 s`), `73.7 s` single-process; worker RSS
+`441 MB` (the mapped stretch of its segment, shared page cache) against
+`1175 MB` per worker; every pixel's $K$ and $K_{\rho>0}$ equal, values
+within `7.9e-15`. With many store groups the peak no longer adds up: twelve
+$\Phi$ groups, one store each, peak at `119 MB` physical footprint against
+`111 MB` for one group, while loading them the gather's way takes
+`1285 MB`. A sparse pixel set (a one-pixel-wide profile, bands that do not
+overlap) is the gather's best case and runs at the same speed; the scatter
+wins where pixels share events. A GPU back end is out of scope; on the CPU
+the products (inner dimension three) are cheap next to the elementwise
+$\rho$ (`0.14 s` against `3.4 s` for `arccos` alone on the same
+$256\times4096$ grid, 200 repeats), so a further factor would come from
+$\rho$, not from the products.
 
 ## 9. Divergent light
 
@@ -932,3 +980,48 @@ merge (schema 3), self-checks excluded.
 - *Wall clock.* Even at $10^8$, `20 %` slower at $5\times10^7$ (system time
   `26 s` vs `15 s`: bucket files appended about 64k times and the data
   written twice); single runs on one machine.
+
+**Scatter renderer (task `band-sum-scatter-renderer`, 2026-09-24).** Section 8's
+organisation in production. Mac (M2 Max, 12 cores), `JAX_PLATFORMS=cpu
+OMP_NUM_THREADS=1`; the machine was shared with other jobs (load average
+5-7 during the timed runs below, 20-45 during earlier ones, which took 2-3×
+longer in wall clock at the same CPU time).
+
+| canonical strip, $N = 10^8$, 201051 px | gather (task 16, 2026-09-23) | scatter, 4 workers | scatter, 1 worker |
+|---|---|---|---|
+| wall clock | `168.9 s` | `30.8 s` | `73.7 s` |
+| pixel bands (geometry, part of the wall clock) | inside the pixel loop | `3.4 s` | `9.9 s` |
+| segment CPU (sum over workers) | `661 s` | `97 s` | `63 s` |
+| max RSS parent / worker | `1187 / 1175 MB` | `416 / 441 MB` | `692 MB` |
+
+- *Agreement with `artifacts/band-sum-full`* (`regress_band_sum.py --stage
+  scatter`): every pixel's band, $K$, $K_{\rho>0}$ and lit status equal;
+  value within `7.9e-15`, $K_{\mathrm{eff}}$ within `3.5e-15`, no pixel above
+  `1e-12`; rows 48-56 (the inner-edge caustic, 794 lit pixels) within
+  `7.9e-15`, the same as the rest. Both worker counts give these numbers.
+- *Other scenes against the gather*, $N = 10^7$ Fibonacci stores: class
+  `[1,3,5]` (24 members, 12 transports improper, random density, a
+  $61\times61$ 150° camera): value `1.0e-15`, $K_{\mathrm{eff}}$ `2.1e-15`,
+  scatter `0.93 s` against gather `31.7 s`; task 14's plate / Parry / Lowitz
+  profiles on class `[3,5]` (one store, 12 transports): value within
+  `3.4e-14` / `5.4e-15` / `3.7e-15`, $K$ and $K_{\rho>0}$ equal, `0.28 / 0.71 /
+  0.90 s` against the gather's `0.46 / 0.70 / 0.79 s`. The unit tests cover
+  all five families on `[3,5]` (proper), `[1,3,5,2]` (improper) and `[3,5]`
+  as twelve stores at $N = 10^5$, and two sun altitudes on one store.
+- *Why a sparse profile is no faster.* Its bands do not overlap, so an event
+  chunk serves one to three pixels and the per-chunk event work (frames and
+  their 11 transports) is not shared; profiling found it dominant
+  (`1.7 s` of `2.4 s` with an `einsum`; `tensordot` made it 7.5× cheaper).
+  Widening chunks where few pixels are live was tried and dropped: the
+  masked-out part of each block grew faster than the overhead fell.
+- *Tile size.* Chunks of 4096 events × blocks of 256 pixels (8 MB grids)
+  doubled the system time against 1024 × 32 (256 kB) at equal user time:
+  the large grids were mapped and zero-filled afresh by the allocator.
+- *Many store groups* (`scratchpad/task-band-sum-scatter-renderer/probe_group_memory.py`):
+  class `[3,5]` with `transport=False`, twelve $\Phi$ groups, one $N = 10^7$
+  store each (`1174 MB` of arrays in total), every tenth column of the
+  canonical camera (20826 px), one process each. Lifetime maximum physical
+  footprint (macOS; clean pages of a mapping are not in it) / max RSS:
+  scatter, one group `111 / 306 MB`; scatter, twelve groups `119 / 313 MB`;
+  the gather's load of all twelve `1285 / 1359 MB`. The peak is that of one
+  group (in fact of the chunk temporaries), not the sum.

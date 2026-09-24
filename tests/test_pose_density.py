@@ -304,6 +304,54 @@ def test_roll_locked_batch_density_matches_the_scalar_call_pose_by_pose():
 
 
 # ---------------------------------------------------------------------------
+# axis-zenith interface (task band-sum-scatter-renderer): evaluate_batch is the oracle
+
+AXIS_ZENITH_FAMILIES = {
+    "random": {},
+    "plate": {"zenith_std_deg": 1.0},
+    "column": {"zenith_std_deg": 0.5},
+    "parry": {"zenith_std_deg": 1.0, "roll_std_deg": 1.0},
+    "lowitz": {"zenith_std_deg": 1.0, "roll_std_deg": 1.0},
+}
+
+
+def near_mode_rotations(density, count: int, rng: np.random.Generator) -> np.ndarray:
+    """Poses within a few widths of the family's mode (the narrow densities vanish on most Haar poses)."""
+    mean = getattr(density, "zenith_mean_rad", np.pi / 2.0)
+    zenith = np.clip(mean + np.radians(3.0) * rng.standard_normal(count), 1e-3, np.pi - 1e-3)
+    roll = getattr(density, "roll_mean_rad", 0.0) + np.radians(3.0) * rng.standard_normal(count)
+    az = rng.uniform(0.0, 2.0 * np.pi, count)
+    return np.stack([chain_rotation(a, z, r) for a, z, r in zip(az, zenith, roll)])
+
+
+@pytest.mark.parametrize("family", sorted(AXIS_ZENITH_FAMILIES))
+def test_axis_zenith_interface_matches_evaluate_batch_pose_by_pose(family):
+    density = build_pose_density(family, **AXIS_ZENITH_FAMILIES[family])
+    rng = np.random.default_rng(22)
+    rotations = np.concatenate([haar_rotations(4000, rng), near_mode_rotations(density, 4000, rng)])
+    oracle = density.evaluate_batch(rotations)
+    components = {name: rotations[:, 2, index] for index, name in enumerate(("e1", "e2", "e3")) if name in density.axis_zeniths}
+    rho = np.broadcast_to(density.evaluate_axis_zeniths(**components), oracle.shape)
+    assert (oracle > 0.0).sum() > 1000
+    np.testing.assert_allclose(rho, oracle, rtol=1e-13, atol=0.0)
+    # (M, K) grids evaluate element by element (the renderer's pixel x event blocks)
+    grid = {name: value.reshape(80, 100) for name, value in components.items()}
+    np.testing.assert_array_equal(np.broadcast_to(density.evaluate_axis_zeniths(**grid), (80, 100)), rho.reshape(80, 100))
+
+
+def test_axis_zenith_interface_declares_and_requires_its_components():
+    assert build_pose_density("random").axis_zeniths == ()
+    assert build_pose_density("column", zenith_std_deg=0.5).axis_zeniths == ("e3",)
+    assert build_pose_density("parry", zenith_std_deg=1.0, roll_std_deg=1.0).axis_zeniths == ("e1", "e2", "e3")
+    with pytest.raises(ValueError, match="e3"):
+        build_pose_density("plate", zenith_std_deg=1.0).evaluate_axis_zeniths()
+    with pytest.raises(ValueError, match="e1, e2 and e3"):
+        build_pose_density("lowitz", zenith_std_deg=1.0, roll_std_deg=1.0).evaluate_axis_zeniths(e3=np.ones(3))
+    # a class attribute, not a dataclass field: construction, equality and repr are unchanged
+    assert HaarUniformPoseDensity() == HaarUniformPoseDensity() and repr(HaarUniformPoseDensity()) == "HaarUniformPoseDensity()"
+
+
+# ---------------------------------------------------------------------------
 # family enumeration, factory and provenance (plan Step 6)
 
 

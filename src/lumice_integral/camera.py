@@ -41,6 +41,7 @@ coordinate, unrelated to Phase II's ``u = R^-1 s_hat``; ``docs/conventions.md``.
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Mapping
 
 import numpy as np
@@ -65,18 +66,26 @@ def rotation_about_axis(axis: np.ndarray, angle_deg: float) -> np.ndarray:
 
 
 def camera_rotation(view: Mapping[str, float] | None) -> np.ndarray:
-    """Lumice ``render.view`` -> camera rotation (columns = camera x / y / z)."""
+    """Lumice ``render.view`` -> camera rotation (columns = camera x / y / z); read-only, cached per view."""
     settings = dict(view or {})
-    azimuth = float(settings.get("azimuth", 0.0))
-    elevation = float(settings.get("elevation", 0.0))
-    roll = float(settings.get("roll", 0.0))
+    return _camera_rotation(
+        float(settings.get("azimuth", 0.0)), float(settings.get("elevation", 0.0)), float(settings.get("roll", 0.0))
+    )
+
+
+@functools.lru_cache(maxsize=64)  # far more than the distinct views any single render or process touches
+def _camera_rotation(azimuth: float, elevation: float, roll: float) -> np.ndarray:
+    # Every pixel direction of a render asks for the same rotation (three Rodrigues matrices, most of a
+    # pixel's geometry time); the same arithmetic once per view, so the directions are unchanged bit for bit.
     z_axis = np.array([0.0, 0.0, 1.0])
     y_axis = np.array([0.0, 1.0, 0.0])
-    return (
+    rotation = (
         rotation_about_axis(z_axis, azimuth)
         @ rotation_about_axis(y_axis, 90.0 - elevation)
         @ rotation_about_axis(z_axis, -90.0 + roll)
     )
+    rotation.flags.writeable = False
+    return rotation
 
 
 def linear_scale(fov_deg: float, width: int, height: int) -> float:

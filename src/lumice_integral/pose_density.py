@@ -14,6 +14,18 @@ All three share one duck-typed contract consumed by ``weights.py``: ``unit``,
 ``normalization``, ``__call__(rotation)`` and ``evaluate_batch(rotations)``.
 :data:`PoseDensity` is the type alias naming that contract.
 
+Every family reads a pose only through the zenith components of its body
+axes, ``z_j = z_hat . (R e_j) = R[2, j - 1]`` (the third row of ``R``): the
+c axis zenith is ``arccos(z_3)`` and the roll ``atan2(-z_2, z_1)``.  The
+axis-zenith interface exposes that: ``axis_zeniths`` names the components a
+family reads (``()``, ``("e3",)`` or ``("e1", "e2", "e3")``) and
+``evaluate_axis_zeniths(e1=, e2=, e3=)`` evaluates ``rho_H`` from arrays of
+any common shape.  The band-sum renderer (:mod:`.band_sum`) builds those
+arrays for a whole pixel block at once, a matrix product of pixel and event
+vectors, instead of one rotation matrix per (pixel, event).
+``evaluate_batch`` stays the authoritative definition and the interface's
+test oracle.
+
 Model (canonical ch06 scene, ``docs/ch06-reference-fixture.md`` section 3.3):
 the crystal c axis (body ``+z``, see ``geometry.core.HexPrism``) has world
 direction ``n = R e3``; its zenith angle ``theta = arccos(n_z)`` follows a
@@ -63,7 +75,7 @@ approaching the period; the locked widths (about 1 deg) are far from that.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal, get_args
+from typing import ClassVar, Literal, get_args
 
 import numpy as np
 
@@ -190,6 +202,17 @@ class ZenithGaussianPoseDensity:
         theta = np.arccos(np.clip(rotations[:, 2, 2], -1.0, 1.0))
         return np.asarray(self.density_at_zenith(theta), dtype=np.float64)
 
+    axis_zeniths: ClassVar[tuple[str, ...]] = ("e3",)
+
+    def evaluate_axis_zeniths(
+        self, *, e1: np.ndarray | None = None, e2: np.ndarray | None = None, e3: np.ndarray | None = None
+    ) -> np.ndarray:
+        """``rho_H`` from the c axis zenith component ``e3 = R[2, 2]`` (any shape; ``e1``, ``e2`` unused)."""
+        if e3 is None:
+            raise ValueError("a zenith-Gaussian density reads the c axis zenith component e3")
+        theta = np.arccos(np.clip(e3, -1.0, 1.0))
+        return np.asarray(self.density_at_zenith(theta), dtype=np.float64)
+
 
 @dataclass(frozen=True)
 class HaarUniformPoseDensity:
@@ -223,6 +246,14 @@ class HaarUniformPoseDensity:
         if rotations.ndim != 3 or rotations.shape[1:] != (3, 3):
             raise ValueError("rotations must have shape (N, 3, 3)")
         return np.ones(rotations.shape[0], dtype=np.float64)
+
+    axis_zeniths: ClassVar[tuple[str, ...]] = ()  # the body-axis zenith components read (module docstring)
+
+    def evaluate_axis_zeniths(
+        self, *, e1: np.ndarray | None = None, e2: np.ndarray | None = None, e3: np.ndarray | None = None
+    ) -> np.ndarray:
+        """``rho_H = 1``: a 0-d array (reads no component; broadcasts against any shape)."""
+        return np.ones((), dtype=np.float64)
 
 
 def roll_gaussian(psi: np.ndarray, *, roll_mean_rad: float, roll_std_rad: float) -> np.ndarray:
@@ -311,6 +342,18 @@ class ZenithRollGaussianPoseDensity:
             raise ValueError("rotations must have shape (N, 3, 3)")
         theta = np.arccos(np.clip(rotations[:, 2, 2], -1.0, 1.0))
         psi = np.arctan2(-rotations[:, 2, 1], rotations[:, 2, 0])
+        return np.asarray(self.zenith.density_at_zenith(theta) * self.density_at_roll(psi), dtype=np.float64)
+
+    axis_zeniths: ClassVar[tuple[str, ...]] = ("e1", "e2", "e3")
+
+    def evaluate_axis_zeniths(
+        self, *, e1: np.ndarray | None = None, e2: np.ndarray | None = None, e3: np.ndarray | None = None
+    ) -> np.ndarray:
+        """``rho_H`` from the zenith components ``e1, e2, e3 = R[2, 0], R[2, 1], R[2, 2]`` (any common shape)."""
+        if e1 is None or e2 is None or e3 is None:
+            raise ValueError("a roll-locked density reads the zenith components e1, e2 and e3")
+        theta = np.arccos(np.clip(e3, -1.0, 1.0))
+        psi = np.arctan2(-np.asarray(e2), e1)
         return np.asarray(self.zenith.density_at_zenith(theta) * self.density_at_roll(psi), dtype=np.float64)
 
 

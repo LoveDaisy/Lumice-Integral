@@ -40,6 +40,15 @@ Stages (``--stage``):
   ``K_eff`` and for the pooled ``per_transport_sample`` one.  (The Fibonacci
   lattice is not i.i.d.: its error is below ``1 / sqrt(K_eff)``, so the
   ``class`` stage's ``z`` is below 1 by the lattice gain.)
+- ``scatter``: the scatter renderer (task ``band-sum-scatter-renderer``) against the
+  gather it replaced.  With ``--band-dir`` and ``--baseline-dir``: two renders of
+  one scene pixel by pixel (``pixels.csv``: ``K`` / ``K_rho_pos`` exactly, value and
+  ``K_eff`` relative, lit pixels; the inner-edge rows 48-56 separately; every pixel
+  beyond ``1e-12`` listed with its value relative to the image maximum).  Without
+  them: ``render_band_sum_window`` against ``class_band_sum_pixel`` pixel by pixel on
+  class ``[1,3,5]`` (24 members, 12 reached by mirrors only; random density,
+  ``--random-n`` Fibonacci points, a 150 deg camera) and on task 14's three
+  profiles (class ``[3,5]``, one store, ``--random-n`` points), value and ``K_eff``.
 - ``figure``: log-scale images of render directories (``uv run --with matplotlib``).
 
 Usage::
@@ -49,6 +58,9 @@ Usage::
     uv run python scripts/regress_band_sum.py --stage class --tiers 1000000 10000000 50000000 \\
         --store-n 100000000 --output <report.json>
     uv run python scripts/regress_band_sum.py --stage k-eff --random-n 10000000 --output <report.json>
+    uv run python scripts/regress_band_sum.py --stage scatter --band-dir <new> --baseline-dir artifacts/band-sum-full \
+        --output <report.json>
+    uv run python scripts/regress_band_sum.py --stage scatter --random-n 10000000 --output <report.json>
     uv run --with matplotlib python scripts/regress_band_sum.py --stage figure --band-dir <dir> --output <png>
 """
 
@@ -65,12 +77,18 @@ import numpy as np
 
 from lumice_integral.band_sum import (
     K_EFF_SEMANTICS,
+    BandSumScene,
+    ScatterSums,
     StoreGroup,
     Transport,
     band_poses,
     class_band_sum_pixel,
     kish_k_eff,
     pixel_band,
+    pixel_bands,
+    render_band_sum_window,
+    scatter_results,
+    scatter_store,
     store_plan,
 )
 from lumice_integral.canonical_scene import (
@@ -81,8 +99,15 @@ from lumice_integral.canonical_scene import (
 from lumice_integral.optics import path_id_of
 from lumice_integral.path_class import build_path_class
 from lumice_integral.pose_density import build_pose_density
-from lumice_integral.s2_store import DEFAULT_CACHE_DIR, RandomSphereSampler, build_event_store, build_or_load, events_from_schema1
-from lumice_integral.strip_io import read_strip
+from lumice_integral.s2_store import (
+    DEFAULT_CACHE_DIR,
+    RandomSphereSampler,
+    S2EventStore,
+    build_event_store,
+    build_or_load,
+    events_from_schema1,
+)
+from lumice_integral.strip_io import Window, read_strip
 
 # Machine-specific default (the main checkout's gitignored strip-full artifact); other environments
 # must pass --reference-dir explicitly, or read_strip will fail to find this path.
@@ -446,6 +471,137 @@ def stage_k_eff(random_n: int) -> dict[str, Any]:
     return report
 
 
+# --------------------------------------------------------------- scatter
+SCATTER_TOLERANCE = 1e-12
+INNER_EDGE_ROWS = (48, 57)  # canonical camera rows about the 22 deg inner-edge caustic
+
+
+def _csv_float(text: str) -> float:
+    """A ``pixels.csv`` float; renders before chore ``band-sum-small-fixes`` wrote some as ``np.float64(x)``."""
+    return float(text.removeprefix("np.float64(").removesuffix(")"))
+
+
+def read_pixels_csv(band_dir: Path) -> dict[tuple[int, int], dict[str, float]]:
+    with (band_dir / "pixels.csv").open() as handle:
+        return {
+            (int(r["row"]), int(r["column"])): {
+                k: _csv_float(r[k]) for k in ("value", "K", "K_rho_pos", "K_eff", "delta_deg", "band_width_rad")
+            }
+            for r in csv.DictReader(handle)
+        }
+
+
+def relative_difference(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    return np.where(b != 0.0, np.abs(a - b) / np.where(b != 0.0, np.abs(b), 1.0), np.abs(a))
+
+
+def compare_results(new: list, old: list, rows: tuple[int, int] | None = None) -> dict[str, Any]:
+    """Two pixel lists of one scene (``BandSumPixelResult`` or ``pixels.csv`` dicts), pixel by pixel."""
+    if not new:
+        raise ValueError("compare_results: 'new' is empty, nothing to compare")
+    get = (lambda r, k: r[k]) if isinstance(new[0], dict) else (lambda r, k: getattr(r, k))  # noqa: E731
+    fields = {k: (np.array([get(r, k) for r in new]), np.array([get(r, k) for r in old])) for k in ("value", "K", "K_rho_pos", "K_eff")}
+    value_new, value_old = fields["value"]
+    lit = value_old > 0.0
+    top = float(value_old.max()) if len(value_old) else 0.0
+    rel = relative_difference(value_new, value_old)
+    rel_k_eff = relative_difference(*fields["K_eff"])
+    out: dict[str, Any] = {
+        "pixels": len(new),
+        "lit": int(lit.sum()),
+        "lit_mismatch": int(np.count_nonzero(lit != (value_new > 0.0))),
+        "K_mismatch": int(np.count_nonzero(fields["K"][0] != fields["K"][1])),
+        "K_rho_pos_mismatch": int(np.count_nonzero(fields["K_rho_pos"][0] != fields["K_rho_pos"][1])),
+        "value_max_rel_lit": float(rel[lit].max(initial=0.0)),
+        "K_eff_max_rel_lit": float(rel_k_eff[lit].max(initial=0.0)),
+        "value_max_abs_over_image_max": float(np.max(np.abs(value_new - value_old), initial=0.0) / top) if top else 0.0,
+    }
+    beyond = np.nonzero(lit & ((rel > SCATTER_TOLERANCE) | (rel_k_eff > SCATTER_TOLERANCE)))[0]
+    out["beyond_tolerance"] = [
+        {
+            "row": int(get(new[i], "row")), "column": int(get(new[i], "column")),
+            "value_rel": float(rel[i]), "K_eff_rel": float(rel_k_eff[i]),
+            "value_over_image_max": float(value_old[i] / top), "K_eff": float(fields["K_eff"][1][i]),
+        }
+        for i in beyond[np.argsort(-rel[beyond])][:WORST]
+    ]
+    out["beyond_tolerance_count"] = int(len(beyond))
+    if rows is not None:
+        row_of = np.array([get(r, "row") for r in new])
+        band = lit & (row_of >= rows[0]) & (row_of < rows[1])
+        out["inner_edge_rows"] = {
+            "rows": list(rows), "lit": int(band.sum()),
+            "value_max_rel": float(rel[band].max(initial=0.0)), "K_eff_max_rel": float(rel_k_eff[band].max(initial=0.0)),
+        }
+    return out
+
+
+def stage_scatter_dirs(band_dir: Path, baseline_dir: Path) -> dict[str, Any]:
+    new, old = read_pixels_csv(band_dir), read_pixels_csv(baseline_dir)
+    if new.keys() != old.keys():
+        raise SystemExit(f"{band_dir} and {baseline_dir} render different pixels")
+    keys = sorted(new)
+    bands = [k for k in keys if (new[k]["delta_deg"], new[k]["band_width_rad"]) != (old[k]["delta_deg"], old[k]["band_width_rad"])]
+    listed = lambda table: [{"row": k[0], "column": k[1], **table[k]} for k in keys]  # noqa: E731
+    report = compare_results(listed(new), listed(old), INNER_EDGE_ROWS)
+    report["band_mismatch"] = len(bands)
+    report["execution"] = {
+        name: {k: json.loads((d / "provenance.json").read_text())["execution"].get(k) for k in (
+            "workers", "wall_clock_s", "render_wall_clock_s", "pixel_bands_wall_clock_s", "pixel_cpu_seconds",
+            "max_rss_mb_parent", "max_rss_mb_worker", "renderer",
+        )}
+        for name, d in (("new", band_dir), ("baseline", baseline_dir))
+    }
+    return report
+
+
+def stage_scatter_windows(random_n: int, store_cache_dir: Path, workers: int) -> dict[str, Any]:
+    crystal = canonical_crystal()
+    sun = canonical_sun_direction()
+    report: dict[str, Any] = {"N": random_n, "tolerance": SCATTER_TOLERANCE}
+    # Class [1,3,5]: 24 members, 12 of them through mirrors; random density; the window renderer itself.
+    render = {"width": 61, "height": 61, "fov_deg": 150.0, "view": {"azimuth": 0.0, "elevation": 15.0}}
+    scene = BandSumScene(
+        build_path_class(crystal, (1, 3, 5)), crystal, CANONICAL_REFRACTIVE_INDEX, sun, build_pose_density("random"), render
+    )
+    start = time.perf_counter()
+    new, execution = render_band_sum_window(scene, Window((0, 61), (0, 61)), random_n, workers=workers, base_dir=store_cache_dir)
+    scatter_s = time.perf_counter() - start
+    (group,) = scene.plan
+    events = S2EventStore.load(Path(execution["stores"][0]["directory"])).events.arrays()
+    start = time.perf_counter()
+    old = [class_band_sum_pixel([(events, group)], sun, scene.pose_density, r.row, r.column, random_n, render) for r in new]
+    block = compare_results(new, old)
+    block.update(
+        transports=len(group.transports), improper=int(sum(t.g is not None and np.linalg.det(t.g) < 0.0 for t in group.transports)),
+        scatter_wall_clock_s=scatter_s, gather_wall_clock_s=time.perf_counter() - start, render=render, workers=workers,
+    )
+    report["class_1-3-5_random"] = block
+    print("class 1-3-5", json.dumps({k: v for k, v in block.items() if k != "beyond_tolerance"}))
+    del events
+    # Task 14's three profiles on class [3,5]: one store, twelve transports; scatter_store against the gather.
+    path_class = build_path_class(crystal, (3, 5))
+    (group,) = store_plan(path_class, crystal)
+    store = build_or_load(crystal, CANONICAL_REFRACTIVE_INDEX, [(3, 5)], random_n, base_dir=store_cache_dir, mmap_mode="r")
+    arrays = S2EventStore.load(Path(store_cache_dir) / store.spec.cache_key()).events.arrays()
+    windows = json.loads((TASK14_ARTIFACTS / "profile_windows.json").read_text())["families"]
+    for family, spec in windows.items():
+        density = build_pose_density(family, **spec["density"])
+        start = time.perf_counter()
+        bands = pixel_bands([tuple(p) for p in spec["pixels"]], sun, spec["render"])
+        sums = ScatterSums.zeros(len(bands))
+        scatter_store(store.events, group, density, bands, sums)
+        new = scatter_results(bands, sums, random_n)
+        scatter_s = time.perf_counter() - start
+        start = time.perf_counter()
+        old = [class_band_sum_pixel([(arrays, group)], sun, density, r, c, random_n, spec["render"]) for r, c in spec["pixels"]]
+        block = compare_results(new, old)
+        block.update(scatter_wall_clock_s=scatter_s, gather_wall_clock_s=time.perf_counter() - start)
+        report[f"task14_{family}"] = block
+        print("task 14", family, json.dumps({k: v for k, v in block.items() if k != "beyond_tolerance"}))
+    return report
+
+
 # ---------------------------------------------------------------- figure
 def stage_figure(band_dirs: list[Path], output: Path, title: str) -> None:
     import matplotlib
@@ -482,9 +638,11 @@ def stage_figure(band_dirs: list[Path], output: Path, title: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--stage", choices=("full", "class", "k-eff", "figure"), required=True)
+    parser.add_argument("--stage", choices=("full", "class", "k-eff", "scatter", "figure"), required=True)
     parser.add_argument("--band-dir", type=Path, nargs="+")
     parser.add_argument("--coarse-dir", type=Path, default=None)
+    parser.add_argument("--baseline-dir", type=Path, default=None, help="--stage scatter: the render --band-dir is compared with")
+    parser.add_argument("--workers", type=int, default=1, help="--stage scatter: workers of the class [1,3,5] window render")
     parser.add_argument(
         "--reference-dir",
         type=Path,
@@ -494,7 +652,9 @@ def main() -> None:
     parser.add_argument("--tiers", type=int, nargs="*", default=[1_000_000, 10_000_000, 50_000_000])
     parser.add_argument("--store-n", type=int, default=None)
     parser.add_argument("--store-cache-dir", type=Path, default=DEFAULT_CACHE_DIR)
-    parser.add_argument("--random-n", type=int, default=10_000_000, help="points of each i.i.d. store (--stage k-eff)")
+    parser.add_argument(
+        "--random-n", type=int, default=10_000_000, help="points of each i.i.d. store (--stage k-eff); store points (--stage scatter)"
+    )
     parser.add_argument("--title", default="band-sum renderer (log scale, 4 decades)")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
@@ -506,6 +666,14 @@ def main() -> None:
         print(json.dumps({k: v for k, v in report.items() if k not in ("worst_pixels", "per_column_median_abs_rel", "unexplained_pixels")}, indent=1))
     elif args.stage == "k-eff":
         report = stage_k_eff(args.random_n)
+    elif args.stage == "scatter":
+        if (args.band_dir is None) != (args.baseline_dir is None):
+            parser.error("--stage scatter compares --band-dir with --baseline-dir (both), or renders windows (neither)")
+        if args.band_dir is not None:
+            report = stage_scatter_dirs(args.band_dir[0], args.baseline_dir)
+            print(json.dumps({k: v for k, v in report.items() if k != "beyond_tolerance"}, indent=1))
+        else:
+            report = stage_scatter_windows(args.random_n, args.store_cache_dir, args.workers)
     else:
         report = stage_class(args.tiers, args.store_n, args.store_cache_dir)
     args.output.write_text(json.dumps(report, indent=2) + "\n")
