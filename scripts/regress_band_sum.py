@@ -628,6 +628,16 @@ def _z_block(estimate: np.ndarray, reference: np.ndarray, k_eff: np.ndarray, lit
     }
 
 
+def _max_relative_error_estimate(render_dir: Path, lit: np.ndarray) -> float:
+    """Largest ``error_estimate / value`` of a contour render's ``pixels.csv`` over ``lit``."""
+    worst = 0.0
+    with (render_dir / "pixels.csv").open() as handle:
+        for row in csv.DictReader(handle):
+            if lit[int(row["row"]), int(row["column"])]:
+                worst = max(worst, float(row["error_estimate"]) / float(row["value"]))
+    return worst
+
+
 def stage_contour(
     band_dir: Path, contour_dir: Path, coarse_dir: Path | None, point_dir: Path | None, reference_dir: Path | None
 ) -> dict[str, Any]:
@@ -656,7 +666,7 @@ def stage_contour(
         "N": band_provenance["options"]["N"],
         "k_eff_semantics": k_eff_semantics_of(band_provenance),
         "contour_pixel_model": contour_provenance["options"]["pixel_model"],
-        "contour_relative_error_estimate_max_lit": contour_provenance["summary"]["relative_error_estimate_max_lit"],
+        "contour_relative_error_estimate_max_lit": _max_relative_error_estimate(contour_dir, lit),
         "lit_definition": f"contour band average > {LIT_FRACTION} x its column maximum",
         "band_sum_vs_contour_band": _z_block(band.values, ref, k_eff, lit),
         "whole_image_sum_ratio": float(band.values.sum() / ref.sum()),
@@ -682,7 +692,10 @@ def stage_contour(
             "lit_pixels_above_1e-2": int(np.sum(np.abs(model) > 1e-2)),
             "lit_pixels_steep": int(np.sum(steep[lit] > STEEP_NEIGHBOUR_CHANGE)),
         }
-        report["band_sum_vs_contour_point_wrong_model"] = _z_block(band.values, point.values, k_eff, lit)
+        # an edge pixel whose band reaches the lit range while its centre does not has a point value of 0
+        point_lit = lit & (point.values > 0.0)
+        report["pixel_model_point_vs_band"]["lit_pixels_point_zero"] = int((lit & ~point_lit).sum())
+        report["band_sum_vs_contour_point_wrong_model"] = _z_block(band.values, point.values, k_eff, point_lit)
         if reference_dir is not None:
             reference, _ = read_strip(reference_dir)
             both = lit & (reference.values > 0.0)

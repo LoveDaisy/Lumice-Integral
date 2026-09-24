@@ -120,6 +120,27 @@ M2 scrum 依次构建：$D_P$ 在 $U_P$ 上的拓扑（从格点 seed 出发用 
 
 鞍点分支只以转义的形式被覆盖：没有 fixture 带内部鞍点（见上），区间划分转义时提取拒绝执行。实测记录：见英文版附录「Contour extraction」。
 
+**已实现：等值线求积**（`lumice_integral.contour_quadrature`，任务 `s2-contour-quadrature`）。在提取出的分量上做 §2 的线积分，确定性，每个像素带误差估计：
+
+- *常数，以及带求和为什么是同一个。* §2 由 Haar $= \frac{dA}{4\pi}\frac{d\psi}{2\pi}$ 与 $d\psi = d\alpha$ 得到 $I\sin\delta = \frac{1}{8\pi^2}\int_{D_P=\delta}\rho A_PT_P/|\nabla_{S^2}D_P|\,d\ell$；$\frac{1}{8\pi^2}$ 直接引用 Phase I 的 `HAAR_TO_DVOL_G_FACTOR`，不另写一份。对像素的偏折角带积分：$S^2$ 上的余面积公式给出 $\int_{\delta_{\mathrm{lo}}}^{\delta_{\mathrm{hi}}} d\delta' \int_{D_P=\delta'} f/|\nabla D_P|\,d\ell = \int_{\delta_{\mathrm{lo}} \le D_P \le \delta_{\mathrm{hi}}} f\,dA$，$N$ 个等面积点把右边估计为 $\frac{4\pi}{N}\sum_{D_i\in\text{band}} f(\mathbf u_i)$。于是带平均 $I_{\mathrm{band}} = \frac{1}{\Delta\delta\,\sin\delta}\int_{\delta_{\mathrm{lo}}}^{\delta_{\mathrm{hi}}} I(\delta',\alpha)\sin\delta'\,d\delta'$ 的估计是 $\frac{1}{8\pi^2\Delta\delta\sin\delta}\cdot\frac{4\pi}{N}\sum f_i = \sum f_i / (2\pi N\Delta\delta\sin\delta)$，恰好就是 `band_sum_estimate`。带求和就是在带上平均、在仓库上采样的等值线积分：同一个常数推导了两次；任务 13 零拟合比值 `~1.000` 是这个恒等式透过采样噪声的样子。
+- *与 Phase I 的逐点恒等式。* 以转角为度量的 $\mathrm{SO}(3)$ 局部是 $dA(\mathbf u)\,d\psi$（$R \mapsto R^{-1}\hat{\mathbf s}$ 是纤维长 $2\pi$ 的黎曼淹没，总体积 $8\pi^2$）；余面积公式的纤维测度只依赖体积形式和目标面元，所以每条纤维上都有 $ds/J_\perp = d\ell_u/(|\nabla_{S^2}D_P|\sin\delta)$。沿 Phase I 纤维 $R' = R\hat{\boldsymbol\xi}$（$|\boldsymbol\xi| = 1$，右平移，与 `continuation.py` 一致），$\mathbf u = R^T\hat{\mathbf s}$ 以速度 $|\boldsymbol\xi\times\mathbf u|$ 移动，因此
+  $$J_\perp F_P(R) = \frac{|\nabla_{S^2}D_P(\mathbf u)|\,\sin\delta}{|\boldsymbol\xi\times\mathbf u|}.$$
+  这是闭式，没有拟合因子：canonical 纤维全部 61 个节点上相对误差 `2.9e-15`（`tests/test_contour_quadrature.py`）。所谓「坐标变换因子」就是 $1/|\boldsymbol\xi\times\mathbf u|$（那里在 $[1.0002, 1.138]$ 之间），即 Phase I 弧长与其在 $S^2$ 上投影之比。
+- *奇异性：$\varepsilon \to 0$ 极限。* 由恒等式，$J_\perp = 0$ 恰在 $\nabla D_P = 0$ 处，即只在 $\delta$ 取临界值时；那里水平集拓扑改变，提取拒绝该 $\delta$。离开临界值，整条水平集上 $|\nabla D_P| > 0$（在 exit-TIR 曲线旁它无界增大，被积函数趋于零），点值无需正则化：它就是 Phase I $\rho W/(J_\perp+\varepsilon)$ 在 $\varepsilon \to 0$ 的极限。点像素的 $\delta$ 距临界值不到 `EXTREMUM_ATOL = 1e-7` rad 时不积分（状态位 `quadrature_unavailable`，值为 0；canonical 图中没有）；带像素在带内的临界值处把带切开，在那里即使有 fold 带平均也有限（极小值周围的闭环 $\int d\ell/|\nabla D_P|$ 趋于有限极限，正是 §10 对随机取向 22° 内缘预期的有限跳变）。
+- *点在曲线上，速度精确。* 一个 panel 是提取节点的一段 $\mathbf a \to \mathbf b$（首批 panel 合并节点，弦长不超过 1°、转角不超过 20°，margin 低于 `1e-3` 的节点处不合并——弦在那里可能出 $U_P$）。点取 $\mathbf q(t) = \mathrm{normalize}(\cos s\,\mathbf c(t) + \sin s\,\mathbf n)$，$\mathbf c$ 为大圆弦、$\mathbf n$ 为其极点，Newton 解 $s(t)$ 使 $D_P(\mathbf q) = \delta$（到 `4e-16`）；$|d\mathbf q/dt|$ 由隐函数定理给出（$ds/dt = -D_t/D_s$，`jax.jvp`）。没有用弦代替弧，也没有落在曲线外的插值点。
+- *求积与误差。* 每个 panel 五点 Simpson 对其三点子集（$N$ 对 $N/2$，估计 $|S_N - S_{N/2}|/15$）；超出按弦长分得的 $\max(\mathrm{rtol}\,|I|, \mathrm{atol})$ 份额就对半分，复用已有点，最多 `max_depth = 24` 层（canonical 图中从未达到；达到会置状态位）。$A_P$ 的 kink 使局部降阶：一次细分使误差估计下降不到 8 倍（光滑时 16 倍）计入 `low_order_splits`（canonical 每个水平集几十次），逐像素报告。
+- *两阶段，批量。* 水平集的几何（点、取自 `s2_store.evaluate_fields` 即仓库自身权重的 $w = A_PT_P$、$|\nabla D_P|$、速度）与像素方位和 $\rho$ 无关：`LevelSetGeometry.build` 在 $w/|\nabla D_P|$ 上细分，每批 64 个水平集；`integrate` 在 `s2_store.event_rotations` 重建的姿态（用点自身的偏折角，带求和同一构造）上求 $\rho$，每批 64 个像素，只在 $\rho$ 需要处加点。random 族 $\rho = 1$ 不加点，值只是 $\delta$ 的函数（四个方位逐位相同）。每轮细分的所有点是一次补齐到 2 的幂的 `jax.vmap`，生产求值器的每次调用也补齐（它们的 eager `jax.vmap` 按批大小编译；不补齐时编译占一列耗时的一半）。
+- *像素模型。* `band_nodes = 0` 是像素中心的点值（Phase I 的模型）；`band_nodes = k` 是上面的带平均，在 $[\delta_{\mathrm{lo}}, \delta_{\mathrm{hi}}]$ 被临界值切开的每段上做 $k$ 点 Gauss-Legendre（带求和的模型），于是两个渲染器可以不带任务 14 那种模型差异地比较。
+
+核验（实测记录：英文版附录「Contour quadrature」）：
+
+- *逐像素对 Phase I*（`scripts/compare_contour_quadrature_phase1.py`，canonical 像素与第 126 列第 150/300/450/600 行，column 与 random 两族）：生产 Phase I（$\varepsilon = 10^{-12}$、`rtol = 1e-9`）相差 `2.4e-9`-`5.6e-6`，较大的差异不在它自报误差（`6e-10`）之内。原因在 Phase I：`quadrature._parametric_speed` 把相位条件 $\boldsymbol\nu(t)\cdot\boldsymbol\delta(t) = 0$ 求导成 $\boldsymbol\nu\cdot\boldsymbol\delta' = 0$，漏掉 $\boldsymbol\nu'\cdot\boldsymbol\delta$；回缩偏移 $\boldsymbol\delta$（canonical 闭环上 `~6e-6`）由固定的预测样条决定，所以弧长速度在任何网格下都偏 $O(|\boldsymbol\delta|)$（canonical 纤维：$\int\lambda\,dt$ 收敛到 `2.3806253`，回缩姿态间测地距离之和收敛到 `2.3806315`）。补上这一项（脚本内诊断；生产 Phase I 不改，后续见 backlog）后，十个像素上 Phase I 与等值线值相差都在 `4.3e-9` 以内，低于 Phase I 自身 65537 节点的离散误差。
+- *整图对 Phase I。* canonical 251 × 801 点值渲染与 `artifacts/strip-full`（生产 Phase I，`rtol = 1e-4`、$\varepsilon = 10^{-6}$）的非零像素完全相同（187406 个）；亮像素（高于列最大值的 `1e-2`）上 median `1.2e-5`、p99 `1.2e-4`、max `4.2e-4`、mean `-1.0e-5`，即 Phase I 的容差与它的 $\varepsilon/J_\perp$ 偏差。
+- *同一像素模型下对带求和。* 带平均渲染（`--band-nodes 2`，`rtol = 1e-6`）与 `artifacts/band-sum-full`（$N = 10^8$）的非零像素完全相同（187538 个）。在 121044 个亮像素上，带求和的误差无偏（均值 `-8.6e-7` $\pm$ `4.2e-5`，亮区总和比 `1.0000006`；median $|\mathrm{rel}|$ `3.6e-3`），$z = \mathrm{rel}\sqrt{K_{\mathrm{eff}}}$ 标准差 `0.50`，$|z|$ median `0.23`、p99 `1.6`、max `3.7`，没有超过 4 的：正是 $K_{\mathrm{eff}}$ 预测的噪声，因 Fibonacci 格点的增益低于 i.i.d. 尺度（任务 14）。$N = 10^7$ 时 RMS 误差大 `3.7` 倍（$\sqrt{10} = 3.2$）：采样误差。若改与点值渲染比，25 个像素 $|z|$ 超过 4（最高 `17.8`）：这是任务 14 的像素模型差异，在这里被单独分离出来（点值对带平均：median `6.7e-6`、p99 `2.1e-4`，51 个亮像素超过 `1e-2`，都在内缘第 56-57 行）。
+- *成本结构*（`benchmarks/benchmark_contour_quadrature.py`，第 150 列 256 个偏折角，单进程稳态，M2 Max）。找曲线每个 $\delta$ `6.4 ms`；水平集几何每个 $\delta$ `16.8 ms`（`1356` 个点，大部分是生产的 `entry_measure_batch`）；逐像素积分对共享一个 $\delta$ 的像素数是平的：canonical 密度下每 $\delta$ 1 / 4 / 16 个像素时每像素 `5.2 / 7.3 / 5.5 ms`（为 $\rho$ 峰加 240-380 个点），random 族 `1.1 ms`（不加点）。设计模型（曲线 $\propto$ 环数、积分 $\propto$ 像素数）成立，只是每环部分以几何为主而非曲线本身；它也与太阳方向和 $\rho$ 无关。ch06 条带每个像素都有自己的 $\delta$，每环部分等于按像素付：整图 4 个 worker `43 min`（CPU 曲线 `21 %`、几何 `57 %`、积分 `22 %`），带平均（每像素两个偏折角）`70 min`；带求和 $N = 10^8$ 时 `2.8 min`，Phase I 30 个 worker `35 min`。
+
+**作为精度权威的地位。** 对固定光路，等值线值是另外两条链的尺子：canonical 每个亮像素的相对误差估计都低于 `4e-10`，每个 $\delta$ 都有完整性证书（Phase I 的完整性只是流程性的），并且它定位出一个 Phase I 自报误差看不见的偏差。Phase I 保留为独立的 $\mathrm{SO}(3)$ 表述（AGENTS.md：不替换），带求和保留为快速渲染器和参数扫描工具。决策见 roadmap §9，2026-09-25。
+
 ## 5. 求积 B：带求和
 
 来源：Ice Halo Simulation 仓库的 `doc/research/inverse-rendering.md`（中文 `inverse-rendering_zh.md`；「基于预计算标准事件的逆向渲染」，源自 Gislén 等 2004）。那篇笔记是设计草图；本节是本项目对这一思路的权威表述。笔记中的对象就是上面的场：
@@ -270,12 +291,16 @@ $R_i$ 按 §5 的方法构造，只是把 $\hat{\mathbf s}$ 换成从 $\mathbf x
 - **Jacobian 对齐。** 在纤维化的坐标变换下，$1/\lvert\nabla_{S^2} D_P\rvert$ 与 Phase I 的 $J_\perp$ 的对齐是交叉验证的接触点。`s2-contour-quadrature`。
 - **与 Lumice 的绝对尺度**，在其投影面积修复（Ice Halo #597）之后：2026-09-24 完成（任务 `lumice-area-weighting-recheck`）：plate 与 Parry 族的带求和光路类渲染对 Lumice 浮点导出，$K_p = \bar y(550)\,\Omega_p/(S/2)$，不拟合（`docs/ch06-reference-fixture.md` 第 7 节 stage 4）。
 
+- **Jacobian 对齐。** 已解决（任务 `s2-contour-quadrature`，§4）：闭式 $J_\perp = |\nabla_{S^2} D_P|\sin\delta/|\boldsymbol\xi\times\mathbf u|$，canonical 纤维上 `3e-15`。
+- **与 Lumice 的绝对尺度**，在其投影面积修复（Ice Halo #597）之后：任务 `lumice-area-weighting-recheck`。
+
 | 部分 | 状态 | 在哪 |
 |---|---|---|
 | 带求和、事件仓库、$D_{6h}$ 搬运、$K_{\mathrm{eff}}$ | 实测，已投产 | 英文版附录；任务 13-19 |
 | 仓库与光源无关；`.npy` + mmap；分桶构建 | 实测，已投产 | 英文版附录；任务 21 `s2-store-schema-3` |
 | 按偏折角组织带求和（分段、逐类累加、GEMM） | 设计 | 任务 22 `band-sum-scatter-renderer` |
-| 等值线求积、临界点、证书 | 设计 | scrum 24 `phase2-contour-quadrature` |
+| 临界点、证书（场层）、等值线提取 | 实测，已投产 | 英文版附录；任务 `dp-field-layer`、`s2-contour-extraction` |
+| 等值线求积（精度权威）、与 Phase I 及带求和对齐 | 实测，已投产 | §4、英文版附录；任务 `s2-contour-quadrature` |
 | 由仓库提供 Phase I seed 与交叉检查 | 设计 | scrum 24 子任务 5 |
 | 第 10 章裁定 | 开放 | scrum 24 子任务 6 |
 | 发散光 | 推导 | backlog |

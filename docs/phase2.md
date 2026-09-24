@@ -370,6 +370,147 @@ The saddle branch is covered only as an escape: no fixture has an interior
 saddle (above), and extraction refuses to run where the partition escapes.
 Measured record: appendix, "Contour extraction".
 
+**Implemented: contour quadrature** (`lumice_integral.contour_quadrature`,
+task `s2-contour-quadrature`). The line integral of section 2 on the
+extracted components, deterministic, with an error estimate per pixel:
+
+- *The constant, and why the band sum has the same one.* Section 2 gives
+  $I\sin\delta = \frac{1}{8\pi^2}\int_{D_P=\delta}\rho A_PT_P/|\nabla_{S^2}D_P|\,d\ell$
+  from Haar $= \frac{dA}{4\pi}\frac{d\psi}{2\pi}$ with $d\psi = d\alpha$; the
+  $\frac{1}{8\pi^2}$ is Phase I's `HAAR_TO_DVOL_G_FACTOR`, imported, not
+  restated. Integrate over a pixel's band: by the coarea formula on $S^2$,
+  $\int_{\delta_{\mathrm{lo}}}^{\delta_{\mathrm{hi}}} d\delta' \int_{D_P=\delta'} f/|\nabla D_P|\,d\ell
+  = \int_{\delta_{\mathrm{lo}} \le D_P \le \delta_{\mathrm{hi}}} f\,dA$, and $N$
+  equal-area points estimate the right side by
+  $\frac{4\pi}{N}\sum_{D_i\in\text{band}} f(\mathbf u_i)$. So the band average
+  $I_{\mathrm{band}} = \frac{1}{\Delta\delta\,\sin\delta}\int_{\delta_{\mathrm{lo}}}^{\delta_{\mathrm{hi}}} I(\delta',\alpha)\sin\delta'\,d\delta'$
+  is estimated by $\frac{1}{8\pi^2\Delta\delta\sin\delta}\cdot\frac{4\pi}{N}\sum f_i
+  = \sum f_i / (2\pi N\Delta\delta\sin\delta)$: exactly `band_sum_estimate`. The
+  band sum is the contour integral averaged over the band and sampled on the
+  store, one constant, derived twice; the measured zero-fit ratio `~1.000`
+  of task 13 is this identity seen through sampling noise.
+- *Pointwise identity with Phase I.* $\mathrm{SO}(3)$ with the rotation-angle
+  metric is $dA(\mathbf u)\,d\psi$ locally (the map $R \mapsto R^{-1}\hat{\mathbf s}$
+  is a Riemannian submersion with fibers of length $2\pi$, total $8\pi^2$), and
+  the fiber measure of a coarea formula depends only on the volume form and
+  the target area, so $ds/J_\perp = d\ell_u/(|\nabla_{S^2}D_P|\sin\delta)$ on
+  every fiber. Along a Phase I fiber $R' = R\hat{\boldsymbol\xi}$ with
+  $|\boldsymbol\xi| = 1$ (right-trivialised, as `continuation.py`) moves
+  $\mathbf u = R^T\hat{\mathbf s}$ at speed $|\boldsymbol\xi\times\mathbf u|$, hence
+  $$J_\perp F_P(R) = \frac{|\nabla_{S^2}D_P(\mathbf u)|\,\sin\delta}{|\boldsymbol\xi\times\mathbf u|}.$$
+  Closed form, no fitted factor: on all 61 nodes of the canonical fiber it
+  holds to `2.9e-15` relative (`tests/test_contour_quadrature.py`). The
+  "change of coordinates" is the factor $1/|\boldsymbol\xi\times\mathbf u| \in [1.0002, 1.138]$
+  there, the ratio of Phase I's arclength to its projection on $S^2$.
+- *Singularity: the $\varepsilon \to 0$ limit.* By the identity $J_\perp = 0$
+  exactly where $\nabla D_P = 0$, i.e. only at a critical value of $\delta$,
+  where the level set changes topology and extraction refuses the $\delta$.
+  Off it $|\nabla D_P| > 0$ on the whole level set (next to an exit-TIR curve
+  it grows without bound and the integrand goes to zero), so the point value
+  needs no regularisation: it is Phase I's $\rho W/(J_\perp+\varepsilon)$ at
+  $\varepsilon \to 0$. A point pixel within `EXTREMUM_ATOL = 1e-7` rad of a
+  critical value is not integrated (status bit `quadrature_unavailable`,
+  value 0; none in the canonical image); a band pixel splits its band at the
+  critical values inside it, where the band average is finite also for a
+  fold (the loop around a minimum has $\int d\ell/|\nabla D_P| \to$ a finite
+  limit, the finite jump section 10 expects at the random-orientation 22° inner edge).
+- *Points on the curve, exact speed.* A panel is a run of the extraction's
+  nodes $\mathbf a \to \mathbf b$ (first panels merge nodes up to 1° of chord
+  and 20° of turn, never at a node with a margin below `1e-3`, where a chord
+  can leave $U_P$). A point is $\mathbf q(t) = \mathrm{normalize}(\cos s\,\mathbf c(t) + \sin s\,\mathbf n)$,
+  $\mathbf c$ the great-circle chord, $\mathbf n$ its pole, $s(t)$ by Newton so
+  that $D_P(\mathbf q) = \delta$ (to `4e-16`); $|d\mathbf q/dt|$ by the
+  implicit function theorem ($ds/dt = -D_t/D_s$, `jax.jvp`). No chord stands
+  in for an arc and no interpolated point is off the curve.
+- *Quadrature and error.* Five-point Simpson per panel against its
+  three-point subset ($N$ vs $N/2$, estimate $|S_N - S_{N/2}|/15$); a panel
+  above its share of $\max(\mathrm{rtol}\,|I|, \mathrm{atol})$ (by chord length)
+  is halved, reusing its points, up to `max_depth = 24` (never reached in the
+  canonical image; exhaustion would be a status bit). Kinks of $A_P$ lower
+  the local order: a split that cuts the estimate by less than 8 (16 for a
+  smooth panel) is counted as `low_order_splits` (tens per canonical level
+  set), reported per pixel.
+- *Two stages, batched.* The geometry of a level set (points, $w = A_PT_P$
+  from `s2_store.evaluate_fields`, the store's own weight, $|\nabla D_P|$,
+  speed) is independent of the pixel's azimuth and of $\rho$:
+  `LevelSetGeometry.build` refines it on $w/|\nabla D_P|$ for 64 level sets at
+  a time, and `integrate` evaluates $\rho$ at the pose rebuilt by
+  `s2_store.event_rotations` (the point's own deviation, the band-sum
+  construction) for 64 pixels at a time, adding points only where $\rho$
+  needs them. For the random family $\rho = 1$ adds none and the value is a
+  function of $\delta$ alone (four azimuths, bit-identical). Every point
+  evaluation is one `jax.vmap` per refinement round padded to a power of
+  two, and so is every call of the production evaluators (their eager
+  `jax.vmap` compiles per batch size: unpadded, compilation was half the
+  column time).
+- *Pixel models.* `band_nodes = 0` is the point value at the pixel centre
+  (Phase I's model); `band_nodes = k` the band average above by $k$-point
+  Gauss-Legendre on each piece of $[\delta_{\mathrm{lo}}, \delta_{\mathrm{hi}}]$
+  between critical values (the band sum's model), so the two renderers can be
+  compared without the model difference of task 14.
+
+Validation (measured record: appendix, "Contour quadrature"):
+
+- *Against Phase I, pixel by pixel* (`scripts/compare_contour_quadrature_phase1.py`,
+  canonical pixel and rows 150/300/450/600 of column 126, column and random
+  densities): production Phase I at $\varepsilon = 10^{-12}$ and
+  `rtol = 1e-9` agrees to `2.4e-9`-`5.6e-6`, and its own error estimate
+  (`6e-10`) does not cover the larger differences. The cause is in Phase I:
+  `quadrature._parametric_speed` differentiates the phase condition
+  $\boldsymbol\nu(t)\cdot\boldsymbol\delta(t) = 0$ as
+  $\boldsymbol\nu\cdot\boldsymbol\delta' = 0$ and drops $\boldsymbol\nu'\cdot\boldsymbol\delta$;
+  the retraction offset $\boldsymbol\delta$ (`~6e-6` on the canonical loop) is
+  set by the fixed predictor spline, so the arclength speed is biased by
+  $O(|\boldsymbol\delta|)$ at every grid size (the canonical fiber: $\int\lambda\,dt$
+  converges to `2.3806253`, the sum of geodesic distances between the
+  retracted poses to `2.3806315`). With the term restored (a diagnostic in
+  the script; production Phase I unchanged, follow-up in the backlog) Phase I
+  agrees with the contour value to `4.3e-9` or better on all ten pixels,
+  below Phase I's own discretisation at 65537 nodes.
+- *Against Phase I, whole image.* The canonical 251 x 801 point render and
+  `artifacts/strip-full` (production Phase I, `rtol = 1e-4`,
+  $\varepsilon = 10^{-6}$) have the same 187406 non-zero pixels; on the lit
+  ones (above `1e-2` of the column maximum) median `1.2e-5`, p99 `1.2e-4`,
+  max `4.2e-4`, mean `-1.0e-5`: Phase I's tolerance and its $\varepsilon/J_\perp$
+  bias.
+- *Against the band sum, on one pixel model.* The band-average render
+  (`--band-nodes 2`, `rtol = 1e-6`) has the same 187538 non-zero pixels as
+  `artifacts/band-sum-full` ($N = 10^8$). On its 121044 lit pixels the band
+  sum's error is unbiased (mean `-8.6e-7` $\pm$ `4.2e-5`, lit sum ratio
+  `1.0000006`; median $|\mathrm{rel}|$ `3.6e-3`), and
+  $z = \mathrm{rel}\sqrt{K_{\mathrm{eff}}}$ has standard deviation `0.50`,
+  $|z|$ median `0.23`, p99 `1.6`, max `3.7`, none above 4: the noise
+  $K_{\mathrm{eff}}$ predicts, below the i.i.d. scale by the Fibonacci
+  lattice's gain (task 14). At $N = 10^7$ the RMS error is `3.7` times larger
+  ($\sqrt{10} = 3.2$): sampling. Against the point render instead, 25 pixels
+  exceed $|z| = 4$ (up to `17.8`): the pixel-model difference of task 14,
+  here isolated (point against band: median `6.7e-6`, p99 `2.1e-4`, 51 lit
+  pixels above `1e-2`, all on the inner edge, rows 56-57).
+- *Cost structure* (`benchmarks/benchmark_contour_quadrature.py`, 256
+  deviations of column 150, one process, steady state, M2 Max). Curve
+  finding `6.4 ms` per $\delta$; the level set's geometry `16.8 ms` per
+  $\delta$ (`1356` points, most of it the production `entry_measure_batch`);
+  per-pixel integration flat in the number of pixels sharing a $\delta$:
+  `5.2 / 7.3 / 5.5 ms` per pixel at 1 / 4 / 16 pixels per $\delta$ for the
+  canonical density (240-380 points added for the $\rho$ peak), `1.1 ms` for
+  the random family (none added). The design model (curves $\propto$ rings,
+  integration $\propto$ pixels) holds, with the per-ring part dominated by
+  the geometry rather than the curve itself; it is independent of the sun
+  and of $\rho$ as well. On the ch06 strip every pixel has its own $\delta$,
+  so the per-ring part is paid per pixel: the full image took `43 min` on 4
+  workers (CPU `21 %` curves, `57 %` geometry, `22 %` integration), the band
+  average (two deviations a pixel) `70 min`; the band sum takes `2.8 min` at
+  $N = 10^8$, Phase I `35 min` on 30 workers.
+
+**Status as the precision authority.** For a fixed path, the contour value
+is the reference the other two chains are measured against: its error
+estimate is below `4e-10` relative on every lit canonical pixel, it is
+certified complete per $\delta$ (Phase I's completeness is procedural), and
+it located a Phase I bias that Phase I's own estimate does not see. Phase I
+stays as the independent $\mathrm{SO}(3)$ formulation (AGENTS.md: not replaced),
+the band sum as the fast renderer and parameter sweep. Decision: roadmap §9,
+2026-09-25.
+
 ## 5. Quadrature B: the band sum
 
 Source: the Ice Halo Simulation repository,
@@ -741,9 +882,9 @@ needs street-lamp halos (backlog).
 - **Non-uniform $\rho$.** $\psi(\mathbf u,\alpha)$ is single-valued, so $\rho$
   is evaluated pointwise; only the "convolution on the sky" reading of
   chapter 11 needs a uniform $\rho$.
-- **Jacobian alignment.** $1/\lvert\nabla_{S^2} D_P\rvert$ against Phase I's
-  $J_\perp$ under the fibration's change of coordinates is the
-  cross-validation contact point. `s2-contour-quadrature`.
+- **Jacobian alignment.** Settled (task `s2-contour-quadrature`, section 4):
+  $J_\perp = |\nabla_{S^2} D_P|\sin\delta/|\boldsymbol\xi\times\mathbf u|$ in closed
+  form, `3e-15` on the canonical fiber.
 - **Absolute scale against Lumice** after its projected-area fix (Ice Halo
   #597): done 2026-09-24 (task `lumice-area-weighting-recheck`): band-sum
   class renders of the plate and Parry families against Lumice float
@@ -755,7 +896,8 @@ needs street-lamp halos (backlog).
 | band sum, event store, $D_{6h}$ transport, $K_{\mathrm{eff}}$ | measured, in production | appendix; tasks 13-19 |
 | store independent of the source; `.npy` + mmap; bucketed build | measured, in production | appendix; task 21 `s2-store-schema-3` |
 | band sum by deviation (segments, class accumulation, GEMM) | design | task 22 `band-sum-scatter-renderer` |
-| contour quadrature, critical points, certificate | design | scrum 24 `phase2-contour-quadrature` |
+| critical points, certificate (field layer), contour extraction | measured, in production | appendix; tasks `dp-field-layer`, `s2-contour-extraction` |
+| contour quadrature (precision authority), Phase I and band-sum alignment | measured, in production | section 4, appendix; task `s2-contour-quadrature` |
 | Phase I seeds and cross-check from the store | design | scrum 24 sub-task 5 |
 | chapter-10 verdicts | open | scrum 24 sub-task 6 |
 | divergent light | derived | backlog |
@@ -1316,3 +1458,90 @@ start; M2 Max, CPU.
   on 4 workers at `N = 1e8`. Padding every batched call to a power of two
   took the first 161-$\delta$ call from `38 s` to `6.3 s`; a new $\delta$ set of
   another size recompiles only the buckets it has not met.
+
+**Contour quadrature (2026-09-25, task `s2-contour-quadrature`,
+`lumice_integral.contour_quadrature`).** Path 3-5, canonical crystal and
+scene, $n = 1.31$, M2 Max.
+
+- *Pointwise identity.* On the 61 accepted poses of the canonical Phase I
+  loop, $J_\perp$ from `jacobian_diagnostics` against
+  $|\nabla_{S^2}D_P(\mathbf u)|\sin\delta/|\boldsymbol\xi\times\mathbf u|$ (the
+  trace's own unit tangents): max relative difference `2.9e-15`, median
+  `1.1e-15`; $J_\perp \in [0.082, 0.150]$, $|\boldsymbol\xi\times\mathbf u| \in [0.879, 0.9998]$,
+  $\max|D_P(\mathbf u)-\delta| = 7.8\times10^{-16}$.
+- *Per-factor check.* At the same poses $A_P$, $T_P$, the pose rebuilt by
+  `event_rotations` and $\rho$ agree with Phase I's weight observables to
+  `2.2e-16`, `0`, `5.9e-15` (max matrix entry) and `9.2e-13`.
+- *Pixel values against Phase I* (`scripts/compare_contour_quadrature_phase1.py`;
+  contour at `rtol = 1e-11`; Phase I production = discovery + resampled
+  quadrature at $\varepsilon = 10^{-12}$, `rtol = 1e-9`, up to 262145 nodes;
+  "full speed" = the same grids with $\boldsymbol\nu\cdot\boldsymbol\delta' = -\boldsymbol\nu'\cdot\boldsymbol\delta$,
+  $\boldsymbol\nu'$ by central difference, 16385/65537 nodes Richardson at order 2):
+
+  | density | pixel | $\delta$ | contour value | its estimate | production Phase I | full-speed Phase I |
+  |---|---|---|---|---|---|---|
+  | column | (150, 150) | 24.0469° | 6.58152199151 | `1.3e-11` | `-5.63e-6` | `-3.1e-9` |
+  | | (150, 126) | 24.0400° | 7.14327384031 | `1.4e-11` | `-2.85e-7` | `+2.2e-9` |
+  | | (300, 126) | 27.6088° | 5.02167143871 | `1.3e-11` | `-2.47e-7` | `-3.8e-9` |
+  | | (450, 126) | 31.1961° | 2.86623626686 | `6.4e-12` | `-1.55e-7` | `+1.5e-10` |
+  | | (600, 126) | 34.7742° | 0.311740878191 | `7.3e-13` | `+2.4e-9` | `+3.6e-9` |
+  | random | (150, 150) | 24.0469° | 0.234374880559 | `7.1e-13` | `-3.47e-6` | `-1.5e-9` |
+  | | (150, 126) | 24.0400° | 0.234840842632 | `7.2e-13` | `-3.50e-6` | `+2.4e-9` |
+  | | (300, 126) | 27.6088° | 0.0920434482944 | `3.3e-13` | `-4.90e-7` | `-4.3e-9` |
+  | | (450, 126) | 31.1961° | 0.0381016477303 | `1.1e-13` | `-1.91e-7` | `+1.5e-10` |
+  | | (600, 126) | 34.7742° | 0.0147710106485 | `4.3e-14` | `-1.07e-7` | `+1.9e-9` |
+
+  The full-speed Phase I still moves by up to `9e-9` between its last two
+  grids (order 2, the slope jumps of `entry_measure`): the remaining
+  differences are Phase I's discretisation. On the canonical loop the
+  production $\int\lambda\,dt$ converges to `2.38062526` (1025/4097/16385
+  nodes), the geodesic distances between the retracted poses sum to
+  `2.38063152`, and the full-speed $\int\lambda\,dt$ to `2.38063154`; the
+  retraction offset is `5.75e-6` at every grid. An independent rule sharing
+  only the level-set points (trapezoid on geodesic chords, 16/64/256 points
+  per node interval) extrapolates to the contour value to `1e-9`.
+- *Tolerances.* On the canonical level set the value moves by `2e-10` from
+  `rtol = 1e-6` to `1e-10` and by `3e-11` from `1e-8` on; first panels of
+  1° with the default `rtol = 1e-9` need 900-1600 geometry points a level
+  set (2800-5400 with node-interval panels), errors below the estimates.
+- *Full canonical image, point pixels* (`artifacts/contour-quadrature-full`,
+  4 workers, store `N = 1e6` for the seed check): 201051 pixels, 187406 lit,
+  `2555.7 s` wall clock, per pixel `0.051` CPU s; CPU: curve finding
+  `2137 s`, level-set geometry `5698 s`, per-pixel integration `2264 s`;
+  worker peak RSS `2.9 GB`. No critical-$\delta$ pixel, no exhausted panel,
+  no open arc (the image stays below the 3-5 open-arc interval at 42.99°).
+  Relative error estimate on lit pixels (above `1e-2` of the column maximum)
+  at most `3.9e-10`; the `1.3e4` pixels above `1e-8` all have values below
+  `2e-11` (the absolute floor). Against `artifacts/strip-full` (production
+  Phase I, `rtol = 1e-4`, $\varepsilon = 10^{-6}$): the same 187406 non-zero
+  pixels; lit median `1.2e-5`, p99 `1.2e-4`, max `4.2e-4`, mean `-1.0e-5`,
+  lit sum ratio `0.999979`.
+- *Full canonical image, band pixels* (`artifacts/contour-quadrature-band`,
+  `--band-nodes 2 --relative-tolerance 1e-6`, 4 workers): 187538 lit,
+  `4216 s` wall clock; CPU: curve finding `5455 s`, geometry `9479 s`,
+  integration `1721 s`; 269 pixels have a critical value inside the band
+  (more than two deviations); lit relative error estimate at most `3.7e-7`.
+  `scripts/regress_band_sum.py --stage contour` (lit = band average above
+  `1e-2` of the column maximum, 121044 pixels):
+
+  | band sum | median $\lvert$rel$\rvert$ | RMS | mean rel | lit sum ratio | $z$ std | $\lvert z\rvert$ p50 / p99 / max | $\lvert z\rvert > 4$ |
+  |---|---|---|---|---|---|---|---|
+  | $N = 10^8$ vs contour band | `3.56e-3` | `1.46e-2` | `-8.6e-7` $\pm$ `4.2e-5` | `1.0000006` | `0.50` | `0.23 / 1.63 / 3.72` | 0 |
+  | $N = 10^7$ vs contour band | `1.91e-2` | `5.39e-2` | `-2.8e-4` $\pm$ `1.6e-4` | `1.0000145` | `0.67` | `0.37 / 2.01 / 4.97` | 19 |
+  | $N = 10^8$ vs contour point | `3.57e-3` | `1.47e-2` | `-1.0e-6` | `0.99957` | `0.54` | `0.23 / 1.64 / 17.8` | 25 |
+
+  RMS ratio $10^7 / 10^8$: `3.69` ($\sqrt{10} = 3.16$). Point against band
+  contour: median `6.7e-6`, p99 `2.1e-4`, 51 lit pixels above `1e-2`, 24 lit
+  band pixels with a point value 0 (the edge: the band reaches the lit range,
+  the centre does not); the worst band-sum pixels are dim rows 770-794 with
+  $K_{\mathrm{eff}} \approx 500$ and $z < 3.8$.
+- *Cost* (`benchmarks/benchmark_contour_quadrature.py`, column 150 rows
+  100-355, store `N = 1e6`, `rtol = 1e-9`, steady state, one process):
+  extraction `1.65 s` for 256 $\delta$ (`6.4 ms` each, 169369 nodes);
+  geometry `4.29 s` (`16.8 ms` per $\delta$, `1356` points); integration per
+  pixel at 1 / 4 / 16 pixels per $\delta$ (azimuths within $\pm3°$):
+  column density `5.16 / 7.33 / 5.46 ms` (`242 / 383 / 354` points added),
+  random `1.09 / 1.11 / 1.08 ms` (none); peak RSS `1.5 GB`. Before padding the
+  production evaluators' batches to powers of two a column spent `18 s` of
+  `45 s` compiling; before merging the extraction's nodes into first panels
+  of up to 1° a level set took 2800-5400 geometry points.

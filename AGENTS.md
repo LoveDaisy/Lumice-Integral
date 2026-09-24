@@ -77,6 +77,21 @@ uv run python scripts/verify_dp_field_intervals.py --grid 1201
 # certified level-set extraction (lumice_integral.contour): a strip's worth of deltas, first call and steady state
 # (3-5, 801 deltas: 11 s first call, 6 s steady on an M2 Max, one process)
 uv run python benchmarks/benchmark_contour_extraction.py --deltas 801
+# contour quadrature (lumice_integral.contour_quadrature): deterministic pixel values on the level sets, the precision
+# authority; smoke window, then the full canonical image (43 min on 4 workers, M2 Max; --band-nodes 2 gives the band-sum
+# pixel model for the like-for-like comparison below)
+uv run python scripts/render_contour_quadrature.py --rows 140:160 --columns 145:155 --output-dir /tmp/contour-quad-smoke
+JAX_PLATFORMS=cpu OMP_NUM_THREADS=1 \
+  uv run python scripts/render_contour_quadrature.py --workers 4 --output-dir artifacts/contour-quadrature-full
+JAX_PLATFORMS=cpu OMP_NUM_THREADS=1 uv run python scripts/render_contour_quadrature.py --band-nodes 2 \
+  --relative-tolerance 1e-6 --workers 4 --output-dir artifacts/contour-quadrature-band
+# ... against Phase I pixel by pixel (canonical + column 126, with the full-derivative arclength-speed diagnostic; ~30 s)
+uv run python scripts/compare_contour_quadrature_phase1.py --output /tmp/contour-phase1.json
+# ... the band sum against it on one pixel model (z = rel sqrt(K_eff)), and the cost structure (curves vs pixels)
+uv run python scripts/regress_band_sum.py --stage contour --band-dir artifacts/band-sum-full \
+  --coarse-dir artifacts/band-sum-full-N1e7 --contour-dir artifacts/contour-quadrature-band \
+  --contour-point-dir artifacts/contour-quadrature-full --reference-dir artifacts/strip-full --output /tmp/regression_contour.json
+uv run python benchmarks/benchmark_contour_quadrature.py
 # a non-canonical pose-density family (recorded in provenance.json and the resume fingerprint)
 uv run python scripts/render_ch06_strip.py --rows 300:302 --columns 126:127 --output-dir /tmp/strip-parry \
   --pose-density-family parry --pose-density-zenith-std-deg 1 --pose-density-roll-std-deg 1
@@ -101,7 +116,8 @@ The design is `docs/overview.md` (entry), `docs/phase1.md` and `docs/phase2.md`
 │   │                      # attitude construction (pure numpy, depends on geometry only)
 │   ├── dp_field/          # Phase II D_P field layer: evaluation, critical points, dU_P walk,
 │   │                      # delta-interval partition (public: DPField)
-│   └── contour.py         # level sets {D_P = delta} in U_P, certified against the partition
+│   ├── contour.py         # level sets {D_P = delta} in U_P, certified against the partition
+│   └── contour_quadrature.py  # line integrals on them: Phase II pixel values, the precision authority
 ├── tests/                 # Analytic and optical regression fixtures
 ├── benchmarks/            # Reproducible CPU/GPU probes
 ├── docs/

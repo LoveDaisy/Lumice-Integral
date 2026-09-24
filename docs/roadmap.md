@@ -27,7 +27,7 @@ Queue (tasks in `scratchpad/tasks.md`; dispatch order 20 ∥ 21, then 22 ∥ 24,
 
 | 22 | `band-sum-scatter-renderer`: band sum organised by deviation, class accumulation, GEMM tiles ([phase2.md](phase2.md) §8) | 21 |
 | 23 | `lumice-area-weighting-recheck`: absolute scale after Lumice's projected-area fix | Ice Halo #597 merged |
-| 24 | scrum `phase2-contour-quadrature` (M2): `dp-field-topology` → `dp-field-layer` → `s2-contour-extraction` → `s2-contour-quadrature` → `phase1-seeds-from-store` → `ch10-numerical-verdicts` — `dp-field-layer` **done 2026-09-24** (`lumice_integral.dp_field`, [phase2.md](phase2.md) §3.1); `s2-contour-extraction` **done 2026-09-24** (`lumice_integral.contour`, [phase2.md](phase2.md) §4) | 21 |
+| 24 | scrum `phase2-contour-quadrature` (M2): `dp-field-topology` → `dp-field-layer` → `s2-contour-extraction` → `s2-contour-quadrature` → `phase1-seeds-from-store` → `ch10-numerical-verdicts` — `dp-field-layer` **done 2026-09-24** (`lumice_integral.dp_field`, [phase2.md](phase2.md) §3.1); `s2-contour-extraction` **done 2026-09-24** (`lumice_integral.contour`, [phase2.md](phase2.md) §4); `s2-contour-quadrature` **done 2026-09-25** (`lumice_integral.contour_quadrature`, [phase2.md](phase2.md) §4) | 21 |
 
 Deferred: the chapter-11 table (path classes × pose families) after 22 and
 M2; divergent light ([phase2.md](phase2.md) §9, backlog); finite solar disk;
@@ -346,3 +346,29 @@ Moved to [overview.md](overview.md) §3.
   `1e-12` rad where $|\nabla D_P| \le 10^3$ and to $64\,\varepsilon|\nabla D_P|$
   next to an exit-TIR curve (the `1e-12` of the scrum is not reachable there
   in float64). Measured: 801 deviations of 3-5 in 6 s steady in one process (M2 Max).
+- **2026-09-25**: contour quadrature is `lumice_integral.contour_quadrature`
+  (task `s2-contour-quadrature`, [phase2.md](phase2.md) §4 and appendix), and
+  for a fixed path it is the **precision authority** the other two chains are
+  measured against, **beside Phase I, not replacing it** (Phase I stays the
+  independent $\mathrm{SO}(3)$ formulation, AGENTS.md; the band sum stays the
+  fast renderer). Grounds: per-pixel error estimate below `4e-10` on every lit
+  canonical pixel, completeness certified per $\delta$, and the pointwise
+  identity $J_\perp = |\nabla_{S^2}D_P|\sin\delta/|\boldsymbol\xi\times\mathbf u|$
+  closed-form to `3e-15`. The constant is not a second normalisation: the
+  band sum's $1/(2\pi N\Delta\delta\sin\delta)$ is the contour integral
+  averaged over the band and sampled on the store (derivation in §4). Points
+  are solved onto the level set across each chord (never interpolated) with
+  the arclength speed from the implicit function theorem; adaptive Simpson
+  with $N$ vs $N/2$ per panel and kinks reported, not the plan's slerp
+  resampling, which would put points off the curve. The pixel value is the
+  $\varepsilon \to 0$ point value (a $\delta$ at a critical value is not
+  integrated); a band-average mode gives the band sum's pixel model. The
+  cross-check found a Phase I defect: `quadrature._parametric_speed` drops
+  the $\boldsymbol\nu'\cdot\boldsymbol\delta$ term of the differentiated phase
+  condition, a speed bias of $O(|\boldsymbol\delta|)$ (`5.6e-6` on the canonical
+  pixel) that Phase I's own error estimate does not see; restored in a
+  diagnostic, Phase I agrees to `4e-9` on ten pixels. Not fixed here (another
+  root cause; it moves frozen Phase I values), queued in the backlog. The
+  full canonical image takes 43 min on 4 workers (M2 Max), CPU 21 % curve
+  finding, 57 % level-set geometry, 22 % per-pixel integration; the
+  geometry is dominated by the production `entry_measure_batch`.
