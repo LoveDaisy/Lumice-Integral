@@ -50,6 +50,9 @@ uv run --with matplotlib python scripts/compare_strip_v2.py --strip-dir artifact
 uv run python scripts/probe_absolute_scale.py --lumice-run <run1> --lumice-run <run2> --output-dir /tmp/abs-scale
 uv run --with matplotlib python scripts/compare_strip_v2.py --strip-dir artifacts/strip-full --output-dir /tmp/strip-compare \
   --lumice-float <run1>/img_01.npy --lumice-float-run2 <run2>/img_01.npy --absolute-scale-probe /tmp/abs-scale
+# ... and a pose family: a band-sum --path-class render against Lumice exports with the same camera and a PBD
+# filter (K_p = ybar Omega_p / (S/2): total flux, bright-pixel ratio, max-normalised profiles, seed noise floor)
+uv run python scripts/compare_lumice_family.py --li-dir /tmp/band-sum-plate --lumice-run <run1> --lumice-run <run2> --output /tmp/plate.json
 # S^2 band-sum renderer (docs/phase2.md sections 5, 8; scatter form, one deviation segment per worker over
 # read-only mapped stores): the same strip layout on a Mac. N = 1e8 full image: 31 s on 4 workers, 74 s on one,
 # with the store cached under artifacts/s2-store (first build ~80 s)

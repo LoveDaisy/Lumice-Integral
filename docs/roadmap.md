@@ -22,7 +22,7 @@ Queue (tasks in `scratchpad/tasks.md`; dispatch order 20 ∥ 21, then 22 ∥ 24,
 | 20 | chore `band-sum-small-fixes`: `pixels.csv` value repr, a docstring escape, two missing regression tests | — |
 | 21 | `s2-store-schema-3`: store independent of the source, `.npy` + mmap, bucketed build ([phase2.md](phase2.md) §1.1, §8) — **done 2026-09-24** (schema 3) | — |
 | 22 | `band-sum-scatter-renderer`: band sum organised by deviation, class accumulation, GEMM tiles ([phase2.md](phase2.md) §8) — **done 2026-09-24** (canonical strip `30.8 s`, was `169 s`) | 21 |
-| 23 | `lumice-area-weighting-recheck`: absolute scale after Lumice's projected-area fix | Ice Halo #597 merged |
+| 23 | `lumice-area-weighting-recheck`: absolute scale after Lumice's projected-area fix — **done 2026-09-24** (`K_p = N_sym ȳ Ω_p / (S/2)`, column strip `0.998`, plate / Parry families) | Ice Halo #597 merged |
 | 24 | scrum `phase2-contour-quadrature` (M2): `dp-field-topology` → `dp-field-layer` → `s2-contour-extraction` → `s2-contour-quadrature` → `phase1-seeds-from-store` → `ch10-numerical-verdicts` | 21 |
 
 Deferred: the chapter-11 table (path classes × pose families) after 22 and
@@ -285,3 +285,23 @@ Moved to [overview.md](overview.md) §3.
   $K_{\rho>0}$ equal, values within `7.9e-15`; twelve store groups peak at
   one group's memory. A GPU back end stays deferred: on the CPU the
   elementwise $\rho$, not the product, dominates.
+- **2026-09-24**: the absolute scale against Lumice after Ice Halo #597
+  (task 23 `lumice-area-weighting-recheck`, Lumice `2056f699`). The merged
+  fix is not the accept/reject of 597.1-597.3: `6fc48bb4` weighs every ray
+  by `A_tot / (S/2)` at entry on every backend and discards none, and
+  `emitted_energy` still counts the weight lost there. With the entry
+  sub-triangle still drawn by `A_face / A_tot`, `A_tot` cancels, so
+  `raw[p] / emitted_energy = K_p V`, `K_p = N_sym ȳ(550) Ω_p / (S/2)`: the
+  pixel-dependent `A_eff` of 2026-09-23 is replaced by one constant
+  (`S/2 = 8.598 a²` at `h/a = 2`). Checked with nothing fitted: the column
+  strip's bright band `0.998` at matched index, the implied area `8.62 a²`
+  on every column with noise-level spread; the plate and Parry families
+  through the band-sum class renderer (`scripts/compare_lumice_family.py`):
+  total flux `0.9999` / `1.0001`, Parry's two feature halves `1.0002 /
+  1.0001`.
+  The old conversion stays in the fixture specification as history
+  (a42: it held for the Lumice of its date). `probe_absolute_scale.py` lost
+  its `rho / A_tot` second quadrature (a04); `docs/conventions.md` row 17
+  cites Lumice's equal-surface-area convention. Family comparisons need no
+  `A_eff` folding; they do need the matched index (`1.3110129`): at the
+  canonical `1.31` a sharp caustic edge moves by about half a pixel.

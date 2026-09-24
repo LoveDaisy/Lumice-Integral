@@ -617,7 +617,10 @@ needs street-lamp halos (backlog).
   $J_\perp$ under the fibration's change of coordinates is the
   cross-validation contact point. `s2-contour-quadrature`.
 - **Absolute scale against Lumice** after its projected-area fix (Ice Halo
-  #597): task `lumice-area-weighting-recheck`.
+  #597): done 2026-09-24 (task `lumice-area-weighting-recheck`): band-sum
+  class renders of the plate and Parry families against Lumice float
+  exports with $K_p = \bar y(550)\,\Omega_p/(S/2)$, nothing fitted
+  (`docs/ch06-reference-fixture.md` section 7, stage 4).
 
 | piece | status | where |
 |---|---|---|
