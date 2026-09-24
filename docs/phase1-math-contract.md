@@ -95,7 +95,7 @@ context, not competing specifications:
 
 | Source | Role | Normative status |
 |---|---|---|
-| [`roadmap.md`](roadmap.md) | Project staging, responsibility boundaries, and validation strategy. | Context; links here for detailed Phase I semantics. |
+| [`phase1.md`](phase1.md), [`overview.md`](overview.md), [`roadmap.md`](roadmap.md) | Phase I design and history; project overview, responsibility boundaries and validation strategy; status and decisions. | Context; links here for detailed Phase I semantics. |
 | [`0001-phase-i-python-jax.md`](decisions/0001-phase-i-python-jax.md) | Accepted reference stack, dtype, and execution boundary. | Normative for architecture; numerical observations are evidence. |
 | `scratchpad/explore-ad-continuation-stack/SUMMARY.md` | AD, closure-distance, precision, and batching experiments. | Evidence only. |
 | `src/lumice_integral/{analytic,so3,continuation,optics}.py` | Current analytic and synthetic probes. | Evidence/current strategy only. |

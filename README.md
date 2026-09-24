@@ -12,18 +12,14 @@ specified image direction. Lumice Integral owns an independent differentiable
 optics implementation and does not use Lumice as a library or runtime engine;
 Lumice serves only as an external validation oracle and analysis-data source.
 
-The project is currently in the design and reconstruction stage. The first
-implementation will reproduce the original SO(3) continuation prototype before
-considering the newer fiber-reduction formulation.
+Status: Phase I (SO(3) fibre continuation) is closed and agrees with Lumice
+in shape and absolute scale; Phase II's band-sum renderer over precomputed
+$S^2$ events is in production; the Phase II contour method (milestone M2) is
+next.
 
-The Phase I reference API is `trace_fiber(FiberProblem, ContinuationOptions)`.
-It traces only the connected component reachable from the supplied regular
-seed and returns structured closure, event, numerical-failure, or budget
-diagnostics. Its geometry-only result deliberately leaves physical weight
-factors unavailable; component discovery and coarea integration remain
-separate stages.
-
-See [docs/roadmap.md](docs/roadmap.md) for the mathematical model, scope, phased
-plan, and validation strategy. The accepted Phase I stack and its measured
-CPU/GPU boundaries are recorded in
+Start with [docs/overview.md](docs/overview.md) ([中文](docs/overview_zh.md)):
+how direct integration differs from Monte Carlo rendering, what Phases I and
+II are, and the plan. Design details: [docs/phase1.md](docs/phase1.md),
+[docs/phase2.md](docs/phase2.md). Status, queue and decisions:
+[docs/roadmap.md](docs/roadmap.md). The accepted Phase I stack is
 [ADR 0001](docs/decisions/0001-phase-i-python-jax.md).
