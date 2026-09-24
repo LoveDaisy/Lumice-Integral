@@ -120,7 +120,6 @@ from . import geometry, optics
 from .camera import incident_direction_from_sun, sun_direction
 from .geometry import HexPrism, Polyhedron
 from .optics import normalize_faces, path_id_of
-from .path_class import phi_key
 from .provenance import git_commit, sha256_of
 
 # 3: no sun direction in the spec (the arrays do not depend on it), one .npy per array, task s2-store-schema-3;
@@ -613,6 +612,99 @@ class S2EventStore:
                 raise ValueError(f"{path}: SHA-256 of array {name!r} is {digest}, the provenance records {record['sha256']}")
 
 
+@dataclasses.dataclass(frozen=True, eq=False)
+class StoreSeeds:
+    """Phase I discovery candidates of one path ``faces`` from a store: the band of a target, posed.
+
+    The store is the SO(3) sampling quotiented by the twist about ``s_hat``
+    (section 4.1(a)): for a target direction ``d`` at deviation ``delta``
+    from the propagation ``s = -s_hat`` every event with ``|D_i - delta| <=
+    half_width`` gives, through :func:`event_rotations` with ``d`` as the
+    centre, a pose whose outgoing direction lies at deviation ``D_i`` in the
+    azimuth of ``d``, i.e. ``|D_i - delta|`` from ``d``: the one-dimensional
+    residual of a candidate (:meth:`candidates`).  ``faces`` is the path
+    these candidates seed: a member of the store's ``Phi`` group
+    (``g is None``) or its image under the ``D6h`` element ``g`` (the
+    :class:`.band_sum.Transport` of that member's group; the poses are
+    :func:`transported_rotations`, a rotation also for an improper ``g``).
+    The store's crystal and refractive index are the problem's; the sun is
+    the caller's (a store records none).
+
+    ``eq=False``: it holds arrays (``sun_direction``, ``g``) and a store.
+    """
+
+    store: S2EventStore
+    faces: Faces
+    sun_direction: np.ndarray
+    g: np.ndarray | None = None
+
+    def __post_init__(self) -> None:
+        faces = normalize_faces(self.faces)
+        sun = np.asarray(self.sun_direction, dtype=np.float64)
+        g = None if self.g is None else np.asarray(self.g, dtype=np.float64)
+        if self.store.events.iw is not None:
+            raise ValueError("a seed store must be a uniform point set (no inverse weights)")
+        if g is None:
+            if faces not in self.store.spec.members:
+                raise ValueError(f"{path_id_of(faces)} is not a member of the store {self.store.spec.path_id}")
+        else:
+            from .path_class import _hexprism_normals, _symmetry_image_of_faces  # path_class imports this module
+
+            normals = _hexprism_normals(self.crystal)
+            images = {_symmetry_image_of_faces(g, member, normals) for member in self.store.spec.members}
+            if faces not in images:
+                raise ValueError(f"{path_id_of(faces)} is not the image under g of a member of {self.store.spec.path_id}")
+        object.__setattr__(self, "faces", faces)
+        object.__setattr__(self, "sun_direction", sun)
+        object.__setattr__(self, "g", g)
+
+    @property
+    def path_id(self) -> str:
+        return path_id_of(self.faces)
+
+    @property
+    def incident_direction(self) -> np.ndarray:
+        """The propagation direction ``s = -s_hat`` of the optics."""
+        return incident_direction_from_sun(self.sun_direction)
+
+    @property
+    def refractive_index(self) -> float:
+        return self.store.spec.refractive_index
+
+    @property
+    def crystal(self) -> HexPrism:
+        return crystal_from_description(self.store.spec.crystal)
+
+    @property
+    def n(self) -> int:
+        return self.store.spec.n
+
+    def candidates(self, target_direction: np.ndarray, half_width_rad: float) -> tuple[np.ndarray, np.ndarray]:
+        """Poses of the events with ``|D_i - delta| <= half_width_rad`` and their offsets ``|D_i - delta|``.
+
+        ``delta`` is the deviation of ``target_direction`` from ``s``; the
+        poses (``(K, 3, 3)``, in store order, increasing ``D``) put ``u_i`` on
+        ``s_hat`` and ``phi_i`` in the azimuth of the target, so the offset is
+        the angle between a candidate's outgoing direction and the target.
+        """
+        target = np.asarray(target_direction, dtype=np.float64)
+        if target.shape != (3,):
+            raise ValueError("target_direction must have shape (3,)")
+        if half_width_rad <= 0.0:
+            raise ValueError("half_width_rad must be positive")
+        delta = float(np.arccos(np.clip(target @ self.incident_direction, -1.0, 1.0)))
+        band = self.store.band_slice(delta - half_width_rad, np.nextafter(delta + half_width_rad, np.inf))
+        if len(band) == 0:
+            return np.zeros((0, 3, 3)), np.zeros(0)
+        deviation = np.asarray(band.D, dtype=np.float64)
+        rotations = event_rotations(
+            np.asarray(band.u, dtype=np.float64), np.asarray(band.phi, dtype=np.float64), deviation, self.sun_direction, target
+        )
+        if self.g is not None:
+            rotations = transported_rotations(rotations, self.g, self.sun_direction, target)
+        return rotations, np.abs(deviation - delta)
+
+
 def _read_provenance(directory: Path) -> dict[str, Any]:
     provenance = json.loads((directory / PROVENANCE_FILE).read_text())
     schema = provenance["build"].get("schema_version")
@@ -814,6 +906,8 @@ def _spec_of(
         deviation_window=deviation_window,
         dtype=dtype,
     )
+    from .path_class import phi_key  # path_class -> strip_pixel -> this module: imported at call time
+
     keys = {phi_key(crystal, m) for m in spec.members}
     if len(keys) != 1:
         raise ValueError(f"members {spec.path_id} do not share one phi_key: {sorted(keys)}")
@@ -965,6 +1059,7 @@ __all__ = [
     "S2EventStore",
     "S2Events",
     "S2StoreSpec",
+    "StoreSeeds",
     "align_rotations",
     "build_event_store",
     "build_or_load",

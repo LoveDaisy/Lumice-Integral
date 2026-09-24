@@ -112,6 +112,57 @@ def test_band_slice(small_store) -> None:
     assert np.all((band.D >= lo_d) & (band.D < hi_d))
 
 
+def _outgoing_offsets(rotations: np.ndarray, faces, target: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Validity and angle to ``target`` of the production outgoing direction (the oracle of the seed poses)."""
+    domain = optics.path_domain_batch(rotations, faces, canonical_incident_direction(), CANONICAL_REFRACTIVE_INDEX)
+    return domain.valid, np.arccos(np.clip(domain.direction @ target, -1.0, 1.0))
+
+
+@pytest.mark.parametrize("g_name", ["identity", "proper", "improper"])
+def test_store_seeds_pose_the_band_onto_the_target(small_store, g_name: str) -> None:
+    """Every candidate is a valid pose of its path whose outgoing direction is ``|D_i - delta|`` from the target.
+
+    ``proper``: the rotation ``Rz(60)`` serves member ``4-6`` of the ``3-5``
+    class; ``improper``: the basal mirror maps ``3-5`` onto itself.
+    """
+    from lumice_integral.path_class import hexprism_symmetry_matrices
+
+    elements = hexprism_symmetry_matrices()
+    g, faces = {
+        "identity": (None, (3, 5)),
+        "proper": (elements[2], (4, 6)),
+        "improper": (np.diag([1.0, 1.0, -1.0]), (3, 5)),
+    }[g_name]
+    sun = canonical_sun_direction()
+    seeds = s2_store.StoreSeeds(small_store, faces, sun, g)
+    target = optics.path_domain_batch(
+        align_rotations(small_store.events.u[500:501], sun), (3, 5), canonical_incident_direction(), CANONICAL_REFRACTIVE_INDEX
+    ).direction[0]
+    delta = np.arccos(target @ canonical_incident_direction())
+    half_width = np.radians(0.5)
+    rotations, offsets = seeds.candidates(target, half_width)
+    expected = np.count_nonzero(np.abs(small_store.events.D - delta) <= half_width)
+    assert len(rotations) == expected > 50
+    assert np.all(offsets <= half_width)
+    assert np.allclose(np.linalg.det(rotations), 1.0) and np.allclose(rotations @ rotations.transpose(0, 2, 1), np.eye(3))
+    valid, angle = _outgoing_offsets(rotations, faces, target)
+    assert valid.all()
+    np.testing.assert_allclose(angle, offsets, atol=1e-9)
+    if g is None:
+        lo, hi = np.searchsorted(small_store.events.D, [delta - half_width, np.nextafter(delta + half_width, np.inf)])
+        np.testing.assert_allclose(np.einsum("nij,nj->ni", rotations, small_store.events.u[lo:hi]), np.broadcast_to(sun, (hi - lo, 3)), atol=1e-12)
+
+
+def test_store_seeds_refuse_a_path_the_store_does_not_serve(small_store) -> None:
+    sun = canonical_sun_direction()
+    with pytest.raises(ValueError, match="not a member"):
+        s2_store.StoreSeeds(small_store, (3, 7), sun)
+    with pytest.raises(ValueError, match="image under g"):
+        s2_store.StoreSeeds(small_store, (3, 7), sun, np.diag([1.0, 1.0, -1.0]))
+    with pytest.raises(ValueError, match="half_width"):
+        s2_store.StoreSeeds(small_store, (3, 5), sun).candidates(canonical_incident_direction(), 0.0)
+
+
 def test_float32_store_is_the_float64_store_cast(small_store) -> None:
     single = _build(dtype="float32")
     for name, array in single.events.arrays().items():
