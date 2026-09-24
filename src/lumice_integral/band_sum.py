@@ -481,9 +481,10 @@ def render_pixels(
 
 
 # --------------------------------------------------------------- scatter
-# Events per chunk and pixels per block of the scatter form: a (block x chunk) float64 grid is 8 MB.
-SCATTER_EVENT_CHUNK = 4096
-SCATTER_PIXEL_BLOCK = 256
+# Events per chunk and pixels per block of the scatter form: a (block x chunk) float64 grid is 256 kB, small
+# enough for the allocator to reuse (8 MB grids were mapped and zero-filled afresh: 2x the system time).
+SCATTER_EVENT_CHUNK = 1024
+SCATTER_PIXEL_BLOCK = 32
 _AXIS_INDEX = {"e1": 0, "e2": 1, "e3": 2}
 
 
@@ -518,10 +519,10 @@ def pixel_bands(pixels: Sequence[tuple[int, int]], sun: np.ndarray, render: Mapp
     """:func:`pixel_band` of every pixel (the same per-pixel arithmetic, so the bands are bit-identical)."""
     count = len(pixels)
     delta, lo, hi, zenith = np.zeros(count), np.zeros(count), np.zeros(count), np.zeros((count, 3))
-    for index, (row, column) in enumerate(pixels):
-        centre, delta[index], lo[index], hi[index] = pixel_band(row, column, sun, render)
-        # The sun pixel's centre may be s_hat itself (e = 0): its band is empty or its value NaN, as in the gather.
-        with np.errstate(invalid="ignore", divide="ignore"):
+    # The sun pixel's centre may be s_hat itself (e = 0): its band is empty or its value NaN, as in the gather.
+    with np.errstate(invalid="ignore", divide="ignore"):
+        for index, (row, column) in enumerate(pixels):
+            centre, delta[index], lo[index], hi[index] = pixel_band(row, column, sun, render)
             zenith[index] = pixel_world_frame(sun, centre)[2]
     rows = np.array([r for r, _ in pixels], dtype=np.int64)
     columns = np.array([c for _, c in pixels], dtype=np.int64)

@@ -571,7 +571,7 @@ def stage_scatter_windows(random_n: int, store_cache_dir: Path, workers: int) ->
     old = [class_band_sum_pixel([(events, group)], sun, scene.pose_density, r.row, r.column, random_n, render) for r in new]
     block = compare_results(new, old)
     block.update(
-        transports=len(group.transports), improper=sum(t.g is not None and np.linalg.det(t.g) < 0.0 for t in group.transports),
+        transports=len(group.transports), improper=int(sum(t.g is not None and np.linalg.det(t.g) < 0.0 for t in group.transports)),
         scatter_wall_clock_s=scatter_s, gather_wall_clock_s=time.perf_counter() - start, render=render, workers=workers,
     )
     report["class_1-3-5_random"] = block

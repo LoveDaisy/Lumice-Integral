@@ -269,7 +269,7 @@ def transported_frames(frames: np.ndarray, g: np.ndarray) -> np.ndarray:
     transport is a fixed linear map of the event side only.
     """
     g = np.asarray(g, dtype=np.float64)
-    moved = np.einsum("ij,njk->nik", g, frames)
+    moved = np.moveaxis(np.tensordot(g, frames, axes=([1], [1])), 0, 1)  # (g F)[n, i, k]; 7x a plain einsum
     if np.linalg.det(g) < 0.0:
         moved[:, :, 2] *= -1.0
     return moved

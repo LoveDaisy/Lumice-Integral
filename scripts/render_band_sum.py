@@ -35,7 +35,10 @@ loaded, never rebuilt.  A rank-0 class is the task 9 point mass on the sun
 pixel.
 
 ``--workers``: the default 1 is for smokes; a full image wants 4 (the macOS
-cap, :data:`MAC_MAX_WORKERS`; ~1 GB of store per worker at ``N = 1e8``).
+cap, :data:`MAC_MAX_WORKERS`).  The workers compute the pixels' bands, then
+each renders one deviation segment (``band_sum.render_band_sum_window``,
+the scatter form): the stores are mapped read-only and shared as page cache,
+one store group at a time, not loaded once per worker.
 Set ``JAX_PLATFORMS=cpu OMP_NUM_THREADS=1`` for multi-worker runs (the
 setting ``render_ch06_strip.py`` runs with) so the workers do not oversubscribe
 threads.  An existing non-empty ``--output-dir`` is refused unless
@@ -107,7 +110,7 @@ def main(argv: list[str] | None = None) -> None:
         "--workers",
         type=int,
         default=1,
-        help=f"worker processes (default 1 is for smokes; full images: {MAC_MAX_WORKERS}, the macOS cap)",
+        help=f"worker processes, one deviation segment each (default 1 is for smokes; full images: {MAC_MAX_WORKERS}, the macOS cap)",
     )
     parser.add_argument(
         "--pose-density-family",
