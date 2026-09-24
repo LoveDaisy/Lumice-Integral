@@ -88,6 +88,7 @@ The authoritative staged design is `docs/roadmap.md`.
 ├── docs/
 │   ├── roadmap.md         # Mathematical model, phased scope, validation
 │   ├── conventions.md     # Every coordinate / sign / symbol convention and its check
+│   ├── s2-precomputation.md # Design note: the S^2 event store, its consumers and costs
 │   └── decisions/         # Accepted architecture decisions
 └── scratchpad/            # Local task management, ignored by git
 ```
@@ -150,6 +151,7 @@ workflows as a black-box Monte Carlo oracle or source of analysis artifacts.
 - `README.md`: project entry point.
 - `docs/roadmap.md`: current design authority and phase boundary.
 - `docs/conventions.md`: convention authority (Lumice / writing series / this project, with checks).
+- `docs/s2-precomputation.md`: design note for the $S^2$ event store (source independence, its consumers, cost structure, band sum organised by deviation, divergent light).
 - `scratchpad/tasks.md`: local task index.
 - `scratchpad/backlog.md`: unstructured ideas awaiting task selection.
 

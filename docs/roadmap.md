@@ -445,6 +445,10 @@ diagnostics tool, or the primary renderer.
 The level-set integral has two discretisations: tracing the contours
 (section 4.1) and summing precomputed $S^2$ events per deviation band
 (section 4.2). They are two quadratures of one integral, not alternatives.
+The overall picture (what the event store depends on, its three consumers,
+the cost of each route, the band sum organised by deviation, divergent
+light) is the design note `docs/s2-precomputation.md` (2026-09-24); this
+section keeps the decisions and the measured results.
 
 ### 4.1 Design findings (2026-09-20 discussion, before the Phase II scrum)
 
@@ -687,7 +691,11 @@ renderer.
 **Divergent light (deferred).** The note's ray-marching extension (a nearby
 source; $\omega$ varies along each view ray, one range query per step with
 inverse-square weights) reuses the same event store and fits this project,
-but comes after Phase II. Multiple scattering stays a non-goal (section 8).
+but comes after Phase II. In the event form no marching is needed: each event
+with $D_i \ge \theta$ maps to one point of the view ray, and the
+inverse-square factor times $dt/d\delta$ is constant along the ray
+(`docs/s2-precomputation.md` section 5). Multiple scattering stays a non-goal
+(section 8).
 
 **Probe results and verdict (2026-09-23).** Path 3-5, canonical crystal
 ($h/a = 2$), $n = 1.31$, sun altitude 15°, the ch06 strip camera; Fibonacci
