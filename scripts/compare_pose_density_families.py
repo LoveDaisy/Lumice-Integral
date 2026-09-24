@@ -6,15 +6,16 @@ JSON (``pose_density_families.json``):
 
 1. **Column profile.**  ``render_pixel`` on column :data:`PROBE_COLUMN` at
    ``--rows`` (default every ``--row-step`` rows from 150 to 600) for each of
-   the five families, plotted on a log axis.  Families whose value is exactly
+   the five families (one shared seed store), plotted on a log axis.  Families whose value is exactly
    zero at every rendered pixel are reported as such in the legend rather
    than silently dropped by the log scale: on the labelled path ``3 -> 5``
    the column-126 fibers have c-axis zenith ``88-92 deg`` and roll
    ``90-155 deg`` (face 3 on the side), so plate (zenith about ``0 deg``),
    parry and lowitz (roll locked at ``0 deg``, face 3 on top) underflow to
    zero there.
-2. **Landing map.**  Where each family's ``3 -> 5`` light goes: the Haar
-   prescan samples (``prescan.build_prescan_table``) weighted by each family's
+2. **Landing map.**  Where each family's ``3 -> 5`` light goes: the
+   domain-valid Haar samples (``path_class.haar_domain_samples``, the stream
+   the retired prescan table held) weighted by each family's
    ``rho_pose`` and binned by outgoing sky direction, with the strip's field
    of view outlined.  This is the picture that explains 1: plate's ``3 -> 5``
    light is the parhelion, parry's the upper Parry arc, lowitz's the Lowitz
@@ -57,7 +58,8 @@ from lumice_integral.continuation import FiberResult, trace_fiber
 from lumice_integral.discovery import retarget_problem
 from lumice_integral.pose_density import PoseDensity, build_pose_density
 from lumice_integral.pose_density_provenance import pose_density_provenance
-from lumice_integral.prescan import PrescanTable, build_prescan_table
+from lumice_integral.path_class import haar_domain_samples
+from lumice_integral.s2_store import StoreSeeds
 from lumice_integral.quadrature import pointwise_integrand
 from lumice_integral.strip_pixel import PixelOptions, StripScene, canonical_strip_scene, pixel_target, render_pixel
 
@@ -144,12 +146,12 @@ def probe_width_sensitivity(scene: StripScene, options: PixelOptions, rows: tupl
 
 
 def render_profiles(
-    densities: Mapping[str, PoseDensity], rows: tuple[int, ...], column: int, prescan_table: PrescanTable, options: PixelOptions
+    densities: Mapping[str, PoseDensity], rows: tuple[int, ...], column: int, seeds: StoreSeeds, options: PixelOptions
 ) -> dict[str, dict[str, Any]]:
-    """Section 1: ``render_pixel`` per family on the shared prescan table."""
+    """Section 1: ``render_pixel`` per family on the shared seed store."""
     profiles: dict[str, dict[str, Any]] = {}
     for family, density in densities.items():
-        scene = canonical_strip_scene(prescan_table=prescan_table, pose_density=density)
+        scene = canonical_strip_scene(seeds=seeds, pose_density=density)
         values, errors, complete, seconds = [], [], [], []
         for row in rows:
             result = render_pixel(scene, row, column, options)
@@ -168,9 +170,11 @@ def render_profiles(
     return profiles
 
 
-def landing_map(densities: Mapping[str, PoseDensity], table: PrescanTable, *, bins_deg: float = 1.0) -> dict[str, Any]:
-    """Section 2: family-weighted prescan samples binned by sky elevation / azimuth."""
-    sky = -np.asarray(table.directions, dtype=np.float64)
+def landing_map(
+    densities: Mapping[str, PoseDensity], rotations: np.ndarray, directions: np.ndarray, *, bins_deg: float = 1.0
+) -> dict[str, Any]:
+    """Section 2: family-weighted domain-valid Haar samples binned by sky elevation / azimuth."""
+    sky = -np.asarray(directions, dtype=np.float64)
     elevation = np.degrees(np.arcsin(np.clip(sky[:, 2], -1.0, 1.0)))
     azimuth = np.degrees(np.arctan2(sky[:, 1], sky[:, 0]))
     inside = np.zeros(len(sky), dtype=bool)
@@ -185,12 +189,12 @@ def landing_map(densities: Mapping[str, PoseDensity], table: PrescanTable, *, bi
     out: dict[str, Any] = {
         "elevation_edges_deg": edges_elevation.tolist(),
         "azimuth_edges_deg": edges_azimuth.tolist(),
-        "valid_samples": int(table.valid_count),
+        "valid_samples": int(len(rotations)),
         "inside_strip_samples": int(inside.sum()),
         "families": {},
     }
     for family, density in densities.items():
-        weight = density.evaluate_batch(table.rotations)
+        weight = density.evaluate_batch(rotations)
         total = float(weight.sum())
         histogram, _, _ = np.histogram2d(elevation, azimuth, bins=[edges_elevation, edges_azimuth], weights=weight)
         significant = weight > 1e-3 * weight.max() if total > 0 else np.zeros_like(inside)
@@ -273,8 +277,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--column", type=int, default=PROBE_COLUMN)
     parser.add_argument("--rows", type=int, nargs="+", default=None, help="profile rows (default: 150..600 every --row-step)")
     parser.add_argument("--row-step", type=int, default=25)
-    parser.add_argument("--prescan-samples", type=int, default=400_000, help="Haar samples of the shared prescan table")
-    parser.add_argument("--prescan-seed", type=int, default=20260916)
+    parser.add_argument("--landing-samples", type=int, default=400_000, help="Haar samples of the landing map")
+    parser.add_argument("--landing-seed", type=int, default=20260916)
     parser.add_argument("--label", default="")
     parser.add_argument("--no-figures", action="store_true")
     args = parser.parse_args(argv)
@@ -282,22 +286,24 @@ def main(argv: list[str] | None = None) -> None:
     rows = tuple(args.rows) if args.rows else tuple(range(150, 601, args.row_step))
 
     incident = canonical_incident_direction()
-    table = build_prescan_table(incident, CANONICAL_REFRACTIVE_INDEX, sample_count=args.prescan_samples, rng_seed=args.prescan_seed)
+    rotations, directions = haar_domain_samples(
+        (3, 5), incident, CANONICAL_REFRACTIVE_INDEX, sample_count=args.landing_samples, rng_seed=args.landing_seed
+    )
     densities = family_densities()
     options = PixelOptions()
 
     print("landing map ...", flush=True)
-    landing = landing_map(densities, table)
+    landing = landing_map(densities, rotations, directions)
     for family, entry in landing["families"].items():
         print(f"  {family:7s} inside-strip fraction {entry['inside_strip_fraction']:.3f}  elevation p1/50/99 {entry['elevation_percentiles_deg']}  azimuth {entry['azimuth_percentiles_deg']}")
 
     print(f"profiles on column {args.column}, {len(rows)} rows x {len(densities)} families ...", flush=True)
-    profiles = render_profiles(densities, rows, args.column, table, options)
+    column_scene = canonical_strip_scene(pose_density=densities["column"])
+    profiles = render_profiles(densities, rows, args.column, column_scene.seeds, options)
     for family, profile in profiles.items():
         print(f"  {family:7s} {profile['total_s']:.1f} s  all_zero={profile['all_zero']}  max={max(profile['value']):.4g}")
 
     print("zenith-width sweep (column family) ...", flush=True)
-    column_scene = canonical_strip_scene(prescan_table=table, pose_density=densities["column"])
     sweep = probe_width_sensitivity(column_scene, options, column=args.column)
     for row, entry in sweep.items():
         print(f"  row {row}: {entry['components'][0]['value_ratio_if_zenith_std_deg'] if entry['components'] else 'no component'}")
@@ -307,7 +313,8 @@ def main(argv: list[str] | None = None) -> None:
         "label": args.label,
         "column": args.column,
         "families": {family: pose_density_provenance(family, **kwargs) for family, kwargs in FAMILY_PARAMETERS.items()},
-        "prescan": {"sample_count": args.prescan_samples, "rng_seed": args.prescan_seed, "valid_count": table.valid_count},
+        "landing_samples": {"sample_count": args.landing_samples, "rng_seed": args.landing_seed, "valid_count": len(rotations)},
+        "seed_store": {"N": column_scene.seeds.n},
         "profiles": profiles,
         "landing": {
             key: value for key, value in landing.items() if key != "families"

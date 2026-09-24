@@ -25,6 +25,7 @@ from lumice_integral.canonical_scene import (
     CANONICAL_RENDER,
     canonical_incident_direction,
     canonical_pose_density,
+    canonical_sun_direction,
 )
 from lumice_integral.continuation import FiberStatus, TerminationReason, trace_fiber
 from lumice_integral.discovery import discover_components
@@ -45,7 +46,7 @@ RECORDED_CRYSTAL = HexPrism.from_ratio(1.0)
 REFLECTION_DISCOVERY = {
     "script": "scripts/discover_3_1_2_5_seed.py",
     "command": "uv run python scripts/discover_3_1_2_5_seed.py",
-    "prescan": {"sample_count": 400_000, "rng_seed": 20260916},
+    "prescan": {"sample_count": 400_000, "rng_seed": 20260916},  # of the pixel selection; the renders seed from the store
     "selection": "strip pixel with the largest summed rho_pose * entry_measure of the landing 3-1-2-5 prescan samples",
     "pixel": {"row": 651, "column": 13},
     "recorded": {
@@ -62,18 +63,22 @@ REFLECTION_DISCOVERY = {
     },
 }
 ROW, COLUMN = REFLECTION_DISCOVERY["pixel"]["row"], REFLECTION_DISCOVERY["pixel"]["column"]
+# The 3-1-2-5 arc as traced from the seed-store seed (task phase1-seeds-from-store, 2026-09-25): both ends on
+# the internal_1_incidence_cosine boundary (margin ~4e-6).  The recorded trace from the prescan seed stopped
+# 0.028 rad short of it at one end, on a path_infeasible trial whose last accepted pose still had margin 0.02;
+# the continuation's event localisation depends on the step sequence, i.e. on the seed.  The value moves by
+# 7e-5 relative (the entry measure vanishes towards both ends), inside the pins below.
+STORE_SEED_ARC_ARCLENGTH = 2.633485946
 
 
 def _scene(faces: tuple[int, ...]) -> StripScene:
     return build_strip_scene(
         faces,
-        incident_direction=canonical_incident_direction(),
+        sun_direction=canonical_sun_direction(),
         refractive_index=CANONICAL_REFRACTIVE_INDEX,
         crystal=RECORDED_CRYSTAL,
         pose_density=canonical_pose_density(),
         render=CANONICAL_RENDER,
-        prescan_sample_count=REFLECTION_DISCOVERY["prescan"]["sample_count"],
-        prescan_rng_seed=REFLECTION_DISCOVERY["prescan"]["rng_seed"],
     )
 
 
@@ -126,7 +131,8 @@ def test_reflecting_member_integrates_with_the_same_map_and_a_different_weight(s
     assert reflecting.component_count == 1
     component = reflecting.components[0]
     assert component.kind == "arc" and component.reason == "path_infeasible" and component.start_reason == "path_infeasible"
-    assert component.arclength == pytest.approx(recorded["3-1-2-5"]["arclength"], rel=1e-3)
+    assert component.arclength == pytest.approx(STORE_SEED_ARC_ARCLENGTH, rel=1e-6)
+    assert component.arclength > recorded["3-1-2-5"]["arclength"]
     assert reflecting.value == pytest.approx(recorded["3-1-2-5"]["value"], rel=1e-3)
     assert reflecting.value / plain.value == pytest.approx(recorded["value_ratio"], rel=2e-3)
     assert reflecting.value != plain.value  # different weight ...
@@ -136,7 +142,7 @@ def test_reflecting_member_integrates_with_the_same_map_and_a_different_weight(s
     target = pixel_target(CANONICAL_RENDER, ROW, COLUMN)
     incident = canonical_incident_direction()
     discovered = discover_components(
-        target, scenes[REFLECTING].crystal, scenes[REFLECTING].prescan_table,
+        target, scenes[REFLECTING].seeds,
         template=scenes[REFLECTING].discovery_template, **options.discovery_kwargs(),
     )
     assert discovered.component_count == 1 and discovered.components[0].kind == "arc"

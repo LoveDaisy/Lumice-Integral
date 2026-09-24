@@ -19,9 +19,12 @@ pipeline of :mod:`.strip_pixel` once per member:
    verifies mechanically that every member shares them.
 3. A rank-2 class (``halo_map_rank == 2``, one-dimensional fibers) is
    rendered by :func:`render_class_pixel`: one :class:`.strip_pixel.StripScene`
-   per member, all built from the same ``(rng_seed, sample_count)`` Haar
-   stream (:class:`ClassScene`), :func:`.strip_pixel.render_pixel` per member,
-   contributions summed.  Members are neither merged nor assumed equal: the
+   per member, :func:`.strip_pixel.render_pixel` per member, contributions
+   summed.  The members' discovery seeds come from the class's
+   :func:`store_plan` (:class:`ClassScene`): one S^2 event store for the
+   ``D6h`` orbit, each member's candidates posed through its ``Phi`` group's
+   element ``g`` (:class:`.s2_store.StoreSeeds`) -- the plan the band-sum
+   renderer uses, not a store per member.  Members are neither merged nor assumed equal: the
    symmetric-density identity "3-7 equals 3-5 pointwise" is a *test* of the
    canonical scene, not an assumption of the code.
 4. A rank-0 class (``M = I`` and ``W = 0``: ``1-2``, ``3-6``, ...; ch8 A0-06)
@@ -31,9 +34,8 @@ pipeline of :mod:`.strip_pixel` once per member:
        m = E_Haar[ [R in V_P] rho_H(R) A_P(R) T_P(R) ]
          = (1 / 8 pi^2) integral_(V_P) rho_H A_P T_P dVol_g,
 
-   estimated by :func:`estimate_rank0_contribution` from the raw Haar stream
-   (same generator as the prescan; the prescan table itself keeps only the
-   domain-valid poses of *its* path, which is the wrong subset here).  ``m``
+   estimated by :func:`estimate_rank0_contribution` from a raw Haar stream
+   (:data:`RANK0_RNG_SEED`, :data:`RANK0_SAMPLE_COUNT`).  ``m``
    is in the same normalisation as the pixel values of a rank-2 path (the
    push-forward of ``rho_H W dmu_Haar``, whose sphere density the fiber
    quadrature reports; ``docs/phase1-math-contract.md`` section 7), so on
@@ -47,9 +49,11 @@ pipeline of :mod:`.strip_pixel` once per member:
    ``Phi`` (``3-5`` and ``3-1-2-5`` share one), and
    :func:`path_class_symmetry` gives each class member a ``D6h`` element
    (proper or improper) that transports the representative's S^2 event
-   store onto it (:mod:`.s2_store`).  Both are pure combinatorics on the prism's face
-   normals and the ``D6h`` table; the store itself (building, caching,
-   I/O) lives in :mod:`.s2_store`, not here.  Everything in this module is
+   store onto it (:mod:`.s2_store`); :func:`store_plan` combines the two
+   into the stores of a class (:class:`StoreGroup`, :class:`Transport`).
+   All three are pure combinatorics on the prism's face normals and the
+   ``D6h`` table; the store itself (building, caching, I/O) lives in
+   :mod:`.s2_store`, not here.  Everything in this module is
    specific to the hexagonal prism.
 
 Nothing here imports or calls Lumice.
@@ -60,24 +64,26 @@ from __future__ import annotations
 import time
 from collections import Counter
 from dataclasses import dataclass
-from typing import Any, Mapping, Sequence
+from pathlib import Path
+from typing import Any, Iterator, Mapping, Sequence
 
 import numpy as np
 
-from .camera import camera_rotation, linear_pixel_sky_direction, linear_scale, project_linear
+from .camera import camera_rotation, incident_direction_from_sun, linear_pixel_sky_direction, linear_scale, project_linear
 from .canonical_scene import (
     CANONICAL_REFRACTIVE_INDEX,
     CANONICAL_RENDER,
     canonical_crystal,
-    canonical_incident_direction,
     canonical_pose_density,
+    canonical_sun_direction,
 )
 from .discovery import ComponentDiscoveryResult, discover_components
 from .geometry import HexPrism, Polyhedron, entry_measure_batch, fold_matrix, halo_map_rank, wedge_angle_deg
 from .optics import fresnel_transmission_path_batch, normalize_faces, path_domain_batch, path_id_of
 from .pose_density import PoseDensity
-from .prescan import DEFAULT_BATCH_SIZE, DEFAULT_RNG_SEED, DEFAULT_SAMPLE_COUNT, PrescanTable, haar_rotations
 from .quadrature import HAAR_TO_DVOL_G_FACTOR
+from .s2_store import DEFAULT_SEED_STORE_N, S2EventStore, StoreSeeds
+from .so3 import haar_rotations
 from .strip_pixel import (
     EVENT_NAMES,
     STAGE_NAMES,
@@ -87,11 +93,17 @@ from .strip_pixel import (
     StripScene,
     build_strip_scene,
     render_pixel,
+    seed_store,
 )
 from .symmetry.signature import D6H
 
 Faces = tuple[int, ...]
 Completeness = str  # "complete" | "unknown"
+# The Haar stream of the rank-0 point-mass estimate (module docstring item 4): the values the retired Phase I
+# prescan table was sampled with, which every recorded rank-0 estimate used.
+RANK0_SAMPLE_COUNT = 4_000_000
+RANK0_RNG_SEED = 20260916
+RANK0_BATCH_SIZE = 200_000
 
 # ---- PBD orbit ---------------------------------------------------------------
 
@@ -286,7 +298,138 @@ def build_path_class(crystal: Polyhedron, representative: Sequence[int]) -> Path
     return PathClass(representative, tuple(sorted(members)), wedge, rank)
 
 
+# ---- store plan ----------------------------------------------------------------
+@dataclass(frozen=True, eq=False)
+class Transport:
+    """A ``Phi`` group served by a store through the ``D6h`` element ``g`` (:func:`.s2_store.transported_rotations`).
+
+    ``g`` may be proper or improper.  ``g is None`` is the identity (the
+    store's own group; no multiplication, so the poses are bit-identical to
+    the untransported ones).
+
+    ``eq=False`` (identity comparison): ``g`` is an ``np.ndarray``, which
+    breaks the dataclass-generated ``__eq__``/``__hash__`` (ambiguous truth
+    value / unhashable) if ever compared or hashed.
+    """
+
+    members: tuple[Faces, ...]
+    g: np.ndarray | None
+
+    def as_json(self) -> dict[str, Any]:
+        return {
+            "members": [path_id_of(m) for m in self.members],
+            "g": None if self.g is None else np.round(self.g, 12).tolist(),
+        }
+
+
+@dataclass(frozen=True, eq=False)
+class StoreGroup:
+    """One event store (of the ``Phi`` group ``members``) and the groups it serves.
+
+    ``eq=False`` for the same reason as :class:`Transport`: it holds
+    ``Transport`` instances (which carry an ``np.ndarray`` field), so
+    identity comparison avoids the same ambiguous-truth-value/unhashable trap.
+    """
+
+    members: tuple[Faces, ...]
+    transports: tuple[Transport, ...]
+
+    @property
+    def served_members(self) -> tuple[Faces, ...]:
+        return tuple(m for t in self.transports for m in t.members)
+
+    def as_json(self) -> dict[str, Any]:
+        return {"store_members": [path_id_of(m) for m in self.members], "transports": [t.as_json() for t in self.transports]}
+
+
+def single_path_class(crystal: HexPrism, faces: Sequence[int]) -> PathClass:
+    """A one-member :class:`.path_class.PathClass` of ``faces`` (the single-path renderer's unit)."""
+    faces = normalize_faces(faces)
+    return PathClass(faces, (faces,), wedge_angle_deg(crystal, faces), halo_map_rank(crystal, faces))
+
+
+def store_plan(path_class: PathClass, crystal: HexPrism, *, transport: bool = True) -> tuple[StoreGroup, ...]:
+    """Stores of a rank-2 class: ``Phi`` groups, then one store for the ``D6h`` orbit of groups (module docstring).
+
+    Every member is served exactly once (checked).  A class is one ``D6h``
+    orbit, so with ``transport`` the plan is a single store (the
+    representative's group); a member outside the orbit is a class
+    construction error (``RuntimeError`` from
+    :func:`.path_class.path_class_symmetry`).  ``transport=False`` gives
+    every group its own store.  A rank-0 class has no stores (empty plan).
+    """
+    if path_class.halo_map_rank == 0:
+        return ()
+    by_key: dict[Any, list[Faces]] = {}
+    for member in path_class.members:
+        by_key.setdefault(phi_key(crystal, member), []).append(member)
+    groups = [tuple(sorted(g)) for g in by_key.values()]
+    groups.sort(key=lambda g: (path_class.representative not in g, g))
+    if not transport:
+        plan = tuple(StoreGroup(group, (Transport(group, None),)) for group in groups)
+    else:
+        source = groups[0]
+        rooted = PathClass(source[0], path_class.members, path_class.wedge_deg, path_class.halo_map_rank)
+        symmetry = path_class_symmetry(rooted, crystal)
+        transports = [Transport(source, None)]
+        for group in groups[1:]:
+            # g maps source[0] onto a member of ``group``; Phi_{g m}(u) = g Phi_m(g^-1 u) for every member m
+            # of ``source`` (proper or improper g), so g maps the whole Phi group onto ``group`` (same size).
+            # Any member's element serves; a proper one is preferred (no reflection factor, cheaper).
+            g = next((symmetry[m] for m in group if np.linalg.det(symmetry[m]) > 0.0), symmetry[group[0]])
+            transports.append(Transport(group, g))
+        plan = (StoreGroup(source, tuple(transports)),)
+    served = sorted(m for s in plan for m in s.served_members)
+    if served != sorted(path_class.members):
+        raise RuntimeError(f"store plan serves {served}, class has {sorted(path_class.members)}")
+    return plan
+
+
+
 # ---- rank-0 point mass -------------------------------------------------------
+
+
+def haar_domain_batches(
+    faces: Sequence[int],
+    incident_direction: np.ndarray,
+    refractive_index: float,
+    *,
+    sample_count: int = RANK0_SAMPLE_COUNT,
+    rng_seed: int = RANK0_RNG_SEED,
+    batch_size: int = RANK0_BATCH_SIZE,
+) -> Iterator[tuple[np.ndarray, np.ndarray]]:
+    """The Haar stream restricted to the smooth domain of ``faces``: per batch, the valid poses and their directions.
+
+    ``sample_count`` poses of :func:`.so3.haar_rotations` from one
+    ``numpy`` generator seeded with ``rng_seed``, drawn ``batch_size`` at a
+    time (the batch size bounds memory and does not change the stream), gated
+    by :func:`.optics.path_domain_batch` on the infinite prism (no crystal).
+    The stream of :func:`estimate_rank0_contribution` and of the sky landing
+    maps of the diagnostic scripts; Phase I discovery seeds from the S^2
+    event store instead (:class:`.s2_store.StoreSeeds`).
+    """
+    faces = normalize_faces(faces)
+    if sample_count < 1 or batch_size < 1:
+        raise ValueError("sample_count and batch_size must be positive")
+    incident = np.asarray(incident_direction, dtype=np.float64)
+    index = float(refractive_index)
+    rng = np.random.default_rng(rng_seed)
+    for start in range(0, sample_count, batch_size):
+        chunk = haar_rotations(min(batch_size, sample_count - start), rng)
+        domain = path_domain_batch(chunk, faces, incident, index)
+        rows = np.flatnonzero(domain.valid)
+        yield chunk[rows], domain.direction[rows]
+
+
+def haar_domain_samples(
+    faces: Sequence[int], incident_direction: np.ndarray, refractive_index: float, **stream: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """All of :func:`haar_domain_batches` at once: valid poses ``(M, 3, 3)`` and outgoing directions ``(M, 3)``."""
+    batches = list(haar_domain_batches(faces, incident_direction, refractive_index, **stream))
+    return (
+        np.concatenate([rotations for rotations, _ in batches]) if batches else np.zeros((0, 3, 3)),
+        np.concatenate([directions for _, directions in batches]) if batches else np.zeros((0, 3)),
+    )
 
 
 @dataclass(frozen=True)
@@ -332,11 +475,11 @@ def estimate_rank0_contribution(
     refractive_index: float,
     pose_density: PoseDensity,
     *,
-    rng_seed: int = DEFAULT_RNG_SEED,
-    sample_count: int = DEFAULT_SAMPLE_COUNT,
-    batch_size: int = DEFAULT_BATCH_SIZE,
+    rng_seed: int = RANK0_RNG_SEED,
+    sample_count: int = RANK0_SAMPLE_COUNT,
+    batch_size: int = RANK0_BATCH_SIZE,
 ) -> Rank0Estimate:
-    """Sample the same Haar stream as :func:`.prescan.build_prescan_table` and average the integrand.
+    """Sample ``sample_count`` Haar poses (:func:`.so3.haar_rotations`, ``batch_size`` at a time) and average the integrand.
 
     Per pose the integrand is ``[path_domain valid] * rho_H * entry_measure *
     fresnel_transmission`` with the three factors read from their single
@@ -349,23 +492,15 @@ def estimate_rank0_contribution(
     faces = normalize_faces(faces)
     if halo_map_rank(crystal, faces) != 0:
         raise ValueError(f"{path_id_of(faces)} is not a rank-0 path")
-    if sample_count < 1 or batch_size < 1:
-        raise ValueError("sample_count and batch_size must be positive")
     incident = np.asarray(incident_direction, dtype=np.float64)
     index = float(refractive_index)
-    rng = np.random.default_rng(rng_seed)
     total = 0.0
     total_squares = 0.0
     valid_count = 0
-    for start in range(0, sample_count, batch_size):
-        count = min(batch_size, sample_count - start)
-        chunk = haar_rotations(count, rng)
-        domain = path_domain_batch(chunk, faces, incident, index)
-        rows = np.flatnonzero(domain.valid)
-        valid_count += int(rows.size)
-        if rows.size == 0:
+    for valid, _ in haar_domain_batches(faces, incident, index, sample_count=sample_count, rng_seed=rng_seed, batch_size=batch_size):
+        valid_count += len(valid)
+        if len(valid) == 0:
             continue
-        valid = chunk[rows]
         integrand = (
             np.asarray(pose_density.evaluate_batch(valid), dtype=np.float64)
             * entry_measure_batch(valid, faces, incident, crystal, n_ice=index)
@@ -419,26 +554,29 @@ def pixel_solid_angle(render: Mapping[str, Any], row: int, column: int) -> float
 class ClassScene:
     """A :class:`PathClass` bound to one scene: one :class:`.strip_pixel.StripScene` per rank-2 member.
 
-    Every member scene shares the constants, the pose density, the render
-    window and the prescan sampling policy ``(prescan_rng_seed,
-    prescan_sample_count)``; each has its own :class:`.prescan.PrescanTable`
-    of its own path, all drawn from the same Haar stream.  A rank-0 class has
-    no member scenes (``member_scenes`` is empty) and is estimated from the
-    raw stream instead (:func:`estimate_rank0_contribution`).
+    Every member scene shares the constants, the pose density and the render
+    window; its seeds are the class's :func:`store_plan` stores of
+    ``seed_store_n`` points, each member posed through its group's element
+    (module docstring item 3).  A rank-0 class has no member scenes
+    (``member_scenes`` is empty) and is estimated from the Haar stream
+    ``(rank0_rng_seed, rank0_sample_count)`` instead
+    (:func:`estimate_rank0_contribution`).  ``sun_direction`` is ``s_hat``;
+    :attr:`incident_direction` the propagation ``-s_hat``.
     """
 
     path_class: PathClass
-    incident_direction: np.ndarray
+    sun_direction: np.ndarray
     refractive_index: float
     crystal: HexPrism
     pose_density: PoseDensity
     render: Mapping[str, Any]
-    prescan_sample_count: int
-    prescan_rng_seed: int
+    seed_store_n: int
+    rank0_sample_count: int
+    rank0_rng_seed: int
     member_scenes: Mapping[Faces, StripScene]
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "incident_direction", np.asarray(self.incident_direction, dtype=np.float64))
+        object.__setattr__(self, "sun_direction", np.asarray(self.sun_direction, dtype=np.float64))
         object.__setattr__(self, "refractive_index", float(self.refractive_index))
         expected = () if self.path_class.halo_map_rank == 0 else self.path_class.members
         if tuple(self.member_scenes) != expected:
@@ -446,11 +584,15 @@ class ClassScene:
         for member, scene in self.member_scenes.items():
             if scene.faces != member:
                 raise ValueError(f"scene of member {path_id_of(member)} is of path {scene.path_id!r}")
-            table = scene.prescan_table
-            if (table.sample_count, table.rng_seed) != (self.prescan_sample_count, self.prescan_rng_seed):
-                raise ValueError(f"member {path_id_of(member)} prescan table does not share the scene's Haar stream")
+            if scene.seeds.n != self.seed_store_n:
+                raise ValueError(f"member {path_id_of(member)} seeds come from a store of {scene.seeds.n} points, not {self.seed_store_n}")
             if not np.array_equal(scene.incident_direction, self.incident_direction) or scene.refractive_index != self.refractive_index:
                 raise ValueError(f"member {path_id_of(member)} scene constants differ from the class scene")
+
+    @property
+    def incident_direction(self) -> np.ndarray:
+        """The propagation direction ``s = -s_hat`` of the optics."""
+        return incident_direction_from_sun(self.sun_direction)
 
     @property
     def sun_pixel(self) -> tuple[int, int] | None:
@@ -464,57 +606,67 @@ class ClassScene:
 def build_class_scene(
     path_class: PathClass,
     *,
-    incident_direction: np.ndarray,
+    sun_direction: np.ndarray,
     refractive_index: float,
     crystal: HexPrism,
     pose_density: PoseDensity,
     render: Mapping[str, Any],
-    prescan_sample_count: int = DEFAULT_SAMPLE_COUNT,
-    prescan_rng_seed: int = DEFAULT_RNG_SEED,
-    prescan_tables: Mapping[Faces, PrescanTable] | None = None,
+    seed_store_n: int = DEFAULT_SEED_STORE_N,
+    seed_store_cache_dir: Path | None = None,
+    seed_stores: Mapping[tuple[Faces, ...], S2EventStore] | None = None,
+    rank0_sample_count: int = RANK0_SAMPLE_COUNT,
+    rank0_rng_seed: int = RANK0_RNG_SEED,
 ) -> ClassScene:
     """Build the member scenes of ``path_class`` with :func:`.strip_pixel.build_strip_scene`.
 
-    ``prescan_tables`` (by member) supplies tables a driver built or loaded;
-    a member without one gets a table built from ``(prescan_rng_seed,
-    prescan_sample_count)``.  A rank-0 class builds nothing.
+    The seeds follow :func:`store_plan`: per :class:`StoreGroup` one store
+    (``seed_stores[group.members]`` if a caller built or loaded it, else
+    :func:`.strip_pixel.seed_store` of ``seed_store_n`` points, cached in
+    ``seed_store_cache_dir`` if given), and every member of a
+    :class:`Transport` of that group seeds from it through the transport's
+    ``g``.  A rank-0 class builds nothing.
     """
-    tables = dict(prescan_tables or {})
+    stores = dict(seed_stores or {})
+    sun = np.asarray(sun_direction, dtype=np.float64)
     member_scenes: dict[Faces, StripScene] = {}
-    if path_class.halo_map_rank != 0:
-        for member in path_class.members:
-            member_scenes[member] = build_strip_scene(
-                member,
-                incident_direction=incident_direction,
-                refractive_index=refractive_index,
-                crystal=crystal,
-                pose_density=pose_density,
-                render=render,
-                prescan_table=tables.get(member),
-                prescan_sample_count=prescan_sample_count,
-                prescan_rng_seed=prescan_rng_seed,
-            )
+    for group in store_plan(path_class, crystal):
+        store = stores.get(group.members)
+        if store is None:
+            store = seed_store(crystal, refractive_index, group.members, seed_store_n, cache_dir=seed_store_cache_dir)
+        for transport in group.transports:
+            for member in transport.members:
+                member_scenes[member] = build_strip_scene(
+                    member,
+                    sun_direction=sun,
+                    refractive_index=refractive_index,
+                    crystal=crystal,
+                    pose_density=pose_density,
+                    render=render,
+                    seeds=StoreSeeds(store, member, sun, transport.g),
+                )
     return ClassScene(
         path_class=path_class,
-        incident_direction=incident_direction,
+        sun_direction=sun,
         refractive_index=refractive_index,
         crystal=crystal,
         pose_density=pose_density,
         render=dict(render),
-        prescan_sample_count=int(prescan_sample_count),
-        prescan_rng_seed=int(prescan_rng_seed),
-        member_scenes=member_scenes,
+        seed_store_n=int(seed_store_n),
+        rank0_sample_count=int(rank0_sample_count),
+        rank0_rng_seed=int(rank0_rng_seed),
+        member_scenes={member: member_scenes[member] for member in path_class.members if member in member_scenes},
     )
 
 
 def canonical_class_scene(
     representative: Sequence[int] = (3, 5),
     *,
-    prescan_sample_count: int = DEFAULT_SAMPLE_COUNT,
-    prescan_rng_seed: int = DEFAULT_RNG_SEED,
+    seed_store_n: int = DEFAULT_SEED_STORE_N,
+    seed_stores: Mapping[tuple[Faces, ...], S2EventStore] | None = None,
+    rank0_sample_count: int = RANK0_SAMPLE_COUNT,
+    rank0_rng_seed: int = RANK0_RNG_SEED,
     pose_density: PoseDensity | None = None,
     render: Mapping[str, Any] | None = None,
-    prescan_tables: Mapping[Faces, PrescanTable] | None = None,
     crystal: HexPrism | None = None,
 ) -> ClassScene:
     """The ch06 canonical scene for the class of ``representative`` (``canonical_strip_scene`` per member).
@@ -528,14 +680,15 @@ def canonical_class_scene(
     crystal = canonical_crystal() if crystal is None else crystal
     return build_class_scene(
         build_path_class(crystal, representative),
-        incident_direction=canonical_incident_direction(),
+        sun_direction=canonical_sun_direction(),
         refractive_index=CANONICAL_REFRACTIVE_INDEX,
         crystal=crystal,
         pose_density=canonical_pose_density() if pose_density is None else pose_density,
         render=CANONICAL_RENDER if render is None else render,
-        prescan_sample_count=prescan_sample_count,
-        prescan_rng_seed=prescan_rng_seed,
-        prescan_tables=prescan_tables,
+        seed_store_n=seed_store_n,
+        seed_stores=seed_stores,
+        rank0_sample_count=rank0_sample_count,
+        rank0_rng_seed=rank0_rng_seed,
     )
 
 
@@ -578,8 +731,8 @@ def discover_class_components(
                 scene.incident_direction,
                 scene.refractive_index,
                 scene.pose_density,
-                rng_seed=scene.prescan_rng_seed,
-                sample_count=scene.prescan_sample_count,
+                rng_seed=scene.rank0_rng_seed,
+                sample_count=scene.rank0_sample_count,
             )
             if scene.sun_in_field_of_view
             else None
@@ -590,8 +743,7 @@ def discover_class_components(
     per_member = {
         member: discover_components(
             target,
-            member_scene.crystal,
-            member_scene.prescan_table,
+            member_scene.seeds,
             template=member_scene.discovery_template,
             extra_seeds=tuple(seeds.get(member, ())),
             **options.discovery_kwargs(),
@@ -660,8 +812,8 @@ def _rank0_pixel(scene: ClassScene, row: int, column: int, total_start: float) -
             scene.incident_direction,
             scene.refractive_index,
             scene.pose_density,
-            rng_seed=scene.prescan_rng_seed,
-            sample_count=scene.prescan_sample_count,
+            rng_seed=scene.rank0_rng_seed,
+            sample_count=scene.rank0_sample_count,
         )
         block["estimate"] = estimate.provenance()
         block["this_pixel_contains_sun"] = sun == (int(row), int(column))
@@ -686,7 +838,7 @@ def _rank0_pixel(scene: ClassScene, row: int, column: int, total_start: float) -
         timings=timings,
         provenance={
             **path_class.provenance(),
-            "prescan": {"sample_count": scene.prescan_sample_count, "rng_seed": scene.prescan_rng_seed},
+            "rank0_sampling": {"sample_count": scene.rank0_sample_count, "rng_seed": scene.rank0_rng_seed},
             "per_member": {},
             "rank0": block,
         },
@@ -738,7 +890,7 @@ def render_class_pixel(
         timings={name: float(timings[name]) for name in STAGE_NAMES},
         provenance={
             **path_class.provenance(),
-            "prescan": {"sample_count": scene.prescan_sample_count, "rng_seed": scene.prescan_rng_seed},
+            "seed_store": {"N": scene.seed_store_n, "plan": [group.as_json() for group in store_plan(path_class, scene.crystal)]},
             "per_member": {
                 path_id_of(member): {
                     "value": result.value,
@@ -762,17 +914,26 @@ __all__ = [
     "ClassPixelResult",
     "ClassScene",
     "PathClass",
+    "RANK0_BATCH_SIZE",
+    "RANK0_RNG_SEED",
+    "RANK0_SAMPLE_COUNT",
     "Rank0Estimate",
+    "StoreGroup",
+    "Transport",
     "build_class_scene",
     "build_path_class",
     "canonical_class_scene",
     "discover_class_components",
     "estimate_rank0_contribution",
+    "haar_domain_batches",
+    "haar_domain_samples",
     "hexprism_symmetry_matrices",
     "path_class_symmetry",
     "pbd_orbit_hexprism",
     "phi_key",
     "pixel_solid_angle",
     "render_class_pixel",
+    "single_path_class",
+    "store_plan",
     "sun_pixel",
 ]

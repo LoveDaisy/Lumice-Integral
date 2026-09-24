@@ -1,8 +1,8 @@
 """Content hashing and git commit lookup shared by artifact-provenance writers.
 
-Kept free of any intra-package imports so both :mod:`.prescan` and
+Kept free of any intra-package imports so both :mod:`.s2_store` and
 :mod:`.strip_io` can depend on it directly without joining the cycle
-``strip_io -> strip_pixel -> discovery -> prescan``.
+``strip_io -> strip_pixel -> discovery -> s2_store``.
 """
 
 from __future__ import annotations

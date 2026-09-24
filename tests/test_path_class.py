@@ -32,6 +32,7 @@ from lumice_integral.canonical_scene import (
     canonical_crystal,
     canonical_incident_direction,
     canonical_pose_density,
+    canonical_sun_direction,
     canonical_target_direction,
 )
 from lumice_integral.geometry import HexPrism, halo_map_rank, wedge_angle_deg
@@ -51,14 +52,14 @@ from lumice_integral.path_class import (
     sun_pixel,
 )
 from lumice_integral.pose_density import build_pose_density
-from lumice_integral.prescan import build_prescan_table
+from lumice_integral.optics import path_domain_batch
 from lumice_integral.quadrature import HAAR_TO_DVOL_G_FACTOR
+from lumice_integral.so3 import haar_rotations
 from lumice_integral.strip_pixel import PixelOptions, canonical_strip_scene, render_pixel
 
 from _geometry_oracles import pbd_orbit, trace_faces
 
 CRYSTAL = HexPrism(1.0, 0.8)
-TEST_PRESCAN_SAMPLES = 400_000  # tests/test_strip_pixel.py's table; the canonical value is pinned to it
 
 
 # ---- Step 4: orbit and class ------------------------------------------------------
@@ -188,12 +189,15 @@ def test_rank0_error_decays_as_one_over_sqrt_n_and_the_domain_is_half_of_haar():
     assert small.error_estimate / large.error_estimate == pytest.approx(2.0, rel=0.15)
     assert abs(small.value - large.value) <= 3.0 * np.hypot(small.error_estimate, large.error_estimate)
     assert small.valid_fraction == pytest.approx(0.5, abs=0.01) and large.valid_fraction == pytest.approx(0.5, abs=0.005)
-    # Same Haar stream as the prescan: the first batch of a prescan of the same seed sees the same poses.
-    table = build_prescan_table(canonical_incident_direction(), 1.31, sample_count=100_000, rng_seed=3, path_id="1-2")
-    assert table.valid_count == round(small.valid_fraction * 100_000)
+    # The estimate's stream is ``so3.haar_rotations`` of its seed (one batch here): its valid fraction is that
+    # stream's domain-valid fraction.
+    rotations = haar_rotations(100_000, np.random.default_rng(3))
+    assert np.count_nonzero(path_domain_batch(rotations, (1, 2), canonical_incident_direction(), 1.31).valid) == round(
+        small.valid_fraction * 100_000
+    )
     # A rank-2 path is far more selective than the rank-0 one.
-    table_3_5 = build_prescan_table(canonical_incident_direction(), 1.31, sample_count=100_000, rng_seed=3)
-    assert table_3_5.valid_count / 100_000 < 0.5 * small.valid_fraction
+    valid_3_5 = path_domain_batch(rotations, (3, 5), canonical_incident_direction(), 1.31).valid
+    assert np.count_nonzero(valid_3_5) / 100_000 < 0.5 * small.valid_fraction
     with pytest.raises(ValueError, match="rank-0"):
         estimate_rank0_contribution(CRYSTAL, (3, 5), canonical_incident_direction(), 1.31, canonical_pose_density())
 
@@ -211,14 +215,13 @@ def test_pseudo_single_member_class_reproduces_the_canonical_pixel_bit_for_bit(o
     single = PathClass((3, 5), ((3, 5),), wedge_angle_deg(canonical_crystal(), (3, 5)), 2)
     scene = build_class_scene(
         single,
-        incident_direction=canonical_incident_direction(),
+        sun_direction=canonical_sun_direction(),
         refractive_index=CANONICAL_REFRACTIVE_INDEX,
         crystal=canonical_crystal(),
         pose_density=canonical_pose_density(),
         render=CANONICAL_RENDER,
-        prescan_sample_count=TEST_PRESCAN_SAMPLES,
     )
-    baseline_scene = canonical_strip_scene(prescan_sample_count=TEST_PRESCAN_SAMPLES)
+    baseline_scene = canonical_strip_scene()
     baseline = render_pixel(baseline_scene, CANONICAL_PIXEL_ROW, CANONICAL_PIXEL_COLUMN, options)
     result = render_class_pixel(scene, CANONICAL_PIXEL_ROW, CANONICAL_PIXEL_COLUMN, options)
 
@@ -241,7 +244,10 @@ def test_pseudo_single_member_class_reproduces_the_canonical_pixel_bit_for_bit(o
     assert provenance["halo_map_rank"] == 2 and provenance["wedge_deg"] == pytest.approx(60.0)
     assert provenance["per_member"]["3-5"]["value"] == baseline.value
     assert provenance["per_member"]["3-5"]["completeness"] == baseline.completeness
-    assert provenance["prescan"] == {"sample_count": TEST_PRESCAN_SAMPLES, "rng_seed": baseline_scene.prescan_table.rng_seed}
+    assert provenance["seed_store"] == {
+        "N": baseline_scene.seeds.n,
+        "plan": [{"store_members": ["3-5"], "transports": [{"members": ["3-5"], "g": None}]}],
+    }
     assert provenance["rank0"] is None
     # The discovery-level entry finds the same single closed component.
     discovered = discover_class_components(canonical_target_direction(), scene, options)
@@ -253,22 +259,22 @@ def test_pseudo_single_member_class_reproduces_the_canonical_pixel_bit_for_bit(o
 def test_class_scene_rejects_mismatched_member_scenes():
     path_class = build_path_class(canonical_crystal(), (3, 5))
     kwargs = dict(
-        incident_direction=canonical_incident_direction(),
+        sun_direction=canonical_sun_direction(),
         refractive_index=CANONICAL_REFRACTIVE_INDEX,
         crystal=canonical_crystal(),
         pose_density=canonical_pose_density(),
         render=CANONICAL_RENDER,
     )
-    only_3_5 = {(3, 5): canonical_strip_scene(prescan_sample_count=1_000)}
+    rank0 = dict(rank0_sample_count=1_000, rank0_rng_seed=20260916)
+    only_3_5 = {(3, 5): canonical_strip_scene(seed_store_n=1_000)}
     with pytest.raises(ValueError, match="member_scenes"):
-        ClassScene(path_class=path_class, prescan_sample_count=1_000, prescan_rng_seed=20260916, member_scenes=only_3_5, **kwargs)
-    with pytest.raises(ValueError, match="Haar stream"):
+        ClassScene(path_class=path_class, seed_store_n=1_000, member_scenes=only_3_5, **rank0, **kwargs)
+    with pytest.raises(ValueError, match="store of 1000 points"):
         ClassScene(
-            path_class=PathClass((3, 5), ((3, 5),), 60.0, 2), prescan_sample_count=2_000, prescan_rng_seed=20260916,
-            member_scenes=only_3_5, **kwargs,
+            path_class=PathClass((3, 5), ((3, 5),), 60.0, 2), seed_store_n=2_000, member_scenes=only_3_5, **rank0, **kwargs
         )
     # A rank-0 class has no member scenes at all.
-    scene = build_class_scene(build_path_class(canonical_crystal(), (1, 2)), prescan_sample_count=1_000, **kwargs)
+    scene = build_class_scene(build_path_class(canonical_crystal(), (1, 2)), seed_store_n=1_000, **kwargs)
     assert scene.member_scenes == {} and not scene.sun_in_field_of_view
 
 
@@ -288,11 +294,11 @@ def test_sun_pixel_and_pixel_solid_angle():
 
 def test_rank0_class_contributes_the_point_mass_only_on_the_sun_pixel(options, monkeypatch):
     """AC3: the point mass lands on the sun pixel (pixel-averaged), every other pixel gets 0."""
-    scene = canonical_class_scene((1, 2), prescan_sample_count=50_000, render=SUN_WINDOW)
+    scene = canonical_class_scene((1, 2), rank0_sample_count=50_000, render=SUN_WINDOW)
     assert scene.path_class.halo_map_rank == 0 and scene.sun_pixel == (10, 10)
     on_sun = render_class_pixel(scene, 10, 10, options)
     assert isinstance(on_sun.rank0_estimate, Rank0Estimate)
-    assert on_sun.rank0_estimate.sample_count == 50_000 and on_sun.rank0_estimate.rng_seed == scene.prescan_rng_seed
+    assert on_sun.rank0_estimate.sample_count == 50_000 and on_sun.rank0_estimate.rng_seed == scene.rank0_rng_seed
     assert on_sun.value == on_sun.rank0_estimate.value / pixel_solid_angle(SUN_WINDOW, 10, 10) > 0.0
     assert on_sun.error_estimate == on_sun.rank0_estimate.error_estimate / pixel_solid_angle(SUN_WINDOW, 10, 10)
     assert on_sun.members == {} and on_sun.completeness == "complete"
@@ -312,7 +318,7 @@ def test_rank0_class_contributes_the_point_mass_only_on_the_sun_pixel(options, m
 
 def test_rank0_class_outside_the_field_of_view_is_zero_without_sampling(options, monkeypatch):
     """AC3: the strip window does not contain the sun; the estimator must not even be called."""
-    scene = canonical_class_scene((3, 6), prescan_sample_count=50_000)
+    scene = canonical_class_scene((3, 6), rank0_sample_count=50_000)
     assert scene.path_class.halo_map_rank == 0 and not scene.sun_in_field_of_view
 
     def forbidden(*args, **kwargs):

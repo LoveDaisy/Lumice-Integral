@@ -14,7 +14,7 @@ import pytest
 from lumice_integral.strip_driver import (
     WORKER_MALLOC_ENV,
     DriverOptions,
-    PrescanBuildOptions,
+    SeedStoreOptions,
     _merge_subpixels,
     load_checkpoints,
     render_column,
@@ -132,7 +132,7 @@ def test_write_and_read_strip_round_trip_with_verified_hashes(tmp_path: Path):
         width=3,
         pixel_model={"model": "point", "epsilon": 1e-6},
         execution={"wall_clock_s": 1.0, "workers": 1},
-        prescan=PrescanBuildOptions(sample_count=123, rng_seed=7).as_json(),
+        seed_store=SeedStoreOptions(n=123).as_json(),
     )
     assert set(files) == set(FILE_NAMES)
     assert all(path.exists() for path in files.values())
@@ -153,12 +153,12 @@ def test_write_and_read_strip_round_trip_with_verified_hashes(tmp_path: Path):
     assert provenance["options"]["quadrature"]["initial_node_count"] == 129
     assert provenance["options"]["quadrature"]["method"].startswith("composite Simpson on a uniform grid")
     assert provenance["options"]["discovery"]["distance_threshold"] == PixelOptions().distance_threshold
-    assert provenance["options"]["discovery"]["prescan"] == {"sample_count": 123, "rng_seed": 7, "cache_path": None}
-    assert "prescan table" in provenance["options"]["discovery"]["strategy"]
+    assert provenance["options"]["discovery"]["seed_store"] == {"N": 123, "cache_dir": None}
+    assert "seed store" in provenance["options"]["discovery"]["strategy"]
     assert "open-arc" in provenance["options"]["discovery"]["strategy"]
     assert "traced once" in provenance["options"]["discovery"]["strategy"]
     assert provenance["options"]["continuation"]["maximum_accepted_steps"] == 4000
-    assert set(provenance["options"]["discovery"]) == {"prescan", "angle_tolerance_deg", "cluster_radius_rad", "distance_threshold", "strategy"}
+    assert set(provenance["options"]["discovery"]) == {"seed_store", "band_half_width_deg", "cluster_radius_rad", "distance_threshold", "strategy"}
     assert provenance["scene"]["refractive_index"] == {"value": 1.31, "provenance": "canonical-new"}
     assert provenance["scene"]["sun"]["provenance"] == "historical-inferred"
     assert provenance["summary"]["rendered_pixels"] == 6
@@ -236,13 +236,13 @@ def test_load_checkpoints_recomputes_instead_of_crashing_on_a_factory_default_fi
     assert messages == ["column 0 checkpoint options predate a current option field; recomputing"]
 
 
-def test_load_checkpoints_recomputes_a_checkpoint_that_predates_the_scene_prescan(tmp_path: Path):
-    # task-scene-prescan-table replaced the per-pixel 400k prescan by the
-    # scene-level table: a checkpoint without ``DriverOptions.prescan`` was
+def test_load_checkpoints_recomputes_a_checkpoint_that_predates_the_seed_store(tmp_path: Path):
+    # task phase1-seeds-from-store replaced the Haar prescan table by the S^2
+    # seed store: a checkpoint without ``DriverOptions.seed_store`` was
     # rendered under the old discovery policy and must not be reused.
     options = DriverOptions()
     old_options = object.__new__(DriverOptions)
-    old_options.__dict__.update({k: v for k, v in options.__dict__.items() if k != "prescan"})
+    old_options.__dict__.update({k: v for k, v in options.__dict__.items() if k != "seed_store"})
     (tmp_path / "column_0000.pkl").write_bytes(
         pickle.dumps({"format": FORMAT_VERSION, "rows": [0, 1], "results": [_pixel(0, 0, 1.0)], "options": old_options})
     )
@@ -264,21 +264,19 @@ def test_load_checkpoints_recomputes_a_checkpoint_of_another_format_version(tmp_
         assert messages == [f"column 0 checkpoint format {tag!r} != {FORMAT_VERSION!r}; recomputing"]
 
 
-def test_prescan_build_options_fingerprint_ignores_the_cache_path(tmp_path: Path):
-    base = DriverOptions(prescan=PrescanBuildOptions(sample_count=1_000, rng_seed=1))
+def test_seed_store_options_fingerprint_ignores_the_cache_dir(tmp_path: Path):
+    base = DriverOptions(seed_store=SeedStoreOptions(n=1_000))
     (tmp_path / "column_0000.pkl").write_bytes(
         pickle.dumps({"format": FORMAT_VERSION, "rows": [0, 1], "results": [_pixel(0, 0, 1.0)], "options": base})
     )
     window = Window((0, 1), (0, 1))
-    moved = DriverOptions(prescan=PrescanBuildOptions(sample_count=1_000, rng_seed=1, cache_path=tmp_path / "t.npz"))
+    moved = DriverOptions(seed_store=SeedStoreOptions(n=1_000, cache_dir=tmp_path / "stores"))
     assert sorted(load_checkpoints(tmp_path, window, moved)) == [0]
-    denser = DriverOptions(prescan=PrescanBuildOptions(sample_count=2_000, rng_seed=1))
+    denser = DriverOptions(seed_store=SeedStoreOptions(n=2_000))
     assert load_checkpoints(tmp_path, window, denser) == {}
-    reseeded = DriverOptions(prescan=PrescanBuildOptions(sample_count=1_000, rng_seed=2))
-    assert load_checkpoints(tmp_path, window, reseeded) == {}
     with pytest.raises(ValueError):
-        PrescanBuildOptions(sample_count=0)
-    assert moved.prescan.as_json()["cache_path"] == str(tmp_path / "t.npz")
+        SeedStoreOptions(n=0)
+    assert moved.seed_store.as_json()["cache_dir"] == str(tmp_path / "stores")
 
 
 def test_merge_subpixels_averages_and_propagates_unknown():
@@ -360,13 +358,13 @@ def test_load_checkpoints_reuses_a_checkpoint_that_predates_the_pose_density_fie
 # --- solver-backed window tests ---------------------------------------------------
 
 
-# The survey's prescan (400k samples); see tests/test_strip_pixel.py.
-TEST_PRESCAN = PrescanBuildOptions(sample_count=400_000)
+# The production seed store; see tests/test_strip_pixel.py.
+KEPT_EVENTS = 160216
 
 
 @pytest.fixture(scope="module")
 def scene():
-    return canonical_strip_scene(prescan_sample_count=TEST_PRESCAN.sample_count, prescan_rng_seed=TEST_PRESCAN.rng_seed)
+    return canonical_strip_scene()
 
 
 def test_render_column_chain_matches_independent_pixels(scene):
@@ -376,7 +374,8 @@ def test_render_column_chain_matches_independent_pixels(scene):
     assert [r.extra_seed_count for r in results] == [0, 1, 1]
     for result in results:
         independent = render_pixel(scene, result.row, 150, options.pixel)
-        assert result.value == pytest.approx(independent.value, rel=1e-6)
+        # Warm vs cold seed on one loop: within the quadrature's tolerance (tests/test_strip_pixel.py).
+        assert result.value == pytest.approx(independent.value, rel=options.pixel.quadrature.relative_tolerance)
         assert result.component_count == independent.component_count == 1
 
 
@@ -399,20 +398,20 @@ def test_render_window_serial_writes_checkpoints_and_resumes(scene, tmp_path: Pa
     results, execution = render_window(window, options, workers=1, checkpoint_dir=tmp_path, scene=scene)
     assert len(results) == 4
     assert execution["columns_rendered_now"] == 2 and execution["columns_resumed"] == 0
-    assert execution["prescan"]["source"] == "scene" and execution["prescan"]["valid_count"] == 64427
+    assert execution["seed_store"]["source"] == "scene" and execution["seed_store"]["kept_events"] == KEPT_EVENTS
     assert sorted(load_checkpoints(tmp_path, window, options)) == [150, 151]
     assert load_checkpoints(tmp_path, Window((150, 153), (150, 152)), options) == {}
 
     resumed, execution = render_window(window, options, workers=1, checkpoint_dir=tmp_path, resume=True, scene=scene)
     assert execution["columns_rendered_now"] == 0 and execution["columns_resumed"] == 2
-    assert execution["prescan"]["source"] == "not-needed"
+    assert execution["seed_store"]["source"] == "not-needed"
     assert [(r.row, r.column, r.value) for r in resumed] == [(r.row, r.column, r.value) for r in results]
 
 
 def test_render_window_parallel_resume_with_nothing_pending_never_touches_the_pool(scene, tmp_path: Path):
     """``workers > 1`` with every column already checkpointed must render nothing
     and never attempt to build a ``Pool`` (round 2 code review dispute: a disputed
-    claim that this path could read an unbound ``table`` before any ``Pool`` is
+    claim that this path could read an unbound table before any ``Pool`` is
     ever created; no process is spawned here, so this needs no ``spawn`` support)."""
     window = Window((150, 152), (150, 152))
     options = DriverOptions()
@@ -421,26 +420,26 @@ def test_render_window_parallel_resume_with_nothing_pending_never_touches_the_po
 
     resumed, execution = render_window(window, options, workers=2, checkpoint_dir=tmp_path, resume=True)
     assert execution["columns_rendered_now"] == 0 and execution["columns_resumed"] == 2
-    assert execution["prescan"]["source"] == "not-needed"
+    assert execution["seed_store"]["source"] == "not-needed"
     assert len(resumed) == 4
 
 
-def test_render_window_without_a_scene_builds_the_table_once_from_the_options(scene, tmp_path: Path):
+def test_render_window_without_a_scene_builds_the_store_once_from_the_options(scene, tmp_path: Path):
     window = Window((150, 151), (150, 151))
-    cache = tmp_path / "prescan.npz"
-    options = DriverOptions(prescan=PrescanBuildOptions(sample_count=400_000, cache_path=cache))
+    cache = tmp_path / "stores"
+    options = DriverOptions(seed_store=SeedStoreOptions(cache_dir=cache))
     messages: list[str] = []
     results, execution = render_window(window, options, workers=1, log=messages.append)
-    assert execution["prescan"]["source"] == str(cache)
-    assert execution["prescan"]["sample_count"] == 400_000 and execution["prescan"]["valid_count"] == 64427
-    assert cache.exists() and any("prescan table built" in m for m in messages)
+    assert execution["seed_store"]["source"] == str(cache)
+    assert execution["seed_store"]["N"] == 1_000_000 and execution["seed_store"]["kept_events"] == KEPT_EVENTS
+    assert (cache / execution["seed_store"]["cache_key"] / "provenance.json").exists()
+    assert any(m.startswith("self-checks") for m in messages)  # built, with the store's self-checks
     reference = render_pixel(scene, 150, 150, options.pixel)
-    assert results[0].value == pytest.approx(reference.value, rel=1e-12)
-    # A second run loads the cache instead of sampling again.
+    assert results[0].value == pytest.approx(reference.value, rel=1e-12)  # the cached store is the in-memory one
+    # A second run loads the cache instead of building again.
     messages.clear()
     render_window(window, options, workers=1, log=messages.append)
-    assert any(m.startswith("prescan table loaded from") for m in messages)
-    assert not any("prescan table built" in m for m in messages)
+    assert not any(m.startswith("self-checks") for m in messages)
 
 
 def test_render_window_rejects_a_scene_whose_pose_density_is_not_the_options(scene):
@@ -487,11 +486,11 @@ def test_render_window_parallel_matches_serial(scene, tmp_path: Path):
     if multiprocessing.get_start_method(allow_none=True) not in (None, "spawn", "fork", "forkserver"):
         pytest.skip("unsupported start method")
     window = Window((150, 152), (150, 152))
-    options = DriverOptions(prescan=TEST_PRESCAN)
+    options = DriverOptions()
     serial, _ = render_window(window, options, workers=1, scene=scene)
     parallel, execution = render_window(window, options, workers=2)
     assert execution["workers"] == 2
-    assert execution["prescan"]["source"] == "in-memory" and execution["prescan"]["valid_count"] == 64427
+    assert execution["seed_store"]["source"] == "in-memory" and execution["seed_store"]["kept_events"] == KEPT_EVENTS
     assert [(r.row, r.column) for r in parallel] == [(r.row, r.column) for r in serial]
     for a, b in zip(serial, parallel):
         assert a.value == pytest.approx(b.value, rel=1e-12)

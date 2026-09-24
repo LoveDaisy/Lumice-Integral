@@ -91,8 +91,7 @@ and ``SCHEMA_VERSION``; ``SCHEMA_VERSION`` is bumped by hand when the build
 algorithm changes.  The git commit is recorded in the provenance for
 forensics but deliberately *not* part of the key or of the comparison: a
 large store (``N = 1e8`` takes minutes to hours) must not be invalidated by
-unrelated commits.  Unlike :func:`.prescan.build_or_load_prescan_table`
-(which rebuilds on mismatch), :func:`build_or_load` refuses a cache whose
+unrelated commits.  :func:`build_or_load` refuses a cache whose
 recorded parameters differ from the request, and :meth:`S2EventStore.load`
 refuses an array whose SHA-256 differs from the recorded one --
 neither silently rebuilds nor silently reuses.
@@ -104,6 +103,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
+import functools
 import hashlib
 import json
 import platform
@@ -121,6 +121,7 @@ from .camera import incident_direction_from_sun, sun_direction
 from .geometry import HexPrism, Polyhedron
 from .optics import normalize_faces, path_id_of
 from .provenance import git_commit, sha256_of
+from .so3 import haar_rotations
 
 # 3: no sun direction in the spec (the arrays do not depend on it), one .npy per array, task s2-store-schema-3;
 # 2: u = R^-1 s_hat (toward the sun) with the sun direction recorded, task notation-alignment;
@@ -139,6 +140,10 @@ ROTATION_PER_POINT = (
     "R = [s_hat, p_s, s_hat x p_s][u, p_u, u x p_u]^T (any R with R u = s_hat, s_hat toward the sun; section 4.1(a))"
 )
 RANDOM_SEED = 20260923
+# The Phase I seed store (:class:`StoreSeeds`): a 32-pixel probe against the retired 4M Haar prescan found every
+# component already at N = 1e5 with a 0.02 deg band; 1e6 (9.8 MB for 3-5, ~1 s in memory) with the default
+# 0.2 deg band keeps a factor 10 in N and ~100 in pool size over that (task phase1-seeds-from-store).
+DEFAULT_SEED_STORE_N = 1_000_000
 # The reference ``s_hat`` of the build (``R u = s_hat``).  A store does not depend on the sun: validity, ``A``,
 # ``T``, ``phi`` and ``D`` depend on the pose only through ``u = R^-1 s_hat`` (section 4.1(a); measured in
 # ``docs/phase2.md`` section 1.1 and pinned by ``tests/test_s2_store.py``), so any direction gives the same events
@@ -406,18 +411,7 @@ def self_check_haar_mean(
     Checks the fibration claim ``u = R^-1 s_hat`` is uniform on ``S^2`` under Haar together with
     the ``4 pi / N`` area element, independently of the ``u`` parametrisation.
     """
-    rng = np.random.default_rng(20260923)
-    q = rng.normal(size=(n, 4))
-    q /= np.linalg.norm(q, axis=1, keepdims=True)
-    w0, x, y, z = q.T
-    rotations = np.stack(
-        [
-            np.stack([1 - 2 * (y * y + z * z), 2 * (x * y - z * w0), 2 * (x * z + y * w0)], axis=1),
-            np.stack([2 * (x * y + z * w0), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w0)], axis=1),
-            np.stack([2 * (x * z - y * w0), 2 * (y * z + x * w0), 1 - 2 * (x * x + y * y)], axis=1),
-        ],
-        axis=1,
-    )
+    rotations = haar_rotations(n, np.random.default_rng(20260923))
     values = []
     for start in range(0, n, CHUNK):
         values.append(evaluate_fields(rotations[start : start + CHUNK], sun, crystal, index, members)["w"])
@@ -671,8 +665,9 @@ class StoreSeeds:
     def refractive_index(self) -> float:
         return self.store.spec.refractive_index
 
-    @property
+    @functools.cached_property
     def crystal(self) -> HexPrism:
+        """The store's crystal (its ``w > 0`` filter), the problem's crystal."""
         return crystal_from_description(self.store.spec.crystal)
 
     @property
@@ -1051,6 +1046,7 @@ __all__ = [
     "CHUNK",
     "DEFAULT_BUCKET_COUNT",
     "DEFAULT_CACHE_DIR",
+    "DEFAULT_SEED_STORE_N",
     "FIBONACCI_SAMPLING",
     "ROTATION_PER_POINT",
     "SCHEMA_VERSION",

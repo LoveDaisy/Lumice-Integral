@@ -99,7 +99,7 @@ layout with a contour-quadrature ``pixels.csv`` and ``provenance.json``.
 Worker pool (``--workers > 1``): its own ``spawn`` :class:`concurrent.futures.ProcessPoolExecutor`
 (:func:`_worker_init` / :func:`_worker_column`), not a reuse of
 :mod:`.strip_driver`'s.  Evaluated and rejected: ``strip_driver``'s worker
-state is a Phase I ``DriverOptions`` + ``PrescanTable`` (continuation-based
+state is a Phase I ``DriverOptions`` + seed store (continuation-based
 fiber discovery with per-column checkpoint files for a resumable render);
 this module's worker state is a Phase II :class:`ContourQuadratureScene` +
 :class:`.s2_store.S2EventStore` (event-store based, no checkpointing —

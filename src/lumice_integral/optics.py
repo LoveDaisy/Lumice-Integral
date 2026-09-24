@@ -374,7 +374,7 @@ def path_domain_batch(
 
     The single authority for the batch form of the smooth-branch gates that
     :func:`path_domain` applies one pose at a time (names and order from
-    :func:`domain_margin_names`); the prescan table and component discovery
+    :func:`domain_margin_names`); the S^2 event store and component discovery
     both go through here so the two forms cannot drift apart.  Margins are
     the cosines and discriminants :func:`path_direction` evaluates on its way
     through the faces, read straight off its :class:`PathEvaluation` (no

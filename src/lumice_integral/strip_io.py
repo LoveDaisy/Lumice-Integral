@@ -302,19 +302,20 @@ def scene_block(pose_density: Mapping[str, Any] | None = None) -> dict[str, Any]
     }
 
 
-def options_block(options: PixelOptions, prescan: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    """``PixelOptions`` plus the scene-level prescan build parameters (``prescan``, if any)."""
+def options_block(options: PixelOptions, seed_store: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """``PixelOptions`` plus the scene-level seed-store build parameters (``seed_store``, if any)."""
     return {
         "discovery": {
-            "prescan": dict(prescan) if prescan is not None else None,
-            "angle_tolerance_deg": options.angle_tolerance_deg,
+            "seed_store": dict(seed_store) if seed_store is not None else None,
+            "band_half_width_deg": options.band_half_width_deg,
             "cluster_radius_rad": options.cluster_radius_rad,
             "distance_threshold": options.distance_threshold,
             "strategy": (
                 "column-wise top-down scan; per pixel one discovery: the candidate pool is the "
-                "scene-level prescan table (built once per run from prescan.sample_count Haar "
-                "samples with prescan.rng_seed, domain-valid poses indexed by outgoing direction) "
-                "queried within angle_tolerance_deg, plus the integrated components of the pixel "
+                "scene-level seed store (the S^2 event store of the path, seed_store.N Fibonacci points, "
+                "w = A T > 0 events sorted by deviation D; built or loaded once per run) band "
+                "|D - delta| <= band_half_width_deg around the pixel's deviation delta, each event posed "
+                "in the pixel's azimuth (s2_store.StoreSeeds), plus the integrated components of the pixel "
                 "above as warm Gauss-Newton starts (never traced on their own); greedy geodesic "
                 "clustering with cluster_radius_rad; each representative is Newton-corrected, gated "
                 "(residual, path domain, entry measure), deduplicated by SO(3) distance below "
@@ -368,14 +369,14 @@ def write_strip(
     pixel_model: Mapping[str, Any],
     execution: Mapping[str, Any],
     repo: Path | None = None,
-    prescan: Mapping[str, Any] | None = None,
+    seed_store: Mapping[str, Any] | None = None,
     pose_density: Mapping[str, Any] | None = None,
 ) -> dict[str, Path]:
     """Write every payload plus ``provenance.json``; returns the file map.
 
-    ``prescan`` is the scene-level prescan build record
-    (:meth:`.strip_driver.PrescanBuildOptions.as_json`), stored under
-    ``options.discovery.prescan``; ``pose_density`` the density block of the
+    ``seed_store`` is the scene-level seed-store build record
+    (:meth:`.strip_driver.SeedStoreOptions.as_json`), stored under
+    ``options.discovery.seed_store``; ``pose_density`` the density block of the
     run (:func:`scene_block`).
     """
     output_dir = Path(output_dir)
@@ -399,7 +400,7 @@ def write_strip(
             "lumice_dependency": "none (independent implementation; Lumice is neither imported nor invoked)",
         },
         "scene": scene_block(pose_density),
-        "options": options_block(options, prescan),
+        "options": options_block(options, seed_store),
         "pixel_model": dict(pixel_model),
         "window": window.as_json(),
         "arrays": {

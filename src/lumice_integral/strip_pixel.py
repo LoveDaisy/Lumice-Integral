@@ -5,7 +5,7 @@ driver (:mod:`.strip_driver` schedules it, :mod:`.strip_io` writes it out).
 For one target direction ``d`` it
 
 1. runs :func:`.discovery.discover_components` once: the candidate pool is
-   the scene's :class:`.prescan.PrescanTable` query plus ``warm_seeds`` (the
+   the band of the scene's :class:`.s2_store.StoreSeeds` plus ``warm_seeds`` (the
    converged poses of any neighbouring pixels the caller chooses; they only
    warm the Gauss-Newton start of their cluster and are neither traced on
    their own nor a source of completeness); every cluster representative is
@@ -21,7 +21,7 @@ For one target direction ``d`` it
    conservative bound, not a root-sum-square).
 
 There is no separate hot-start path and no periodic cold check: every pixel
-always queries the prescan table, so the blind spot the old hot-start chain
+always queries the seed store, so the blind spot the old hot-start chain
 had (a component with no seed in the neighbour) does not exist here, and the
 cold check that bounded it has nothing left to bound.
 
@@ -44,26 +44,27 @@ from __future__ import annotations
 import time
 from collections import Counter
 from dataclasses import dataclass, field, replace
-from typing import Any, Mapping, Sequence
+from pathlib import Path
+from typing import Any, Callable, Mapping, Sequence
 
 import jax.numpy as jnp
 import numpy as np
 
-from .camera import linear_pixel_outgoing_direction
+from .camera import incident_direction_from_sun, linear_pixel_outgoing_direction
 from .canonical_scene import (
     CANONICAL_REFRACTIVE_INDEX,
     CANONICAL_RENDER,
     canonical_crystal,
-    canonical_incident_direction,
     canonical_pose_density,
+    canonical_sun_direction,
 )
 from .continuation import ContinuationOptions, FiberProblem
 from .discovery import DISCOVERY_EVENT_NAMES, DiscoveredComponent, discover_components, retarget_problem
 from .geometry import HexPrism
 from .optics import PATH_3_5_FACES, normalize_faces, path_id_of, path_problem, problem_path_label
 from .pose_density import PoseDensity
-from .prescan import DEFAULT_RNG_SEED, DEFAULT_SAMPLE_COUNT, PrescanTable, build_prescan_table
 from .quadrature import ResampleOptions, integrate_fiber_resampled
+from .s2_store import DEFAULT_SEED_STORE_N, S2EventStore, StoreSeeds, build_event_store, build_or_load, crystal_description
 from .weights import build_path_weight_evaluators
 
 Completeness = str  # "complete" | "unknown"
@@ -93,17 +94,18 @@ STAGE_NAMES = ("discovery_s", "trace_s", "quadrature_s", "total_s")
 
 @dataclass(frozen=True)
 class StripScene:
-    """Scene constants, the prescan table and the two shared problem templates of one process.
+    """Scene constants, the seed store and the two shared problem templates of one process.
 
     ``discovery_template`` is weightless (the traces must not pay for weight
     evaluation at every accepted pose); ``production_template`` carries the
     four named weights the quadrature evaluates on its own grid.  Both share
     the same evaluator closures, so every per-pixel problem derived by
     :func:`.discovery.retarget_problem` hits the same ``jax.jit`` caches.
-    ``prescan_table`` is the scene-level :class:`.prescan.PrescanTable` every
-    pixel queries (built once per scene, read-only afterwards) and the single
-    source of the scene's face sequence (:attr:`faces`); both templates must
-    be problems of that path.
+    ``seeds`` is the scene-level :class:`.s2_store.StoreSeeds` every pixel
+    queries (a store built or loaded once per scene, read-only afterwards)
+    and the single source of the scene's face sequence (:attr:`faces`); its
+    incident direction, refractive index and crystal must be the scene's,
+    and both templates must be problems of its path.
     """
 
     incident_direction: np.ndarray
@@ -113,26 +115,28 @@ class StripScene:
     render: Mapping[str, Any]
     discovery_template: FiberProblem
     production_template: FiberProblem
-    prescan_table: PrescanTable
+    seeds: StoreSeeds
 
     def __post_init__(self) -> None:
-        table = self.prescan_table
-        if not np.array_equal(table.incident_direction, np.asarray(self.incident_direction, dtype=np.float64)):
-            raise ValueError("prescan_table incident direction does not match the scene")
-        if table.refractive_index != float(self.refractive_index):
-            raise ValueError("prescan_table refractive index does not match the scene")
-        expected = problem_path_label(table.faces, self.refractive_index)
+        seeds = self.seeds
+        if not np.array_equal(seeds.incident_direction, np.asarray(self.incident_direction, dtype=np.float64)):
+            raise ValueError("seeds incident direction does not match the scene")
+        if seeds.refractive_index != float(self.refractive_index):
+            raise ValueError("seeds refractive index does not match the scene")
+        if seeds.store.spec.crystal != crystal_description(self.crystal):
+            raise ValueError(f"seed store crystal {seeds.store.spec.crystal} is not the scene's {crystal_description(self.crystal)}")
+        expected = problem_path_label(seeds.faces, self.refractive_index)
         for name in ("discovery_template", "production_template"):
             if getattr(self, name).path != expected:
-                raise ValueError(f"{name} path {getattr(self, name).path!r} does not match the prescan table's {expected!r}")
+                raise ValueError(f"{name} path {getattr(self, name).path!r} does not match the seeds' {expected!r}")
 
     @property
     def faces(self) -> tuple[int, ...]:
-        return self.prescan_table.faces
+        return self.seeds.faces
 
     @property
     def path_id(self) -> str:
-        return self.prescan_table.path_id
+        return self.seeds.path_id
 
     @property
     def width(self) -> int:
@@ -146,32 +150,35 @@ class StripScene:
 def build_strip_scene(
     faces: Sequence[int],
     *,
-    incident_direction: np.ndarray,
+    sun_direction: np.ndarray,
     refractive_index: float,
     crystal: HexPrism,
     pose_density: PoseDensity,
     render: Mapping[str, Any],
-    prescan_table: PrescanTable | None = None,
-    prescan_sample_count: int = DEFAULT_SAMPLE_COUNT,
-    prescan_rng_seed: int = DEFAULT_RNG_SEED,
+    seeds: StoreSeeds | None = None,
+    seed_store_n: int = DEFAULT_SEED_STORE_N,
+    seed_store_cache_dir: Path | None = None,
 ) -> StripScene:
     """Assemble the scene of one face sequence (single authority; :func:`canonical_strip_scene` is its ch06 binding).
 
-    ``prescan_table`` (a table the driver built or loaded once) is used as is
-    and must be a table of ``faces``; otherwise one is built here from
-    ``prescan_sample_count`` / ``prescan_rng_seed``.  The two templates are
-    one :func:`.optics.path_problem` of ``faces`` (weightless for discovery,
-    with :func:`.weights.build_path_weight_evaluators` for production).
+    ``seeds`` (a store the driver or a class scene built or loaded once) is
+    used as is and must seed ``faces``; otherwise the store of ``faces`` alone
+    is made here by :func:`seed_store`.  ``sun_direction`` is the public
+    ``s_hat`` (toward the sun); the scene's :attr:`StripScene.incident_direction`
+    is the propagation ``-s_hat`` of the optics
+    (:func:`.camera.incident_direction_from_sun`).  The two templates are one
+    :func:`.optics.path_problem` of ``faces`` (weightless for discovery, with
+    :func:`.weights.build_path_weight_evaluators` for production).
     """
     faces = normalize_faces(faces)
-    incident = np.asarray(incident_direction, dtype=np.float64)
+    sun = np.asarray(sun_direction, dtype=np.float64)
+    incident = incident_direction_from_sun(sun)
     index = float(refractive_index)
-    if prescan_table is None:
-        prescan_table = build_prescan_table(
-            incident, index, sample_count=prescan_sample_count, rng_seed=prescan_rng_seed, path_id=path_id_of(faces)
-        )
-    elif prescan_table.faces != faces:
-        raise ValueError(f"prescan_table is of path {prescan_table.path_id!r}, not {path_id_of(faces)!r}")
+    if seeds is None:
+        store = seed_store(crystal, index, (faces,), seed_store_n, cache_dir=seed_store_cache_dir)
+        seeds = StoreSeeds(store, faces, sun)
+    elif seeds.faces != faces:
+        raise ValueError(f"seeds are of path {seeds.path_id!r}, not {path_id_of(faces)!r}")
     template = path_problem(
         jnp.asarray(np.eye(3)),
         faces,
@@ -194,41 +201,63 @@ def build_strip_scene(
         render=dict(render),
         discovery_template=template,
         production_template=replace(template, weight_evaluators=evaluators),
-        prescan_table=prescan_table,
+        seeds=seeds,
     )
+
+
+def seed_store(
+    crystal: HexPrism,
+    refractive_index: float,
+    members: Sequence[Sequence[int]],
+    n: int = DEFAULT_SEED_STORE_N,
+    *,
+    cache_dir: Path | None = None,
+    log: Callable[[str], None] | None = None,
+) -> S2EventStore:
+    """The event store the seeds of ``members`` (one ``Phi`` group) come from.
+
+    ``cache_dir=None`` builds it in memory without the self-checks (tests and
+    in-process rendering; ~1 s at the default ``N``); otherwise
+    :func:`.s2_store.build_or_load` builds it once into ``cache_dir`` with the
+    self-checks and later runs load it (SHA-256 checked).
+    """
+    if cache_dir is None:
+        return build_event_store(crystal, refractive_index, members, n, run_checks=False)
+    return build_or_load(crystal, refractive_index, members, n, base_dir=cache_dir, log=log)
 
 
 def canonical_strip_scene(
     *,
-    prescan_table: PrescanTable | None = None,
-    prescan_sample_count: int = DEFAULT_SAMPLE_COUNT,
-    prescan_rng_seed: int = DEFAULT_RNG_SEED,
+    seeds: StoreSeeds | None = None,
+    seed_store_n: int = DEFAULT_SEED_STORE_N,
+    seed_store_cache_dir: Path | None = None,
     pose_density: PoseDensity | None = None,
     crystal: HexPrism | None = None,
 ) -> StripScene:
     """The ch06 canonical scene (``docs/ch06-reference-fixture.md`` section 3.3), path 3-5.
 
-    ``prescan_table`` (a table the driver built or loaded once) is used as is;
-    otherwise one is built here from ``prescan_sample_count`` /
-    ``prescan_rng_seed`` (in-process rendering and tests).  ``pose_density``
-    replaces the canonical column density (``canonical_pose_density()``) by
-    another :mod:`.pose_density` family for diagnostics; discovery, tracing and
-    the prescan table do not depend on it (only the ``rho_pose`` weight does),
-    so the same prescan table serves every family.  ``crystal`` likewise
-    replaces ``canonical_crystal()`` (only the ``entry_measure`` weight and the
-    admissibility gate of discovery depend on it); tests use it to keep
+    ``seeds`` (a store the driver built or loaded once) is used as is;
+    otherwise :func:`seed_store` makes one of ``seed_store_n`` points (in
+    memory unless ``seed_store_cache_dir``).  ``pose_density`` replaces the
+    canonical column density (``canonical_pose_density()``) by another
+    :mod:`.pose_density` family for diagnostics; discovery, tracing and the
+    seed store do not depend on it (only the ``rho_pose`` weight does), so
+    the same store serves every family.  ``crystal`` likewise replaces
+    ``canonical_crystal()``: the ``entry_measure`` weight, the admissibility
+    gate of discovery and the store's ``w > 0`` filter depend on it, so a
+    supplied ``seeds`` must be of that crystal; tests use it to keep
     baselines recorded on the pre-2026-09-20 ``h/a = 1`` crystal.
     """
     return build_strip_scene(
         PATH_3_5_FACES,
-        incident_direction=canonical_incident_direction(),
+        sun_direction=canonical_sun_direction(),
         refractive_index=CANONICAL_REFRACTIVE_INDEX,
         crystal=canonical_crystal() if crystal is None else crystal,
         pose_density=canonical_pose_density() if pose_density is None else pose_density,
         render=CANONICAL_RENDER,
-        prescan_table=prescan_table,
-        prescan_sample_count=prescan_sample_count,
-        prescan_rng_seed=prescan_rng_seed,
+        seeds=seeds,
+        seed_store_n=seed_store_n,
+        seed_store_cache_dir=seed_store_cache_dir,
     )
 
 
@@ -257,14 +286,16 @@ def subpixel_targets(render: Mapping[str, Any], row: int, column: int, grid: int
 class PixelOptions:
     """Every numerical policy of one pixel, in one place (exported to provenance).
 
-    The prescan sampling (sample count, seed) is a scene policy, not a pixel
-    one: it lives in :class:`.strip_driver.PrescanBuildOptions` and the
-    resulting :attr:`StripScene.prescan_table`.  There is one step budget:
+    The seed store's size is a scene policy, not a pixel one: it lives in
+    :class:`.strip_driver.SeedStoreOptions` and the resulting
+    :attr:`StripScene.seeds`; the band half-width of its query is a pixel
+    one.  There is one step budget:
     ``continuation.maximum_accepted_steps`` (every trace is a production
     trace).
     """
 
-    angle_tolerance_deg: float = 2.0
+    # Half-width of the store band around the target's deviation (discovery.discover_components).
+    band_half_width_deg: float = 0.2
     cluster_radius_rad: float = 0.3
     # SO(3) geodesic distance below which a corrected candidate seed is the
     # same component as an already accepted curve (``discovery.distance_to_curve``);
@@ -282,7 +313,7 @@ class PixelOptions:
         """Keyword arguments of :func:`.discovery.discover_components`."""
         return dict(
             continuation=self.continuation,
-            angle_tolerance_deg=self.angle_tolerance_deg,
+            band_half_width_deg=self.band_half_width_deg,
             cluster_radius_rad=self.cluster_radius_rad,
             distance_threshold=self.distance_threshold,
         )
@@ -433,8 +464,7 @@ def render_pixel(
     start = time.perf_counter()
     discovered = discover_components(
         target,
-        scene.crystal,
-        scene.prescan_table,
+        scene.seeds,
         template=scene.discovery_template,
         extra_seeds=tuple(warm_seeds) if warm_seeds else (),
         **options.discovery_kwargs(),
@@ -485,5 +515,6 @@ __all__ = [
     "canonical_strip_scene",
     "pixel_target",
     "render_pixel",
+    "seed_store",
     "subpixel_targets",
 ]

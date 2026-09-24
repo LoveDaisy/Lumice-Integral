@@ -15,7 +15,7 @@ import pytest
 
 from lumice_integral import optics
 from lumice_integral.camera import incident_direction_from_sun, sun_direction
-from lumice_integral.prescan import haar_rotations
+from lumice_integral.so3 import haar_rotations
 from lumice_integral.symmetry import reflection_group as rg
 from lumice_integral.symmetry.attitude import Ry, column_attitude, sky_direction
 

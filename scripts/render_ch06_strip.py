@@ -1,6 +1,6 @@
 """Render the canonical ch06 251 x 801 direct 3-5 strip (or a window of it).
 
-Per pixel: prescan-table candidates warmed by the pixel above -> one production
+Per pixel: seed-store candidates warmed by the pixel above -> one production
 trace per distinct candidate (closed loop, or forward + backward stitched into an
 open arc) -> resampled fixed-grid line quadrature -> component sum
 (``lumice_integral.strip_pixel``).  Columns are rendered in parallel by
@@ -15,9 +15,11 @@ Examples::
     JAX_PLATFORMS=cpu XLA_FLAGS="--xla_cpu_multi_thread_eigen=false" OMP_NUM_THREADS=1 \\
         uv run python scripts/render_ch06_strip.py --workers 30 --output-dir artifacts/strip-full --resume
 
-The scene-level prescan table (``--prescan-samples`` Haar poses, ``--rng-seed``)
-is built once in the parent before the workers start and shared with them;
-``--prescan-cache`` keeps it on disk with a provenance sidecar for reuse.
+The scene-level seed store (the ``3-5`` S^2 event store of ``--seed-store-n``
+points on the canonical crystal, ``lumice_integral.s2_store.StoreSeeds``) is
+built once in the parent before the workers start and shared with them;
+``--seed-store-cache-dir`` keeps it on disk (``s2_store.build_or_load``, with its
+self-checks) for reuse, otherwise it is built in memory (~1 s at the default).
 
 ``--pose-density-family`` replaces the canonical column density (zenith
 Gaussian ``90 +- 0.5 deg``) by another family of ``pose_density.build_pose_density``;
@@ -48,8 +50,8 @@ from lumice_integral.canonical_scene import CANONICAL_POSE_DENSITY_FAMILY, CANON
 from lumice_integral.continuation import ContinuationOptions
 from lumice_integral.quadrature import ResampleOptions
 from lumice_integral.pose_density import POSE_DENSITY_FAMILIES
-from lumice_integral.prescan import DEFAULT_RNG_SEED, DEFAULT_SAMPLE_COUNT
-from lumice_integral.strip_driver import PIXEL_MODELS, DriverOptions, PrescanBuildOptions, render_window
+from lumice_integral.s2_store import DEFAULT_SEED_STORE_N
+from lumice_integral.strip_driver import PIXEL_MODELS, DriverOptions, SeedStoreOptions, render_window
 from lumice_integral.strip_io import Window, write_strip
 from lumice_integral.strip_pixel import PixelOptions
 
@@ -88,17 +90,16 @@ def main(argv: list[str] | None = None) -> None:
         help="SO(3) distance below which a candidate seed is folded into an already traced component",
     )
     parser.add_argument(
-        "--prescan-samples",
+        "--seed-store-n",
         type=int,
-        default=DEFAULT_SAMPLE_COUNT,
-        help="Haar samples of the scene-level prescan table, built once per run and shared by every worker",
+        default=DEFAULT_SEED_STORE_N,
+        help="points of the scene-level seed store (S^2 event store of 3-5), built once per run and shared by every worker",
     )
-    parser.add_argument("--rng-seed", type=int, default=DEFAULT_RNG_SEED, help="seed of the prescan sampling stream")
     parser.add_argument(
-        "--prescan-cache",
+        "--seed-store-cache-dir",
         type=Path,
         default=None,
-        help="optional .npz path to cache the prescan table (reused on --resume when its provenance matches)",
+        help="optional s2_store cache base directory (e.g. artifacts/s2-store); the store is built there once and loaded after",
     )
     parser.add_argument(
         "--pose-density-family",
@@ -146,9 +147,7 @@ def main(argv: list[str] | None = None) -> None:
     try:
         options = DriverOptions(
             pixel=pixel_options,
-            prescan=PrescanBuildOptions(
-                sample_count=args.prescan_samples, rng_seed=args.rng_seed, cache_path=args.prescan_cache
-            ),
+            seed_store=SeedStoreOptions(n=args.seed_store_n, cache_dir=args.seed_store_cache_dir),
             pixel_model=args.pixel_model,
             subpixel_grid=args.subpixel_grid,
             subpixel_rows=parse_range(args.subpixel_rows, height) if args.subpixel_rows else None,
@@ -198,7 +197,7 @@ def main(argv: list[str] | None = None) -> None:
         pixel_model=options.pixel_model_block(),
         execution=execution,
         repo=Path(__file__).resolve().parent.parent,
-        prescan=options.prescan.as_json(),
+        seed_store=options.seed_store.as_json(),
         pose_density=options.pose_density_block(),
     )
     unknown = sum(r.completeness != "complete" for r in results)

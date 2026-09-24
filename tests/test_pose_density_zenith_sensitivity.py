@@ -44,7 +44,6 @@ DEFECT2_SECTION_4 = {
     600: {"0.25": 1.078, "0.5": 1.0, "1": 0.828, "2": 0.536},
 }
 RELATIVE_TOLERANCE = 0.015
-TEST_PRESCAN_SAMPLES = 400_000
 TABLE_CRYSTAL = HexPrism.from_ratio(1.0)
 
 
@@ -59,7 +58,7 @@ def families_script():
 
 @pytest.fixture(scope="module")
 def scene():
-    return canonical_strip_scene(prescan_sample_count=TEST_PRESCAN_SAMPLES, crystal=TABLE_CRYSTAL)
+    return canonical_strip_scene(crystal=TABLE_CRYSTAL)
 
 
 @pytest.mark.parametrize("row", sorted(DEFECT2_SECTION_4))

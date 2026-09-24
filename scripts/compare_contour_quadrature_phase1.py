@@ -111,7 +111,7 @@ def compare_pixel(scene, field, store, row: int, column: int, density) -> dict:
 
     start = time.perf_counter()
     target = pixel_target(scene.render, row, column)
-    discovered = discover_components(target, scene.crystal, scene.prescan_table, template=scene.discovery_template,
+    discovered = discover_components(target, scene.seeds, template=scene.discovery_template,
                                      **PixelOptions().discovery_kwargs())
     production, corrected, kinds = 0.0, [], []
     production_error = 0.0

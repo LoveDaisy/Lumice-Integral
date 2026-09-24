@@ -2,7 +2,7 @@
 
 Given one pixel's target direction ``d``, this module finds the connected
 pieces of the inverse-image fiber ``X_(P, d)`` in SO(3) that the scene's
-prescan of path ``P`` can reach, traces each once with the production continuation, and
+S^2 event store of path ``P`` can reach, traces each once with the production continuation, and
 returns them as distinct *components* -- closed loops or open arcs -- plus the
 candidates that could not be classified.
 
@@ -10,17 +10,22 @@ The procedure (task-pixel-pipeline-v2, after the author's ruling of
 2026-09-17 that an open arc is a first-class component, not a failure):
 
 1. Candidate pool: ``extra_seeds`` (already converged poses of neighbouring
-   pixels, any neighbour -- the caller decides which) followed by the query of
-   the scene's :class:`.prescan.PrescanTable` (Haar samples that pass every
-   gate of the path's smooth branch, indexed by outgoing direction) for the
-   poses whose outgoing direction lies within ``angle_tolerance_deg`` of
-   ``d``.  The table's ``path_id`` is the single source of the face sequence
-   this call discovers (:attr:`.prescan.PrescanTable.faces`).
+   pixels, any neighbour -- the caller decides which) followed by the band of
+   the scene's :class:`.s2_store.StoreSeeds`: the store events (``w = A T >
+   0`` on the crystal) whose deviation lies within ``band_half_width_deg`` of
+   the deviation ``delta`` of ``d``, each posed in the azimuth of ``d``
+   (:meth:`.s2_store.StoreSeeds.candidates`), so a candidate's outgoing
+   direction is ``|D_i - delta|`` from ``d``.  The store is the SO(3)
+   sampling quotiented by the twist about the sun (task
+   ``phase1-seeds-from-store``, which retired the Haar prescan table after a
+   32-pixel probe found the same components).  ``seeds.faces`` is the single
+   source of the face sequence this call discovers, and the store's crystal
+   and refractive index are the problem's.
 2. Greedy geodesic clustering of the whole pool with radius
    ``cluster_radius_rad``.  A cluster's representative is its first extra
    seed if it contains one (that is all a warm seed does: it puts the
    Gauss-Newton start of its cluster on a neighbouring solution), else its
-   best-aligned prescan member.
+   store member with the smallest ``|D_i - delta|``.
 3. Per cluster, in pool order: Gauss-Newton the representative onto the
    fiber, gate it with :func:`.optics.path_domain` and
    :func:`.geometry.entry_measure`, then *deduplicate before tracing*: a
@@ -87,8 +92,8 @@ from .continuation import (
 )
 from .geometry import Polyhedron, entry_measure
 from .optics import PATH_3_5_FACES, path_domain, path_problem, problem_path_label
-from .prescan import PrescanTable
 from .resample import OpenArc, stitch_open_arc
+from .s2_store import StoreSeeds
 from .so3 import exp, rotation_distances
 
 Completeness = Literal["complete", "unknown"]
@@ -165,7 +170,7 @@ class ComponentDiscoveryResult:
 
     ``completeness`` is procedural (see the module docstring): ``"complete"``
     iff ``incomplete`` is empty.  The count fields record the funnel
-    (``pool_count`` prescan poses plus ``extra_seed_count`` warm seeds ->
+    (``pool_count`` store-band poses plus ``extra_seed_count`` warm seeds ->
     clusters -> admissible) for regression and diagnosis;
     ``events`` the classification counters (:data:`DISCOVERY_EVENT_NAMES`);
     ``trace_seconds`` the wall clock spent inside :func:`.continuation.trace_fiber`.
@@ -252,7 +257,7 @@ def _newton_correct(
     """Unconstrained Gauss-Newton from an arbitrary pose onto the target fiber.
 
     Unlike :func:`.continuation.retract_to_fiber` this needs no on-fiber base
-    pose or phase tangent; it only pulls a prescan sample onto the fiber.
+    pose or phase tangent; it only pulls a candidate pose onto the fiber.
     Each iteration is one compiled kernel keyed on the problem's
     ``direction_evaluator`` (shared through ``template``).
     """
@@ -380,29 +385,31 @@ def _problem_template(
 
 def discover_components(
     target_direction: np.ndarray,
-    crystal: Polyhedron,
-    table: PrescanTable,
+    seeds: StoreSeeds,
     *,
     continuation: ContinuationOptions | None = None,
     extra_seeds: Sequence[np.ndarray] = (),
-    angle_tolerance_deg: float = 2.0,
+    band_half_width_deg: float = 0.2,
     cluster_radius_rad: float = 0.3,
     distance_threshold: float = ContinuationOptions.closure_distance,
     template: FiberProblem | None = None,
 ) -> ComponentDiscoveryResult:
-    """Discover the fiber components of the table's path reaching ``target_direction``.
+    """Discover the fiber components of the seeds' path reaching ``target_direction``.
 
-    ``table`` is the scene's prescan (:func:`.prescan.build_prescan_table`)
-    and the single source of the face sequence (``table.faces``), the
-    incident direction and the refractive index of the problem; ``crystal`` only feeds the finite-crystal
-    :func:`.geometry.entry_measure` gate applied to each corrected candidate
-    (the table does not depend on it).  ``continuation`` is the production
+    ``seeds`` is the scene's store view (:class:`.s2_store.StoreSeeds`) and
+    the single source of the face sequence (``seeds.faces``), the incident
+    direction, the refractive index and the crystal of the problem (the
+    crystal feeds the finite-crystal :func:`.geometry.entry_measure` gate
+    applied to each corrected candidate; the store kept only its ``w > 0``
+    events).  ``continuation`` is the production
     policy every trace runs under (default :class:`ContinuationOptions`);
     ``extra_seeds`` are converged poses of neighbouring pixels used as
     Gauss-Newton starts (module docstring step 2), never traced separately
-    and never a source of completeness.  Pool defaults come from the
-    ``explore-component-discovery`` survey (2 deg tolerance, 0.3 rad cluster
-    radius); ``distance_threshold`` defaults to the continuation's
+    and never a source of completeness.  ``band_half_width_deg`` defaults to
+    0.2 deg (with the production ``N = 1e6`` store a pool of the prescan's
+    size; the task ``phase1-seeds-from-store`` probe found every component of
+    its 32 pixels already at ``N = 1e5`` and 0.02 deg), the 0.3 rad cluster
+    radius to the ``explore-component-discovery`` survey; ``distance_threshold`` defaults to the continuation's
     ``closure_distance`` (same scale: "is this pose on that curve").  The
     result's ``completeness`` is procedural; see the module docstring.
     ``template`` (optional) is a problem of the same path, incident direction
@@ -411,19 +418,18 @@ def discover_components(
     if distance_threshold <= 0.0:
         raise ValueError("distance_threshold must be positive")
     options = continuation or ContinuationOptions()
-    faces = table.faces
-    incident = table.incident_direction
-    refractive_index = table.refractive_index
+    faces = seeds.faces
+    incident = seeds.incident_direction
+    refractive_index = seeds.refractive_index
+    crystal = seeds.crystal
     target = np.asarray(target_direction, dtype=np.float64)
-    pool_indices = table.candidates(target, angle_tolerance_deg)
+    band_rotations, band_offsets = seeds.candidates(target, np.radians(band_half_width_deg))
     extra = np.asarray(extra_seeds, dtype=np.float64).reshape(-1, 3, 3)
-    pool_rotations = np.concatenate((extra, table.rotations[pool_indices]))
+    pool_rotations = np.concatenate((extra, band_rotations))
     extra_count = len(extra)
-    # Alignment of the prescan members with the target; extra seeds have no
-    # table direction and are chosen as representatives by position instead.
-    pool_alignment = np.concatenate(
-        (np.full(extra_count, -np.inf), table.directions[pool_indices] @ target)
-    )
+    # Alignment of the band members with the target (the smaller |D_i - delta|, the better); extra
+    # seeds have no band offset and are chosen as representatives by position instead.
+    pool_alignment = np.concatenate((np.full(extra_count, -np.inf), -band_offsets))
 
     clusters = _geodesic_cluster(pool_rotations, cluster_radius_rad)
     template = _problem_template(
@@ -460,7 +466,7 @@ def discover_components(
         components=tuple(components),
         incomplete=tuple(incomplete),
         completeness="complete" if not incomplete else "unknown",
-        pool_count=int(len(pool_indices)),
+        pool_count=int(len(band_rotations)),
         extra_seed_count=extra_count,
         raw_cluster_count=len(clusters),
         admissible_count=admissible_count,
@@ -469,14 +475,128 @@ def discover_components(
     )
 
 
+@dataclass(frozen=True)
+class BandCoverage:
+    """How the band events of one pixel sit relative to the components discovery traced (a diagnostic).
+
+    Every event of the band (``event_count``) is either *near* a traced curve
+    as posed (SO(3) distance below ``near_radius``), or Newton-corrected onto
+    the fiber and then *on* a traced curve (distance below
+    ``distance_threshold``), *inadmissible* (the discovery gates reject it),
+    or a *suspect*: an admissible fiber pose far from every traced curve,
+    i.e. evidence of a component discovery missed.  ``suspects`` are those
+    corrected poses and ``suspect_clusters`` their count after the discovery
+    clustering.  ``component_event_counts[k]`` is the number of events
+    assigned to component ``k`` (nearest curve); the smallest of them,
+    ``k_min``, gives ``miss_probability_bound = exp(-k_min)``: the chance
+    that ``N`` independent uniform points put no event on a component whose
+    band measure is that of the least-covered component found (for i.i.d.
+    points ``(1 - mu / 4 pi)^N <= exp(-N mu / 4 pi)`` with ``N mu / 4 pi``
+    estimated by ``k_min``; the store's Fibonacci lattice is deterministic
+    and quasi-uniform, so this is the Monte Carlo reading of the same
+    density, not a certificate).  ``None`` when nothing was traced.
+    """
+
+    event_count: int
+    near_count: int
+    corrected_count: int
+    on_curve_count: int
+    inadmissible_count: int
+    suspects: tuple[np.ndarray, ...]
+    suspect_clusters: int
+    component_event_counts: tuple[int, ...]
+    miss_probability_bound: float | None
+
+    @property
+    def suspect_count(self) -> int:
+        return len(self.suspects)
+
+
+def miss_probability(band_measure_sr: float, n: int) -> float:
+    """``exp(-n mu / 4 pi)``: the chance that ``n`` i.i.d. uniform points on ``S^2`` miss a region of measure ``mu``."""
+    return float(np.exp(-n * band_measure_sr / (4.0 * np.pi)))
+
+
+def check_band_coverage(
+    target_direction: np.ndarray,
+    seeds: StoreSeeds,
+    result: ComponentDiscoveryResult,
+    *,
+    band_half_width_deg: float = 0.2,
+    near_radius: float = ContinuationOptions.closure_distance,
+    distance_threshold: float = ContinuationOptions.closure_distance,
+    cluster_radius_rad: float = 0.3,
+    continuation: ContinuationOptions | None = None,
+    template: FiberProblem | None = None,
+) -> BandCoverage:
+    """Completeness cross-check of one pixel's discovery against *every* event of its store band.
+
+    Discovery traces one representative per cluster of the band; this check
+    revisits all of them (:class:`BandCoverage`).  An event posed within
+    ``near_radius`` of a traced curve is counted as covered without
+    correction (the posed events lie ``|D_i - delta|`` off the fiber in
+    direction: within 0.035 rad of the curve on the 32 survey pixels away
+    from the caustic, up to 0.117 rad on its short loops, task
+    ``phase1-seeds-from-store``); the default is discovery's own dedup
+    distance, so an event is never taken as covered where discovery would
+    not fold it.  Every other event is
+    corrected onto the fiber and gated exactly as a discovery candidate
+    (:func:`_admissible_seed`) and compared with the curves at
+    ``distance_threshold``.  A diagnostic and a test tool, not part of the
+    rendering path: it costs one Newton correction per far event.
+    """
+    options = continuation or ContinuationOptions()
+    target = np.asarray(target_direction, dtype=np.float64)
+    rotations, _ = seeds.candidates(target, np.radians(band_half_width_deg))
+    curves = [np.asarray(component.result.poses) for component in result.components]
+    counts = [0] * len(curves)
+    near = corrected_count = on_curve = inadmissible = 0
+    suspects: list[np.ndarray] = []
+    problem = None
+    for rotation in rotations:
+        distances = [float(np.min(rotation_distances(rotation, poses))) for poses in curves]
+        if distances and min(distances) < near_radius:
+            near += 1
+            counts[int(np.argmin(distances))] += 1
+            continue
+        if problem is None:
+            problem = _problem_template(target, seeds.faces, seeds.incident_direction, seeds.refractive_index, rotation, template)
+        corrected_count += 1
+        seed = _admissible_seed(problem, options, seeds.crystal, seeds.faces, seeds.refractive_index, jnp.asarray(rotation))
+        if seed is None:
+            inadmissible += 1
+            continue
+        distances = [distance_to_curve(seed, poses) for poses in curves]
+        if distances and min(distances) < distance_threshold:
+            on_curve += 1
+            counts[int(np.argmin(distances))] += 1
+        else:
+            suspects.append(seed)
+    clusters = _geodesic_cluster(np.asarray(suspects).reshape(-1, 3, 3), cluster_radius_rad)
+    return BandCoverage(
+        event_count=int(len(rotations)),
+        near_count=near,
+        corrected_count=corrected_count,
+        on_curve_count=on_curve,
+        inadmissible_count=inadmissible,
+        suspects=tuple(suspects),
+        suspect_clusters=len(clusters),
+        component_event_counts=tuple(counts),
+        miss_probability_bound=float(np.exp(-min(counts))) if counts else None,
+    )
+
+
 __all__ = [
     "ARC_EVENTS",
     "DISCOVERY_EVENT_NAMES",
     "PATH_3_5_FACES",
+    "BandCoverage",
     "ComponentDiscoveryResult",
     "DiscoveredComponent",
     "IncompleteCandidate",
+    "check_band_coverage",
     "discover_components",
     "distance_to_curve",
+    "miss_probability",
     "retarget_problem",
 ]

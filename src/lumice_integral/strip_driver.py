@@ -3,7 +3,7 @@
 Scan order and parallel axis: one task per *column*; inside a column the rows
 are scanned top-down and every pixel receives the integrated components of
 the pixel above as ``warm_seeds`` (Gauss-Newton starts added to its own
-prescan candidate pool -- never a substitute for the pool, so there is no
+seed-store candidate pool -- never a substitute for the pool, so there is no
 hot-start blind spot and no periodic cold check; task-pixel-pipeline-v2).
 Columns never share seeds, so column tasks are independent and
 embarrassingly parallel.
@@ -21,12 +21,13 @@ checkpointed as pickles so a long run can be resumed; a checkpoint records
 the :data:`.strip_io.FORMAT_VERSION` it was written under and is only reused
 by the same version (the pickled result types change with the format).
 
-Prescan table: the scene-level :class:`.prescan.PrescanTable` is built (or
-loaded from ``DriverOptions.prescan.cache_path``) exactly once in the parent
-process before any column is scheduled and handed to every worker through the
-pool's ``initargs``; workers only unpickle it (rebuilding the kd-tree) and
-never sample.  ``prescan.cache_path`` is optional and outside the checkpoint
-fingerprint (it changes where the table is read from, not what it holds).
+Seed store: the scene-level :class:`.s2_store.StoreSeeds` (the ``3-5``
+event store of ``DriverOptions.seed_store.n`` points on the canonical crystal)
+is built (or loaded from ``DriverOptions.seed_store.cache_dir``) exactly once
+in the parent process before any column is scheduled and handed to every
+worker through the pool's ``initargs``; workers only unpickle it and never
+sample.  ``seed_store.cache_dir`` is optional and outside the checkpoint
+fingerprint (it changes where the store is read from, not what it holds).
 
 Worker memory: before task-scene-prescan-table every cold discovery evaluated
 a 400k-sample prescan eagerly, and on glibc the freed intermediates stayed in
@@ -56,11 +57,13 @@ from .canonical_scene import (
     CANONICAL_REFRACTIVE_INDEX,
     CANONICAL_ZENITH_MEAN_DEG,
     CANONICAL_ZENITH_STD_DEG,
-    canonical_incident_direction,
+    canonical_crystal,
+    canonical_sun_direction,
 )
+from .optics import PATH_3_5_FACES
 from .pose_density import PoseDensity, build_pose_density, resolve_pose_density_parameters
 from .pose_density_provenance import pose_density_provenance
-from .prescan import DEFAULT_RNG_SEED, DEFAULT_SAMPLE_COUNT, PrescanTable, build_or_load_prescan_table
+from .s2_store import DEFAULT_SEED_STORE_N, StoreSeeds
 from .strip_io import FORMAT_VERSION, Window
 from .strip_pixel import (
     PixelOptions,
@@ -68,6 +71,7 @@ from .strip_pixel import (
     StripScene,
     canonical_strip_scene,
     render_pixel,
+    seed_store,
     subpixel_targets,
 )
 
@@ -84,39 +88,35 @@ WORKER_MALLOC_ENV: dict[str, str] = {
 
 
 @dataclass(frozen=True)
-class PrescanBuildOptions:
-    """How the scene-level prescan table is built (or where it is cached).
+class SeedStoreOptions:
+    """How the scene-level seed store is built (or where it is cached).
 
-    ``sample_count``/``rng_seed`` determine the table's content and are part
-    of the checkpoint fingerprint; ``cache_path`` only says where to keep it
-    and is excluded from equality, so a resumed run may point at another
-    cache file without recomputing columns.
+    ``n`` (the store's point count) determines its content and is part of the
+    checkpoint fingerprint; ``cache_dir`` (an :func:`.s2_store.build_or_load`
+    base directory; ``None`` builds in memory) only says where to keep it and
+    is excluded from equality, so a resumed run may point at another cache
+    without recomputing columns.
     """
 
-    sample_count: int = DEFAULT_SAMPLE_COUNT
-    rng_seed: int = DEFAULT_RNG_SEED
-    cache_path: Path | None = field(default=None, compare=False)
+    n: int = DEFAULT_SEED_STORE_N
+    cache_dir: Path | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
-        if self.sample_count < 1:
-            raise ValueError("prescan sample_count must be positive")
+        if self.n < 1:
+            raise ValueError("seed store n must be positive")
 
     def as_json(self) -> dict[str, Any]:
-        return {
-            "sample_count": int(self.sample_count),
-            "rng_seed": int(self.rng_seed),
-            "cache_path": str(self.cache_path) if self.cache_path is not None else None,
-        }
+        return {"N": int(self.n), "cache_dir": str(self.cache_dir) if self.cache_dir is not None else None}
 
 
 @dataclass(frozen=True)
 class DriverOptions:
     pixel: PixelOptions = field(default_factory=PixelOptions)
-    # ``default_factory`` on purpose: a checkpoint written before the scene-
-    # level prescan existed was rendered under a different discovery policy
-    # (per-pixel 400k prescan) and must be recomputed, which the
-    # ``AttributeError`` branch of :func:`load_checkpoints` does.
-    prescan: PrescanBuildOptions = field(default_factory=PrescanBuildOptions)
+    # ``default_factory`` on purpose: a checkpoint written before the seed
+    # store existed was rendered under a different discovery policy (the Haar
+    # prescan table) and must be recomputed, which the ``AttributeError``
+    # branch of :func:`load_checkpoints` does.
+    seed_store: SeedStoreOptions = field(default_factory=SeedStoreOptions)
     pixel_model: str = "point"
     subpixel_grid: int = 3
     subpixel_rows: tuple[int, int] | None = None  # half-open row band; None = every row
@@ -273,25 +273,23 @@ _WORKER_SCENE: StripScene | None = None
 _WORKER_OPTIONS: DriverOptions | None = None
 
 
-def _init_worker(options: DriverOptions, table: PrescanTable) -> None:
+def _init_worker(options: DriverOptions, seeds: StoreSeeds) -> None:
     global _WORKER_SCENE, _WORKER_OPTIONS
-    _WORKER_SCENE = canonical_strip_scene(prescan_table=table, pose_density=options.pose_density())
+    _WORKER_SCENE = canonical_strip_scene(seeds=seeds, pose_density=options.pose_density())
     _WORKER_OPTIONS = options
 
 
-def build_scene_prescan_table(
-    options: DriverOptions, *, log: LogCallback | None = None, repo: Path | None = None
-) -> PrescanTable:
-    """The canonical scene's table for ``options.prescan`` (built or loaded once per run)."""
-    return build_or_load_prescan_table(
-        options.prescan.cache_path,
-        canonical_incident_direction(),
+def build_scene_seeds(options: DriverOptions, *, log: LogCallback | None = None) -> StoreSeeds:
+    """The canonical scene's seeds for ``options.seed_store`` (the ``3-5`` store, built or loaded once per run)."""
+    store = seed_store(
+        canonical_crystal(),
         CANONICAL_REFRACTIVE_INDEX,
-        sample_count=options.prescan.sample_count,
-        rng_seed=options.prescan.rng_seed,
-        repo=repo,
+        (PATH_3_5_FACES,),
+        options.seed_store.n,
+        cache_dir=options.seed_store.cache_dir,
         log=log,
     )
+    return StoreSeeds(store, PATH_3_5_FACES, canonical_sun_direction())
 
 
 def _render_column_task(task: tuple[int, tuple[int, int]]) -> tuple[int, list[PixelResult], float]:
@@ -375,10 +373,10 @@ def render_window(
     """Render every pixel of ``window``; returns the results and an execution record.
 
     ``workers <= 1`` renders in-process (``scene`` may be supplied, in which
-    case its own ``prescan_table`` is used and ``options.prescan`` is not
+    case its own ``seeds`` are used and ``options.seed_store`` is not
     consulted; its ``pose_density`` must equal ``options.pose_density()``,
     which is what provenance records); otherwise ``workers`` spawn processes each take whole
-    columns and share the table built here (module docstring).  The table's
+    columns and share the seeds built here (module docstring).  The store's
     size and build time are reported in the execution record.
     """
     if workers < 1:
@@ -413,49 +411,46 @@ def render_window(
                 f"{seconds:.1f}s ({len(done)}/{len(window.column_range)} columns)"
             )
 
-    def build_table() -> tuple[PrescanTable, dict[str, Any]]:
-        prescan_start = time.perf_counter()
-        table = build_scene_prescan_table(options, log=log)
-        report = {
-            "source": str(options.prescan.cache_path) if options.prescan.cache_path is not None else "in-memory",
-            "seconds": time.perf_counter() - prescan_start,
-            "sample_count": table.sample_count,
-            "valid_count": table.valid_count,
-            "rng_seed": table.rng_seed,
+    def store_report(seeds: StoreSeeds, source: str, seconds: float) -> dict[str, Any]:
+        return {
+            "source": source,
+            "seconds": seconds,
+            "N": seeds.n,
+            "kept_events": len(seeds.store.events),
+            "cache_key": seeds.store.spec.cache_key(),
         }
-        return table, report
 
-    # The table is obtained once, before any column: built or loaded per
-    # ``options.prescan`` unless an in-process ``scene`` already carries one.
-    # Whether to build it and whether a ``Pool`` will read it are decided by
+    def build_seeds() -> tuple[StoreSeeds, dict[str, Any]]:
+        store_start = time.perf_counter()
+        seeds = build_scene_seeds(options, log=log)
+        cache_dir = options.seed_store.cache_dir
+        return seeds, store_report(seeds, str(cache_dir) if cache_dir is not None else "in-memory", time.perf_counter() - store_start)
+
+    # The seeds are obtained once, before any column: built or loaded per
+    # ``options.seed_store`` unless an in-process ``scene`` already carries them.
+    # Whether to build them and whether a ``Pool`` will read them are decided by
     # the same branch (rather than two separately-shaped conditions) so that
-    # "table is bound before ``Pool(...)`` uses it" holds by construction
+    # "seeds are bound before ``Pool(...)`` uses them" holds by construction
     # instead of requiring two independent conditions to be kept in sync
     # (round 2 code review: a split if/elif pair made that invariant provable
     # only by cross-referencing two conditions, and was twice misread as a
     # possible ``UnboundLocalError``).
-    prescan: dict[str, Any] = {"source": "not-needed", "seconds": 0.0}
+    store: dict[str, Any] = {"source": "not-needed", "seconds": 0.0}
     if pending and workers > 1:
-        table, prescan = build_table()
+        seeds, store = build_seeds()
         for name, value in WORKER_MALLOC_ENV.items():
             os.environ.setdefault(name, value)
         context = multiprocessing.get_context("spawn")
         tasks = [(column, window.rows) for column in pending]
-        with context.Pool(workers, initializer=_init_worker, initargs=(options, table)) as pool:
+        with context.Pool(workers, initializer=_init_worker, initargs=(options, seeds)) as pool:
             for column, results, seconds in pool.imap_unordered(_render_column_task, tasks):
                 finish(column, results, seconds)
     elif pending:
         if scene is None:
-            table, prescan = build_table()
-            scene = canonical_strip_scene(prescan_table=table, pose_density=options.pose_density())
+            seeds, store = build_seeds()
+            scene = canonical_strip_scene(seeds=seeds, pose_density=options.pose_density())
         else:
-            prescan = {
-                "source": "scene",
-                "seconds": 0.0,
-                "sample_count": scene.prescan_table.sample_count,
-                "valid_count": scene.prescan_table.valid_count,
-                "rng_seed": scene.prescan_table.rng_seed,
-            }
+            store = store_report(scene.seeds, "scene", 0.0)
         for column in pending:
             column_start = time.perf_counter()
             results = render_column(scene, column, window.row_range, options, log)
@@ -469,7 +464,7 @@ def render_window(
         "columns_resumed": len(window.column_range) - len(pending),
         "column_seconds": {str(column): seconds for column, seconds in sorted(column_seconds.items())},
         "checkpoint_dir": str(checkpoint_dir) if checkpoint_dir is not None else None,
-        "prescan": prescan,
+        "seed_store": store,
     }
     return results, execution
 
@@ -477,9 +472,9 @@ def render_window(
 __all__ = [
     "DriverOptions",
     "PIXEL_MODELS",
-    "PrescanBuildOptions",
+    "SeedStoreOptions",
     "WORKER_MALLOC_ENV",
-    "build_scene_prescan_table",
+    "build_scene_seeds",
     "load_checkpoints",
     "render_column",
     "render_window",
