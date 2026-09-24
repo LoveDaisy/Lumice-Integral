@@ -319,6 +319,57 @@ disk-domain default with an explicit, checkable escape hatch (test $U_P$'s
 own and complementary connectivity before assuming Morse-Bott simplicity).
 Measured record: appendix, "$D_P$ field topology probes".
 
+**Implemented: contour extraction** (`lumice_integral.contour`, task
+`s2-contour-extraction`). `extract_level_sets(field, deltas, store)` returns,
+for every $\delta$, every component of $\{D_P = \delta\}\cap U_P$ as a node
+sequence (closed loop, or open arc with both ends on $\partial U_P$ and the
+smallest margin reported there), certified:
+
+- *Seeds, three sources.* The field layer's critical data first: the
+  crossings of $\delta$ by $D_P$ along the boundary loop (bisection along
+  the piece, pulled `1e-14` inside; the ends of every open arc) and the first
+  crossing along a geodesic ray out of the interior extremum (a point of the
+  closed loop around it). They reach what no sampling resolves at
+  $\pm10^{-6}$ rad from a critical value: the arc cut off below a loop
+  maximum is `~1e-6` rad deep, `~1e-12` in margin on an exit-TIR piece where
+  $D_P\sim\sqrt{\text{margin}}$; the loop above the 3-5 minimum is `~2e-3` rad
+  across, the one below the `3-5-6-7-3` cone point $D = \pi$ has radius
+  `5e-7`. The event store's band ($|D-\delta| < h$, $h$ two mean point
+  spacings) and linear crossings on the edges of an orthographic grid of the
+  entry hemisphere are the independent check: any of their seeds farther
+  from the extracted components than its own resolution is refined and
+  walked, and a component it finds is an extra one.
+- *Walking.* Lockstep over every curve of every $\delta$ (one `jax.vmap`-ed
+  step scanned 64 at a time, finished curves compacted out, batches padded
+  to powers of two): geodesic predictor along $\mathbf u\times\nabla D_P$,
+  Newton corrector along $\nabla D_P$; a step is accepted inside $U_P$, on
+  the level set, and with the tangent turned by at most 5°, otherwise
+  halved. Leaving $U_P$ halves down to `1e-13` rad, which puts an arc end on
+  $\partial U_P$. A walk closes when its start is within one current step
+  ahead — relative, never an absolute distance (Phase I defect 1). Next to an
+  exit-TIR piece the curve runs parallel to $\partial U_P$ at a depth of
+  `~1e-12` and the geodesic predictor falls out by the boundary's curvature;
+  there the predictor keeps the first-order value of the smallest margin.
+- *Certificate.* Per $\delta$ the (closed, open) counts are compared with the
+  interval of `DPField.interval_partition()` containing it; a mismatch
+  raises `ContourCertificateError`, a `TopologyEscape` of the partition (a
+  saddle among others) is propagated and nothing is extracted, a $\delta$ at
+  a critical value is refused.
+- *Sharing.* The result depends on $\delta$ only: repeated values are
+  extracted once, and a class member takes `LevelSet.transported(g)`
+  ($\mathbf u\to g\mathbf u$, node order reversed for improper $g$ so that
+  nodes keep running along $\mathbf u\times\nabla D_P$).
+- *Accuracy.* $|D_P - \delta| \le 10^{-12}$ wherever $|\nabla D_P| \le 10^3$;
+  next to an exit-TIR curve ($|\nabla D_P|$ up to `~1e7`) the rounding of
+  $\mathbf u$ alone moves $D_P$ by $\varepsilon|\nabla D_P|$ and nodes are held
+  to $64\,\varepsilon|\nabla D_P|$ (at most `~8e-9` measured). An arc meets
+  such a curve tangentially, so its end is located to `~sqrt(1e-13)` along
+  the curve.
+
+The saddle branch is covered only as an escape: no fixture has an interior
+saddle (above), and extraction refuses to run where the partition escapes.
+Measured record: appendix, "Contour extraction".
+
 ## 5. Quadrature B: the band sum
 
 Source: the Ice Halo Simulation repository,
@@ -1222,3 +1273,46 @@ start; M2 Max, CPU.
   on such a boundary piece carry `~1e-8` rad (the square root of the
   `1e-16` margin residual) and the position of a loop extremum on it only
   `~1e-4` rad; corners and interior points are Newton-exact.
+
+**Contour extraction (2026-09-24, task `s2-contour-extraction`,
+`lumice_integral.contour`).** Canonical crystal, $n = 1.31$, stores of
+`N = 2e5` built in memory, default grid `401²`.
+
+- *Certificate.* On every interval midpoint of the five fixtures and at
+  every critical value $\pm10^{-6}$ and $\pm10^{-3}$ rad (including both
+  ends of $[\min D_P, \max D_P]$) the extracted (closed, open) counts equal
+  the partition's, and each offset pair straddles a count change:
+
+  | path | $\delta$ values | components (closed) | nodes | max $\lvert D-\delta\rvert$, $\lvert\nabla D\rvert\le10^3$ | max overall | nodes above `1e-12` | wall (incl. compile) |
+  |---|---|---|---|---|---|---|---|
+  | `3-5` | 19 | 35 (5) | 9189 | `3.1e-13` | `7.8e-9` | 14 % | 8.1 s |
+  | `1-3` | 14 | 15 (5) | 3416 | `5.0e-13` | `7.9e-9` | 11 % | 5.0 s |
+  | `3-1-6` | 9 | 5 (0) | 3103 | `4.4e-16` | `4.4e-16` | 0 | 5.1 s |
+  | `1-3-2` | 9 | 5 (0) | 3099 | `4.4e-16` | `4.4e-16` | 0 | 6.1 s |
+  | `3-5-6-7-3` | 14 | 15 (5) | 3322 | `4.4e-16` | `4.4e-16` | 0 | 10.1 s |
+
+  The nodes above `1e-12` are all within reach of an exit-TIR curve
+  ($|\nabla D|$ up to `2.4e7`), most in the end clusters of arcs (the last
+  steps halve towards $\partial U_P$). The loop `1e-6` above the 3-5 minimum
+  winds once (tangent-plane angle $2\pi$), radius between `1e-4` and
+  `1e-2` rad, at least 72 nodes; the `3-5-6-7-3` loop at $\pi - 10^{-6}$ has
+  radius `5e-7` about $\mathbf n_M$ to `1e-6` relative.
+- *Independence.* Without the ray seed the 3-5 loop is found by the store
+  and grid seeds alone; with those also disabled (`grid=3`, zero band) the
+  certificate raises (predicted `(1, 0)`, extracted `(0, 0)`); against a
+  partition predicting nothing it raises on the extra loop.
+- *Transport.* `3-5 → 3-7` and `3-5-6-7-3 → 4-8-7-6-4`, proper and improper
+  $g$, interval midpoints: equal counts, every node of either set on the
+  other's polylines (`5 %` of the segment length), except within
+  `3.2e-6` rad of an arc end on an exit-TIR piece.
+- *Cost* (`benchmarks/benchmark_contour_extraction.py`, path 3-5, store
+  `N = 1e6`, M2 Max, one process): 161 equally spaced $\delta$ (the band-sum
+  strip's row count): first call `6.3 s` (XLA compilation included),
+  steady `1.0 s` (`6.3 ms` per $\delta$), 207 components, `115788` nodes;
+  801 $\delta$ (ch06's row count): first call `11.1 s`, steady `6.0 s`
+  (`7.5 ms` per $\delta$), 1027 components, `572885` nodes, peak RSS
+  `2.5 GB` (the in-memory store included; `1.1 GB` at 161). For scale: the
+  ch06 strip took 35 min on 30 workers through Phase I, the band sum 2.8 min
+  on 4 workers at `N = 1e8`. Padding every batched call to a power of two
+  took the first 161-$\delta$ call from `38 s` to `6.3 s`; a new $\delta$ set of
+  another size recompiles only the buckets it has not met.

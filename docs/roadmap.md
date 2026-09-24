@@ -27,7 +27,7 @@ Queue (tasks in `scratchpad/tasks.md`; dispatch order 20 ∥ 21, then 22 ∥ 24,
 
 | 22 | `band-sum-scatter-renderer`: band sum organised by deviation, class accumulation, GEMM tiles ([phase2.md](phase2.md) §8) | 21 |
 | 23 | `lumice-area-weighting-recheck`: absolute scale after Lumice's projected-area fix | Ice Halo #597 merged |
-| 24 | scrum `phase2-contour-quadrature` (M2): `dp-field-topology` → `dp-field-layer` → `s2-contour-extraction` → `s2-contour-quadrature` → `phase1-seeds-from-store` → `ch10-numerical-verdicts` — `dp-field-layer` **done 2026-09-24** (`lumice_integral.dp_field`, [phase2.md](phase2.md) §3.1) | 21 |
+| 24 | scrum `phase2-contour-quadrature` (M2): `dp-field-topology` → `dp-field-layer` → `s2-contour-extraction` → `s2-contour-quadrature` → `phase1-seeds-from-store` → `ch10-numerical-verdicts` — `dp-field-layer` **done 2026-09-24** (`lumice_integral.dp_field`, [phase2.md](phase2.md) §3.1); `s2-contour-extraction` **done 2026-09-24** (`lumice_integral.contour`, [phase2.md](phase2.md) §4) | 21 |
 
 Deferred: the chapter-11 table (path classes × pose families) after 22 and
 M2; divergent light ([phase2.md](phase2.md) §9, backlog); finite solar disk;
@@ -92,7 +92,9 @@ Moved to [phase2.md](phase2.md).
 ### 4.1 Design findings (2026-09-20 discussion, before the Phase II scrum)
 
 (a) weights on $S^2$ → [phase2.md](phase2.md) §1; (b) the level-set
-integral and boundaries → §2; (c) topology and completeness → §3.1; (d)
+integral and boundaries → §2 (the level sets themselves, extracted: §4,
+"Implemented: contour extraction"); (c) topology and completeness → §3.1
+(the certificate checked on extracted components: §4); (d)
 layered invariance → §3.2 (symmetry: §3.3); (e) fixtures → §4; (f) design
 constraints → §4; (g) open points → §10.
 
@@ -331,3 +333,16 @@ Moved to [overview.md](overview.md) §3.
   `3-1-6` / `1-3-2`, an interior cone maximum on `3-5-6-7-3`). The
   explores' "transversal triple point / bigon" on `3-5-6-7-3` is corrected:
   every corner is two-edged, the third curve tangent.
+- **2026-09-24**: contour extraction is `lumice_integral.contour` (task
+  `s2-contour-extraction`, [phase2.md](phase2.md) §4 and appendix), a module
+  beside `dp_field` whose walker traces `dp_field.field.d_value` /
+  `margin_vector` inside one `jax.jit` (every entry takes a built `DPField`,
+  so the rank-0 refusal still holds). Seeds come first from the field
+  layer's critical data (boundary-loop crossings, a ray out of the interior
+  extremum), because the components within $10^{-6}$ rad of a critical
+  value are thinner than any grid or store resolves; the store's band and a
+  chart grid, the two sources the scrum planned, stay as the independent
+  check that finds extra components. Nodes are on the level set to
+  `1e-12` rad where $|\nabla D_P| \le 10^3$ and to $64\,\varepsilon|\nabla D_P|$
+  next to an exit-TIR curve (the `1e-12` of the scrum is not reachable there
+  in float64). Measured: 801 deviations of 3-5 in 6 s steady in one process (M2 Max).

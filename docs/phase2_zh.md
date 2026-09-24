@@ -110,6 +110,16 @@ M2 scrum 依次构建：$D_P$ 在 $U_P$ 上的拓扑（从格点 seed 出发用 
 提供了一个默认的圆盘定义域假设，配一条明确、可核验的逃生舱口（在假定 Morse-Bott 简单性之前，
 先核对 $U_P$ 自身与其补集的连通性）。实测记录：见附录「$D_P$ 场拓扑探针」。
 
+**已实现：等值线提取**（`lumice_integral.contour`，任务 `s2-contour-extraction`）。`extract_level_sets(field, deltas, store)` 对每个 $\delta$ 返回 $\{D_P = \delta\}\cap U_P$ 的全部分量，以节点序列表示（闭环；或两端都在 $\partial U_P$ 上的开弧，并报告端点处最小的 margin），并附证书：
+
+- *seed，三路。* 先用场层的临界数据：$D_P$ 沿边界环穿越 $\delta$ 的点（沿该段二分，再向 $U_P$ 内拉 `1e-14`；即每条开弧的端点），以及从内部极值出发沿测地射线的首个穿越点（落在绕它的闭环上）。它们能到达任何采样在临界值 $\pm10^{-6}$ rad 处都分辨不了的分量：环上极大值下方被截出的开弧深 `~1e-6` rad，在 exit-TIR 段上（$D_P\sim\sqrt{\text{margin}}$）以 margin 计深 `~1e-12`；3-5 极小值上方的闭环直径 `~2e-3` rad，`3-5-6-7-3` 锥点 $D = \pi$ 下方的闭环半径 `5e-7`。事件仓库的带（$|D-\delta| < h$，$h$ 取两个平均点间距）和入射半球正交投影网格边上的线性穿越点是独立核验：它们的 seed 若离已提取分量超过自身分辨率，就细化后再走，走出的分量即多出来的分量。
+- *行走。* 所有 $\delta$ 的所有曲线 lockstep 推进（一个 `jax.vmap` 化的步进核，每次 scan 64 步，走完的曲线在两批之间压缩掉，批量补齐到 2 的幂）：沿 $\mathbf u\times\nabla D_P$ 做测地预测，沿 $\nabla D_P$ 做 Newton 校正；落在 $U_P$ 内、在水平集上、切向转角不超过 5° 才接受，否则步长减半。走出 $U_P$ 就一路减半到 `1e-13` rad，开弧端点即落在 $\partial U_P$ 上。起点在前方一个当前步长之内时闭合——相对判据，绝不用绝对距离（Phase I 缺陷①）。在 exit-TIR 段旁，曲线以 `~1e-12` 的深度平行于 $\partial U_P$，测地预测点会按边界曲率掉出域外；此时预测点保持最小 margin 的一阶值。
+- *证书。* 每个 $\delta$ 的（闭环，开弧）计数与 `DPField.interval_partition()` 中包含它的区间比较；不一致抛 `ContourCertificateError`；区间划分自身的 `TopologyEscape`（鞍点等）向上传播、不做提取；$\delta$ 恰为临界值时拒绝。
+- *共享。* 结果只依赖 $\delta$：重复的值只提取一次；类成员取 `LevelSet.transported(g)`（$\mathbf u\to g\mathbf u$；非真 $g$ 时节点顺序反转，使节点仍沿 $\mathbf u\times\nabla D_P$ 排列）。
+- *精度。* 在 $|\nabla D_P| \le 10^3$ 处 $|D_P - \delta| \le 10^{-12}$；在 exit-TIR 曲线旁（$|\nabla D_P|$ 可达 `~1e7`），仅 $\mathbf u$ 自身的舍入就让 $D_P$ 变动 $\varepsilon|\nabla D_P|$，节点按 $64\,\varepsilon|\nabla D_P|$ 验收（实测最大 `~8e-9`）。开弧与这种曲线相切相交，端点沿曲线只能定位到 `~sqrt(1e-13)`。
+
+鞍点分支只以转义的形式被覆盖：没有 fixture 带内部鞍点（见上），区间划分转义时提取拒绝执行。实测记录：见英文版附录「Contour extraction」。
+
 ## 5. 求积 B：带求和
 
 来源：Ice Halo Simulation 仓库的 `doc/research/inverse-rendering.md`（中文 `inverse-rendering_zh.md`；「基于预计算标准事件的逆向渲染」，源自 Gislén 等 2004）。那篇笔记是设计草图；本节是本项目对这一思路的权威表述。笔记中的对象就是上面的场：

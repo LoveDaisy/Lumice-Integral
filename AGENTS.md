@@ -74,6 +74,9 @@ uv run python scripts/regress_band_sum.py --stage scatter --random-n 10000000 --
 # D_P field layer (lumice_integral.dp_field): interval partition of the five fixtures against an
 # independent dense grid through evaluate_fields (~45 s standalone, ~2 min as the slow test in test_dp_field_certificate.py, M2 Max)
 uv run python scripts/verify_dp_field_intervals.py --grid 1201
+# certified level-set extraction (lumice_integral.contour): a strip's worth of deltas, first call and steady state
+# (3-5, 801 deltas: 11 s first call, 6 s steady on an M2 Max, one process)
+uv run python benchmarks/benchmark_contour_extraction.py --deltas 801
 # a non-canonical pose-density family (recorded in provenance.json and the resume fingerprint)
 uv run python scripts/render_ch06_strip.py --rows 300:302 --columns 126:127 --output-dir /tmp/strip-parry \
   --pose-density-family parry --pose-density-zenith-std-deg 1 --pose-density-roll-std-deg 1
@@ -96,8 +99,9 @@ The design is `docs/overview.md` (entry), `docs/phase1.md` and `docs/phase2.md`
 │   │                      # intersection, path enumeration, entry_measure (pure numpy)
 │   ├── symmetry/          # D6h / G tables, signature and Phi classes, ch3 ground truth,
 │   │                      # attitude construction (pure numpy, depends on geometry only)
-│   └── dp_field/          # Phase II D_P field layer: evaluation, critical points, dU_P walk,
-│                          # delta-interval partition (public: DPField)
+│   ├── dp_field/          # Phase II D_P field layer: evaluation, critical points, dU_P walk,
+│   │                      # delta-interval partition (public: DPField)
+│   └── contour.py         # level sets {D_P = delta} in U_P, certified against the partition
 ├── tests/                 # Analytic and optical regression fixtures
 ├── benchmarks/            # Reproducible CPU/GPU probes
 ├── docs/

@@ -775,16 +775,16 @@ def _extract_unique(field: DPField, deltas: np.ndarray, store: S2EventStore, gri
     candidates, candidate_j = np.vstack([grid_points[far], band_points]), np.r_[grid_j[far], band_j].astype(int)
     refined, good = _refine(field, candidates, deltas[candidate_j])
     candidates, candidate_j = refined[good], candidate_j[good]
-    for _ in range(MAX_EXTRA_ROUNDS):
+    for extra_round in range(MAX_EXTRA_ROUNDS + 1):
         uncovered = ~_covered(candidates, candidate_j, polylines())
         candidates, candidate_j = candidates[uncovered], candidate_j[uncovered]
         if len(candidates) == 0:
             break
+        if extra_round == MAX_EXTRA_ROUNDS:
+            raise RuntimeError(f"{len(candidates)} seed(s) of {optics.path_id_of(field.faces)} still off every component "
+                               f"after {MAX_EXTRA_ROUNDS} rounds")
         pick = np.linspace(0, len(candidates) - 1, min(len(candidates), EXTRA_SEEDS_PER_ROUND)).astype(int)
         kept += _deduplicate(_components_of(field, candidates[pick], candidate_j[pick], deltas), kept)
-    else:
-        raise RuntimeError(f"{len(candidates)} seed(s) of {optics.path_id_of(field.faces)} still off every component "
-                           f"after {MAX_EXTRA_ROUNDS} rounds")
     out: list[list[tuple[str, np.ndarray]]] = [[] for _ in deltas]
     for group, kind, points in kept:
         out[group].append((kind, points))
