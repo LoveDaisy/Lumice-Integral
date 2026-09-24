@@ -52,7 +52,10 @@ extrema are refined by golden-section search on the piece (derivative-free:
 ``grad D_P`` diverges on the exit-TIR curve, where ``D_P`` itself is finite)
 and corner values are kept as they are.  On the exit TIR curve the corrector
 leaves points on the ``U_P`` side (margin ``>= 0``) so the exit refraction's
-square root is real; the value error there is ``~ sqrt(1e-16) = 1e-8`` rad.
+square root is real; ``D_P`` is Hoelder-1/2 across that curve, so the value
+error there is ``~ sqrt(1e-16) = 1e-8`` rad, and the *position* of a loop
+extremum on such a piece (where ``D_P`` is flat along the loop) only
+``~1e-4`` rad; corners (two-margin Newton) are exact.
 Slab paths are evaluated in closed form (:func:`.field.d_value`).
 """
 
