@@ -177,11 +177,15 @@ Parry, Lowitz) replace the single zenith-Gaussian model; only the integrand
 changes.
 
 **Absolute scale.** With nothing fitted, this renderer and Lumice agree to
-`0.997-0.999` on the bright band at matched refractive index, through a
-per-pixel factor $K_p$. Deriving it exposed that Lumice gave every pose equal
-energy instead of weighting by the crystal's projected area; the author
-ruled it a Lumice bug and fixed it there (Ice Halo #597; re-check pending,
-task `lumice-area-weighting-recheck`).
+`0.997-0.999` on the bright band at matched refractive index. Deriving the
+factor first exposed that Lumice gave every pose equal energy instead of
+weighting by the crystal's projected area, which made it a per-pixel $K_p$;
+the author ruled it a Lumice bug and fixed it there (Ice Halo #597). Against
+the fixed Lumice the factor is $K_p = N_{\mathrm{sym}}\,\bar y(550)\,
+\Omega_p/(S/2)$, $S$ the crystal's surface area: one constant up to the
+pixel's solid angle, re-checked on the column strip (`0.998`) and on the
+plate and Parry families (total flux `0.9999` / `1.0001`) (task `lumice-area-weighting-recheck`,
+fixture specification section 7, stage 4).
 
 ## 5. Where Phase I stands
 
@@ -308,7 +312,10 @@ it agrees with nothing fitted: `raw / emitted_energy = K_p V` with
 `K_p = 12 ybar(550) Omega_p / A_eff`, which gives measured over predicted
 `0.997-0.999` on the bright band of columns `106 / 126 / 146` at matched
 refractive index (task `phase1-closeout-absolute-scale`, fixture
-specification section 7, stage 4). This closes the first image-level target.
+specification section 7, stage 4). Against Lumice after Ice Halo #597
+(2026-09-24, task `lumice-area-weighting-recheck`) `A_eff` is replaced by
+the constant `S/2` and the same bright band gives `0.998`. This closes the
+first image-level target.
 Outside the point-source point-pixel model the remaining open items are
 unchanged: a completeness certificate, finite solar disk, and pixel
 averaging in the caustic band.
@@ -396,7 +403,8 @@ order below follows their dependencies, not the solver's own curiosity.
    profile above is max-normalised), was checked 2026-09-23 (task
    `phase1-closeout-absolute-scale`): `PBD x12` is confirmed as one scalar,
    and Lumice's pose sampling without silhouette weighting adds a
-   pixel-dependent `A_eff` (fixture specification section 7, stage 4). Path-class
+   pixel-dependent `A_eff` (fixture specification section 7, stage 4; since
+   Ice Halo #597 the constant `S/2`, re-checked 2026-09-24). Path-class
    accounting is *not* a suspect here: the `PBD` orbit of `3-5` adds only
    `3-7`, whose image is identical under the zenith-symmetric density (the
    prism's `C2'` rotation maps one to the other), a uniform `x2`; all three

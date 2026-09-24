@@ -914,8 +914,92 @@ color-to-factor mapping.
      (`compare/compare_metrics.json`, `compare/strip_profiles_lumice_float.png`,
      `edge-offset-analysis.md`, `lumice-raw/run1|run2/` with `config.json`,
      `img_01.{npy,json}`, `run.log`, and the `probe-*/` runs).
-   - Absolute radiometric scale (task `phase1-closeout-absolute-scale`,
-     2026-09-23). The strip value is `V(w) = (1 / 8 pi^2) int rho A_P T /
+   - Absolute radiometric scale, current Lumice (task
+     `lumice-area-weighting-recheck`, 2026-09-24; Ice Halo `2056f699`,
+     `Lumice 4.6.1-dev`). Ice Halo #597 made Lumice weigh each ray by the
+     crystal's projected area. At entry (`InitRay_p_fid`,
+     `src/core/simulator.cpp:213`) the ray's weight is multiplied by
+     `lm_pcg::entry_weight = min(1, A_tot / (S/2))`
+     (`src/core/shared/pcg_shared.h:627`), where `S` is the crystal's total
+     surface area; `S/2` bounds the projected area of every convex body, so
+     the `min` never binds. The entry sub-triangle is then still drawn with
+     probability `A_face / A_tot`, and the pose still from `rho` alone. No
+     ray is discarded: `6fc48bb4` replaced the per-ray accept/reject of
+     597.1-597.3 by this expected weight on every backend. An emitted ray
+     therefore lands on `3-5` with expected weight `A_P / (S/2)`: `A_tot`
+     cancels, and `A_P` is exactly the `entry_measure` inside `V`.
+     `emitted_energy` keeps its meaning: `emitted_weight x
+     emitted_ray_equivalent` (`simulator.cpp:1737, 1760, 2032`; one
+     scattering entry under `proportional` allocation gives `ray_num`), and
+     the weight a ray loses at entry still counts toward it
+     (`doc/configuration.md`, the note after the `ray_allocation` table); the
+     runs below record `emitted_energy = sim_ray_num = 5e8`. Hence
+     `raw[p] / emitted_energy = K_p V(w_p)` with
+     `K_p = N_sym * ybar(550) * Omega_p / (S/2)`, `S = 6ah + 3 sqrt(3) a^2 =
+     17.196 a^2` at `h/a = 2`. `K_p` depends on the pixel through
+     `Omega_p` alone (`3.0 %` over the bright band). The ratio
+     `A_tot / (S/2)` is scale free, so Lumice's equal-surface-area crystal
+     size convention (`docs/conventions.md` row 17) only matters between
+     crystals of different shapes. Check (`scripts/probe_absolute_scale.py`,
+     nothing fitted; the task 8 `config.json` unchanged under the new binary,
+     seeds `7 / 11` at `5e8` rays each, merged): on the bright band (rows
+     `60` to `440-500`, caustic row `60` excluded, `38-44` pixels per column) the
+     measured over predicted `raw / E` is `0.998 +- 0.004 / 0.998 +- 0.003 /
+     0.998 +- 0.005` (median +- standard error) on columns `106 / 126 / 146`
+     at Lumice's `n(550) = 1.3110129`, and `1.013 / 1.027 / 1.009` at the
+     canonical `n = 1.31` (the index mismatch of the next bullet). The area
+     each pixel implies, `N_sym ybar Omega_p V / (raw / E)`, has median
+     `8.62 a^2` on all three columns (`S/2 = 8.598 a^2`) and a per-pixel
+     relative spread of `1.6-3.0 %` against a merged Monte Carlo noise of
+     `2.0-2.5 %`: the pixel-dependent `A_eff` of the old Lumice (`3.8-4.5
+     a^2`, `~15 %`) is gone, and `K_p` is the pixel-independent constant
+     `N_sym ybar / (S/2)` times `Omega_p`. The caustic row `60` measures
+     `0.83 / 0.62 / 0.94` of its point prediction (point versus pixel area,
+     as before); the `3 x 3` sub-pixel means at rows `150 / 300 / 450` stay
+     within `0.02 %` of the point values. The shape is unchanged: ours
+     against the new export has column log-RMS `0.036 / 0.048 / 0.037`
+     against a seed-to-seed floor of `0.060 / 0.045 / 0.062`, and the
+     `compare_strip_v2.py --absolute-scale-probe` residual on the delivered
+     strip is `+1.3 / +2.7 / +0.7 %` (canonical `n`).
+     Pose families (`scripts/compare_lumice_family.py`: the band-sum
+     renderer's `[3,5]` PBD class at `N = 1e8`, whose value already sums the
+     `12` members, against the Lumice `PBD` filter with the same camera; so
+     `K_p = ybar Omega_p / (S/2)`). Plate (zenith `gauss(0, 1 deg)`, camera
+     `321 x 161`, linear `32 deg`, view elevation `15 deg`, both parhelia):
+     at matched `n` the total flux ratio is `0.9999` (seeds `0.9999 /
+     0.9999`), the bright pixels (`168`, above `10 %` of the maximum) have
+     median ratio `0.995` and relative spread `0.94 %` against `0.78 %`
+     expected (Lumice seeds `0.11 %`, band sum `1 / sqrt(K_eff)`), and the
+     max-normalised row and column through the peak differ by RMS `0.003 /
+     0.004`. At the canonical `n = 1.31` the total is `0.9965` but the
+     bright spread is `18 %`, all of it on the parhelion's inner edge: the
+     `1e-3` index step moves that caustic by about half a pixel, which a
+     `30 x 32` window re-rendered at `n = 1.3110129` confirmed before the
+     full image (window `0.9868 -> 0.9999`). Parry (zenith `gauss(90, 1 deg)`,
+     roll `gauss(0, 1 deg)`, camera `401 x 401`, linear `100 deg`, view
+     elevation `15 deg`; the class images above and below the sun): at
+     matched `n` the total flux ratio is `1.0001` (seeds `1.0002 /
+     1.0001`) and the two halves of the image, which hold different halo
+     features and so different poses, give `1.0002 / 1.0001` (top / bottom,
+     `27 / 73 %` of the flux). The `40` bright pixels form one sharp spot:
+     median ratio `0.994`, spread `2.1 %` against `0.6 %` expected, falling
+     to `1.4 / 1.2 / 0.4 %` when both images are binned `2 x 2 / 3 x 3 / 4 x
+     4`, i.e. the band average against the pixel-area average, not a pose
+     factor. At the canonical `n` the total is `0.998` and the halves
+     `0.990 / 1.001`.
+     No `A_eff` has to be folded into a family comparison any more; the
+     backlog item that asked for it is void. Evidence:
+     `scratchpad/task-lumice-area-weighting-recheck/artifacts/`
+     (`lumice-new/run1|run2/`, `absolute-scale/`, `absolute-scale-n-lumice/`,
+     `compare/compare_metrics.json`, `lumice-plate|parry/run1|run2/`,
+     `li-plate*/`, `li-parry*/`, `family/*.json`; the matched-`n` band sums
+     come from `render_band_sum_n_lumice.py` there, a copy of
+     `scripts/render_band_sum.py` with only the index changed, whose
+     `provenance.json` still records `1.31`).
+   - Absolute radiometric scale, Lumice before `6fc48bb4` (history; task
+     `phase1-closeout-absolute-scale`, 2026-09-23). This bullet describes the
+     Lumice of that date; its conversion does not apply to the current
+     binary (previous bullet). The strip value is `V(w) = (1 / 8 pi^2) int rho A_P T /
      (J_perp + epsilon) dH^1`, the Haar expectation of `A_P T delta(w -
      Phi(R))`: power per steradian sent along `3-5` by one crystal of random
      pose per unit incident irradiance, in crystal `length^2 / sr` (hexagon
@@ -980,7 +1064,7 @@ color-to-factor mapping.
    relative to a whole-image median and log-domain profile differences;
    the Lumice float comparison is radiometric up to one scale factor, and
    that factor is derived and checked in absolute terms by the
-   absolute-scale bullet. Scripts and JSON
+   absolute-scale bullets. Scripts and JSON
    of the v1 preview:
    `scratchpad/scrum-ch06-direct-integration/task-strip-image-driver/`
    (`scripts/compare_with_historical.py`, `scripts/cross_check.py`,

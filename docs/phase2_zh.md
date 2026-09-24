@@ -240,7 +240,7 @@ $R_i$ 按 §5 的方法构造，只是把 $\hat{\mathbf s}$ 换成从 $\mathbf x
 - **秩亏映射。** $W = 0$ 的类是光源方向上的点质量（任务 `path-class-rendering-unit`）；平行面类（$M \ne I$、$W = I$）的退化像来自 $\rho$ 对 $\mathbf u$ 的约束而非 $\Phi$，需要单独记账（「降维聚光」vs「Jacobian 聚光」，作为求解器的显式输出）。`ch10-numerical-verdicts`。
 - **非均匀 $\rho$。** $\psi(\mathbf u,\alpha)$ 是单值的，所以 $\rho$ 逐点求值；只有第 11 章「天空上的卷积」这种读法需要均匀 $\rho$。
 - **Jacobian 对齐。** 在纤维化的坐标变换下，$1/\lvert\nabla_{S^2} D_P\rvert$ 与 Phase I 的 $J_\perp$ 的对齐是交叉验证的接触点。`s2-contour-quadrature`。
-- **与 Lumice 的绝对尺度**，在其投影面积修复（Ice Halo #597）之后：任务 `lumice-area-weighting-recheck`。
+- **与 Lumice 的绝对尺度**，在其投影面积修复（Ice Halo #597）之后：2026-09-24 完成（任务 `lumice-area-weighting-recheck`）：plate 与 Parry 族的带求和光路类渲染对 Lumice 浮点导出，$K_p = \bar y(550)\,\Omega_p/(S/2)$，不拟合（`docs/ch06-reference-fixture.md` 第 7 节 stage 4）。
 
 | 部分 | 状态 | 在哪 |
 |---|---|---|
