@@ -235,12 +235,44 @@ def event_rotations(
     For the events transported by a crystal symmetry ``g`` see
     :func:`transported_rotations` (module docstring).
     """
+    return np.einsum("ij,nkj->nik", pixel_world_frame(sun, centre), event_frames(u, phi, deviation))
+
+
+def pixel_world_frame(sun: np.ndarray, centre: np.ndarray) -> np.ndarray:
+    """The pixel side ``W = [s_hat, e, s_hat x e]`` (columns) of :func:`event_rotations`; ``e`` from ``centre``."""
     e = centre - (centre @ sun) * sun
     e /= np.linalg.norm(e)
+    return np.stack([sun, e, np.cross(sun, e)], axis=1)
+
+
+def event_frames(u: np.ndarray, phi: np.ndarray, deviation: np.ndarray) -> np.ndarray:
+    """The event side ``F = [u, f, u x f]`` (columns, ``(K, 3, 3)``) of :func:`event_rotations`: no sun, no pixel.
+
+    ``event_rotations`` is ``R_i = W F_i^T``, so a pose splits into a pixel
+    factor and an event factor.  The zenith components of the body axes are
+    the third row, ``R_i[2, j] = sum_k W[2, k] F_i[j, k]`` (``e_j`` of the
+    :mod:`.pose_density` axis-zenith interface): for a block of pixels and a
+    band of events that is one matrix product of the pixels' ``W[2, :]`` and
+    the events' ``F_i[j, :]`` per body axis ``j`` (the band-sum renderer's
+    scatter form, :mod:`.band_sum`).
+    """
     f2 = phi + np.cos(deviation)[:, None] * u
     f2 /= np.linalg.norm(f2, axis=1, keepdims=True)
-    world = np.stack([sun, e, np.cross(sun, e)], axis=1)
-    return np.einsum("ij,nkj->nik", world, frame(u, f2))
+    return frame(u, f2)
+
+
+def transported_frames(frames: np.ndarray, g: np.ndarray) -> np.ndarray:
+    """:func:`event_frames` of the events transported by ``g``: ``g F J``, ``J = diag(1, 1, det g)``.
+
+    With the same world frame ``W``, ``W (g F J)^T`` is
+    :func:`transported_rotations` of ``W F^T`` (its docstring): the
+    transport is a fixed linear map of the event side only.
+    """
+    g = np.asarray(g, dtype=np.float64)
+    moved = np.einsum("ij,njk->nik", g, frames)
+    if np.linalg.det(g) < 0.0:
+        moved[:, :, 2] *= -1.0
+    return moved
 
 
 def transported_rotations(rotations: np.ndarray, g: np.ndarray, sun: np.ndarray, centre: np.ndarray) -> np.ndarray:
@@ -925,15 +957,18 @@ __all__ = [
     "crystal_description",
     "crystal_from_description",
     "evaluate_fields",
+    "event_frames",
     "event_rotations",
     "events_from_schema1",
     "fibonacci_sphere",
     "frame",
     "max_rss_mb",
+    "pixel_world_frame",
     "self_check_gate_coverage",
     "self_check_haar_mean",
     "self_check_psi_invariance",
     "store_lattice",
+    "transported_frames",
     "transported_rotations",
     "twist_about",
 ]
