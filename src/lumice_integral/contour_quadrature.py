@@ -96,6 +96,18 @@ check) once; each worker builds the field and renders whole columns: one
 Output (:func:`write_contour_quadrature_strip`) is the :mod:`.strip_io`
 layout with a contour-quadrature ``pixels.csv`` and ``provenance.json``.
 
+Worker pool (``--workers > 1``): its own ``spawn`` :class:`concurrent.futures.ProcessPoolExecutor`
+(:func:`_worker_init` / :func:`_worker_column`), not a reuse of
+:mod:`.strip_driver`'s.  Evaluated and rejected: ``strip_driver``'s worker
+state is a Phase I ``DriverOptions`` + ``PrescanTable`` (continuation-based
+fiber discovery with per-column checkpoint files for a resumable render);
+this module's worker state is a Phase II :class:`ContourQuadratureScene` +
+:class:`.s2_store.S2EventStore` (event-store based, no checkpointing —
+:func:`render_contour_quadrature_window` has no ``--resume``).  The two pools
+share only the ``spawn`` + per-column job shape, not the state they carry,
+so a forced merge would couple two renderers' worker lifecycles for no
+shared behaviour.
+
 Nothing here imports or calls Lumice.
 """
 
