@@ -70,6 +70,10 @@ uv run python scripts/regress_band_sum.py --stage k-eff --random-n 10000000 --ou
 # or class [1,3,5] and task 14's profiles rendered both ways (~2 min with the N = 1e7 stores cached)
 uv run python scripts/regress_band_sum.py --stage scatter --band-dir artifacts/band-sum-full-new --baseline-dir artifacts/band-sum-full --output /tmp/regression_scatter.json
 uv run python scripts/regress_band_sum.py --stage scatter --random-n 10000000 --workers 4 --output /tmp/regression_scatter_windows.json
+
+# D_P field layer (lumice_integral.dp_field): interval partition of the five fixtures against an
+# independent dense grid through evaluate_fields (~45 s standalone, ~2 min as the slow test in test_dp_field_certificate.py, M2 Max)
+uv run python scripts/verify_dp_field_intervals.py --grid 1201
 # a non-canonical pose-density family (recorded in provenance.json and the resume fingerprint)
 uv run python scripts/render_ch06_strip.py --rows 300:302 --columns 126:127 --output-dir /tmp/strip-parry \
   --pose-density-family parry --pose-density-zenith-std-deg 1 --pose-density-roll-std-deg 1
@@ -90,8 +94,10 @@ The design is `docs/overview.md` (entry), `docs/phase1.md` and `docs/phase2.md`
 ├── src/lumice_integral/   # Differentiable numerical building blocks
 │   ├── geometry/          # Finite-crystal geometry: polyhedra, unfolding, corridor
 │   │                      # intersection, path enumeration, entry_measure (pure numpy)
-│   └── symmetry/          # D6h / G tables, signature and Phi classes, ch3 ground truth,
-│                          # attitude construction (pure numpy, depends on geometry only)
+│   ├── symmetry/          # D6h / G tables, signature and Phi classes, ch3 ground truth,
+│   │                      # attitude construction (pure numpy, depends on geometry only)
+│   └── dp_field/          # Phase II D_P field layer: evaluation, critical points, dU_P walk,
+│                          # delta-interval partition (public: DPField)
 ├── tests/                 # Analytic and optical regression fixtures
 ├── benchmarks/            # Reproducible CPU/GPU probes
 ├── docs/

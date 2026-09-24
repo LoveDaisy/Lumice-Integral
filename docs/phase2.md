@@ -146,6 +146,57 @@ procedural) becomes a checkable statement. This is the larger gain of
 Phase II; speed is the smaller one. (**Design**; M2 sub-tasks
 `dp-field-topology`, `dp-field-layer`, `s2-contour-extraction`.)
 
+**Implemented: the field layer** (`lumice_integral.dp_field`, task
+`dp-field-layer`; public surface `DPField` and `TopologyEscape` only, so the
+rank-0 refusal in `DPField.build` cannot be bypassed). For one face
+sequence, independent of the sun:
+
+- *Evaluation.* $D_P(\mathbf u) = ngle(\Phi_P(-\mathbf u), -\mathbf u)$ at
+  the identity pose, batched (`jax.vmap`) value, tangent gradient and
+  Riemannian Hessian $P(H - (\mathbf u\cdot\mathbf g)I)P$ — the curvature
+  term is what makes it independent of how $D_P$ is extended off the sphere
+  (without it the 3-5 minimum reads as a maximum or a saddle, depending on
+  the extension). Taken in `atan2` form; equal to the event store's
+  `evaluate_fields` to `1e-12`.
+- *Fold pre-screen.* $|\mathbf n_a\cdot M^{\mathsf T}\mathbf n_b| = 1$ is a
+  slab: $D_P(\mathbf u) = ngle(M\mathbf u, \mathbf u)$, evaluated in that
+  closed form, whose critical set is $\pm\mathbf n_M$ and the crease
+  $\mathbf u\cdot\mathbf n_M = 0$; otherwise interior critical points come
+  from damped tangent-space Newton, batched over the $U_P$ points of a
+  Fibonacci lattice, classified by the Hessian.
+- *Boundary.* $\partial U_P$ is walked: along the zero set of the active
+  margin with $U_P$ on the left, a corner wherever another margin turns
+  negative (bisection, then a two-margin Newton, residual `<= 2.3e-16`),
+  continuing along the one margin through the corner that keeps the
+  boundary, until the walk is back at its first corner — closing the walk
+  is the completeness statement for the loop. An incidence cosine is walked
+  as a great circle when its normal $\mathbf m = R_{k-1}^{\mathsf T}\mathbf n_k$
+  satisfies $\mathbf m\cdot\mathbf n_a = 0$ (then the margin is linear in
+  $\mathbf u$; checked per path at run time), otherwise marched like every
+  discriminant. Margins equal to an earlier one (three side-face
+  reflections stepping by ±60°) are dropped first; a margin vanishing along
+  a whole piece (a square, such as `exit_snell_discriminant` $=$
+  `entry_incidence_cosine`$^2$ on `3-5-6-7-3`) is recorded as coincident.
+  A corner lists every margin vanishing there; the two it is bounded by;
+  the others as tangent or transversal to them.
+- *Partition.* Critical values are the interior ones, the extrema of $D_P$
+  along the loop, and the corner values. On each interval the number of
+  open arcs is half the number of crossings of $\delta$ along the loop
+  (exact for any topology); closed loops need an interior extremum, and with
+  at most one (a non-degenerate minimum or a slab cone point) there is one
+  closed loop from its value to the loop extremum where the sublevel set
+  first reaches $\partial U_P$ (checked on a small ring). Anything else —
+  $U_P$ or its complement not connected on the lattice, several interior
+  critical points, a saddle, a crease inside $U_P$, a boundary-born sublevel
+  component — raises `TopologyEscape` instead of guessing.
+- *Check.* `scripts/verify_dp_field_intervals.py` recomputes every
+  interval's counts on a dense grid through `evaluate_fields`: closed loops
+  as sub/superlevel regions touching no boundary, arcs as crossings along
+  the traced grid boundary moved onto $\partial U_P$ by bisection (node
+  values alone fail: $D_P$ falls like a square root off an exit-TIR curve).
+  All intervals of the five fixtures agree; the measured values are in the
+  appendix.
+
 ### 3.2 Layered invariance: what a halo shares and what varies
 
 The fibre of a pixel, $\{R : R\,\Phi_P(-R^{-1}\hat{\mathbf s}) = \mathbf d\}$,
@@ -233,9 +284,17 @@ Fixtures the structure suggests:
   at ±60° compose to one) and different windows. The 142° sharp edge
   ($= 120° +$ the 21.84° minimum deviation) is a $D_P$ critical value and is
   shape-independent; the narrow peak is the `3-5-6-7-3` window and moves
-  with the cross-section. Two pictures on one sphere.
+  with the cross-section. Two pictures on one sphere. *Measured (task
+  `dp-field-layer`):* both are slabs with the same $M$, so the fields agree
+  pointwise, but $U_P$ differ and so do the critical values on them:
+  $\{0°, 115.607°\}$ for `1-3-2`, $\{0°, 153.070°, 180°\}$ for
+  `3-5-6-7-3` (normal incidence on face 3 is inside, the backscatter cone
+  point). No 142° value on either with this repository's face numbering;
+  task `verify-liljequist-face-numbering` holds the manual check.
 - *Parhelic circle*: $D_P(\mathbf u) = \angle(M\mathbf u, \mathbf u)$ has
-  $\nabla D_P = 0$ only at $\pm\mathbf n_M$, so the ring has **no fold**;
+  $\nabla D_P = 0$ only at $\pm\mathbf n_M$ (on `3-1-6` both lie on the entry
+  great circle but outside the closure of $U_P$, an internal TIR fails
+  there: no interior critical point at all), so the ring has **no fold**;
   its brightness along the ring is entirely the window layer. For plates
   the ring azimuth is linear in the crystal azimuth, so the profile is a sum
   of shifted copies of one window (three mirror planes of the prism): a test
@@ -1111,3 +1170,55 @@ Scratchpad probes (`src/` untouched) ahead of `task-dp-field-layer`, on the
 Scratchpad: `scratchpad/scrum-phase2-contour-quadrature/explore-dp-field-*/`
 (hypothesis.md / experiments.md / insights.md / SUMMARY.md per explore;
 local, not part of the source tree).
+
+**$D_P$ field layer (2026-09-24, task `dp-field-layer`,
+`lumice_integral.dp_field`).** Refractive index `1.31`, canonical prism,
+Fibonacci lattice `N = 20000` for seeds, the disk check and the walk's
+start; M2 Max, CPU.
+
+| path | fold dot | interior critical points | corners | critical values (deg) | intervals `(n, closed, open)` |
+|---|---|---|---|---|---|
+| `3-5` | `-0.5` | minimum `21.839300` (`= 2 asin(n sin 30°) - 60°` to `1e-12`), Hessian `[0.338, 0.965]` | 2 (entry ∩ exit TIR) | 21.839300, 42.990858, 43.465157, 50.062619 | `(1,1,0)`, `(4,0,4)`, `(2,0,2)` |
+| `1-3` | `0` | minimum `45.733421` (`= 2 asin(n sin 45°) - 90°`) | 2 (entry ∩ exit TIR) | 45.733421, 57.803628, 73.506892 | `(1,1,0)`, `(2,0,2)` |
+| `3-1-6` | `-1` (slab) | none (`±n_M` outside the closure) | 4 | 0, 115.607259 | `(1,0,1)` |
+| `1-3-2` | `-1` (slab) | none (`±n_M` outside the closure) | 4 | 0, 115.607259 | `(1,0,1)` |
+| `3-5-6-7-3` | `-1` (slab) | `+n_M` (face-3 normal), cone maximum `180` | 4 | 0, 153.069685, 180 | `(2,0,2)`, `(1,1,0)` |
+
+- *Checks.* `D` against `evaluate_fields` on 256 random points of each
+  $U_P$: `<= 1e-12` (points within `1e-3` rad of `0` / `π` excluded, where
+  `arccos` loses `sqrt(eps)`); slab closed form against the optics chain:
+  `<= 1e-12`; gradient against central differences, step scan: plateau
+  `<= 1e-9`; the same critical point from lattices of `2000` and `20000`;
+  corners to residual `<= 2.3e-16`, and on `3-5` equal to an independent
+  bisection on the entry circle with the scalar gates to `1e-10` rad;
+  every edge point of the lattice domain within `1.5` lattice spacings of
+  the walked loop; `D6h` transport `3-5 → 3-7` and
+  `3-5-6-7-3 → 4-8-7-6-4`, proper and improper `g`: corners and interior
+  points to `1e-9` rad, values to `5e-8`, identical partitions; all
+  intervals against the independent grid (`1201²`, ~45 s for the five).
+- *Cost.* Batched on `10^6` points after compilation: `D` `76.6 M/s`,
+  tangent gradient `24.1 M/s`, Riemannian Hessian `7.5 M/s`. A whole
+  `DPField` (critical points, walk, disk check, partition) `0.4-1.9 s` per
+  path.
+- *Corrections to the probe record above.* (i) At all four corners of
+  `3-5-6-7-3` the third curve is *tangent* to the TIR edge it meets
+  (gradient angle `0.0°` at the pair on `internal_2_tir` as at the pair on
+  `internal_1_tir`); the bigon between `internal_1_incidence_cosine` and
+  `internal_2_tir_discriminant` is a lens between two curves tangent at both
+  ends, outside $U_P$; every corner of the five fixtures bounds $U_P$ with
+  two edges, and a fourth margin (`exit_snell_discriminant`) vanishes there
+  as the square of the entry margin. (ii) An internal incidence cosine is a
+  great circle only when $\mathbf m\cdot\mathbf n_a = 0$ (`1-3-2`, `3-1-6`,
+  and the exit margin of `1-3`); on `3-5-6-7-3`, $\mathbf n_5\cdot\mathbf n_3
+  = -1/2$ and it is marched. (iii) On `3-1-6`, $\pm\mathbf n_M$ lie on the
+  entry great circle but `internal_1_tir_discriminant = -0.284` there:
+  outside the closure, not on $\partial U_P$. (iv) `3-5-6-7-3` has no fold
+  but does have an interior critical point, the non-smooth maximum
+  $D = \pi$ at normal incidence on face 3 (the slab set, not found by
+  Newton; Newton on the lattice finds nothing on any slab, where
+  $|\nabla D_P| = 2$). (v) The 3-5 domain's largest deviation is
+  `50.062619°` (the corners), not the `49.16°` of the `N = 200000` lattice.
+- *Accuracy limit.* $D_P$ is Hölder-½ across an exit-TIR curve, so values
+  on such a boundary piece carry `~1e-8` rad (the square root of the
+  `1e-16` margin residual) and the position of a loop extremum on it only
+  `~1e-4` rad; corners and interior points are Newton-exact.

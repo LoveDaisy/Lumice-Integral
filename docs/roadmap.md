@@ -25,6 +25,10 @@ Queue (tasks in `scratchpad/tasks.md`; dispatch order 20 ∥ 21, then 22 ∥ 24,
 | 23 | `lumice-area-weighting-recheck`: absolute scale after Lumice's projected-area fix — **done 2026-09-24** (`K_p = N_sym ȳ Ω_p / (S/2)`, column strip `0.998`, plate / Parry families) | Ice Halo #597 merged |
 | 24 | scrum `phase2-contour-quadrature` (M2): `dp-field-topology` → `dp-field-layer` → `s2-contour-extraction` → `s2-contour-quadrature` → `phase1-seeds-from-store` → `ch10-numerical-verdicts` | 21 |
 
+| 22 | `band-sum-scatter-renderer`: band sum organised by deviation, class accumulation, GEMM tiles ([phase2.md](phase2.md) §8) | 21 |
+| 23 | `lumice-area-weighting-recheck`: absolute scale after Lumice's projected-area fix | Ice Halo #597 merged |
+| 24 | scrum `phase2-contour-quadrature` (M2): `dp-field-topology` → `dp-field-layer` → `s2-contour-extraction` → `s2-contour-quadrature` → `phase1-seeds-from-store` → `ch10-numerical-verdicts` — `dp-field-layer` **done 2026-09-24** (`lumice_integral.dp_field`, [phase2.md](phase2.md) §3.1) | 21 |
+
 Deferred: the chapter-11 table (path classes × pose families) after 22 and
 M2; divergent light ([phase2.md](phase2.md) §9, backlog); finite solar disk;
 multiple wavelengths (one store per wavelength); GPU kernels. Dropped:
@@ -305,3 +309,25 @@ Moved to [overview.md](overview.md) §3.
   cites Lumice's equal-surface-area convention. Family comparisons need no
   `A_eff` folding; they do need the matched index (`1.3110129`): at the
   canonical `1.31` a sharp caustic edge moves by about half a pixel.
+
+- **2026-09-24**: the $D_P$ field layer is `lumice_integral.dp_field` (task
+  `dp-field-layer`, [phase2.md](phase2.md) §3.1 and appendix). A subpackage
+  (`field` / `boundary` / `certificate`) behind one public class `DPField`
+  (plus its `TopologyEscape`), so that the rank-0 refusal has one entry
+  point. $\partial U_P$ is found by walking it rather than by the explores'
+  entry-great-circle scan plus per-type intersections: the walk meets every
+  corner in order (TIR-TIR and deeper-reflection corners included) and its
+  closure is the completeness statement. Slab paths
+  ($|\mathbf n_a\cdot\tilde{\mathbf n}_b| = 1$) are evaluated by the closed
+  form $\angle(M\mathbf u, \mathbf u)$ (on `3-5-6-7-3` the crease is the entry
+  circle, where the optics chain's exit square root goes `NaN`). The
+  interval counts follow from the critical data under the disk / at most one
+  interior extremum reasoning; every other case raises `TopologyEscape`
+  (none of the five fixtures does). Liljequist: the 142° critical value is
+  not reproduced (`1-3-2` $\{0°, 115.6°\}$, `3-5-6-7-3`
+  $\{0°, 153.1°, 180°\}$), recorded as measured and left to the manual task
+  `verify-liljequist-face-numbering`; the parallel-face ("$\pm\mathbf n_M$")
+  class has both branches among the fixtures (outside the closure on
+  `3-1-6` / `1-3-2`, an interior cone maximum on `3-5-6-7-3`). The
+  explores' "transversal triple point / bigon" on `3-5-6-7-3` is corrected:
+  every corner is two-edged, the third curve tangent.

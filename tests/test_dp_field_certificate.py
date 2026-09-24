@@ -125,7 +125,7 @@ def test_escape_hatch_minimum_that_never_reaches_the_boundary_first(fields) -> N
 
 @pytest.mark.slow
 def test_partition_agrees_with_the_independent_grid() -> None:
-    """``scripts/verify_dp_field_intervals.py`` on the five fixtures (~45 s on an M2 Max)."""
+    """``scripts/verify_dp_field_intervals.py`` on the five fixtures (~2 min on an M2 Max)."""
     spec = importlib.util.spec_from_file_location("verify_dp_field_intervals", SCRIPT)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

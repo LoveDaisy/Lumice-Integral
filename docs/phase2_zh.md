@@ -59,6 +59,14 @@ $$
 
 标量场的水平集由其临界点支配：$\nabla D_P = 0$ 的点（有限个，由格点 seed 出发做 AD Newton 求得），加上 $D_P|_{\partial U_P}$ 的临界点，把 $\delta$ 轴切成若干区间，每个区间内水平集的拓扑不变。每个区间 marching 一次再 Newton 细化，就能得到*全部*分量；于是 Phase I 给不出的完整性证书（契约 C11：`completeness` 只是过程性的）变成了一个可检验的陈述。这是 Phase II 更大的收益，速度是较小的那一个。（**设计**；M2 子任务 `dp-field-topology`、`dp-field-layer`、`s2-contour-extraction`。）
 
+**已实现：场层**（`lumice_integral.dp_field`，任务 `dp-field-layer`；对外只有 `DPField` 与 `TopologyEscape`，秩 0 路径在 `DPField.build` 这一处被拒绝，无法绕过）。针对一条面序列，与太阳方向无关：
+
+- *求值。* 单位姿态下 $D_P(\mathbf u) = \angle(\Phi_P(-\mathbf u), -\mathbf u)$，批量（`jax.vmap`）给出值、切向梯度与 Riemannian Hessian $P(H - (\mathbf u\cdot\mathbf g)I)P$——曲率项使它与 $D_P$ 在球外如何延拓无关（缺了它，3-5 极小点会随延拓方式被读成极大或鞍点）。角度取 `atan2` 形式，与事件仓库的 `evaluate_fields` 一致到 `1e-12`。
+- *折叠前置分流。* $|\mathbf n_a\cdot M^{\mathsf T}\mathbf n_b| = 1$ 为平板（slab）：$D_P(\mathbf u) = \angle(M\mathbf u, \mathbf u)$，按此闭式求值，其临界集为 $\pm\mathbf n_M$ 与折痕 $\mathbf u\cdot\mathbf n_M = 0$；否则内部临界点由阻尼切空间 Newton 给出（对 Fibonacci 格点在 $U_P$ 内的点批量迭代），按 Hessian 分类。
+- *边界。* 沿 $\partial U_P$ 行走：沿当前 active margin 的零集前进、$U_P$ 在左侧，另一个 margin 变负处即角点（二分后做双 margin Newton，残差 `<= 2.3e-16`），再沿过该角点、能延续边界的唯一 margin 继续，直到回到第一个角点——行走闭合即该边界环完整的陈述。入射余弦 margin 的法向 $\mathbf m = R_{k-1}^{\mathsf T}\mathbf n_k$ 满足 $\mathbf m\cdot\mathbf n_a = 0$ 时它对 $\mathbf u$ 线性，按大圆闭式行走（每条路径运行时核验），否则与各判别式一样 marching。与前面某个 margin 恒等的（三次侧面反射、方位角步长相同 ±60°）先删去；沿整段为零的 margin（平方型，如 `3-5-6-7-3` 上 `exit_snell_discriminant` $=$ `entry_incidence_cosine`$^2$）记为重合。角点记录在该处为零的全部 margin、围出它的两条、其余与之相切或横截。
+- *区间划分。* 临界值取内部临界值、$D_P$ 沿边界环的极值与角点值。每个区间上开弧数等于 $\delta$ 沿边界环穿越次数的一半（对任意拓扑都成立）；闭环需要内部极值，至多一个时（非退化极小或平板锥点），从它的值到子水平集首次触及 $\partial U_P$ 的环上极值之间恰有一个闭环（在小圆环上核验）。其余情形——$U_P$ 或其补集在格点上不连通、多个内部临界点、鞍点、折痕穿过 $U_P$、子水平集分量在边界上新生——抛 `TopologyEscape`，不猜。
+- *核验。* `scripts/verify_dp_field_intervals.py` 在稠密网格上经 `evaluate_fields` 重算每个区间的计数：闭环取不触及边界的子/超水平集区域，开弧取沿追踪出的网格边界（经二分移到 $\partial U_P$ 上）的穿越次数（只用节点值不行：$D_P$ 离开 exit TIR 曲线按平方根下降）。五条 fixture 全部区间一致；实测值见英文版附录。
+
 ### 3.2 分层不变性：一个晕共享什么、变化什么
 
 像素的纤维 $\{R : R\,\Phi_P(-R^{-1}\hat{\mathbf s}) = \mathbf d\}$ 只经由 $\Phi_P$ 依赖于光路。于是：
@@ -88,8 +96,8 @@ M2 scrum 依次构建：$D_P$ 在 $U_P$ 上的拓扑（从格点 seed 出发用 
 
 这一结构提示的 fixture：
 
-- *Liljequist*（写作第 8 章）：`1-3-2` 与 `3-5-6-7-3` 的 $\Phi$ 相同（面 3/6 所在平面的镜面；三次在 ±60° 平面上的反射合成为一次），窗口不同。142° 锐边（$= 120° +$ 最小偏向 21.84°）是 $D_P$ 的一个临界值，与晶体形状无关；窄峰是 `3-5-6-7-3` 的窗口，随截面移动。一个球面上的两张图。
-- *幻日环*：$D_P(\mathbf u) = \angle(M\mathbf u, \mathbf u)$ 只在 $\pm\mathbf n_M$ 处 $\nabla D_P = 0$，所以环上**没有 fold**；环上的亮度变化全部来自窗口层。对板晶，环上方位角是晶体方位角的线性函数，所以剖面是同一个窗口函数的若干平移叠加（棱柱的三个镜面）：这是一个不受 Jacobian 干扰、检验窗口求和与搬运层的干净测试。
+- *Liljequist*（写作第 8 章）：`1-3-2` 与 `3-5-6-7-3` 的 $\Phi$ 相同（面 3/6 所在平面的镜面；三次在 ±60° 平面上的反射合成为一次），窗口不同。142° 锐边（$= 120° +$ 最小偏向 21.84°）是 $D_P$ 的一个临界值，与晶体形状无关；窄峰是 `3-5-6-7-3` 的窗口，随截面移动。一个球面上的两张图。*实测（任务 `dp-field-layer`）：* 两者都是 $M$ 相同的平板，场逐点相等，但 $U_P$ 不同，其上的临界值也不同：`1-3-2` 为 $\{0°, 115.607°\}$，`3-5-6-7-3` 为 $\{0°, 153.070°, 180°\}$（面 3 正入射在域内，即后向散射锥点）。按本仓库的面编号两者都没有 142°；人工核对见任务 `verify-liljequist-face-numbering`。
+- *幻日环*：$D_P(\mathbf u) = \angle(M\mathbf u, \mathbf u)$ 只在 $\pm\mathbf n_M$ 处 $\nabla D_P = 0$（`3-1-6` 上两者都在 entry 大圆上、但在 $U_P$ 闭包之外，那里某次内反射 TIR 失败：根本没有内部临界点），所以环上**没有 fold**；环上的亮度变化全部来自窗口层。对板晶，环上方位角是晶体方位角的线性函数，所以剖面是同一个窗口函数的若干平移叠加（棱柱的三个镜面）：这是一个不受 Jacobian 干扰、检验窗口求和与搬运层的干净测试。
 - *22° 晕*：fold；见 §10。
 
 **为什么完整性证书很少需要鞍点分支。** 对六棱柱路径空间的系统搜索（entry 面取 `{1,3}`，
