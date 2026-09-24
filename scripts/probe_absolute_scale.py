@@ -111,6 +111,35 @@ def pixel_solid_angle(row: int, column: int, render: dict[str, Any]) -> float:
     return cos_theta**3 / scale**2
 
 
+def pixel_solid_angles(render: dict[str, Any]) -> np.ndarray:
+    """``(H, W)`` linear-lens pixel solid angles, vectorised (:func:`pixel_solid_angle` for every pixel).
+
+    Uses the axis-aligned tangent-plane shortcut (``cos_theta = 1 / sqrt(1 + x^2 + y^2)``) instead of
+    :func:`~lumice_integral.camera.linear_pixel_sky_direction`'s per-pixel rotation, which is equivalent for
+    this camera model but avoids a Python loop over every pixel; ``tests/test_probe_absolute_scale.py``
+    checks it against the scalar form pixel by pixel.
+    """
+    width, height = int(render["width"]), int(render["height"])
+    scale = linear_scale(render["fov_deg"], width, height)
+    x = ((np.arange(width) + 0.5) - width / 2.0) / scale
+    y = ((np.arange(height) + 0.5) - height / 2.0) / scale
+    cos_theta = 1.0 / np.sqrt(1.0 + x[None, :] ** 2 + y[:, None] ** 2)
+    return cos_theta**3 / scale**2
+
+
+def merged_relative_noise(a: np.ndarray, b: np.ndarray) -> float:
+    """Relative noise of the *merged* pair of i.i.d. runs ``a``, ``b`` of the same quantity.
+
+    ``rel = (a - b) / (0.5 * (a + b))``, ``std(rel) / 2`` (see
+    ``scripts/compare_strip_v2.py::merge_lumice_float`` for the derivation: the run-to-run relative
+    difference has standard deviation ``sqrt(2)`` times the single-run relative noise, and the merged
+    (averaged) relative noise is half of that difference's std). The single shared implementation for
+    this quantity (a56); do not re-derive it per caller.
+    """
+    rel = (a - b) / (0.5 * (a + b))
+    return float(np.std(rel) / 2.0)
+
+
 def load_run(run_dir: Path) -> tuple[np.ndarray, dict[str, Any], str]:
     arr = np.load(run_dir / "img_01.npy")
     meta = json.loads((run_dir / "img_01.json").read_text())
@@ -267,8 +296,7 @@ def main(argv: list[str] | None = None) -> None:
         runs_arr = np.array([r["lumice_per_ray_runs"] for r in sel])
         noise = None
         if runs_arr.shape[1] >= 2:
-            rel = (runs_arr[:, 0] - runs_arr[:, 1]) / (0.5 * (runs_arr[:, 0] + runs_arr[:, 1]))
-            noise = float(np.std(rel) / 2.0)  # merged relative noise, see compare_strip_v2.merge_lumice_float
+            noise = merged_relative_noise(runs_arr[:, 0], runs_arr[:, 1])
         lumice = np.array([r["lumice_per_ray"] for r in sel])
         bright = lumice >= args.bright_floor * lumice.max()
         k_bright = np.array([r["k_pixel"] for r, b in zip(sel, bright) if b])

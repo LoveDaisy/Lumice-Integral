@@ -19,8 +19,8 @@ fitted.  Reported, per family render:
   maximum: the per-pixel ratio (median, mean, standard error) and the entry
   area it implies, ``ybar Omega_p V / (raw / E)`` (predicted: ``S / 2`` on
   every pixel, the ratio's reciprocal times ``S / 2``), next to the expected
-  per-pixel noise (Lumice: ``|x1 - x2| / (x1 + x2)``, the merged relative
-  noise of two i.i.d. seeds; Lumice Integral: ``1 / sqrt(K_eff)`` from the
+  per-pixel noise (Lumice: ``probe_absolute_scale.merged_relative_noise`` of
+  the two i.i.d. seeds; Lumice Integral: ``1 / sqrt(K_eff)`` from the
   band-sum ``pixels.csv``);
 - ``regions``: the same flux ratio per image half (top / bottom, left /
   right), so a pose-dependent factor between two halo features shows up as
@@ -50,22 +50,11 @@ from typing import Any
 
 import numpy as np
 
-from lumice_integral.camera import linear_scale
 from lumice_integral.canonical_scene import canonical_crystal
 from lumice_integral.strip_io import read_strip
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from probe_absolute_scale import YBAR_550, load_run, total_surface_area  # noqa: E402
-
-
-def pixel_solid_angles(render: dict[str, Any]) -> np.ndarray:
-    """``(H, W)`` linear-lens pixel solid angles ``cos^3(theta) / scale^2`` (``probe_absolute_scale.pixel_solid_angle``)."""
-    width, height = int(render["width"]), int(render["height"])
-    scale = linear_scale(render["fov_deg"], width, height)
-    x = ((np.arange(width) + 0.5) - width / 2.0) / scale
-    y = ((np.arange(height) + 0.5) - height / 2.0) / scale
-    cos_theta = 1.0 / np.sqrt(1.0 + x[None, :] ** 2 + y[:, None] ** 2)
-    return cos_theta**3 / scale**2
+from probe_absolute_scale import YBAR_550, load_run, merged_relative_noise, pixel_solid_angles, total_surface_area  # noqa: E402
 
 
 def check_camera(render: dict[str, Any], config: dict[str, Any]) -> None:
@@ -89,6 +78,8 @@ def flux_ratio(measured: np.ndarray, predicted: np.ndarray, mask: np.ndarray) ->
 
 
 def profile_rms(a: np.ndarray, b: np.ndarray, floor: float) -> tuple[float, int]:
+    if a.max() <= 0 or b.max() <= 0:
+        raise ValueError("profile_rms: a profile's peak is <= 0, nothing to max-normalise")
     na, nb = a / a.max(), b / b.max()
     lit = (na > floor) | (nb > floor)
     return float(np.sqrt(np.mean((na[lit] - nb[lit]) ** 2))), int(lit.sum())
@@ -163,8 +154,7 @@ def main(argv: list[str] | None = None) -> None:
     }
     if len(per_run) >= 2:
         x1, x2 = per_run[0][bright], per_run[1][bright]
-        lumice_noise = np.abs(x1 - x2) / (x1 + x2)
-        out["bright"]["lumice_merged_relative_noise_rms"] = float(np.sqrt(np.mean(lumice_noise**2)))
+        out["bright"]["lumice_merged_relative_noise_rms"] = merged_relative_noise(x1, x2)
         out["bright"]["expected_ratio_relative_std"] = float(np.sqrt(out["bright"]["lumice_merged_relative_noise_rms"] ** 2 + out["bright"]["li_relative_noise_rms"] ** 2))
     h, w = value.shape
     halves = {

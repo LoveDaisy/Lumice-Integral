@@ -65,3 +65,13 @@ def test_pixel_constant_depends_on_the_pixel_through_its_solid_angle_only(probe)
     for row, column in ((150, 106), (300, 126), (450, 146)):
         k = probe.pixel_constant(row, column, render, n_sym=12, surface_area=s)
         assert k / centre == pytest.approx(probe.pixel_solid_angle(row, column, render) / LUMICE_SIDECAR_AXIS_SOLID_ANGLE, rel=1e-6)
+
+
+def test_merged_relative_noise_matches_its_own_formula(probe):
+    rng = np.random.default_rng(0)
+    a = 100.0 + rng.normal(0, 5.0, 5000)
+    b = 100.0 + rng.normal(0, 5.0, 5000)
+    expected = float(np.std((a - b) / (0.5 * (a + b))) / 2.0)
+    assert probe.merged_relative_noise(a, b) == pytest.approx(expected, rel=1e-12)
+    assert probe.merged_relative_noise(a, b) == pytest.approx(probe.merged_relative_noise(b, a), rel=1e-12)
+    assert probe.merged_relative_noise(a, a) == pytest.approx(0.0, abs=1e-12)
