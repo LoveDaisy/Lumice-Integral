@@ -497,6 +497,8 @@ def relative_difference(a: np.ndarray, b: np.ndarray) -> np.ndarray:
 
 def compare_results(new: list, old: list, rows: tuple[int, int] | None = None) -> dict[str, Any]:
     """Two pixel lists of one scene (``BandSumPixelResult`` or ``pixels.csv`` dicts), pixel by pixel."""
+    if not new:
+        raise ValueError("compare_results: 'new' is empty, nothing to compare")
     get = (lambda r, k: r[k]) if isinstance(new[0], dict) else (lambda r, k: getattr(r, k))  # noqa: E731
     fields = {k: (np.array([get(r, k) for r in new]), np.array([get(r, k) for r in old])) for k in ("value", "K", "K_rho_pos", "K_eff")}
     value_new, value_old = fields["value"]

@@ -73,7 +73,7 @@ def camera_rotation(view: Mapping[str, float] | None) -> np.ndarray:
     )
 
 
-@functools.lru_cache(maxsize=64)
+@functools.lru_cache(maxsize=64)  # far more than the distinct views any single render or process touches
 def _camera_rotation(azimuth: float, elevation: float, roll: float) -> np.ndarray:
     # Every pixel direction of a render asks for the same rotation (three Rodrigues matrices, most of a
     # pixel's geometry time); the same arithmetic once per view, so the directions are unchanged bit for bit.

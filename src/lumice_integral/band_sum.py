@@ -488,7 +488,7 @@ SCATTER_PIXEL_BLOCK = 32
 _AXIS_INDEX = {"e1": 0, "e2": 1, "e3": 2}
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, eq=False)
 class PixelBands:
     """The pixel side of the scatter form, one entry per pixel (:func:`pixel_bands`).
 
@@ -529,7 +529,7 @@ def pixel_bands(pixels: Sequence[tuple[int, int]], sun: np.ndarray, render: Mapp
     return PixelBands(rows, columns, delta, lo, hi, zenith)
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(eq=False)
 class ScatterSums:
     """Per-pixel accumulators of the scatter form, aligned with a :class:`PixelBands`."""
 
@@ -919,8 +919,8 @@ __all__ = [
     "band_sum_estimate",
     "band_sum_pixel",
     "class_band_sum_pixel",
-    "kish_k_eff",
     "deviation_segments",
+    "kish_k_eff",
     "pixel_band",
     "pixel_bands",
     "prepare_stores",
