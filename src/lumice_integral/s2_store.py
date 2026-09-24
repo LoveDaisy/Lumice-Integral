@@ -72,7 +72,20 @@ to ``5.5e-3`` on the worst pixel -- comparable to the float64 estimate's own
 median error against the Phase I reference (``7.1e-3``), so float32 is not
 the default (2026-09-23, task ``s2-event-store``).
 
-Disk cache: ``<base_dir>/<cache_key>/events.npz`` + ``provenance.json``.
+Independent of the sun (schema 3, task ``s2-store-schema-3``): the
+arrays depend on the crystal, the ``Phi`` group, the refractive index and
+the sampling only, never on ``s_hat``, so one store serves every sun
+direction.  The build aligns ``R u = s_hat`` to one fixed reference
+direction (``_REFERENCE_SUN_DIRECTION``) and :class:`S2StoreSpec` records
+no sun.
+
+Disk cache: ``<base_dir>/<cache_key>/<name>.npy`` per array (``D``, ``u``,
+``phi``, ``w``, ``iw``) + ``provenance.json`` with each array's SHA-256 and
+size.  :meth:`S2EventStore.load` reads them (hash checked) or maps them
+read-only (``mmap_mode="r"``, size checked; :meth:`S2EventStore.verify`
+hashes on demand).  :func:`build_or_load` builds a missing store bucket by
+bucket in ``D`` straight into the cache (:func:`_build_into`), so the build
+never holds all events in memory.
 The key hashes the build parameters (:meth:`S2StoreSpec.build_parameters`)
 and ``SCHEMA_VERSION``; ``SCHEMA_VERSION`` is bumped by hand when the build
 algorithm changes.  The git commit is recorded in the provenance for
@@ -81,7 +94,7 @@ large store (``N = 1e8`` takes minutes to hours) must not be invalidated by
 unrelated commits.  Unlike :func:`.prescan.build_or_load_prescan_table`
 (which rebuilds on mismatch), :func:`build_or_load` refuses a cache whose
 recorded parameters differ from the request, and :meth:`S2EventStore.load`
-refuses an ``events.npz`` whose SHA-256 differs from the recorded one --
+refuses an array whose SHA-256 differs from the recorded one --
 neither silently rebuilds nor silently reuses.
 
 Nothing here imports or calls Lumice.
@@ -95,6 +108,8 @@ import hashlib
 import json
 import platform
 import resource
+import shutil
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
@@ -102,17 +117,19 @@ from typing import Any, Callable, Mapping, Sequence
 import numpy as np
 
 from . import geometry, optics
-from .camera import incident_direction_from_sun
+from .camera import incident_direction_from_sun, sun_direction
 from .geometry import HexPrism, Polyhedron
 from .optics import normalize_faces, path_id_of
 from .path_class import phi_key
 from .provenance import git_commit, sha256_of
 
-# 2: u = R^-1 s_hat (toward the sun), task notation-alignment; 1: u = R^-1 s (propagation), refused on load.
-SCHEMA_VERSION = 2
+# 3: no sun direction in the spec (the arrays do not depend on it), one .npy per array, task s2-store-schema-3;
+# 2: u = R^-1 s_hat (toward the sun) with the sun direction recorded, task notation-alignment;
+# 1: u = R^-1 s (propagation).  Schemas 1 and 2 are refused on load.
+SCHEMA_VERSION = 3
 CHUNK = 250_000  # rotations per batch call: ~0.5 GB transient in the eager jax.vmap (task 13/14 value)
 DEFAULT_CACHE_DIR = Path("artifacts/s2-store")
-EVENTS_FILE = "events.npz"
+DEFAULT_BUCKET_COUNT = 1024  # equal-width D buckets of the build (0.18 deg on [0, pi]); an I/O knob, not in the key
 PROVENANCE_FILE = "provenance.json"
 FIBONACCI_SAMPLING = (
     "antipodal Fibonacci lattice on S^2 (u_i = -f_i, f_i the equal-area spiral z_i = 1 - (2i+1)/N, "
@@ -122,6 +139,14 @@ ROTATION_PER_POINT = (
     "R = [s_hat, p_s, s_hat x p_s][u, p_u, u x p_u]^T (any R with R u = s_hat, s_hat toward the sun; section 4.1(a))"
 )
 RANDOM_SEED = 20260923
+# The reference ``s_hat`` of the build (``R u = s_hat``).  A store does not depend on the sun: validity, ``A``,
+# ``T``, ``phi`` and ``D`` depend on the pose only through ``u = R^-1 s_hat`` (section 4.1(a); measured in
+# ``docs/phase2.md`` section 1.1 and pinned by ``tests/test_s2_store.py``), so any direction gives the same events
+# to round-off.  This one is numerically the canonical sun (altitude 15 deg, azimuth 0) -- a coincidence chosen to
+# keep the schema 2 canonical builds bit for bit, not a dependence on the canonical scene (nothing imported from it).
+REFERENCE_SUN_ALTITUDE_DEG = 15.0
+REFERENCE_SUN_AZIMUTH_DEG = 0.0
+_REFERENCE_SUN_DIRECTION = sun_direction(REFERENCE_SUN_ALTITUDE_DEG, REFERENCE_SUN_AZIMUTH_DEG)
 DTYPES = ("float64", "float32")
 
 Faces = tuple[int, ...]
@@ -385,7 +410,6 @@ class S2StoreSpec:
     members: tuple[Faces, ...]
     crystal: Mapping[str, Any]
     refractive_index: float
-    sun_direction: tuple[float, float, float]  # s_hat, toward the sun
     n: int
     sampling: str = FIBONACCI_SAMPLING
     deviation_window: tuple[float, float] | None = None
@@ -403,7 +427,6 @@ class S2StoreSpec:
         object.__setattr__(self, "members", members)
         object.__setattr__(self, "crystal", dict(self.crystal))
         object.__setattr__(self, "refractive_index", float(self.refractive_index))
-        object.__setattr__(self, "sun_direction", tuple(float(v) for v in self.sun_direction))
         object.__setattr__(self, "n", int(self.n))
         object.__setattr__(self, "deviation_window", None if window is None else (float(window[0]), float(window[1])))
 
@@ -418,7 +441,6 @@ class S2StoreSpec:
             "members": [list(m) for m in self.members],
             "crystal": dict(self.crystal),
             "refractive_index": self.refractive_index,
-            "sun_direction": list(self.sun_direction),
             "N": self.n,
             "sampling": self.sampling,
             "deviation_window_rad": None if self.deviation_window is None else list(self.deviation_window),
@@ -434,7 +456,6 @@ class S2StoreSpec:
             members=tuple(tuple(m) for m in parameters["members"]),
             crystal=parameters["crystal"],
             refractive_index=parameters["refractive_index"],
-            sun_direction=tuple(parameters["sun_direction"]),
             n=parameters["N"],
             sampling=parameters["sampling"],
             deviation_window=None if window is None else tuple(window),
@@ -491,45 +512,87 @@ class S2EventStore:
         return S2Events(e.u[lo:hi], e.phi[lo:hi], e.D[lo:hi], e.w[lo:hi], None if e.iw is None else e.iw[lo:hi])
 
     def save(self, base_dir: Path) -> Path:
-        """Write ``<base_dir>/<cache_key>/events.npz`` then ``provenance.json``; never overwrites."""
+        """Write ``<base_dir>/<cache_key>/<name>.npy`` per array then ``provenance.json``; never overwrites."""
         directory = Path(base_dir) / self.spec.cache_key()
-        events_path, provenance_path = directory / EVENTS_FILE, directory / PROVENANCE_FILE
-        for path in (events_path, provenance_path):
+        arrays = self.events.arrays()
+        for path in [directory / f"{name}.npy" for name in arrays] + [directory / PROVENANCE_FILE]:
             if path.exists():
                 raise FileExistsError(f"{path} exists; refusing to overwrite an event store")
         directory.mkdir(parents=True, exist_ok=True)
-        np.savez(events_path, **self.events.arrays())
-        provenance = {
-            "build": self.spec.build_parameters(),
-            "cache_key": self.spec.cache_key(),
-            "git_commit": git_commit(None),
-            "arrays": {"file": EVENTS_FILE, "sha256": sha256_of(events_path)},
-            "diagnostics": dict(self.diagnostics),
-            "created": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
-        }
-        provenance_path.write_text(json.dumps(provenance, indent=2) + "\n")
+        for name, array in arrays.items():
+            np.save(directory / f"{name}.npy", array)
+        _write_provenance(directory, self.spec, list(arrays), self.diagnostics)
         return directory
 
     @classmethod
-    def load(cls, directory: Path) -> S2EventStore:
-        """Read a saved store; refuses another ``SCHEMA_VERSION`` and an ``events.npz`` whose SHA-256 differs."""
+    def load(cls, directory: Path, *, mmap_mode: str | None = None) -> S2EventStore:
+        """Read a saved store; refuses another ``SCHEMA_VERSION``.
+
+        ``mmap_mode=None`` (default) reads every array into memory after
+        checking its SHA-256 against the provenance (:meth:`verify`), so a
+        modified array is refused.  ``mmap_mode="r"`` maps the arrays
+        read-only (``numpy.memmap``; :meth:`band_slice` stays a view that
+        touches only the pages of its band) and checks only each file's size
+        against the recorded one: the content is deliberately *not* hashed,
+        which would read the whole store and defeat the mapping.  A consumer
+        that needs the content guarantee on that path calls :meth:`verify`
+        once (task ``s2-store-schema-3``).
+        """
+        if mmap_mode not in (None, "r"):
+            raise ValueError(f"mmap_mode must be None or 'r' (a store is read-only), not {mmap_mode!r}")
         directory = Path(directory)
-        provenance = json.loads((directory / PROVENANCE_FILE).read_text())
-        schema = provenance["build"].get("schema_version")
-        if schema != SCHEMA_VERSION:
-            raise ValueError(
-                f"{directory}: schema_version {schema} is not {SCHEMA_VERSION} (schema 1 stored u = R^-1 s with the "
-                "propagation direction s, schema 2 u = R^-1 s_hat); rebuild the store, it is not converted silently"
-            )
-        events_path = directory / EVENTS_FILE
-        digest = sha256_of(events_path)
-        if digest != provenance["arrays"]["sha256"]:
-            raise ValueError(f"{events_path}: SHA-256 {digest} differs from the recorded {provenance['arrays']['sha256']}")
-        with np.load(events_path) as data:
-            arrays = {key: data[key] for key in data.files}
+        provenance = _read_provenance(directory)
+        records = provenance["arrays"]
+        if mmap_mode is None:
+            cls.verify(directory)
+        else:
+            for name, record in records.items():
+                size = (directory / record["file"]).stat().st_size
+                if size != record["bytes"]:
+                    raise ValueError(f"{directory / record['file']}: {size} bytes, the provenance records {record['bytes']}")
+        arrays = {name: np.load(directory / record["file"], mmap_mode=mmap_mode) for name, record in records.items()}
         events = S2Events(arrays["u"], arrays["phi"], arrays["D"], arrays["w"], arrays.get("iw"))
         spec = S2StoreSpec.from_build_parameters(provenance["build"])
         return cls(spec, events, provenance["diagnostics"])
+
+    @staticmethod
+    def verify(directory: Path) -> None:
+        """Full integrity check of a saved store: every array's SHA-256 against the provenance, else ``ValueError``."""
+        directory = Path(directory)
+        for name, record in _read_provenance(directory)["arrays"].items():
+            path = directory / record["file"]
+            digest = sha256_of(path)
+            if digest != record["sha256"]:
+                raise ValueError(f"{path}: SHA-256 of array {name!r} is {digest}, the provenance records {record['sha256']}")
+
+
+def _read_provenance(directory: Path) -> dict[str, Any]:
+    provenance = json.loads((directory / PROVENANCE_FILE).read_text())
+    schema = provenance["build"].get("schema_version")
+    if schema != SCHEMA_VERSION:
+        raise ValueError(
+            f"{directory}: schema_version {schema} is not {SCHEMA_VERSION} (schema 1 stored u = R^-1 s with the "
+            "propagation direction s; schema 2 u = R^-1 s_hat with the sun direction in the key and one events.npz; "
+            "schema 3 is independent of the sun, one .npy per array); rebuild the store, it is not converted"
+        )
+    return provenance
+
+
+def _write_provenance(directory: Path, spec: S2StoreSpec, names: Sequence[str], diagnostics: Mapping[str, Any]) -> None:
+    """``provenance.json`` of the arrays ``<name>.npy`` already written in ``directory`` (SHA-256 and size each)."""
+    arrays = {}
+    for name in names:
+        path = directory / f"{name}.npy"
+        arrays[name] = {"file": path.name, "sha256": sha256_of(path), "bytes": path.stat().st_size}
+    provenance = {
+        "build": spec.build_parameters(),
+        "cache_key": spec.cache_key(),
+        "git_commit": git_commit(None),
+        "arrays": arrays,
+        "diagnostics": dict(diagnostics),
+        "created": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
+    (directory / PROVENANCE_FILE).write_text(json.dumps(provenance, indent=2) + "\n")
 
 
 def events_from_schema1(arrays: Mapping[str, np.ndarray]) -> dict[str, np.ndarray]:
@@ -545,48 +608,47 @@ def events_from_schema1(arrays: Mapping[str, np.ndarray]) -> dict[str, np.ndarra
     return out
 
 
-def build_event_store(
-    crystal: HexPrism,
-    refractive_index: float,
-    members: Sequence[Sequence[int]],
-    n: int,
-    *,
-    sun_direction: np.ndarray,
-    sampler: PointSampler | None = None,
-    sampling: str = FIBONACCI_SAMPLING,
-    deviation_window: tuple[float, float] | None = None,
-    dtype: str = "float64",
-    run_checks: bool = True,
-    log: Callable[[str], None] | None = None,
-) -> S2EventStore:
-    """Event store of ``members`` for the sun direction ``s_hat``: ``w > 0`` events sorted by ``D`` (``[lo, hi]`` rad only, if given).
+def _bucket_edges(deviation_window: tuple[float, float] | None, bucket_count: int) -> np.ndarray:
+    """``bucket_count + 1`` equal-width edges of the deviation domain (``[0, pi]`` or the window), data independent."""
+    lo, hi = (0.0, np.pi) if deviation_window is None else deviation_window
+    return np.linspace(lo, hi, bucket_count + 1)
 
-    ``sampler`` replaces :func:`store_lattice`, returns points ``u`` (toward
-    the sun, body frame) and must come with its own
-    ``sampling`` description (it enters the cache key); its inverse weights
-    are stored as ``iw``.  Several ``members`` must share one
-    :func:`.path_class.phi_key`.  ``run_checks`` runs the section 4.1(a)
-    self-checks (psi invariance and gate coverage before the build, the
-    Haar mean after it) and raises if psi invariance fails.
+
+def _write_array_file(path: Path, dtype: str, shape: tuple[int, ...]):
+    """Open ``path`` for writing a C-order ``.npy`` of ``shape`` sequentially (the header ``np.save`` writes)."""
+    handle = path.open("wb")
+    header = {"descr": np.lib.format.dtype_to_descr(np.dtype(dtype)), "fortran_order": False, "shape": shape}
+    np.lib.format.write_array_header_1_0(handle, header)
+    return handle
+
+
+def _build_into(
+    directory: Path,
+    spec: S2StoreSpec,
+    crystal: HexPrism,
+    sampler: PointSampler | None,
+    bucket_count: int,
+    run_checks: bool,
+    log: Callable[[str], None] | None,
+) -> dict[str, Any]:
+    """Build the arrays of ``spec`` as ``<name>.npy`` in the existing ``directory``; returns the diagnostics.
+
+    Deviation buckets.  Kept rows ``(D, u, phi, w[, iw])`` are appended, in
+    chunk order, to one scratch file per bucket of the fixed equal-width
+    edges :func:`_bucket_edges`; afterwards each bucket is read back alone,
+    sorted with a stable argsort on ``D`` and appended to the final files,
+    buckets in increasing ``D``.  The buckets are disjoint consecutive
+    ``D`` intervals, so equal ``D`` values share a bucket and every bucket
+    holds its rows in their global order: the concatenation is the stable
+    argsort of all rows, the same permutation as sorting everything at
+    once (bucket sort; pinned by ``tests/test_s2_store.py`` against
+    ``bucket_count=1``).  Only one chunk of fields or one bucket is in
+    memory, never all kept events.  ``bucket_count`` is an I/O knob and not
+    a build parameter: it changes neither the arrays nor the cache key.
     """
-    if (sampler is None) != (sampling == FIBONACCI_SAMPLING):
-        raise ValueError("a custom sampler needs its own sampling description, and the Fibonacci lattice the default one")
-    sun = np.asarray(sun_direction, dtype=np.float64)
-    index = float(refractive_index)
-    spec = S2StoreSpec(
-        members=tuple(tuple(m) for m in members),
-        crystal=crystal_description(crystal),
-        refractive_index=index,
-        sun_direction=tuple(sun),
-        n=n,
-        sampling=sampling,
-        deviation_window=deviation_window,
-        dtype=dtype,
-    )
-    members = spec.members
-    keys = {phi_key(crystal, m) for m in members}
-    if len(keys) != 1:
-        raise ValueError(f"members {spec.path_id} do not share one phi_key: {sorted(keys)}")
+    if bucket_count < 1:
+        raise ValueError("bucket_count must be positive")
+    sun, index, members, n = _REFERENCE_SUN_DIRECTION, spec.refractive_index, spec.members, spec.n
     checks: dict[str, Any] = {}
     if run_checks:
         checks["psi_invariance"] = self_check_psi_invariance(sun, crystal, index, members)
@@ -597,54 +659,152 @@ def build_event_store(
             log("self-checks: " + json.dumps(checks))
 
     start = time.perf_counter()
-    kept: dict[str, list[np.ndarray]] = {"u": [], "phi": [], "D": [], "w": []}
+    edges = _bucket_edges(spec.deviation_window, bucket_count)
+    counts = np.zeros(bucket_count, dtype=np.int64)
+    columns = {"D": slice(0, 1), "u": slice(1, 4), "phi": slice(4, 7), "w": slice(7, 8)}
     w_sum = 0.0
     valid_count = 0
-    for first in range(0, n, CHUNK):
-        stop = min(first + CHUNK, n)
-        if sampler is None:
-            u, inverse_weight = store_lattice(n, first, stop), None
-        else:
-            u, inverse_weight = sampler(first, stop)
-        fields = evaluate_fields(align_rotations(u, sun), sun, crystal, index, members)
-        w = fields["w"]
-        valid_count += int(np.count_nonzero(fields["valid"]))
-        keep = w > 0.0
-        if deviation_window is not None:
-            keep &= (fields["D"] >= spec.deviation_window[0]) & (fields["D"] <= spec.deviation_window[1])
-        w_sum += float(np.sum(w if inverse_weight is None else w * inverse_weight))
-        kept["u"].append(u[keep])
-        kept["phi"].append(fields["phi"][keep])
-        kept["D"].append(fields["D"][keep])
-        kept["w"].append(w[keep])
-        if inverse_weight is not None:
-            kept.setdefault("iw", []).append(inverse_weight[keep])
-    deviation = np.concatenate(kept.pop("D"))
-    order = np.argsort(deviation, kind="stable")
-    arrays = {"D": deviation[order]}
-    del deviation
-    for key in list(kept):  # one key at a time keeps the peak at about one extra copy of one array
-        arrays[key] = np.concatenate(kept.pop(key))[order]
-    if dtype != "float64":
-        arrays = {key: np.ascontiguousarray(value, dtype=dtype) for key, value in arrays.items()}
+    with tempfile.TemporaryDirectory(prefix=".buckets-", dir=directory) as scratch:
+        bucket_path = [Path(scratch) / f"{b:05d}.f64" for b in range(bucket_count)]
+        for first in range(0, n, CHUNK):
+            stop = min(first + CHUNK, n)
+            if sampler is None:
+                u, inverse_weight = store_lattice(n, first, stop), None
+            else:
+                u, inverse_weight = sampler(first, stop)
+            if first == 0 and inverse_weight is not None:
+                columns["iw"] = slice(8, 9)
+            if (inverse_weight is not None) != ("iw" in columns):
+                raise ValueError("a sampler must return inverse weights for every chunk or for none")
+            fields = evaluate_fields(align_rotations(u, sun), sun, crystal, index, members)
+            w = fields["w"]
+            valid_count += int(np.count_nonzero(fields["valid"]))
+            keep = w > 0.0
+            if spec.deviation_window is not None:
+                keep &= (fields["D"] >= spec.deviation_window[0]) & (fields["D"] <= spec.deviation_window[1])
+            w_sum += float(np.sum(w if inverse_weight is None else w * inverse_weight))
+            parts = [fields["D"][keep, None], u[keep], fields["phi"][keep], w[keep, None]]
+            if inverse_weight is not None:
+                parts.append(inverse_weight[keep, None])
+            rows = np.concatenate(parts, axis=1)
+            del fields, parts
+            bucket = np.searchsorted(edges[1:-1], rows[:, 0], side="right")
+            order = np.argsort(bucket, kind="stable")  # chunk order kept inside each bucket
+            chunk_counts = np.bincount(bucket, minlength=bucket_count)
+            offset = 0
+            sorted_rows = rows[order]
+            for b in range(bucket_count):
+                size = int(chunk_counts[b])
+                if size:
+                    with bucket_path[b].open("ab") as handle:
+                        handle.write(sorted_rows[offset : offset + size].tobytes())
+                    offset += size
+            counts += chunk_counts
+            del rows, sorted_rows, order, bucket
+
+        kept_count = int(counts.sum())
+        width = 9 if "iw" in columns else 8
+        handles = {
+            name: _write_array_file(directory / f"{name}.npy", spec.dtype, (kept_count, 3) if name in ("u", "phi") else (kept_count,))
+            for name in columns
+        }
+        d_range = None
+        try:
+            for b in np.flatnonzero(counts):
+                rows = np.fromfile(bucket_path[b], dtype=np.float64).reshape(-1, width)
+                bucket_path[b].unlink()
+                rows = rows[np.argsort(rows[:, 0], kind="stable")]
+                d_range = [float(rows[0, 0]) if d_range is None else d_range[0], float(rows[-1, 0])]
+                for name, column in columns.items():
+                    values = rows[:, column] if name in ("u", "phi") else rows[:, column.start]
+                    handles[name].write(np.ascontiguousarray(values, dtype=spec.dtype).tobytes())
+                del rows
+        finally:
+            for handle in handles.values():
+                handle.close()
     wall = time.perf_counter() - start
-    events = S2Events(arrays["u"], arrays["phi"], arrays["D"], arrays["w"], arrays.get("iw"))
 
     if run_checks:
         checks["haar_mean"] = self_check_haar_mean(sun, crystal, index, w_sum / n, members)
         if log is not None:
             log("haar mean check: " + json.dumps(checks["haar_mean"]))
-    kept_count = len(events)
-    diagnostics = {
+    return {
         "kept_events": kept_count,
         "valid_domain_points": valid_count,
         "kept_fraction": kept_count / n,
         "fibonacci_mean_w": w_sum / n,
-        "D_range_deg": [float(np.degrees(events.D[0])), float(np.degrees(events.D[-1]))] if kept_count else None,
+        "D_range_deg": None if d_range is None else [float(np.degrees(d_range[0])), float(np.degrees(d_range[1]))],
         "wall_clock_s": wall,
         "max_rss_mb_process": max_rss_mb(),
+        "bucket_count": bucket_count,
+        "largest_bucket_events": int(counts.max()),
         "self_checks": checks,
     }
+
+
+def _spec_of(
+    crystal: HexPrism,
+    refractive_index: float,
+    members: Sequence[Sequence[int]],
+    n: int,
+    sampler: PointSampler | None,
+    sampling: str,
+    deviation_window: tuple[float, float] | None,
+    dtype: str,
+) -> S2StoreSpec:
+    if (sampler is None) != (sampling == FIBONACCI_SAMPLING):
+        raise ValueError("a custom sampler needs its own sampling description, and the Fibonacci lattice the default one")
+    spec = S2StoreSpec(
+        members=tuple(tuple(m) for m in members),
+        crystal=crystal_description(crystal),
+        refractive_index=refractive_index,
+        n=n,
+        sampling=sampling,
+        deviation_window=deviation_window,
+        dtype=dtype,
+    )
+    keys = {phi_key(crystal, m) for m in spec.members}
+    if len(keys) != 1:
+        raise ValueError(f"members {spec.path_id} do not share one phi_key: {sorted(keys)}")
+    return spec
+
+
+def build_event_store(
+    crystal: HexPrism,
+    refractive_index: float,
+    members: Sequence[Sequence[int]],
+    n: int,
+    *,
+    sampler: PointSampler | None = None,
+    sampling: str = FIBONACCI_SAMPLING,
+    deviation_window: tuple[float, float] | None = None,
+    dtype: str = "float64",
+    bucket_count: int = DEFAULT_BUCKET_COUNT,
+    run_checks: bool = True,
+    log: Callable[[str], None] | None = None,
+) -> S2EventStore:
+    """Event store of ``members`` in memory: ``w > 0`` events sorted by ``D`` (``[lo, hi]`` rad only, if given).
+
+    The store is independent of the sun: it is built with the fixed
+    reference ``s_hat`` (``_REFERENCE_SUN_DIRECTION``) and serves every sun
+    direction (a renderer rebuilds the poses for its own ``s_hat``).
+    ``sampler`` replaces :func:`store_lattice`, returns points ``u`` (toward
+    the sun, body frame) and must come with its own
+    ``sampling`` description (it enters the cache key); its inverse weights
+    are stored as ``iw``.  Several ``members`` must share one
+    :func:`.path_class.phi_key`.  ``run_checks`` runs the section 4.1(a)
+    self-checks (psi invariance and gate coverage before the build, the
+    Haar mean after it) and raises if psi invariance fails.  The arrays are
+    built through a temporary directory (:func:`_build_into`) and read back;
+    :func:`build_or_load` builds into the cache directory instead and never
+    needs all events in memory.
+    """
+    spec = _spec_of(crystal, refractive_index, members, n, sampler, sampling, deviation_window, dtype)
+    with tempfile.TemporaryDirectory(prefix="s2-store-build-") as scratch:
+        directory = Path(scratch)
+        diagnostics = _build_into(directory, spec, crystal, sampler, bucket_count, run_checks, log)
+        arrays = {name: np.load(directory / f"{name}.npy") for name in _array_names(directory)}
+    events = S2Events(arrays["u"], arrays["phi"], arrays["D"], arrays["w"], arrays.get("iw"))
     return S2EventStore(spec, events, diagnostics)
 
 
@@ -655,60 +815,64 @@ def build_or_load(
     n: int,
     *,
     base_dir: Path = DEFAULT_CACHE_DIR,
-    sun_direction: np.ndarray,
     sampler: PointSampler | None = None,
     sampling: str = FIBONACCI_SAMPLING,
     deviation_window: tuple[float, float] | None = None,
     dtype: str = "float64",
+    mmap_mode: str | None = None,
     run_checks: bool = True,
     log: Callable[[str], None] | None = None,
 ) -> S2EventStore:
-    """The cached store of these parameters, built and saved on first use.
+    """The cached store of these parameters, built and saved on first use; returned by :meth:`S2EventStore.load`.
 
-    An existing cache directory is loaded (schema and SHA-256 checked) and its recorded
-    build parameters must equal the request's, else ``ValueError``; a
-    directory without its provenance (an interrupted save) is refused too.
-    Nothing is rebuilt or overwritten silently.
+    An existing cache directory is loaded (schema and, unless
+    ``mmap_mode="r"``, SHA-256 checked) and its recorded build parameters
+    must equal the request's, else ``ValueError``; a directory without its
+    provenance is refused too.  Nothing is rebuilt or overwritten silently.
+    A missing store is built by :func:`_build_into` straight into a hidden
+    staging directory next to it (all events are never in memory at once),
+    which is renamed into place once its provenance is written, so an
+    interrupted build leaves no directory under the cache key.  A concurrent
+    builder that renamed first wins: its store is loaded and ours dropped.
     """
-    spec = S2StoreSpec(
-        members=tuple(tuple(m) for m in members),
-        crystal=crystal_description(crystal),
-        refractive_index=refractive_index,
-        sun_direction=tuple(np.asarray(sun_direction, dtype=np.float64)),
-        n=n,
-        sampling=sampling,
-        deviation_window=deviation_window,
-        dtype=dtype,
-    )
+    spec = _spec_of(crystal, refractive_index, members, n, sampler, sampling, deviation_window, dtype)
     directory = Path(base_dir) / spec.cache_key()
-    if directory.exists():
-        if not (directory / PROVENANCE_FILE).exists():
-            raise ValueError(f"{directory} has no {PROVENANCE_FILE} (interrupted save?); remove it to rebuild")
-        store = S2EventStore.load(directory)
-        recorded, requested = store.spec.build_parameters(), spec.build_parameters()
-        if recorded != requested:
-            differing = sorted(k for k in requested.keys() | recorded.keys() if recorded.get(k) != requested.get(k))
-            raise ValueError(f"{directory}: recorded build parameters differ from the request in {differing}")
-        return store
-    store = build_event_store(
-        crystal,
-        refractive_index,
-        members,
-        n,
-        sun_direction=sun_direction,
-        sampler=sampler,
-        sampling=sampling,
-        deviation_window=deviation_window,
-        dtype=dtype,
-        run_checks=run_checks,
-        log=log,
-    )
-    store.save(base_dir)
+    if not directory.exists():
+        staging = Path(tempfile.mkdtemp(prefix=f".{spec.cache_key()}.building-", dir=_mkdir(Path(base_dir))))
+        try:
+            diagnostics = _build_into(staging, spec, crystal, sampler, DEFAULT_BUCKET_COUNT, run_checks, log)
+            _write_provenance(staging, spec, list(_array_names(staging)), diagnostics)
+            try:
+                staging.rename(directory)
+            except OSError:
+                if not directory.exists():
+                    raise
+        finally:
+            if staging.exists():
+                shutil.rmtree(staging)
+    if not (directory / PROVENANCE_FILE).exists():
+        raise ValueError(f"{directory} has no {PROVENANCE_FILE} (interrupted save?); remove it to rebuild")
+    store = S2EventStore.load(directory, mmap_mode=mmap_mode)
+    recorded, requested = store.spec.build_parameters(), spec.build_parameters()
+    if recorded != requested:
+        differing = sorted(k for k in requested.keys() | recorded.keys() if recorded.get(k) != requested.get(k))
+        raise ValueError(f"{directory}: recorded build parameters differ from the request in {differing}")
     return store
+
+
+def _mkdir(path: Path) -> Path:
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _array_names(directory: Path) -> tuple[str, ...]:
+    """The arrays of a built directory in the on-disk order of :meth:`S2Events.arrays`."""
+    return tuple(name for name in ("D", "u", "phi", "w", "iw") if (directory / f"{name}.npy").exists())
 
 
 __all__ = [
     "CHUNK",
+    "DEFAULT_BUCKET_COUNT",
     "DEFAULT_CACHE_DIR",
     "FIBONACCI_SAMPLING",
     "ROTATION_PER_POINT",

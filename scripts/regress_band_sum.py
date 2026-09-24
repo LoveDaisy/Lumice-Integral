@@ -347,7 +347,7 @@ def stage_class(tiers: list[int], store_n: int | None, store_cache_dir: Path) ->
         report["same_points"][str(n)] = block
     if store_n is not None:
         store = build_or_load(
-            crystal, CANONICAL_REFRACTIVE_INDEX, [(3, 5)], store_n, base_dir=store_cache_dir, sun_direction=canonical_sun_direction()
+            crystal, CANONICAL_REFRACTIVE_INDEX, [(3, 5)], store_n, base_dir=store_cache_dir
         )
         (plan,) = store_plan(path_class, crystal)
         stores = [(store.events.arrays(), plan)]
@@ -410,7 +410,7 @@ def stage_k_eff(random_n: int) -> dict[str, Any]:
         start = time.perf_counter()
         sampler = RandomSphereSampler(seed)
         store = build_event_store(
-            crystal, CANONICAL_REFRACTIVE_INDEX, [(3, 5)], random_n, sun_direction=sun, sampler=sampler,
+            crystal, CANONICAL_REFRACTIVE_INDEX, [(3, 5)], random_n, sampler=sampler,
             sampling=f"{sampler.description}, seed {seed}", deviation_window=window, run_checks=False,
         )
         stores.append([(store.events.arrays(), plan)])

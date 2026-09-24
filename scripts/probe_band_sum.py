@@ -128,7 +128,6 @@ def precompute(
         CANONICAL_REFRACTIVE_INDEX,
         [faces],
         n,
-        sun_direction=sun,
         sampler=sampler,
         sampling=sampling,
         deviation_window=deviation_window,
