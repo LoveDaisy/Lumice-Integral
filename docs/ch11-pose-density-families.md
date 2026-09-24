@@ -3,7 +3,7 @@
 > Status: implemented 2026-09-20 (task `pose-density-families`). The five
 > families of chapter 11 — random, plate, column, Parry, Lowitz — are densities
 > relative to Haar on SO(3), evaluated on the *same* fibers; nothing in
-> discovery, continuation or the prescan table reads them. This document is
+> discovery, continuation or the seed store reads them. This document is
 > the alignment table against Lumice's axis presets, the record of this
 > renderer's own conventions, and the diagnostics that show what the families
 > do on the canonical `3-5` scene — including the finding that, on the

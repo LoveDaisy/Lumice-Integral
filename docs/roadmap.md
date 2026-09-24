@@ -27,7 +27,7 @@ Queue (tasks in `scratchpad/tasks.md`; dispatch order 20 ∥ 21, then 22 ∥ 24,
 
 | 22 | `band-sum-scatter-renderer`: band sum organised by deviation, class accumulation, GEMM tiles ([phase2.md](phase2.md) §8) | 21 |
 | 23 | `lumice-area-weighting-recheck`: absolute scale after Lumice's projected-area fix | Ice Halo #597 merged |
-| 24 | scrum `phase2-contour-quadrature` (M2): `dp-field-topology` → `dp-field-layer` → `s2-contour-extraction` → `s2-contour-quadrature` → `phase1-seeds-from-store` → `ch10-numerical-verdicts` — `dp-field-layer` **done 2026-09-24** (`lumice_integral.dp_field`, [phase2.md](phase2.md) §3.1); `s2-contour-extraction` **done 2026-09-24** (`lumice_integral.contour`, [phase2.md](phase2.md) §4); `s2-contour-quadrature` **done 2026-09-25** (`lumice_integral.contour_quadrature`, [phase2.md](phase2.md) §4) | 21 |
+| 24 | scrum `phase2-contour-quadrature` (M2): `dp-field-topology` → `dp-field-layer` → `s2-contour-extraction` → `s2-contour-quadrature` → `phase1-seeds-from-store` → `ch10-numerical-verdicts` — `dp-field-layer` **done 2026-09-24** (`lumice_integral.dp_field`, [phase2.md](phase2.md) §3.1); `s2-contour-extraction` **done 2026-09-24** (`lumice_integral.contour`, [phase2.md](phase2.md) §4); `s2-contour-quadrature` **done 2026-09-25** (`lumice_integral.contour_quadrature`, [phase2.md](phase2.md) §4); `phase1-seeds-from-store` **done 2026-09-25** (`s2_store.StoreSeeds`, `discovery.check_band_coverage`; `prescan` deleted; [phase1.md](phase1.md) §5) | 21 |
 
 Deferred: the chapter-11 table (path classes × pose families) after 22 and
 M2; divergent light ([phase2.md](phase2.md) §9, backlog); finite solar disk;
@@ -372,3 +372,33 @@ Moved to [overview.md](overview.md) §3.
   full canonical image takes 43 min on 4 workers (M2 Max), CPU 21 % curve
   finding, 57 % level-set geometry, 22 % per-pixel integration; the
   geometry is dominated by the production `entry_measure_batch`.
+- **2026-09-25**: Phase I discovery seeds from the $S^2$ event store; the
+  Haar prescan table (`prescan.PrescanTable`, cKDTree, `.npz` cache) is
+  deleted (task `phase1-seeds-from-store`). Gate first: on the 32 survey
+  pixels every store configuration from `N = 1e5` / `0.02 deg` to
+  `N = 1e8` / `2 deg` found the table's components with the same kinds
+  (arclengths within `1.5e-3`, only on the two `0.17-0.19 rad` caustic
+  loops). Production store `N = 1e6`, band half-width `0.2 deg`
+  (`PixelOptions.band_half_width_deg`, renamed from `angle_tolerance_deg`:
+  a one-dimensional deviation band, not a cone), a factor 10 in `N` and
+  ~100 in pool size above the smallest configuration that found
+  everything. A path class seeds every member from its one store through
+  the `D6h` transports of `path_class.store_plan` (moved there from
+  `band_sum`, which uses the same plan); scene builders take the public
+  `sun_direction` $\hat{\mathbf s}$ (the store needs it; the propagation
+  direction is derived by `incident_direction_from_sun`, still the one
+  conversion). The rank-0 point mass keeps its own Haar stream
+  (`path_class.haar_domain_batches`, the prescan's stream, also the
+  diagnostic scripts' landing maps). New diagnostic
+  `discovery.check_band_coverage`: every band event revisited, suspects
+  reported, miss probability `exp(-k_min)`. Regression against
+  `strip-full`: counts, kinds and completeness identical on `833` pixels,
+  values within `1.02e-4` relative. Finding, not fixed here (a Phase I
+  quadrature property, another root cause): the resampled quadrature's
+  value depends on where the trace starts on a loop (`1.6e-4` relative on
+  the canonical pixel over 16 starts, `4e-3` absolute on caustic loops)
+  and its error estimate is not conservative against that (it varies by
+  1-2 orders along a loop); the seed source only exposes it. Tests that
+  pinned a discovered-seed value to `1e-6`/`1e-9` were re-pinned or moved
+  to the quadrature's `1e-4`, and the integrator alignment test now
+  freezes the seeds its references were recorded from.

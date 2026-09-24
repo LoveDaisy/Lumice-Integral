@@ -279,7 +279,7 @@ Current expected evidence (Mac reference environment):
 | `path_validity` | `1` at every accepted pose |
 | Normal Jacobian range | about `0.0822 .. 0.1497` |
 | `visibility`, `source_factor`, `pixel_factor`, `other_radiometric` | `unavailable` |
-| Line integral `value` (Haar-converted, `partial`) | `6.581373260` with `error_estimate` about `1.4e-4` (`raw_value` about `519.6444`, before the `1/(8 pi^2)` factor) on the `h/a = 2` crystal (2026-09-20, task `defect2-crystal-height-convention`; the pipeline's discovered-seed value is `6.581419934`, `tests/test_strip_pixel.py`). On the `h/a = 1` crystal used until then the same fiber gave `2.364400114` (`raw_value` about `186.6855`), `1.0e-5` below the retired adaptive integrator's `2.364423815 +- 6.0e-9` (rtol `1e-8`); that value stays the frozen alignment reference and its test binds the `h/a = 1` crystal explicitly (`tests/test_resample_quadrature.py::ADAPTIVE_REFERENCE`, `REFERENCE_CRYSTAL`), because the retired integrator cannot re-record on the new crystal. The crystal only enters through `entry_measure`; poses, length, `J_perp` and the node count are unchanged |
+| Line integral `value` (Haar-converted, `partial`) | `6.581373260` with `error_estimate` about `1.4e-4` (`raw_value` about `519.6444`, before the `1/(8 pi^2)` factor) on the `h/a = 2` crystal (2026-09-20, task `defect2-crystal-height-convention`; the pipeline's discovered-seed value is `6.581365570` since the seeds come from the S^2 store, 2026-09-25, `6.581419934` from the retired prescan seed: the same 61-pose loop resampled from another start, `8e-6` apart, `tests/test_strip_pixel.py`). On the `h/a = 1` crystal used until then the same fiber gave `2.364400114` (`raw_value` about `186.6855`), `1.0e-5` below the retired adaptive integrator's `2.364423815 +- 6.0e-9` (rtol `1e-8`); that value stays the frozen alignment reference and its test binds the `h/a = 1` crystal explicitly (`tests/test_resample_quadrature.py::ADAPTIVE_REFERENCE`, `REFERENCE_CRYSTAL`), because the retired integrator cannot re-record on the new crystal. The crystal only enters through `entry_measure`; poses, length, `J_perp` and the node count are unchanged |
 | Quadrature method | resampled fixed grid (`task-resample-and-integrate`): C1 cubic Hermite quaternion spline through the accepted poses with the trace's exact tangents, uniform grid of the cumulative-chord parameter, every node retracted onto the fiber by `2` batched bordered Newton iterations, exact `ds/dt` from the implicit function theorem at the retracted node, composite Simpson, error estimate `\|I_N - I_(N+1)/2\|`, node count doubled (`N -> 2N - 1`) until the estimate meets `relative_tolerance`; `epsilon = 1e-6`, `relative_tolerance = 1e-4`, `initial_node_count = 129`, `maximum_node_count = 1025` |
 | Quadrature work | `257` grid nodes after one doubling (`129 -> 257`), predictor residual before retraction at most `1.2e-6`, after retraction at most `3.6e-16`, no non-finite node; about `19 ms` per fiber (Mac reference environment, warm), against `2.4 s` for the retired adaptive integrator at rtol `1e-8` (`713` nodes) and `0.92 s` at its production rtol `1e-6` |
 | Convergence | the uniform grid converges at order about `2` because `entry_measure` has slope jumps (footprint-clipping vertex events) that fall between grid nodes: deviation from the adaptive reference `7.0e-5 / 3.4e-5 / 1.0e-5 / 3.4e-6` at `65 / 129 / 257 / 513` nodes; the `\|I_N - I_(N+1)/2\|` estimate bounded the actual deviation on every fixture checked |
@@ -587,6 +587,50 @@ color-to-factor mapping.
      `rng_seed`/`prescan_samples` fields were replaced by a nested
      `prescan` object (`sample_count`/`rng_seed`/`cache_path`); no consumer
      in this repository reads the old flat fields.
+   - Seed store replaces the prescan table (task `phase1-seeds-from-store`,
+     2026-09-25; the prescan density survey above, its cold check and its
+     benchmark are history). The table and the $S^2$ event store are one
+     presampling (`docs/phase2.md` section 6): discovery now takes the band
+     `|D_i - delta| <= 0.2 deg` of the `3-5` store (`s2_store.StoreSeeds`,
+     `DEFAULT_SEED_STORE_N = 1e6` Fibonacci points, `160216` kept events,
+     `9.8 MB`, `~1 s` in memory), each event posed exactly in the pixel's
+     azimuth. Probe against the `4M` table on the same `32` pixels (every
+     store `N` in `1e5 .. 1e8` times half-widths `2 / 0.2 / 0.02 deg`, `12`
+     configurations): component count and kinds identical on every pixel and
+     configuration (`31` components, `0` incomplete); arclengths within
+     `1.8e-4` on the loops longer than `0.5 rad` and within `1.5e-3` on the
+     `0.19 / 0.17 rad` caustic loops `(49,0)`/`(50,9)` (the start-point
+     dependence of a short loop's polyline length recorded above, not a
+     density effect); the smallest configuration tried, `N = 1e5` at
+     `0.02 deg` (median pool `36`), already finds every component. The dark
+     row `40` lies inside the minimum deviation (`21.84 deg`): an empty band
+     where the table held `2072` domain-valid samples, `0` components either
+     way. Production `N = 1e6` / `0.2 deg`: median pool `3172` (table
+     `2451`), `0.08 s` per pixel of discovery (table `0.10 s`). Regression
+     against `artifacts/strip-full` (column `126` through the production
+     column chain plus the `32` pixels cold, `833` pixels, `775` lit):
+     component count, kinds and completeness identical everywhere; values
+     median `1.9e-5`, p99 `7.1e-5`, max `1.02e-4` relative; `773` of `775`
+     inside `err_new + err_old`, the two others `(63,126)` (`4.3x`) and
+     `(58,126)` (`1.26x`) are short caustic loops whose value, integrated
+     from `16` start points on the same loop, spreads over `2.8e-3` /
+     `4.1e-3` with `strip-full` inside that spread: the resampled
+     quadrature depends on where the trace starts and its error estimate
+     is not conservative against that (it varies by `1-2` orders along the
+     loop; `(150,150)` spreads `1.6e-4` relative), a Phase I property the
+     seed source only exposes. The completeness cross-check
+     `discovery.check_band_coverage` revisits every band event: on the `32`
+     pixels at `N = 1e6` / `0.2 deg`, `0` suspects (`1165` events corrected
+     first, the rest within `0.08` of a traced curve as posed; on `(49,0)`
+     `541` of `3225`), and the least-covered component carries `1665` band
+     events (miss bound `exp(-1665)`); removing the traced loop of a pixel
+     turns every event into a suspect. `scripts/store_seed_density_survey.py`
+     reproduces the store side of the probe and the cross-check (all `12`
+     configurations agree with `N = 1e8` / `0.2 deg` on every pixel at
+     arclength rtol `2e-3`). Evidence:
+     `scratchpad/scrum-phase2-contour-quadrature/task-phase1-seeds-from-store/probe/`
+     (`probe.{csv,md,log}`, `regress.{json,log}`, `start_point_spread.log`,
+     `store-survey/store_seed_density_survey.{csv,md}`).
    - Single-pixel pipeline v2 (task-pixel-pipeline-v2, 2026-09-17): the
      hot-start chain, the small discovery budget with its production
      retrace, the arclength-fingerprint dedup, the arclength-jump gate, the

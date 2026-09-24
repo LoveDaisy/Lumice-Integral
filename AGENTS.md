@@ -92,6 +92,10 @@ uv run python scripts/regress_band_sum.py --stage contour --band-dir artifacts/b
   --coarse-dir artifacts/band-sum-full-N1e7 --contour-dir artifacts/contour-quadrature-band \
   --contour-point-dir artifacts/contour-quadrature-full --reference-dir artifacts/strip-full --output /tmp/regression_contour.json
 uv run python benchmarks/benchmark_contour_quadrature.py
+# Phase I seed-store density survey: the 32 strip pixels over store N x band half-width, plus the
+# completeness cross-check (discovery.check_band_coverage) on the production store (minutes; the N = 1e8
+# store is ~1 GB under artifacts/s2-store)
+uv run python scripts/store_seed_density_survey.py --output-dir /tmp/store-seed-density
 # a non-canonical pose-density family (recorded in provenance.json and the resume fingerprint)
 uv run python scripts/render_ch06_strip.py --rows 300:302 --columns 126:127 --output-dir /tmp/strip-parry \
   --pose-density-family parry --pose-density-zenith-std-deg 1 --pose-density-roll-std-deg 1

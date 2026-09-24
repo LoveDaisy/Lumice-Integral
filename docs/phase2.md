@@ -603,11 +603,11 @@ workers (appendix).
 
 ## 6. One precomputation, three consumers
 
-Phase I also precomputes. `prescan.PrescanTable` draws $4\times10^6$ Haar
-poses on $\mathrm{SO}(3)$ for a fixed sun, keeps the domain-valid ones with
-their outgoing directions, and indexes those with a k-d tree; a pixel asks
-for the samples in a cap around its own direction and uses them as Newton
-seeds.
+Phase I also precomputed. Until 2026-09-25 its `prescan.PrescanTable` drew
+$4\times10^6$ Haar poses on $\mathrm{SO}(3)$ for a fixed sun, kept the
+domain-valid ones with their outgoing directions, and indexed those with a
+k-d tree; a pixel asked for the samples in a cap around its own direction and
+used them as Newton seeds.
 
 The two are the same sampling. A Haar sample $R$ is a pair
 $(\mathbf u, \psi)$: its deviation is $D_P(\mathbf u)$ and its azimuth is
@@ -615,10 +615,10 @@ fixed by $\psi$, which has a closed form given $\mathbf u$ and the target
 azimuth. The prescan table samples $\psi$ at random and keeps what happens
 to land near the pixel; the store quotients $\psi$ out and constructs, for
 every event in the pixel's band, the pose that lands **exactly** on the
-pixel's azimuth (`band_sum.band_poses`). The store is the strictly stronger
-object:
+pixel's azimuth (`band_sum.band_poses`, and for Phase I
+`s2_store.StoreSeeds`). The store is the strictly stronger object:
 
-| | Phase I prescan table | $S^2$ event store |
+| | Phase I prescan table (retired) | $S^2$ event store |
 |---|---|---|
 | samples | Haar poses on $\mathrm{SO}(3)$, random | points $\mathbf u$ on $S^2$, Fibonacci lattice |
 | per pixel | samples in a cap around the pixel direction | events in a $\delta$ band, each at the pixel's exact azimuth |
@@ -634,15 +634,22 @@ pixel and seeds closer to the fibre. It has three consumers:
 1. **The band sum** (section 5): the events are quadrature nodes.
 2. **Contour tracing** (section 4): a band event lies within half a band
    width of $\{D_P = \delta\}$; it seeds Newton onto the contour.
-3. **Phase I seeds** (M2 sub-task `phase1-seeds-from-store`, **design**):
-   band poses replace the prescan candidates, and `PrescanTable` goes if a
-   32-pixel probe loses no component. The same events give Phase I a
-   completeness cross-check: every band event should lie near one of the
-   traced fibres, and an event far from all of them marks a missed
-   component. The check is statistical, but its miss probability is bounded
-   by $N$ times the component's measure in the band, which the density
-   survey behind `DEFAULT_SAMPLE_COUNT` does not give. Because the store
-   does not depend on the source, Phase I also stops rebuilding per sun.
+3. **Phase I seeds** (M2 sub-task `phase1-seeds-from-store`, **done
+   2026-09-25**): band poses replaced the prescan candidates
+   (`s2_store.StoreSeeds`, `N = 1e6`, band half-width `0.2 deg`) and
+   `PrescanTable` is gone; on the 32-pixel probe every store configuration
+   from `N = 1e5` / `0.02 deg` to `N = 1e8` / `2 deg` found the prescan's
+   components ([phase1.md](phase1.md) appendix). The same events give Phase I
+   a completeness cross-check (`discovery.check_band_coverage`): every band
+   event should lie on one of the traced fibres once corrected, and an
+   admissible one far from all of them marks a missed component. The check
+   is statistical, but its miss probability is bounded: $N$ independent
+   uniform points miss a band region of measure $\mu$ with probability
+   $e^{-N\mu/4\pi}$, estimated by $e^{-k_{\min}}$ with $k_{\min}$ the
+   fewest band events on a component found, which the prescan's density
+   survey did not give. A class seeds every member from its one store
+   through the `D6h` transports of `path_class.store_plan`, and because the
+   store does not depend on the source, Phase I no longer rebuilds per sun.
 
 ## 7. Ring invariance and the cost of each route
 
@@ -659,6 +666,9 @@ works pixel by pixel on $\mathrm{SO}(3)$.
 |---|---|---|---|---|
 | Phase I | prescan table | — | discovery, trace, integrate: `0.1-0.3 s` (measured) | pointwise, adaptive error estimate |
 | band sum | store of $N$ events (`80 s` at $10^8$, measured) | — | $K$ band events: $\rho$ of a matrix product, `0.31 ms` CPU (scatter, section 8; gather `3.3 ms`, measured) | band average in $\delta$; $\sim 1/\sqrt{K_{\mathrm{eff}}}$ |
+
+| Phase I | seed store (until 2026-09-25 a prescan table) | — | discovery, trace, integrate: `0.1-0.3 s` (measured) | pointwise, adaptive error estimate |
+| band sum | store of $N$ events (`80 s` at $10^8$, measured) | — | $K$ band events: pose + $\rho$, `3.3 ms` CPU (measured) | band average in $\delta$; $\sim 1/\sqrt{K_{\mathrm{eff}}}$ |
 | contour (design) | $D_P$ field and critical points | extract and refine the level set | $\rho$ along stored nodes | pointwise, deterministic, high order |
 
 Scaling with resolution:
