@@ -197,3 +197,28 @@ def test_level_sets_and_pixels_batched_together_match_one_at_a_time(field, store
         (alone,) = cq.LevelSetGeometry.build(field, [level_set]).integrate(sun, [band[0]], density)
         assert batched.panels == alone.panels and batched.evaluations == alone.evaluations
         assert abs(batched.value / alone.value - 1.0) < 1e-12
+
+
+def test_band_average_pixel_model(field, store) -> None:
+    """``band_nodes``: Gauss-Legendre over the pixel's deviation band converges (2 vs 4 nodes) and differs from the point value by O(band^2)."""
+    from lumice_integral.canonical_scene import CANONICAL_RENDER
+
+    def scene(nodes: int) -> cq.ContourQuadratureScene:
+        return cq.ContourQuadratureScene((3, 5), canonical_crystal(), INDEX, canonical_sun_direction(), canonical_pose_density(),
+                                         CANONICAL_RENDER, band_nodes=nodes)
+
+    rows = (150, 300)
+    point, _ = cq.render_column(scene(0), field, store, 150, rows)
+    two, _ = cq.render_column(scene(2), field, store, 150, rows)
+    four, timing = cq.render_column(scene(4), field, store, 150, rows)
+    assert set(timing) == {"extract_s", "geometry_s", "integrate_s"}
+    for p, b2, b4 in zip(point, two, four):
+        assert b2.level_sets == 2 and b4.level_sets == 4 and p.level_sets == 1
+        assert abs(b2.value / b4.value - 1.0) < 1e-7
+        assert 1e-9 < abs(b4.value / p.value - 1.0) < 1e-4  # smooth pixels: the band average is near, not equal to, the point value
+    lo, hi = pixel_band(150, 150, canonical_sun_direction())[2:]
+    deviations, weights = cq.band_deviations(field, lo, hi, 4)
+    assert len(deviations) == 4 and abs(weights.sum() - (hi - lo)) < 1e-15
+    minimum = float(field.interval_partition()[0].lower)
+    deviations, weights = cq.band_deviations(field, minimum - 1e-4, minimum + 1e-4, 3)
+    assert len(deviations) == 6 and np.all(np.abs(deviations - minimum) > 1e-6)  # split at the critical value
