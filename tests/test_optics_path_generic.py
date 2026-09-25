@@ -14,6 +14,8 @@ form, written out here independently of ``optics``.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -42,11 +44,12 @@ from lumice_integral.optics import (
     path_id_of,
     path_problem,
     problem_path_label,
+    SNELL_EVENT_TOLERANCE,
     validity_margin_names,
 )
 from lumice_integral.continuation import ContinuationOptions, TerminationReason, trace_fiber
 from lumice_integral.discovery import ARC_EVENTS
-from lumice_integral.so3 import haar_rotations
+from lumice_integral.so3 import exp, haar_rotations, log
 
 from _geometry_oracles import NORMALS, reflect, refract
 
@@ -276,6 +279,56 @@ def test_fiber_crosses_the_internal_critical_angle_at_full_step():
         pinned = sum(d.accepted and d.proposed_step <= options.minimum_step for d in result.step_diagnostics)
         assert pinned <= 2, pinned
     assert crossed >= 2
+
+
+def test_snell_discriminant_within_tolerance_is_the_tir_event_of_the_continuation_problem():
+    """Between a valid pose and one past the exit critical angle, bisect to ``0 < exit_snell <= tolerance``:
+    :func:`path_domain` still calls it valid, the continuation problem's evaluator already the ``tir_boundary`` event."""
+    faces = (3, 5, 6, 7)
+    rotations = haar_rotations(40_000, np.random.default_rng(5))
+    batch = path_domain_batch(rotations, faces, INCIDENT, INDEX)
+    past = (
+        (batch.margins["entry_incidence_cosine"] > 0)
+        & (batch.margins["internal_1_incidence_cosine"] > 0)
+        & (batch.margins["internal_2_incidence_cosine"] > 0)
+        & (batch.margins["exit_incidence_cosine"] > 0)
+        & (batch.margins["exit_snell_discriminant"] <= 0)
+    )
+    inside = rotations[np.flatnonzero(batch.valid)[0]]
+    outside = rotations[np.flatnonzero(past)[0]]
+    problem = path_problem(jnp.asarray(inside), faces, jnp.asarray(INCIDENT), refractive_index=jnp.asarray(INDEX))
+    step = np.asarray(log(jnp.asarray(outside @ inside.T)))
+
+    def along(t: float) -> np.ndarray:
+        return np.asarray(exp(jnp.asarray(t * step))) @ inside
+
+    low, high = 0.0, 1.0
+    for _ in range(200):
+        middle = 0.5 * (low + high)
+        check = path_domain(along(middle), faces, INCIDENT, INDEX)
+        if check.valid and check.margins["exit_snell_discriminant"] <= SNELL_EVENT_TOLERANCE:
+            break
+        low, high = (middle, high) if check.valid else (low, middle)
+    else:
+        pytest.fail("no pose within the tolerance on the segment")
+    pose = along(middle)
+    evaluation = problem.domain_and_event_evaluator(jnp.asarray(pose))
+    assert not evaluation.valid and evaluation.event.kind == TerminationReason.TIR_BOUNDARY
+    assert 0.0 < evaluation.event.margin <= SNELL_EVENT_TOLERANCE
+    assert problem.domain_and_event_evaluator(jnp.asarray(inside)).valid
+
+
+def test_a60_10_member_arcs_end_on_named_events_at_both_ends():
+    """``3-5-6-7`` lives where the face-5 reflection is partial (its exit cosine is face 5's), so every
+    fiber is an arc whose ends meet the exit critical angle tangentially; both directions end on an event."""
+    faces = (3, 5, 6, 7)
+    rotations = _valid_samples(faces, 20_000, seed=3)
+    options = ContinuationOptions()
+    for rotation in rotations[:4]:
+        problem = path_problem(jnp.asarray(rotation), faces, jnp.asarray(INCIDENT), refractive_index=jnp.asarray(INDEX))
+        for sign in (1, -1):
+            result = trace_fiber(problem, replace(options, initial_tangent_sign=sign))
+            assert result.reason in ARC_EVENTS, result.reason
 
 
 def test_face_sequence_helpers():

@@ -566,6 +566,18 @@ def fresnel_transmission_3_5_batch(
     return fresnel_transmission_path_batch(rotations, PATH_3_5_FACES, incident_direction, refractive_index)
 
 
+# A fiber meets a Snell boundary tangentially: the outgoing direction is fixed
+# along it, so ``exit_snell_discriminant = (d . n_exit)^2`` falls quadratically
+# in arclength, and the direction map's square root leaves the corrector
+# unable to converge in the last ~1e-10 of margin (A60-10 arcs ended in
+# ``step_underflow`` at random, task phase1-partial-reflection-domain).
+# :func:`path_problem` therefore puts the ``tir_boundary`` event at this
+# margin; the arclength cut off is ~sqrt(tolerance / curvature), ~1e-4 rad,
+# and is in the quadrature's endpoint truncation estimate.
+SNELL_EVENT_TOLERANCE = 1e-8
+SNELL_MARGIN_NAMES = ("entry_snell_discriminant", "exit_snell_discriminant")
+
+
 def path_problem(
     seed: Array,
     faces: Sequence[int],
@@ -577,6 +589,11 @@ def path_problem(
 ) -> FiberProblem:
     """Adapt the smooth branch of ``faces`` and its host event gate to continuation.
 
+    The domain evaluator is :func:`path_domain` with two adaptations for
+    continuation: its margins are the event margins
+    (:func:`validity_margin_names`, no internal TIR discriminant) and a
+    Snell discriminant at or below :data:`SNELL_EVENT_TOLERANCE` is already
+    the ``tir_boundary`` event.
     ``FiberProblem.path`` is :func:`problem_path_label` (``"3-1-2-5:n=1.31"``);
     the evaluator closures are fresh per call, so batch callers share one
     problem per face sequence through :func:`.discovery.retarget_problem`.
@@ -623,6 +640,19 @@ def path_problem(
             else None
         )
         margins = {name: check.margins[name] for name in event_margin_names if name in check.margins}
+        if check.valid:
+            name = min(SNELL_MARGIN_NAMES, key=lambda key: margins[key])
+            if margins[name] <= SNELL_EVENT_TOLERANCE:
+                return DomainEvaluation(
+                    False,
+                    margins,
+                    EventCandidate(
+                        TerminationReason.TIR_BOUNDARY,
+                        margins[name],
+                        f"{name} within SNELL_EVENT_TOLERANCE of the critical angle",
+                        check.margins,
+                    ),
+                )
         return DomainEvaluation(check.valid, margins, event)
 
     seed_domain = path_domain(seed, faces, incident_direction, refractive_index)
