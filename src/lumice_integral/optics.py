@@ -244,6 +244,17 @@ def validity_margin_names(faces: Sequence[int]) -> tuple[str, ...]:
     return tuple(names)
 
 
+def validity_margin_indices(faces: Sequence[int]) -> tuple[int, ...]:
+    """Positions of :func:`validity_margin_names` in :func:`domain_margin_names`, in validity order.
+
+    For code holding the full margin vector (the ``D_P`` field layer and the
+    contour walker evaluate every margin inside one JAX kernel) this selects
+    the gates of ``U_P``; derived from the two name lists, never restated.
+    """
+    names = domain_margin_names(faces)
+    return tuple(names.index(name) for name in validity_margin_names(faces))
+
+
 def path_domain(
     rotation: Array,
     faces: Sequence[int],

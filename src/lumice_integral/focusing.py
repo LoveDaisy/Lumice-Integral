@@ -224,7 +224,7 @@ def _circle_location(field: DPField, axis: np.ndarray) -> str:
     e = np.asarray(tangent_basis(np.asarray(axis)))
     t = np.linspace(0.0, 2.0 * np.pi, CIRCLE_SAMPLES, endpoint=False)
     circle = np.cos(t)[:, None] * e[0] + np.sin(t)[:, None] * e[1]
-    smallest = np.min(field.margins_batch(circle), axis=1)
+    smallest = np.min(field.validity_margins_batch(circle), axis=1)
     smallest = smallest[np.isfinite(smallest)]
     if smallest.size == 0:
         return "exterior"

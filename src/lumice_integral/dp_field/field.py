@@ -6,10 +6,13 @@ the fixed face sequence ``P`` at the identity pose (``R = I``: the field is
 a function on the body-frame sphere and does not see the sun direction).
 ``D_P(u) = angle(Phi_P(-u), -u)``, the deviation formula of
 :func:`.s2_store.evaluate_fields` without the pose round trip.  ``U_P`` is
-the open set where every margin of :func:`.optics.domain_margin_names` is
-positive; the margins are read off the same :class:`.optics.PathEvaluation`
-that :func:`.optics.path_domain_batch` reads (no second derivation of the
-gates).  Outside ``U_P`` the smooth branch keeps evaluating (reflections have
+the open set where every margin of :func:`.optics.validity_margin_names` is
+positive (:func:`validity_margin_vector`); the internal TIR discriminants of
+:func:`.optics.domain_margin_names` stay in :func:`margin_vector` as
+diagnostics but bound nothing: a partial internal reflection keeps the pose
+in ``U_P`` with Fresnel weight ``R``.  The margins are read off the same
+:class:`.optics.PathEvaluation` that :func:`.optics.path_domain_batch` reads
+(no second derivation of the gates).  Outside ``U_P`` the smooth branch keeps evaluating (reflections have
 no square root, the exit refraction goes ``NaN`` beyond its Snell limit), so
 every root finder here re-checks membership after converging.
 
@@ -94,13 +97,23 @@ def d_slab(u: jax.Array, m: jax.Array) -> jax.Array:
 
 
 def margin_vector(u: jax.Array, faces: Faces, index: jax.Array) -> jax.Array:
-    """Every margin of :func:`.optics.domain_margin_names` at ``u``, in that order (positive inside ``U_P``)."""
+    """Every margin of :func:`.optics.domain_margin_names` at ``u``, in that order (gates: :func:`validity_margin_vector`)."""
     evaluation = _evaluation(u, faces, index)
     values = [evaluation.entry.incidence_cosine, evaluation.entry.discriminant]
     for reflection in evaluation.internal:
         values.extend((reflection.incidence_cosine, reflection.tir_discriminant))
     values.extend((evaluation.exit.incidence_cosine, evaluation.exit.discriminant))
     return jnp.stack(values)
+
+
+def validity_margin_vector(u: jax.Array, faces: Faces, index: jax.Array) -> jax.Array:
+    """The gates of ``U_P`` at ``u``: :func:`margin_vector` at :func:`.optics.validity_margin_indices`.
+
+    ``u in U_P`` iff every entry is positive, the test of
+    :func:`.optics.path_domain_batch` (:func:`valid_batch`) in a form that
+    runs inside a JAX kernel; the two agree by sharing the one list of gates.
+    """
+    return margin_vector(u, faces, index)[np.asarray(optics.validity_margin_indices(faces))]
 
 
 def tangent_basis(u: jax.Array) -> jax.Array:
@@ -149,6 +162,11 @@ def _margins_batch(u: jax.Array, faces: Faces, index: jax.Array) -> jax.Array:
     return jax.vmap(margin_vector, in_axes=(0, None, None))(u, faces, index)
 
 
+@partial(jax.jit, static_argnums=1)
+def _validity_margins_batch(u: jax.Array, faces: Faces, index: jax.Array) -> jax.Array:
+    return jax.vmap(validity_margin_vector, in_axes=(0, None, None))(u, faces, index)
+
+
 def _as_points(u: np.ndarray | jax.Array) -> jax.Array:
     points = jnp.asarray(u, dtype=jnp.float64)
     if points.ndim != 2 or points.shape[1] != 3:
@@ -184,6 +202,11 @@ def hessian_tangent_batch(
 def margins_batch(u: np.ndarray, faces: Faces, index: float) -> np.ndarray:
     """:func:`margin_vector` at each row of ``u``, ``(N, len(domain_margin_names(faces)))``."""
     return np.asarray(_margins_batch(_as_points(u), faces, jnp.float64(index)))
+
+
+def validity_margins_batch(u: np.ndarray, faces: Faces, index: float) -> np.ndarray:
+    """:func:`validity_margin_vector` at each row of ``u``, ``(N, len(validity_margin_names(faces)))``."""
+    return np.asarray(_validity_margins_batch(_as_points(u), faces, jnp.float64(index)))
 
 
 def valid_batch(u: np.ndarray, faces: Faces, index: float) -> np.ndarray:
@@ -273,8 +296,8 @@ class DegenerateFoldSet:
 
 
 def location(u: np.ndarray, faces: Faces, index: float) -> str:
-    """``"interior"``, ``"boundary"`` (smallest margin ``<= BOUNDARY_MARGIN_ATOL`` in size) or ``"exterior"``."""
-    margins = margins_batch(np.asarray(u, dtype=np.float64)[None, :], faces, index)[0]
+    """``"interior"``, ``"boundary"`` (smallest gate ``<= BOUNDARY_MARGIN_ATOL`` in size) or ``"exterior"``."""
+    margins = validity_margins_batch(np.asarray(u, dtype=np.float64)[None, :], faces, index)[0]
     smallest = float(np.min(margins))
     if not np.isfinite(smallest):
         return "exterior"
@@ -292,7 +315,7 @@ def degenerate_fold_set(screen: FoldScreen, faces: Faces, index: float, *, circl
     e = np.asarray(tangent_basis(jnp.asarray(axis)))
     t = np.linspace(0.0, 2.0 * np.pi, circle_samples, endpoint=False)
     circle = np.cos(t)[:, None] * e[0] + np.sin(t)[:, None] * e[1]
-    margins = margins_batch(circle, faces, index)
+    margins = validity_margins_batch(circle, faces, index)
     inside = np.all(margins > BOUNDARY_MARGIN_ATOL, axis=1)
     return DegenerateFoldSet(axis, points, float(inside.mean()))
 
@@ -330,7 +353,7 @@ def lattice_newton_critical_points(
     """Every interior critical point reached by Newton from the ``U_P`` points of a Fibonacci lattice.
 
     Seeds are the lattice points inside ``U_P``; converged iterates that are
-    back inside ``U_P`` with tangent gradient below ``CRITICAL_GRADIENT_TOL``
+    back inside ``U_P`` (every gate above ``BOUNDARY_MARGIN_ATOL``, :func:`location` ``"interior"``) with tangent gradient below ``CRITICAL_GRADIENT_TOL``
     are merged within ``CRITICAL_POINT_MERGE_RAD`` and classified by the
     Riemannian Hessian.  A path with no seeds returns ``()``.
     """
@@ -344,7 +367,10 @@ def lattice_newton_critical_points(
     if len(ends) == 0:
         return ()
     gradient_norm = np.linalg.norm(gradient_batch(ends, faces, index), axis=1)
-    converged = ends[(gradient_norm < CRITICAL_GRADIENT_TOL) & valid_batch(ends, faces, index)]
+    # inside the open U_P, not on dU_P: a critical point of the smooth extension that sits on a grazing
+    # internal-reflection piece (3-4-5-7, D = 141.84 deg, gate 1e-16) is the walk's loop extremum, not interior
+    off_boundary = np.min(validity_margins_batch(ends, faces, index), axis=1) > BOUNDARY_MARGIN_ATOL
+    converged = ends[(gradient_norm < CRITICAL_GRADIENT_TOL) & valid_batch(ends, faces, index) & off_boundary]
     unique: list[np.ndarray] = []
     for point in converged:
         if all(np.arccos(np.clip(point @ other, -1.0, 1.0)) > CRITICAL_POINT_MERGE_RAD for other in unique):

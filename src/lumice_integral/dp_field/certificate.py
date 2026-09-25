@@ -51,7 +51,7 @@ from scipy.spatial import cKDTree
 
 from ..s2_store import fibonacci_sphere
 from .boundary import EXTREMUM_ATOL, BoundaryLoop
-from .field import DegenerateFoldSet, Faces, InteriorCriticalPoint, d_p_batch, margins_batch, tangent_basis, valid_batch
+from .field import DegenerateFoldSet, Faces, InteriorCriticalPoint, d_p_batch, tangent_basis, valid_batch, validity_margins_batch
 
 # Radius of the ring that decides on which side of a boundary extremum D_P is lower (rad), and its directions.
 SIDE_RING_RAD = 1e-5
@@ -111,7 +111,7 @@ def _side_values(point: np.ndarray, faces: Faces, index: float, slab: np.ndarray
     e = np.asarray(tangent_basis(point))
     angles = np.linspace(0.0, 2.0 * np.pi, SIDE_RING_DIRECTIONS, endpoint=False)
     ring = np.cos(SIDE_RING_RAD) * point + np.sin(SIDE_RING_RAD) * (np.cos(angles)[:, None] * e[0] + np.sin(angles)[:, None] * e[1])
-    inside = np.all(margins_batch(ring, faces, index) > 0.0, axis=1)
+    inside = np.all(validity_margins_batch(ring, faces, index) > 0.0, axis=1)
     return d_p_batch(ring[inside], faces, index, slab)
 
 

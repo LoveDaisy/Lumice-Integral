@@ -148,9 +148,13 @@ def level_counts(grid: Grid, edge: np.ndarray, delta: float) -> tuple[int, int, 
     return n_closed + n_open, n_closed, n_open
 
 
-def verify(faces: Sequence[int], index: float, grid: int) -> list[tuple]:
-    """One row per interval: ``(lower_deg, upper_deg, predicted (n, closed, open), grid (n, closed, open))``."""
-    field = DPField.build(canonical_crystal(), faces, index)
+def verify(faces: Sequence[int], index: float, grid: int, lattice_n: int = 20000) -> list[tuple]:
+    """One row per interval: ``(lower_deg, upper_deg, predicted (n, closed, open), grid (n, closed, open))``.
+
+    ``lattice_n`` is the field's lattice (:meth:`.dp_field.DPField.build`): ``3-5-6-7`` needs 50000, its
+    ``U_P`` has a neck that 20000 points split into two components.
+    """
+    field = DPField.build(canonical_crystal(), faces, index, lattice_n=lattice_n)
     chart = grid_field(field.faces, index, grid)
     edge = edge_values(chart, field.faces, index)
     rows = []
@@ -166,12 +170,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--grid", type=int, default=1601, help="grid points per side of the chart")
     parser.add_argument("--refractive-index", type=float, default=float(optics.ICE_REFRACTIVE_INDEX))
     parser.add_argument("--path", type=int, nargs="+", action="append", help="face sequence (repeatable); default: the fixtures")
+    parser.add_argument("--lattice-n", type=int, default=20000, help="Fibonacci lattice of the field layer (DPField.build)")
     args = parser.parse_args(argv)
     paths = [tuple(p) for p in args.path] if args.path else list(FIXTURES)
     failures = 0
     for faces in paths:
         start = time.perf_counter()
-        rows = verify(faces, args.refractive_index, args.grid)
+        rows = verify(faces, args.refractive_index, args.grid, args.lattice_n)
         print(f"{optics.path_id_of(faces)}  ({time.perf_counter() - start:.1f} s, grid {args.grid})")
         for lower, upper, predicted, measured in rows:
             ok = predicted == measured
