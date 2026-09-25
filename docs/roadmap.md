@@ -13,20 +13,16 @@
 |---|---|---|
 | Phase I: $\mathrm{SO}(3)$ continuation renderer | closed 2026-09-23 (strip agrees with Lumice in shape and absolute scale) | [phase1.md](phase1.md) |
 | M1: $S^2$ event store + band-sum renderer in production; $D_{6h}$ transport; conventions and symmetry authority | done 2026-09-23 / 2026-09-24 | [phase2.md](phase2.md) §1-§3, §5 |
-| M2: contour quadrature, critical points, completeness certificate, cross-validation, chapter-10 verdicts | bootstrapped (scrum 24) | [phase2.md](phase2.md) §3.1, §4, §10 |
+| M2: contour quadrature, critical points, completeness certificate, cross-validation, chapter-10 verdicts | done 2026-09-25 (scrum 24; the A60-10 142° verdict blocked on internal partial reflection, see §9) | [phase2.md](phase2.md) §3.1, §4, §10 |
 
-Queue (tasks in `scratchpad/tasks.md`; dispatch order 20 ∥ 21, then 22 ∥ 24, 23 when unblocked):
+Queue (tasks in `scratchpad/tasks.md`; dispatched 20 ∥ 21, then 22 ∥ 24, 23 in parallel with 24; all merged by 2026-09-25):
 
 | # | task | depends on |
 |---|---|---|
-| 20 | chore `band-sum-small-fixes`: `pixels.csv` value repr, a docstring escape, two missing regression tests | — |
+| 20 | chore `band-sum-small-fixes`: `pixels.csv` value repr, a docstring escape, two missing regression tests — **done 2026-09-24** | — |
 | 21 | `s2-store-schema-3`: store independent of the source, `.npy` + mmap, bucketed build ([phase2.md](phase2.md) §1.1, §8) — **done 2026-09-24** (schema 3) | — |
 | 22 | `band-sum-scatter-renderer`: band sum organised by deviation, class accumulation, GEMM tiles ([phase2.md](phase2.md) §8) — **done 2026-09-24** (canonical strip `30.8 s`, was `169 s`) | 21 |
 | 23 | `lumice-area-weighting-recheck`: absolute scale after Lumice's projected-area fix — **done 2026-09-24** (`K_p = N_sym ȳ Ω_p / (S/2)`, column strip `0.998`, plate / Parry families) | Ice Halo #597 merged |
-| 24 | scrum `phase2-contour-quadrature` (M2): `dp-field-topology` → `dp-field-layer` → `s2-contour-extraction` → `s2-contour-quadrature` → `phase1-seeds-from-store` → `ch10-numerical-verdicts` | 21 |
-
-| 22 | `band-sum-scatter-renderer`: band sum organised by deviation, class accumulation, GEMM tiles ([phase2.md](phase2.md) §8) | 21 |
-| 23 | `lumice-area-weighting-recheck`: absolute scale after Lumice's projected-area fix | Ice Halo #597 merged |
 | 24 | scrum `phase2-contour-quadrature` (M2): `dp-field-topology` → `dp-field-layer` → `s2-contour-extraction` → `s2-contour-quadrature` → `phase1-seeds-from-store` → `ch10-numerical-verdicts` — `dp-field-layer` **done 2026-09-24** (`lumice_integral.dp_field`, [phase2.md](phase2.md) §3.1); `s2-contour-extraction` **done 2026-09-24** (`lumice_integral.contour`, [phase2.md](phase2.md) §4); `s2-contour-quadrature` **done 2026-09-25** (`lumice_integral.contour_quadrature`, [phase2.md](phase2.md) §4); `phase1-seeds-from-store` **done 2026-09-25** (`s2_store.StoreSeeds`, `discovery.check_band_coverage`; `prescan` deleted; [phase1.md](phase1.md) §5); `ch10-numerical-verdicts` **done 2026-09-25** (`lumice_integral.ch10_verdicts`, `lumice_integral.focusing`, [phase2.md](phase2.md) §10; Liljequist (i), the A60-10 142° edge, blocked on internal partial reflection) | 21 |
 
 Deferred: the chapter-11 table (path classes × pose families) after 22 and
