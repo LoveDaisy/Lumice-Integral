@@ -53,7 +53,12 @@ from lumice_integral.strip_pixel import (
 # seed now comes from the S^2 store instead of the Haar prescan; the same loop
 # (61 poses, 257 nodes) resampled from another seed moves by 8e-6 relative,
 # inside the quadrature's own error estimate (1.2e-4).
-CANONICAL_PIXEL_RESAMPLED_VALUE = 6.581365570
+# 6.581365570 -> 6.581510519 (task phase1-quadrature-start-and-speed, 2026-09-25):
+# the arclength speed gains its -nu' . delta term and the error estimate is taken
+# panel by panel, which refines this loop to 513 nodes (was 257).  The value driven
+# to rtol = 1e-9 at the same epsilon is 6.581453685: the old pin was 8.8e-5 below it
+# (estimate 1.2e-4), the new one is 5.7e-5 above it (estimate 3.3e-4).
+CANONICAL_PIXEL_RESAMPLED_VALUE = 6.581510519
 # tests/test_discovery.py baselines.
 CANONICAL_ARCLENGTH = 2.379121
 ROW_225_ARCLENGTH = 3.121867

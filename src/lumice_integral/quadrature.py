@@ -37,9 +37,10 @@ by ``O(delta)`` at every node count (canonical pixel ~5.6e-6 low against the
 Phase II contour quadrature; task phase1-quadrature-start-and-speed).  Composite Simpson
 is applied to ``g(t) = f(gamma(t)) lambda(t)`` on the grid, so the sum is an
 exact parametrisation of the ``dH^1_g`` integral up to the quadrature error;
-the error estimate compares the grid with its every-other-node subset and the
-node count doubles until the estimate meets the tolerance or a declared
-maximum.  ``t`` is never reported as arclength.
+the error estimate compares the grid with its every-other-node subset panel by
+panel (:func:`_simpson_error_estimate`) and the node count doubles until the
+estimate meets the tolerance or a declared maximum.  ``t`` is never reported
+as arclength.
 
 Everything here is host-side post-processing of a traced curve (a
 :class:`FiberResult`, or an :class:`.resample.OpenArc` stitched from a forward
@@ -174,8 +175,9 @@ RESAMPLED_QUADRATURE_METHOD = (
     "tangents at the knots); every grid node retracted onto the fiber by a fixed "
     "number of batched bordered Newton iterations; arclength speed ds/dt from "
     "the implicit function theorem at the retracted node; error estimate "
-    "|I_N - I_(N+1)/2| with the node count doubled (N -> 2N-1) until it meets the "
-    "relative tolerance or maximum_node_count"
+    "sum over 4h panels of |S_h - S_2h| (the panel-wise |I_N - I_(N+1)/2|) with the "
+    "node count doubled (N -> 2N-1) until it meets the relative tolerance or "
+    "maximum_node_count"
 )
 
 
@@ -198,7 +200,10 @@ class ResampleOptions:
     what keeps every fixture within 1e-4 of the rtol=1e-8 adaptive reference;
     ``1e-3`` stops at 129 nodes and misses that on the longer loops (1e-4 and
     2e-4).  Two Newton iterations take the spline predictor's ~1e-6 residual
-    to round-off (one leaves ~1e-11).
+    to round-off (one leaves ~1e-11).  Since the panel-wise error estimate
+    (task phase1-quadrature-start-and-speed) the same tolerance refines
+    further: 129-1025 nodes on those fixtures, median 513 on 106 lit pixels of
+    column 126, none exhausted at ``maximum_node_count``.
     """
 
     epsilon: float = 1e-6
@@ -371,6 +376,25 @@ def _evaluate_grid_nodes(
     )
 
 
+def _simpson_error_estimate(values: np.ndarray, spacing: float) -> float:
+    """``sum |S_h - S_2h|`` over the ``4h`` panels of a ``4k + 1`` node grid.
+
+    The global ``|I_N - I_(N+1)/2|`` lets the panels' errors cancel.  The
+    integrand is only piecewise smooth (``entry_measure`` slope jumps: 2 on the
+    canonical loop, 4 on the (63,126) caustic loop) and each kink's Simpson
+    error changes size and sign with where the grid happens to fall, i.e.
+    with the trace's start point.  Over every grid phase of three loops
+    (task phase1-quadrature-start-and-speed, probe/estimator_phase_scan.py) the
+    global difference was optimistic against the Phase II contour quadrature on
+    2-37 % of phases (up to 58x); the panel-wise sum never was (worst 0.7x),
+    at 2-5x the global value.
+    """
+    assert len(values) % 4 == 1 and len(values) >= 5
+    fine = spacing / 3.0 * (values[0:-1:2] + 4.0 * values[1::2] + values[2::2])
+    coarse = 2.0 * spacing / 3.0 * (values[0:-1:4] + 4.0 * values[2::4] + values[4::4])
+    return float(np.sum(np.abs(fine[0::2] + fine[1::2] - coarse)))
+
+
 def _composite_simpson(values: np.ndarray, spacing: float) -> float:
     """Composite Simpson sum of uniformly spaced ``values`` (odd length)."""
     assert len(values) % 2 == 1 and len(values) >= 3
@@ -509,10 +533,10 @@ def integrate_fiber_resampled(
     onto the fiber in one batch (:func:`.continuation.retract_to_fiber_batch`),
     the four named factors and ``J_perp`` are evaluated in batch, and the
     composite Simpson sum of ``f * ds/dt`` over the parameter grid is compared
-    with the same sum over every other node.  Doubling reuses the previous
+    with the same sum over every other node, panel by panel.  Doubling reuses the previous
     grid as the even nodes of the next.  The only correctness evidence is the
     external alignment recorded in ``tests/test_resample_quadrature.py``; the
-    internal ``|I_N - I_(N+1)/2|`` estimate is self-consistency, not proof.
+    internal panel-wise ``|S_h - S_2h|`` estimate is self-consistency, not proof.
     """
     options = options or ResampleOptions()
     status = integrand_availability(problem)
@@ -534,7 +558,7 @@ def integrate_fiber_resampled(
         if not history:
             history.append(((node_count + 1) // 2, coarse))
         history.append((node_count, fine))
-        error = abs(fine - coarse)
+        error = _simpson_error_estimate(grid.weighted, spacing)
         if error <= options.relative_tolerance * abs(fine):
             exhausted = False
             break
