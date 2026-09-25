@@ -91,7 +91,7 @@ def test_3_5_minimum_is_a_finite_jump(labels) -> None:
     assert focusing.classify(canonical_crystal(), (3, 5), PARRY, INDEX).confined_dimensions == 2
 
 
-@pytest.mark.parametrize("faces", SLABS)
+@pytest.mark.parametrize("faces", [faces for faces in SLABS if faces != (1, 3, 5, 2)])
 def test_parallel_face_slabs_have_no_jacobian_focusing(labels, faces) -> None:
     """Wedge 0, ``M != I``: cone points, creases and boundary cusps only; their sharp images are ``rho``'s."""
     label = labels[faces]
@@ -105,6 +105,27 @@ def test_parallel_face_slabs_have_no_jacobian_focusing(labels, faces) -> None:
     assert focusing.classify(canonical_crystal(), faces, PLATE, INDEX).mechanism == "dimension_collapse"
 
 
+def test_rotation_slab_focuses_on_its_fold_circle_at_the_boundary(labels) -> None:
+    """``1-3-5-2`` (120 deg rotation): the fold circle ``D = 120`` deg (``|grad D| -> 0``) is an arc of ``dU_P``.
+
+    With partial internal reflections ``U_P`` is the triangle of the entry and
+    the two internal grazing great circles, and the fold circle is the entry
+    one: a one-sided curve of maxima, ``inverse_sqrt_divergence`` in ``delta``
+    -- Jacobian focusing at 120 deg under random orientation (the
+    ``dp-field-partial-reflection-boundaries`` label; before it the circle
+    missed the closure of ``U_P``).
+    """
+    label = labels[(1, 3, 5, 2)]
+    (circle,) = [o for o in label.onsets if o.source == "slab_circle"]
+    assert circle.location == "boundary" and circle.profile == "inverse_sqrt_divergence"
+    assert np.degrees(circle.value) == pytest.approx(120.0, abs=1e-12)
+    assert label.jacobian_focusing and label.mechanism == "jacobian"
+    lower, upper = label.gradient_norm_range
+    assert lower < 1e-3 and upper == pytest.approx(np.sqrt(3.0), abs=1e-3)
+    assert DPField.build(canonical_crystal(), (1, 3, 5, 2), INDEX).degenerate_fold.circle_interior_fraction == 0.0
+    assert focusing.classify(canonical_crystal(), (1, 3, 5, 2), PLATE, INDEX).mechanism == "jacobian+dimension_collapse"
+
+
 def test_slab_axis_and_circle_labels(labels) -> None:
     liljequist = labels[(3, 5, 6, 7, 3)]
     (cone,) = [o for o in liljequist.onsets if o.source == "slab_axis"]
@@ -112,11 +133,12 @@ def test_slab_axis_and_circle_labels(labels) -> None:
     assert np.degrees(cone.value) == pytest.approx(180.0, abs=1e-9) and cone.gradient_norm == pytest.approx(2.0, abs=1e-6)
     (crease,) = [o for o in liljequist.onsets if o.source == "slab_circle"]
     assert crease.profile == "crease" and crease.value == 0.0
-    # rotation slab (det +1, 120 deg): cone slope 2 sin 60 deg at the axis; its fold circle (D = 120 deg) misses U_P
+    # rotation slab (det +1, 120 deg): cone slope 2 sin 60 deg at the axis; its fold circle (D = 120 deg) is an
+    # arc of dU_P (test_rotation_slab_focuses_on_its_fold_circle_at_the_boundary)
     rotation = labels[(1, 3, 5, 2)]
     (axis,) = [o for o in rotation.onsets if o.source == "slab_axis"]
     assert axis.gradient_norm == pytest.approx(np.sqrt(3.0), abs=1e-6)
-    assert not [o for o in rotation.onsets if o.source == "slab_circle"]
+    assert [o.location for o in rotation.onsets if o.source == "slab_circle"] == ["boundary"]
 
 
 def test_boundary_records_are_merged(labels) -> None:
@@ -125,4 +147,4 @@ def test_boundary_records_are_merged(labels) -> None:
         keys = [(round(o.value, 6), o.location, o.source, o.profile) for o in label.onsets]
         assert len(keys) == len(set(keys))
     (peak,) = [o for o in labels[(3, 5, 6, 7, 3)].onsets if o.source == "boundary_extremum"]
-    assert np.degrees(peak.value) == pytest.approx(153.0697, abs=1e-4) and peak.multiplicity == 2
+    assert np.degrees(peak.value) == pytest.approx(98.1607, abs=1e-4) and peak.multiplicity == 2

@@ -20,12 +20,16 @@ repository; ``scripts/ch10_numerical_verdicts.py`` is the command line.
     between a crossover ``eps_c ~ sigma^2`` and ``~1e-2``, finite
     (``~ 1 / sigma``) below ``eps_c``.
 ``liljequist`` (:func:`liljequist`)
-    (i) the 142 deg edge of class A60-10 is blocked: its members have no
-    valid pose under the internal-TIR-only gate of ``optics.path_domain``
-    (roadmap section 9, 2026-09-25); recorded, not computed.  (ii) ``1-3-2``
-    and ``3-5-6-7-3`` share one mirror-slab field ``D = 2 arcsin |u . n_3|``
-    with ``|grad D| = 2``: no fold; their critical values do not depend on
-    ``h / a``, their windows (profiles) do.
+    (i) the 142 deg edge of class A60-10 (``3-5-6-7``, ``3-4-5-7``, one
+    partial internal reflection each): the ``D_P`` saddle
+    ``120 deg + D_min(3-5)`` on both members and every ``h / a``.  (ii)
+    ``1-3-2`` and ``3-5-6-7-3`` share one mirror-slab field
+    ``D = 2 arcsin |u . n_3|`` with ``|grad D| = 2``: no fold; their
+    critical values do not depend on ``h / a``, their windows (profiles)
+    do.  The Liljequist peak of ``3-5-6-7-3`` is the corner the internal
+    TIR onset of ``R_k`` puts at 153.07 deg (a slope jump, not a critical
+    value of ``D_P``); its one boundary critical value, 98.16 deg, is a
+    grazing internal incidence where ``w`` vanishes: no visible edge.
 ``parhelic-circle`` (:func:`parhelic_circle`)
     ``1-3-2`` under plates: the ring's elevation-integrated brightness equals
     the window-only prediction ``sum_phi w(phi) / (2 pi |d theta / d phi|)``
@@ -36,13 +40,7 @@ repository; ``scripts/ch10_numerical_verdicts.py`` is the command line.
     ``~ 1 / sigma`` at a fixed integral) on a parallel-face (wedge 0,
     ``M != I``) class.
 
-``eps`` is ``delta - D_min`` in radians throughout.  Level sets are
-extracted :data:`LEVEL_SET_CHUNK` deviations per :func:`.contour.extract_level_sets`
-call: on ``1-3-2`` the critical-data seeds find no component and every
-deviation relies on the fallback seeds, whose extra rounds are capped per call
-(``EXTRA_SEEDS_PER_ROUND x MAX_EXTRA_ROUNDS = 192``; a single call with
-~180 deviations there raises), a limitation of :mod:`.contour` recorded in
-the backlog, not changed here.
+``eps`` is ``delta - D_min`` in radians throughout.
 
 Nothing here imports or calls Lumice.
 """
@@ -53,7 +51,10 @@ import dataclasses
 from dataclasses import dataclass, field as dataclass_field
 from typing import Any, Mapping, Sequence
 
+import jax
+import jax.numpy as jnp
 import numpy as np
+from scipy.optimize import minimize
 
 from . import contour_quadrature as cq
 from . import focusing
@@ -61,17 +62,24 @@ from .camera import incident_direction_from_sun, sun_direction
 from .canonical_scene import CANONICAL_HEIGHT_RATIO, CANONICAL_REFRACTIVE_INDEX, canonical_crystal, canonical_sun_direction
 from .contour import extract_level_sets
 from .dp_field import DPField
-from .dp_field.field import tangent_basis
+from .dp_field.boundary import EXTREMUM_ATOL
+from .dp_field.field import d_value, margin_vector, tangent_basis
 from .geometry import HexPrism, halo_map_rank
-from .optics import domain_margin_names, path_id_of
+from .optics import domain_margin_names, path_domain_batch, path_id_of, validity_margin_indices
 from .pose_density import build_pose_density
 from .s2_store import S2EventStore, align_rotations, build_event_store, evaluate_fields, event_rotations, fibonacci_sphere
 
 VERDICTS = ("inner-edge", "liljequist", "parhelic-circle", "parallel-face")
-LEVEL_SET_CHUNK = 64
 # The store only seeds the extraction's independent check (contour module docstring); the tests' size.
 SEED_STORE_N = 200_000
 LATTICE_N = 200_000
+# Class A60-10 (the 142 deg parhelion) and its D_P saddle from the task verify-liljequist-face-numbering numpy probe;
+# a60_10_saddle measures it on the production chain.
+A60_10_MEMBERS = ((3, 5, 6, 7), (3, 4, 5, 7))
+A60_10_REFERENCE_DEG = 141.839300
+# tir_onset_maximum: lattice starts within this of a TIR discriminant's zero; accepted solutions satisfy it to this.
+ONSET_START_BAND = 1e-3
+ONSET_CONSTRAINT_ATOL = 1e-12
 # Smallest ring cross-section window, in units of the plate width (theta -> 0, where the ring is dark anyway).
 CROSS_WIDTH_FLOOR = 1e-2
 
@@ -122,11 +130,8 @@ def seed_store(crystal: HexPrism, index: float, faces: Sequence[int], n: int = S
 def level_set_geometry(
     field: DPField, deltas: np.ndarray, store: S2EventStore, options: cq.QuadratureOptions
 ) -> cq.LevelSetGeometry:
-    """Stage one of the quadrature for ``deltas`` (level sets extracted :data:`LEVEL_SET_CHUNK` at a time)."""
-    deltas = np.asarray(deltas, dtype=np.float64)
-    level_sets: tuple = ()
-    for first in range(0, len(deltas), LEVEL_SET_CHUNK):
-        level_sets += extract_level_sets(field, deltas[first:first + LEVEL_SET_CHUNK], store)
+    """Stage one of the quadrature for ``deltas``."""
+    level_sets = extract_level_sets(field, np.asarray(deltas, dtype=np.float64), store)
     return cq.LevelSetGeometry.build(field, level_sets, options)
 
 
@@ -386,10 +391,13 @@ def inner_edge(options: InnerEdgeOptions = InnerEdgeOptions()) -> Verdict:
 @dataclass(frozen=True)
 class LiljequistOptions:
     height_ratios: tuple[float, ...] = (0.2, 1.0, 2.0)
-    blocked_members: tuple[tuple[int, ...], ...] = ((3, 5, 6, 7), (3, 4, 5, 7))
+    a60_10_members: tuple[tuple[int, ...], ...] = A60_10_MEMBERS
+    # the U_P of 3-5-6-7 has a neck the default lattice splits in two (tests/test_dp_field_certificate.py A60_10)
+    a60_10_lattice_n: int = 50_000
     # profile grids (deg) per path
     grid_1_3_2: tuple[float, float, float] = (0.25, 115.5, 0.25)
     grid_3_5_6_7_3: tuple[float, float, float] = (0.25, 179.75, 0.25)
+    # the fine profile around the Liljequist peak (the TIR onset corner near 153.07 deg)
     peak_window_deg: tuple[float, float] = (145.0, 165.0)
     peak_step_deg: float = 0.05
     cusp_eps: tuple[float, ...] = (1e-2, 1e-3, 1e-4, 1e-5, 1e-6)
@@ -428,7 +436,9 @@ def blocked_class_status(members: Sequence[Sequence[int]], index: float, lattice
     """For each member: lattice points in ``U_P`` (0 means no event) and points passing every gate but internal TIR.
 
     The margins do not depend on the crystal (``U_P`` is shape independent),
-    so one count per member covers every ``h / a``.
+    so one count per member covers every ``h / a``.  Since internal
+    reflections are partial (task ``optics-partial-reflection``) the two
+    counts agree; they differed (0 valid) while internal TIR was a gate.
     """
     lattice = fibonacci_sphere(lattice_n)
     out = {}
@@ -445,11 +455,144 @@ def blocked_class_status(members: Sequence[Sequence[int]], index: float, lattice
     return out
 
 
+def a60_10_saddle(
+    index: float, height_ratios: Sequence[float], members: Sequence[Sequence[int]] = A60_10_MEMBERS, lattice_n: int = 50_000
+) -> dict[str, Any]:
+    """The 142 deg edge of class A60-10: the middle of each member's three critical values, per ``h / a``.
+
+    ``D_P`` of ``3-5-6-7`` / ``3-4-5-7`` has no interior critical point; its
+    critical values are the two corner values and, between them, the
+    maximum of the ``dU_P`` loop on a grazing internal-reflection piece (a
+    saddle of the smooth extension; ``docs/phase2.md``, A60-10), which the
+    reference puts at ``120 + D_min(3-5)``.  Anything but three critical
+    values raises: the middle one would not be that saddle.
+    """
+    per_member: dict[str, list[float]] = {}
+    for faces in members:
+        values = []
+        for ratio_ in height_ratios:
+            critical = np.degrees(DPField.build(HexPrism.from_ratio(ratio_), faces, index, lattice_n=lattice_n).critical_values)
+            if len(critical) != 3:
+                raise RuntimeError(f"{path_id_of(faces)} on h/a = {ratio_}: {len(critical)} critical values {critical}, expected 3")
+            values.append(float(critical[1]))
+        per_member[path_id_of(faces)] = values
+    all_values = np.array(list(per_member.values()))
+    d_min_3_5 = float(np.degrees(DPField.build(canonical_crystal(), (3, 5), index).critical_values[0]))
+    saddle = float(np.mean(all_values))
+    return {
+        "saddle_deg_per_member_and_h_over_a": per_member,
+        "height_ratios": [float(r) for r in height_ratios],
+        "saddle_deg": saddle,
+        "spread_deg": float(np.ptp(all_values)),
+        "reference_deg": A60_10_REFERENCE_DEG,
+        "difference_from_reference_deg": saddle - A60_10_REFERENCE_DEG,
+        "d_min_3_5_deg": d_min_3_5,
+        "saddle_minus_120_minus_d_min_3_5_deg": saddle - 120.0 - d_min_3_5,
+        "lattice_n": int(lattice_n),
+    }
+
+
+def tir_onset_maximum(field: DPField, lattice_n: int = LATTICE_N, starts: int = 5) -> dict[str, Any]:
+    """Per internal reflection: the largest ``D_P`` on its TIR onset ``{internal_k_tir_discriminant = 0}`` in ``U_P``.
+
+    ``R_k`` (:func:`.optics.internal_reflectance`) is ``1`` on the total
+    side and ``1 - O(sqrt(-disc))`` on the partial side: continuous, with an
+    unbounded normal derivative.  Where a level set of ``D_P`` leaves the
+    onset curve (its ``D`` maximum) the random-orientation profile keeps
+    its value and changes its slope (``int sqrt(c - b x^2) dx ~ c``): a
+    corner, not a critical value of ``D_P``.  Lattice starts (the largest
+    ``D`` near the curve), then SLSQP in a tangent chart with the ``U_P``
+    gates as inequalities, derivatives by JAX through the field's own
+    kernels.  ``constraint`` is the discriminant at the solution,
+    ``min_gate_margin`` its smallest gate and ``lagrange_sine`` the sine
+    between the tangent gradients of ``D_P`` and the discriminant (``0`` at
+    a tangency inside ``U_P``); ``None`` for a face without a feasible onset.
+    """
+    faces, index = field.faces, jnp.asarray(field.index)
+    slab = None if field.slab is None else jnp.asarray(field.slab)
+    names = domain_margin_names(faces)
+    gates = np.asarray(validity_margin_indices(faces))
+    lattice = fibonacci_sphere(lattice_n)
+    u = lattice[field.valid_batch(lattice)]
+    d, margins = field.d_p_batch(u), field.margins_batch(u)
+
+    def stacked(v: jax.Array) -> jax.Array:  # (D_P, every margin) at unit v
+        return jnp.concatenate([d_value(v, faces, index, slab)[None], margin_vector(v, faces, index)])
+
+    evaluate, stacked_jacobian = jax.jit(stacked), jax.jit(jax.jacfwd(stacked))
+    out: dict[str, Any] = {}
+    for k, name in enumerate(names):
+        if not name.endswith("_tir_discriminant"):
+            continue
+        near = np.abs(margins[:, k]) < ONSET_START_BAND
+        best = None
+        for j in np.argsort(-d[near])[:starts]:
+            u0 = u[near][j]
+            basis = np.asarray(tangent_basis(u0))
+
+            def point(x, u0=u0, basis=basis):
+                v = u0 + x @ basis
+                return v / jnp.linalg.norm(v)
+
+            def values(x):
+                return np.asarray(evaluate(point(jnp.asarray(x))))
+
+            def jacobian(x, u0=u0, basis=basis):
+                x = jnp.asarray(x)
+                return np.asarray(stacked_jacobian(point(x)) @ jax.jacfwd(point)(x))
+
+            result = minimize(
+                lambda x: -values(x)[0], np.zeros(2), jac=lambda x: -jacobian(x)[0], method="SLSQP",
+                constraints=[
+                    {"type": "eq", "fun": lambda x, k=k: values(x)[1 + k], "jac": lambda x, k=k: jacobian(x)[1 + k]},
+                    {"type": "ineq", "fun": lambda x: values(x)[1 + gates], "jac": lambda x: jacobian(x)[1 + gates]},
+                ],
+                options={"ftol": 1e-15, "maxiter": 500},
+            )
+            at = values(result.x)
+            if abs(at[1 + k]) < ONSET_CONSTRAINT_ATOL and np.all(at[1 + gates] > 0.0) and (best is None or at[0] > best[0]):
+                best = (float(at[0]), np.asarray(point(jnp.asarray(result.x))), at, jacobian(result.x))
+        if best is None:
+            out[name] = None
+            continue
+        value, position, at, jac = best
+        g_d, g_c = jac[0], jac[1 + k]
+        out[name] = {
+            "delta_deg": float(np.degrees(value)),
+            "position": position.tolist(),
+            "constraint": float(at[1 + k]),
+            "min_gate_margin": float(np.min(at[1 + gates])),
+            "lagrange_sine": float(abs(g_d[0] * g_c[1] - g_d[1] * g_c[0]) / (np.linalg.norm(g_d) * np.linalg.norm(g_c))),
+            "lattice_start_band": ONSET_START_BAND,
+        }
+    return out
+
+
+def _one_sided(field: DPField, centre: float, eps: np.ndarray, store: S2EventStore, options: cq.QuadratureOptions) -> dict[str, Any]:
+    """Values at ``centre +- eps`` (and at ``centre`` unless it is a critical value), one-sided slopes, gap exponent."""
+    _, above, _ = _random_profile(field, centre + eps, store, options)
+    _, below, _ = _random_profile(field, centre - eps, store, options)
+    gap = above - below
+    out = {
+        "value_above": above.tolist(),
+        "value_below": below.tolist(),
+        "gap_exponent": float(np.polyfit(np.log(eps[1:]), np.log(np.abs(gap[1:])), 1)[0]),
+        "gap_relative_at_smallest_eps": float(abs(gap[-1]) / max(abs(above[-1]), abs(below[-1]))),
+    }
+    if not cq.critical_delta(field, centre):
+        _, (at,), _ = _random_profile(field, np.array([centre]), store, options)
+        out["value_at"] = float(at)
+        out["slope_above"] = ((above - at) / eps).tolist()
+        out["slope_below"] = ((at - below) / eps).tolist()
+    return out
+
+
 def liljequist(options: LiljequistOptions = LiljequistOptions()) -> Verdict:
-    """Verdict 2 (module docstring): (i) A60-10 blocked, recorded; (ii) ``1-3-2`` / ``3-5-6-7-3`` profiles on several ``h / a``."""
+    """Verdict 2 (module docstring): (i) the A60-10 saddle on every ``h / a``; (ii) ``1-3-2`` / ``3-5-6-7-3`` profiles and the peak corner."""
     index = CANONICAL_REFRACTIVE_INDEX
     quadrature = cq.QuadratureOptions(relative_tolerance=options.relative_tolerance)
-    blocked = blocked_class_status(options.blocked_members, index, options.lattice_n)
+    a60_10 = a60_10_saddle(index, options.height_ratios, options.a60_10_members, options.a60_10_lattice_n)
+    a60_10["domain"] = blocked_class_status(options.a60_10_members, index, options.lattice_n)
 
     paths = {(1, 3, 2): _grid(options.grid_1_3_2), (3, 5, 6, 7, 3): _grid(options.grid_3_5_6_7_3)}
     lattice = fibonacci_sphere(options.lattice_n)
@@ -504,71 +647,78 @@ def liljequist(options: LiljequistOptions = LiljequistOptions()) -> Verdict:
         notes[f"error_{key}"] = f"pixel value; error estimate of value_{key}"
         notes[f"critical_values_deg_{key}"] = f"deg; critical values of D_P for {name} (identical on every h / a)"
 
-    # the Liljequist peak at the boundary critical value: fine profile and the one-sided approach
+    # 3-5-6-7-3: the peak is the corner at the internal TIR onset (not a critical value of D_P); the one
+    # boundary critical value inside (0, 180) deg is a grazing internal incidence, where w itself vanishes
     faces = (3, 5, 6, 7, 3)
-    cusp, fine_rows = [], []
+    peak, onset_98, fine_rows = [], [], []
     fine = np.radians(np.arange(options.peak_window_deg[0], options.peak_window_deg[1] + 1e-9, options.peak_step_deg))
     eps = np.asarray(options.cusp_eps)
     for ratio_ in options.height_ratios:
         crystal = HexPrism.from_ratio(ratio_)
         field = DPField.build(crystal, faces, index)
         store = seed_store(crystal, index, faces, options.seed_store_n)
-        (critical,) = [v for v in field.critical_values if np.radians(150.0) < v < np.radians(160.0)]
+        onsets = tir_onset_maximum(field, options.lattice_n)
+        found = [v["delta_deg"] for v in onsets.values() if v is not None]
+        corner = np.radians(max(found))
+        (boundary,) = [v for v in field.critical_values if EXTREMUM_ATOL < v < np.pi - EXTREMUM_ATOL]
         fine_deltas, fine_values, _ = _random_profile(field, fine, store, quadrature)
         fine_rows.append(fine_values)
-        _, above, _ = _random_profile(field, critical + eps, store, quadrature)
-        _, below, _ = _random_profile(field, critical - eps, store, quadrature)
-        # the peak value is the limit from above (above - its smallest-eps value is O(eps)); below approaches as eps^p
-        gap = above[-1] - below
-        exponent = float(np.polyfit(np.log(eps[1:]), np.log(gap[1:]), 1)[0])
-        cusp.append({
+        sided = _one_sided(field, corner, eps, store, quadrature)
+        peak.append({
             "height_ratio": ratio_,
-            "critical_value_deg": float(np.degrees(critical)),
-            "value_above": above.tolist(),
-            "value_below": below.tolist(),
-            "below_gap_exponent": exponent,
+            "tir_onsets": onsets,
+            "onset_spread_across_faces_deg": float(np.ptp(found)),
+            "corner_deg": float(np.degrees(corner)),
+            "corner_is_a_critical_value": cq.critical_delta(field, corner),
+            **sided,
+            "slope_jump": sided["slope_above"][-1] - sided["slope_below"][-1],
             "fine_peak_deg": float(np.degrees(fine_deltas[int(np.argmax(fine_values))])),
             "fine_half_maximum_range_deg": _half_maximum_range(fine_deltas, fine_values),
+        })
+        edge = _one_sided(field, boundary, eps, store, quadrature)
+        onset_98.append({
+            "height_ratio": ratio_,
+            "critical_value_deg": float(np.degrees(boundary)),
+            **edge,
+            "relative_to_peak": float(edge["value_above"][-1] / sided["value_at"]),
         })
     arrays["delta_deg_3_5_6_7_3_peak"] = np.degrees(fine_deltas)
     arrays["value_3_5_6_7_3_peak"] = np.array(fine_rows)
     arrays["cusp_eps"] = eps
     notes["delta_deg_3_5_6_7_3_peak"] = "deg; fine deviations around the Liljequist peak"
     notes["value_3_5_6_7_3_peak"] = "random-orientation pixel value of 3-5-6-7-3 per (h / a, fine delta)"
-    notes["cusp_eps"] = "rad; offsets from the 153.07 deg critical value of the cusp values in metadata"
+    notes["cusp_eps"] = ("rad; offsets of the one-sided values in metadata, from the 153.07 deg TIR onset corner "
+                         "(liljequist_peak) and from the 98.16 deg boundary critical value (boundary_onset)")
 
     numbers = {
-        "blocked_i": {
-            "status": "blocked",
-            "class": "A60-10",
-            "members": blocked,
-            "reason": ("optics.path_domain / path_domain_batch admit total internal reflection only; every A60-10 "
-                       "member needs one partial reflection (face 5 at 30 deg incidence). Whether to model internal "
-                       "partial reflection is open for the owner (docs/roadmap.md section 9, 2026-09-25)."),
-            "reference_value_not_computed_here": ("141.839300 deg, a D_P saddle on the seam of 3-5-6-7 / 3-4-5-7, from the "
-                                                  "task verify-liljequist-face-numbering scratchpad probe (numpy, not production)"),
-        },
+        "a60_10": a60_10,
         "shared_field": shared,
         "paths": per_path,
-        "liljequist_peak": cusp,
+        "liljequist_peak": peak,
+        "boundary_onset": onset_98,
     }
     spreads = [per_path[p]["critical_value_spread_across_h_over_a_deg"] for p in per_path]
-    c0 = cusp[0]
+    p0 = peak[0]
     statement = (
-        "(i) Blocked: A60-10 (3-5-6-7, 3-4-5-7), the 142 deg edge, has no valid pose in this repository "
-        f"({', '.join(f'{k}: {v['valid_points']} of {v['lattice_points']}' for k, v in blocked.items())} lattice points; "
-        f"{', '.join(str(v['points_passing_all_but_internal_tir']) for v in blocked.values())} pass every gate but internal TIR), "
-        "pending the owner's decision on internal partial reflection. (ii) 1-3-2 and 3-5-6-7-3 have one field, "
+        f"(i) A60-10 (3-5-6-7, 3-4-5-7), the 142 deg edge: its D_P saddle is {a60_10['saddle_deg']:.6f} deg on both members "
+        f"and every h/a (spread {a60_10['spread_deg']:.1e} deg; reference {A60_10_REFERENCE_DEG:.6f} deg, "
+        f"difference {a60_10['difference_from_reference_deg']:.1e} deg), = 120 deg + D_min(3-5) to "
+        f"{a60_10['saddle_minus_120_minus_d_min_3_5_deg']:.1e} deg. (ii) 1-3-2 and 3-5-6-7-3 have one field, "
         f"D = 2 arcsin|u . n_3| (max difference {shared['max_abs_D_difference_on_either_U_P']:.1e} rad), with |grad D_P| = 2 "
         "on U_P: no fold anywhere. Their critical values are the same on every h/a (spread "
-        f"{max(s for s in spreads if s is not None):.1e} deg); the profiles are the window. The Liljequist peak of 3-5-6-7-3 sits "
-        f"at the boundary critical value {c0['critical_value_deg']:.4f} deg for every h/a, finite, reached from below as "
-        f"eps^{np.mean([c['below_gap_exponent'] for c in cusp]):.2f}; its width and the profile below it change with h/a "
-        f"(half maximum {', '.join(f'h/a {c['height_ratio']}: {c['fine_half_maximum_range_deg'][0]:.2f}-{c['fine_half_maximum_range_deg'][1]:.2f}' for c in cusp)} deg). "
-        "The window shapes the peak; it does not move it."
+        f"{max(s for s in spreads if s is not None):.1e} deg); the profiles are the window. The Liljequist peak of 3-5-6-7-3 "
+        f"sits at {p0['corner_deg']:.4f} deg for every h/a, the largest D_P on the internal TIR onsets (not a critical value "
+        "of D_P): a corner, the value continuous (gap ~ eps^"
+        f"{np.mean([c['gap_exponent'] for c in peak]):.2f}), the slope jumping from "
+        f"{', '.join(f'{c['slope_below'][-1]:.3g}' for c in peak)} to {', '.join(f'{c['slope_above'][-1]:.3g}' for c in peak)} "
+        f"per rad (h/a {', '.join(str(c['height_ratio']) for c in peak)}); its width and the profile below it change with h/a "
+        f"(half maximum {', '.join(f'h/a {c['height_ratio']}: {c['fine_half_maximum_range_deg'][0]:.2f}-{c['fine_half_maximum_range_deg'][1]:.2f}' for c in peak)} deg). "
+        f"The boundary critical value {onset_98[0]['critical_value_deg']:.4f} deg (grazing internal incidence) is no "
+        f"visible edge: w vanishes there, the profile is continuous (gap ~ eps^{np.mean([c['gap_exponent'] for c in onset_98]):.2f}) "
+        f"at {max(c['relative_to_peak'] for c in onset_98):.1e} of the peak or less. The window shapes the peak; it does not move it."
     )
     parameters = {"refractive_index": index, "options": dataclasses.asdict(options), "quadrature": quadrature.as_json()}
-    return Verdict("liljequist", "partially_blocked", statement, numbers, parameters, arrays, notes)
+    return Verdict("liljequist", "measured", statement, numbers, parameters, arrays, notes)
 
 
 # ---- verdict 3: the parhelic circle ----------------------------------------------------------------
@@ -583,8 +733,9 @@ class ParhelicCircleOptions:
     # ring cross-section: Gauss-Legendre nodes on +-(half_width_sigmas x sigma) of elevation
     cross_nodes: int = 48
     cross_half_width_sigmas: float = 8.0
-    # theta closer than this many sigma (in ring azimuth) to a jump of the window is not compared
-    jump_exclusion_sigmas: float = 12.0
+    # theta closer than this many sigma (in ring azimuth) to a non-smooth point of the window (a jump, or the
+    # internal TIR onset of R_k, where w is continuous with an unbounded slope) is not compared
+    edge_exclusion_sigmas: float = 12.0
     phi_samples: int = 72000
     relative_tolerance: float = 1e-8
     seed_store_n: int = SEED_STORE_N
@@ -605,11 +756,15 @@ def ring_window(crystal: HexPrism, index: float, sun: np.ndarray, faces: Sequenc
 
     ``phi`` is a periodic uniform grid on ``[0, 2 pi)``.  Returns ``w``, the
     validity, the sky elevation and the ring azimuth ``theta`` (sky azimuth
-    minus the sun's, in ``(-pi, pi]``) of the image, and ``dtheta_dphi``
-    (central differences of the wrapped angle).
+    minus the sun's, in ``(-pi, pi]``) of the image, ``dtheta_dphi``
+    (central differences of the wrapped angle) and ``internal_tir``, the
+    smallest internal TIR discriminant (positive: every internal reflection
+    total, ``R_k = 1``; ``+inf`` without internal reflections).
     """
     rotations = _plate_poses(phi)
     fields = evaluate_fields(rotations, sun, crystal, index, [tuple(faces)])
+    margins = path_domain_batch(rotations, faces, incident_direction_from_sun(sun), index).margins
+    tir = [np.asarray(v) for name, v in margins.items() if name.endswith("_tir_discriminant")]
     sky = -np.einsum("nij,nj->ni", rotations, fields["phi"])
     theta = _wrap(np.arctan2(sky[:, 1], sky[:, 0]) - np.arctan2(sun[1], sun[0]))
     return {
@@ -618,6 +773,7 @@ def ring_window(crystal: HexPrism, index: float, sun: np.ndarray, faces: Sequenc
         "elevation": np.arcsin(np.clip(sky[:, 2], -1.0, 1.0)),
         "theta": theta,
         "dtheta_dphi": _wrap(np.roll(theta, -1) - np.roll(theta, 1)) / (2.0 * (phi[1] - phi[0])),
+        "internal_tir": np.min(tir, axis=0) if tir else np.full(len(phi), np.inf),
     }
 
 
@@ -690,9 +846,15 @@ def parhelic_circle(options: ParhelicCircleOptions = ParhelicCircleOptions()) ->
         other = ring_window(crystal, index, sun, (1, k, 2), phi)["w"]
         # the crystal is invariant under 60 deg turns: face k at phi is face 3 at phi + 60 (k - 3) deg
         shifts[f"1-{k}-2"] = float(np.max(np.abs(other - np.roll(window["w"], -(k - 3) * step))))
-    # jumps of w along phi (the internal-TIR-only gate switching a lit window on or off)
-    jump = np.abs(np.diff(np.r_[window["w"], window["w"][0]])) > 1e-3 * window["w"].max()
+    # non-smooth points of w along phi: jumps (the window switching on or off at a non-zero w) and the internal TIR
+    # onsets (R_k leaves 1: w continuous, slope unbounded); each at the ring azimuth of its first sample
+    w, valid, tir = window["w"], window["valid"], window["internal_tir"]
+    toggle = valid != np.roll(valid, -1)
+    jump = toggle & (np.maximum(w, np.roll(w, -1)) > 1e-3 * w.max())
+    onset = valid & np.roll(valid, -1) & (np.sign(tir) != np.sign(np.roll(tir, -1)))
     jump_thetas = np.mod(window["theta"][np.nonzero(jump)[0]], 2.0 * np.pi)
+    onset_thetas = np.mod(window["theta"][np.nonzero(onset)[0]], 2.0 * np.pi)
+    edge_thetas = np.r_[jump_thetas, onset_thetas]
 
     lit_thetas = np.mod(window["theta"][lit], 2.0 * np.pi)
     lit_thetas = np.where(lit_thetas > np.pi, lit_thetas - 2.0 * np.pi, lit_thetas)
@@ -716,9 +878,9 @@ def parhelic_circle(options: ParhelicCircleOptions = ParhelicCircleOptions()) ->
 
         ring = np.array([ring_cross_integral(values_at, sun, t, elevation, sigma, options)[0] for t in thetas])
         rows.append(ring)
-        near_jump = np.array([np.min(np.abs(np.mod(jump_thetas - t + np.pi, 2 * np.pi) - np.pi)) if len(jump_thetas) else np.inf
-                              for t in thetas]) < options.jump_exclusion_sigmas * sigma
-        compare = (prediction > 0.0) & ~near_jump
+        near_edge = np.array([np.min(np.abs(np.mod(edge_thetas - t + np.pi, 2 * np.pi) - np.pi)) if len(edge_thetas) else np.inf
+                              for t in thetas]) < options.edge_exclusion_sigmas * sigma
+        compare = (prediction > 0.0) & ~near_edge
         relative = ring[compare] / prediction[compare] - 1.0
         residual_stats.append({
             "plate_zenith_std_deg": width,
@@ -733,6 +895,8 @@ def parhelic_circle(options: ParhelicCircleOptions = ParhelicCircleOptions()) ->
                       / np.log(options.plate_widths_deg[0] / options.plate_widths_deg[1]))
 
     jumps_deg = np.degrees(np.unique(np.round(jump_thetas, 6))).tolist()
+    onsets_deg = np.degrees(np.unique(np.round(onset_thetas, 6))).tolist()
+    onset_w = [float(w[i] / w.max()) for i in np.nonzero(onset)[0]]
     numbers = {
         "path": path_id_of(faces),
         "focusing": label.as_json(),
@@ -741,6 +905,8 @@ def parhelic_circle(options: ParhelicCircleOptions = ParhelicCircleOptions()) ->
         "dtheta_dphi_range": slope_range,
         "member_window_shift_max_abs_difference": shifts,
         "window_jump_ring_azimuths_deg": jumps_deg,
+        "window_tir_onset_ring_azimuths_deg": onsets_deg,
+        "window_w_at_tir_onsets_relative_to_max": onset_w,
         "ring_vs_window": residual_stats,
         "residual_order_in_sigma": order,
     }
@@ -752,9 +918,12 @@ def parhelic_circle(options: ParhelicCircleOptions = ParhelicCircleOptions()) ->
         f"The elevation-integrated ring brightness from the contour quadrature under plates equals the window-only prediction "
         f"sum w / (2 pi x 2) to {worst['max_abs_relative_residual']:.1e} (max over {worst['compared_thetas']} ring azimuths at "
         f"sigma = {worst['plate_zenith_std_deg']} deg), shrinking as sigma^{'?' if order is None else f'{order:.2f}'}; "
-        f"within {options.jump_exclusion_sigmas:g} sigma "
-        f"of a jump of the window (the TIR-only gate, ring azimuth {', '.join(f'{t:.2f}' for t in jumps_deg if t <= 180.0)} deg) the "
-        "ring is that jump smoothed by the plate width and is not compared. The six prism members' windows are one function shifted by 60 deg "
+        f"within {options.edge_exclusion_sigmas:g} sigma of a non-smooth point of the window the ring is that point smoothed by "
+        "the plate width and is not compared: "
+        f"{'no jump' if not jumps_deg else 'jumps at ring azimuth ' + ', '.join(f'{t:.2f}' for t in jumps_deg if t <= 180.0) + ' deg'}, "
+        f"{'no internal TIR onset' if not onsets_deg else 'the internal TIR onset at ring azimuth ' + ', '.join(f'{t:.2f}' for t in onsets_deg if t <= 180.0) + ' deg'} "
+        "(w continuous, largest there, then falling with an unbounded slope as R leaves 1). "
+        "The six prism members' windows are one function shifted by 60 deg "
         f"(max difference {max(shifts.values()):.1e}), so under uniform plate azimuth every member draws the same ring."
     )
     arrays = {
@@ -869,13 +1038,21 @@ def parallel_face(options: ParallelFaceOptions = ParallelFaceOptions()) -> Verdi
     jacobian_paths = sorted({row["path"] for row in table if row["jacobian_focusing"]})
     gain = demo[-1]["peak_value"] / demo[0]["peak_value"]
     narrowing = options.demo_widths_deg[0] / options.demo_widths_deg[-1]
+    focusing_onsets = {
+        row["path"]: sorted({(round(o["value_deg"], 4), o["location"], o["source"], o["profile"]) for o in row["onsets"] if o["jacobian_focusing"]})
+        for row in table if row["jacobian_focusing"] and row["family"] == "random"
+    }
+    focused = "; ".join(
+        f"{path} at {', '.join(f'{v:.4f} deg ({source} on the {location}, {profile})' for v, location, source, profile in onsets)}"
+        for path, onsets in focusing_onsets.items()
+    )
     statement = (
         "Explicit output (lumice_integral.focusing): Jacobian focusing is read off the D_P critical set, dimension collapse off "
         "the density's confined dimensions. On the fixtures "
         f"{', '.join(path_id_of(f) for f in options.paths)} "
-        f"{'no critical value focuses' if not jacobian_paths else 'Jacobian focusing on ' + ', '.join(jacobian_paths)}: 3-5 has a finite jump, the "
-        "parallel-face (wedge 0, M != I) slabs have |grad D_P| bounded away from 0 (cone points, creases and boundary cusps; "
-        "the rotation slab 1-3-5-2 keeps its fold circle outside U_P), and 3-6 is a point mass. Every sharp image of these "
+        f"{'no critical value focuses' if not jacobian_paths else 'Jacobian focusing only on ' + focused}. Otherwise 3-5 has a "
+        "finite jump, the parallel-face (wedge 0, M != I) slabs have |grad D_P| bounded away from 0 (cone points, creases and "
+        "boundary cusps), and 3-6 is a point mass. Every other sharp image of these "
         f"classes is dimension collapse: across the parhelic circle (1-3-2, plates) narrowing sigma {narrowing:g}-fold multiplies "
         f"the peak by {gain:.3f} while the cross integral stays at {demo[0]['cross_integral']:.6g} / {demo[-1]['cross_integral']:.6g}, and the "
         f"random-orientation value at the same pixels is smooth ({demo[-1]['random_value_range'][0]:.4g}-{demo[-1]['random_value_range'][1]:.4g})."
@@ -884,6 +1061,7 @@ def parallel_face(options: ParallelFaceOptions = ParallelFaceOptions()) -> Verdi
         "table": table,
         "mechanisms": [list(m) for m in mechanisms],
         "paths_with_jacobian_focusing": jacobian_paths,
+        "jacobian_focusing_onsets_random": {k: [list(o) for o in v] for k, v in focusing_onsets.items()},
         "collapse_demo": {"path": "1-3-2", "theta_deg": options.demo_theta_deg, "widths": demo},
     }
     parameters = {

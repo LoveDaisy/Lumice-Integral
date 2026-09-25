@@ -478,11 +478,12 @@ def test_cache_refuses_mismatched_recorded_parameters(tmp_path) -> None:
         _cached(tmp_path)
 
 
-@pytest.mark.parametrize("schema", [1, 2])
+@pytest.mark.parametrize("schema", [1, 2, 3])
 def test_cache_refuses_an_older_schema(tmp_path, schema: int) -> None:
-    """Schema 1 (``u = R^-1 s``, propagation) and schema 2 (sun direction in the key) are refused, never converted."""
+    """Schema 1 (``u = R^-1 s``, propagation), schema 2 (sun direction in the key) and schema 3 (internal
+    reflections admitted only when total) are refused, never converted."""
     built = _cached(tmp_path)
-    assert s2_store.SCHEMA_VERSION == 3
+    assert s2_store.SCHEMA_VERSION == 4
     directory = tmp_path / built.spec.cache_key()
     provenance_path = directory / "provenance.json"
     provenance = json.loads(provenance_path.read_text())

@@ -1,7 +1,12 @@
 """``dU_P``: the boundary loop of the valid domain, its corners and the restricted critical points of ``D_P``.
 
-``U_P = {u : every margin > 0}`` (:mod:`.field`), so ``dU_P`` is made of
-arcs of the zero sets of single margins meeting at corners.  The boundary is
+``U_P = {u : every gate > 0}`` (:mod:`.field`; the gates are
+:func:`.optics.validity_margin_names`), so ``dU_P`` is made of arcs of the
+zero sets of single gates meeting at corners.  Only gates are walked, cut
+at, or recorded at corners: an internal reflection's TIR discriminant is a
+diagnostic of :func:`.field.margin_vector` and never part of ``dU_P`` (a
+partial reflection keeps the pose in ``U_P``, weighted by Fresnel ``R``).
+"Margin" below means a gate.  The boundary is
 found by *walking* it: from one boundary point, march along the zero set of
 the active margin with ``U_P`` on the left (tangent ``grad m x u``), stop at
 the first point where another margin turns negative (bisection, then a
@@ -11,7 +16,7 @@ at its first corner.  A closed walk is the certificate that the loop is
 complete; that ``U_P`` has a single boundary loop is the disk check of
 :mod:`.certificate`.  Walking subsumes the explore-stage corner enumerations
 (the entry-great-circle scan of ``dp-field-boundary-corners`` finds only the
-corners on that circle; TIR-TIR corners and corners of deeper reflections
+corners on that circle; corners between two marched curves and of deeper reflections
 are met by the walk in order).
 
 Two curve kinds, by margin (explore ``dp-field-exit-tir-marching-generalize``):
@@ -24,15 +29,15 @@ Two curve kinds, by margin (explore ``dp-field-exit-tir-marching-generalize``):
   ``m``).  This is checked per path at run time -- the normal condition and
   the margin on sampled circle points -- and a margin that fails either
   check is marched.  The entry margin is ``n_a . u``, always a great circle.
-- every other margin (TIR and Snell discriminants, non-orthogonal
-  incidence cosines) is marched: tangent predictor, Newton corrector along
+- every other margin (the entry and exit Snell discriminants,
+  non-orthogonal incidence cosines) is marched: tangent predictor, Newton corrector along
   the tangent gradient back onto the zero set (residual at rounding level).
 
 Margin identities are removed before walking, never assumed absent:
 
 - three consecutive internal reflections off side faces whose azimuths step
   by the same ``+-60`` degrees make the first and third incidence cosines
-  (hence TIR discriminants) the same function (explore
+  (hence also the TIR discriminants, which are not walked) the same function (explore
   ``dp-field-boundary-deep-internal-faces``: two reflections compose to a
   rotation that carries the third normal onto the first); the third step's
   margins are dropped and reported in ``identical_margins``;
@@ -152,8 +157,8 @@ class BoundaryPiece:
 class Corner:
     """A non-smooth point of ``dU_P``.
 
-    ``margins``: every margin vanishing there (``|m| <= ZERO_MARGIN_ATOL``),
-    in :func:`.optics.domain_margin_names` order; ``incoming`` /
+    ``margins``: every gate vanishing there (``|m| <= ZERO_MARGIN_ATOL``),
+    in :func:`.optics.validity_margin_names` order; ``incoming`` /
     ``outgoing``: the two that bound ``U_P`` there (walk order);
     ``tangent``: the other vanishing margins whose curve is tangent to a
     bounding one (gradients parallel: they touch the corner from outside
@@ -279,12 +284,12 @@ class _Walker:
         self.index = float(index)
         self._index = jnp.float64(index)
         self._slab = None if slab is None else jnp.asarray(slab, dtype=jnp.float64)
-        self.names = optics.domain_margin_names(faces)
+        self.names = optics.domain_margin_names(faces)  # margin_vector's layout: indices only
         self.identical = identical_margins(faces)
         self.circles = great_circle_margins(crystal, faces, index)
-        # entry_snell_discriminant = 1 - (1 - c^2) / n^2 > 0 for n > 1: never a boundary; it stays in the
-        # validity test (it is a margin of the authority) but is not walked.
-        self.active = [name for name in self.names if name not in self.identical]
+        # the gates of U_P (the authority of path_domain_batch), identities removed; entry_snell_discriminant
+        # = 1 - (1 - c^2) / n^2 > 0 for n > 1 stays a gate but never vanishes, so it never becomes a piece.
+        self.active = [name for name in optics.validity_margin_names(faces) if name not in self.identical]
 
     # -- evaluation
     def margins(self, u: np.ndarray) -> np.ndarray:
@@ -364,7 +369,26 @@ class _Walker:
                 best, best_residual = u, residual
             if residual <= 1e-16:
                 break
-        return best
+        return self._settle(best)
+
+    def _settle(self, u: np.ndarray) -> np.ndarray:
+        """Nudge a corner whose ``D_P`` is ``NaN`` onto the non-negative side of the gate it violates by rounding.
+
+        At the corners of ``3-5-6-7`` / ``3-4-5-7`` three gates vanish, ``exit_snell_discriminant`` among them;
+        left at ``-2e-16`` by the two-margin Newton, the exit square root is ``NaN`` although the corner is a
+        point of the closure.  The step is the one of :meth:`correct`; a corner with a finite ``D_P`` is kept.
+        """
+        for _ in range(8):
+            if np.isfinite(float(_d(jnp.asarray(u), self.faces, self._index, self._slab))):
+                break
+            m, j = self.margins_jacobian(u)
+            rounding = [n for n in self.active if -VIOLATION_ATOL <= m[self.k(n)] < 0.0]
+            if not rounding:
+                break
+            k = self.k(min(rounding, key=lambda n: m[self.k(n)]))
+            g = _tangent(u, j[k])
+            u = _unit(u + ((-m[k]) / (g @ g) + 1e-16 / np.linalg.norm(g)) * g)
+        return u
 
     def _residual(self, u: np.ndarray, names: tuple[str, ...]) -> float:
         m = self.margins(u)

@@ -15,7 +15,12 @@ a store of events on ``S^2``: ``N`` points (the antipodal Fibonacci lattice
 by default, :func:`store_lattice`, ``4 pi / N`` each), one rotation per point, the production batch evaluators
 (:func:`.optics.path_domain_batch`, :func:`.optics.fresnel_transmission_path_batch`,
 :func:`.geometry.entry_measure_batch`), only ``w = A T > 0`` events kept,
-sorted by ``D``.  A renderer takes the band ``[delta_lo, delta_hi]`` of a
+sorted by ``D``.  ``T`` is the path's power factor, entry and exit
+transmittances times every internal reflectance (``1`` where total); since
+schema 4 a partial internal reflection gives ``0 < T < 1`` instead of an
+invalid pose, so the kept set is larger for paths with internal reflections
+while the ``w > 0`` criterion itself (and ``A``, pure geometry with no
+internal-TIR gate) is unchanged.  A renderer takes the band ``[delta_lo, delta_hi]`` of a
 pixel with :meth:`S2EventStore.band_slice` and rebuilds each event's pose
 with :func:`event_rotations`.  This module is the store only; the band-sum
 estimator on top of it belongs to the renderer.
@@ -123,10 +128,12 @@ from .optics import normalize_faces, path_id_of
 from .provenance import git_commit, sha256_of
 from .so3 import haar_rotations
 
+# 4: T = entry T x each internal reflectance R_k x exit T (partial internal reflections are weights, not
+#    gaps; task optics-partial-reflection), arrays of paths without internal reflections unchanged bit for bit;
 # 3: no sun direction in the spec (the arrays do not depend on it), one .npy per array, task s2-store-schema-3;
 # 2: u = R^-1 s_hat (toward the sun) with the sun direction recorded, task notation-alignment;
-# 1: u = R^-1 s (propagation).  Schemas 1 and 2 are refused on load.
-SCHEMA_VERSION = 3
+# 1: u = R^-1 s (propagation).  Schemas 1 to 3 are refused on load.
+SCHEMA_VERSION = 4
 CHUNK = 250_000  # rotations per batch call: ~0.5 GB transient in the eager jax.vmap (task 13/14 value)
 DEFAULT_CACHE_DIR = Path("artifacts/s2-store")
 DEFAULT_BUCKET_COUNT = 1024  # equal-width D buckets of the build (0.18 deg on [0, pi]); an I/O knob, not in the key
@@ -323,7 +330,8 @@ def evaluate_fields(
 ) -> dict[str, np.ndarray]:
     """Production batch evaluators of the ``members`` at ``rotations``, for the sun direction ``s_hat``.
 
-    Returns validity (any member), ``A`` and ``T`` per member (``(m, n)``),
+    Returns validity (any member), ``A`` and ``T`` per member (``(m, n)``;
+    ``T`` includes each internal reflectance, :func:`.optics.fresnel_transmission_path_batch`),
     ``w = sum_m A_m T_m``, body-frame ``phi = Phi_P(-u)``, ``D`` and
     ``u = R^-1 s_hat``.  The evaluators take the propagation direction
     ``s = -s_hat`` (:func:`.camera.incident_direction_from_sun`, the only
@@ -707,7 +715,9 @@ def _read_provenance(directory: Path) -> dict[str, Any]:
         raise ValueError(
             f"{directory}: schema_version {schema} is not {SCHEMA_VERSION} (schema 1 stored u = R^-1 s with the "
             "propagation direction s; schema 2 u = R^-1 s_hat with the sun direction in the key and one events.npz; "
-            "schema 3 is independent of the sun, one .npy per array); rebuild the store, it is not converted"
+            "schema 3 is independent of the sun, one .npy per array, with internal reflections admitted only when "
+            "total; schema 4 weights partial internal reflections by their reflectance); rebuild the store, it is "
+            "not converted"
         )
     return provenance
 

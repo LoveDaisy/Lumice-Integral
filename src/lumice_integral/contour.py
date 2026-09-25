@@ -12,8 +12,8 @@ extraction.
 Seeds, three sources merged per ``delta``:
 
 - **critical data** of the field layer: the crossings of ``delta`` by
-  ``D_P`` along the boundary loop (bisection along the piece, pulled
-  ``BOUNDARY_SEED_MARGIN`` inside ``U_P``), which are the ends of every open
+  ``D_P`` along the boundary loop (bisection along the piece, pulled inside
+  ``U_P`` by the first of ``BOUNDARY_SEED_MARGINS`` that lands inside), which are the ends of every open
   arc, and the first crossing along a geodesic ray out of the interior
   extremum, which lies on the closed loop around it.  These reach components
   that no finite sampling resolves: next to a boundary maximum at
@@ -57,10 +57,15 @@ let short loops be walked twice), the rule of the boundary walk
 (:mod:`.dp_field.boundary`).
 
 The walker traces ``D_P`` and the margins inside one ``jax.jit``, so it
-takes the JAX kernels ``d_value`` / ``margin_vector`` of
+takes the JAX kernels ``d_value`` / ``validity_margin_vector`` of
 :mod:`.dp_field.field` rather than the batched methods of
 :class:`.dp_field.DPField`; every entry point takes a built ``DPField``, so
-its rank-0 refusal still applies.  The chart grid is independent of the
+its rank-0 refusal still applies.  "Margin" below is always a gate of
+``U_P`` (:func:`.optics.validity_margin_names`, indexed in that order): the
+in-kernel membership test re-implements :func:`.optics.path_domain_batch`
+for JIT and agrees with it only by consuming the same list of gates (an
+internal TIR discriminant is not a gate; if the two tests ever disagree,
+check that both still read that one list).  The chart grid is independent of the
 grid of ``scripts/verify_dp_field_intervals.py`` on purpose: that script is
 the oracle of the field layer and does not share code with production.
 """
@@ -80,7 +85,7 @@ from . import optics
 from .dp_field import DPField
 from .dp_field.boundary import EXTREMUM_ATOL
 from .dp_field.certificate import DeviationInterval
-from .dp_field.field import d_value, margin_vector
+from .dp_field.field import d_value, validity_margin_vector
 from .s2_store import S2EventStore
 
 # ---- walk ---------------------------------------------------------------------------------------------
@@ -106,12 +111,15 @@ ROUNDING_ULPS = 64.0
 SEED_NEWTON_ITERATIONS = 40
 SEED_NEWTON_MAX_STEP_RAD = 0.05
 # ---- seeds --------------------------------------------------------------------------------------------
-# Boundary seeds sit on {margin = this}: below the depth ~1e-12 of the thinnest arc the certificate
-# fixtures reach (an exit-TIR piece at 1e-6 rad from a loop maximum), above the margin's rounding.
-BOUNDARY_SEED_MARGIN = 1e-14
-# A seed pulled 1e-14 inside can have a coincident margin (a square such as exit_snell_discriminant =
-# entry_incidence_cosine^2 on 3-5-6-7-3) at 1e-28, outside by rounding: those are pulled this far instead.
-BOUNDARY_SEED_MARGIN_RETRY = 1e-8
+# Boundary seeds sit on {margin = target}, the targets tried in turn, each only for the seeds still outside
+# after the one before.  The first, 1e-14: below the depth ~1e-12 of the thinnest arc the certificate fixtures
+# reach (an exit-TIR piece at 1e-6 rad from a loop maximum), above the margin's rounding.  A seed pulled
+# 1e-14 inside can have a coincident margin that is a square (exit_snell_discriminant = entry_incidence_cosine^2
+# on 3-5-6-7-3, and along the whole entry piece of 1-3-2 and 3-1-6) at 1e-28, outside by rounding.  1e-8 is
+# enough on 3-5-6-7-3 (its constant differs) but leaves every 1-3-2 / 3-1-6 seed at ~1e-16, below
+# INSIDE_MARGIN_FLOOR; 1e-7 clears it (1e-14) and stays below the ~1e-6 depth of the arc next to their boundary
+# maximum D = pi at delta = pi - 1e-6 (a target of 1e-6 put both seeds on the arc's apex, walked as two arcs).
+BOUNDARY_SEED_MARGINS = (1e-14, 1e-8, 1e-7)
 BISECTION_ITERATIONS = 64
 MARGIN_PROJECTION_ITERATIONS = 8
 RAY_SAMPLES = 400
@@ -236,8 +244,8 @@ def _project_onto_level(u: jax.Array, delta: jax.Array, faces, index, slab, iter
 
 
 def _inside(u: jax.Array, faces, index) -> tuple[jax.Array, jax.Array]:
-    """``u in U_P`` (every margin finite and above ``INSIDE_MARGIN_FLOOR``) and the smallest margin."""
-    margins = margin_vector(u, faces, index)
+    """``u in U_P`` (every gate finite and above ``INSIDE_MARGIN_FLOOR``) and the smallest gate (module docstring)."""
+    margins = validity_margin_vector(u, faces, index)
     smallest = jnp.min(margins)
     return jnp.all(jnp.isfinite(margins)) & (smallest > INSIDE_MARGIN_FLOOR), smallest
 
@@ -267,7 +275,7 @@ def _margin_projection(u: jax.Array, k: jax.Array, target: jax.Array, faces, ind
     """Newton along the gradient of margin ``k`` onto ``{margin_k = target}``."""
 
     def margin(v):
-        return margin_vector(v, faces, index)[k]
+        return validity_margin_vector(v, faces, index)[k]
 
     def body(_, v):
         m, g = jax.value_and_grad(margin)(v)
@@ -327,12 +335,12 @@ def _walk_step(s: _WalkState, faces, index, slab) -> tuple[_WalkState, jax.Array
     # geodesic predictor leaves U_P by the boundary's curvature alone: when the smallest margin, to first order
     # along the tangent, stays above half its value but the predictor loses more than that, the predictor is
     # moved onto that first-order margin (a curve heading out of U_P is left alone and ends by halving)
-    margins = margin_vector(s.u, faces, index)
+    margins = validity_margin_vector(s.u, faces, index)
     k = jnp.argmin(margins)
     depth = margins[k]
-    slope = jnp.dot(jax.grad(lambda v: margin_vector(v, faces, index)[k])(s.u), tangent)
+    slope = jnp.dot(jax.grad(lambda v: validity_margin_vector(v, faces, index)[k])(s.u), tangent)
     target = depth + jnp.sin(s.step) * slope
-    sagging = (target > 0.5 * depth) & (margin_vector(predictor, faces, index)[k] < 0.5 * target)
+    sagging = (target > 0.5 * depth) & (validity_margin_vector(predictor, faces, index)[k] < 0.5 * target)
     predictor = jnp.where(sagging, _margin_projection(predictor, k, target, faces, index), predictor)
     candidate = _project_onto_level(predictor, s.delta, faces, index, slab, CORRECTOR_ITERATIONS, CORRECTOR_REACH * s.step)
     residual, g_new = _residual_and_gradient(candidate, s.delta, faces, index, slab)
@@ -543,7 +551,7 @@ def _pairs_in_ranges(lower: np.ndarray, upper: np.ndarray, deltas: np.ndarray) -
 def _boundary_seeds(field: DPField, deltas: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Crossings of every ``delta`` by ``D_P`` along the boundary loop (module docstring): seeds and their delta index."""
     loop = field.boundary
-    names = optics.domain_margin_names(field.faces)
+    names = optics.validity_margin_names(field.faces)
     starts, ends, values_a, values_b, margins = [], [], [], [], []
     for piece in loop.pieces:
         points, values = piece.points, piece.values
@@ -576,7 +584,7 @@ def _boundary_seeds(field: DPField, deltas: np.ndarray) -> tuple[np.ndarray, np.
     k = np.concatenate(margins)[item]
     seeds = np.zeros((len(item), 3))
     todo = np.ones(len(item), dtype=bool)
-    for target in (BOUNDARY_SEED_MARGIN, BOUNDARY_SEED_MARGIN_RETRY):
+    for target in BOUNDARY_SEED_MARGINS:
         rows = np.flatnonzero(todo)
         if len(rows) == 0:
             break
@@ -811,8 +819,8 @@ def _components(field: DPField, deltas: np.ndarray, found: list[list[tuple[str, 
     lengths = [len(points) for _, _, points in flat]
     residuals, _ = _residuals(field, np.vstack([p for _, _, p in flat]), np.repeat([d for d, _, _ in flat], lengths))
     residuals = np.split(residuals, np.cumsum(lengths)[:-1])
-    ends = _in_buckets(field.margins_batch, np.vstack([p[[0, -1]] for _, _, p in flat])).reshape(len(flat), 2, -1)
-    names = optics.domain_margin_names(field.faces)
+    ends = _in_buckets(field.validity_margins_batch, np.vstack([p[[0, -1]] for _, _, p in flat])).reshape(len(flat), 2, -1)
+    names = optics.validity_margin_names(field.faces)
     records = []
     for (delta, kind, points), residual, margins in zip(flat, residuals, ends):
         if kind == "closed":

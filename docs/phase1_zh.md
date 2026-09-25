@@ -21,7 +21,7 @@ I_P(\mathbf d)=
 \frac{\rho(R)\,A_P(R)\,T_P(R)}{J_{F_P}(R)}\,d\mathcal H^1(R),
 $$
 
-其中 $\rho$ 是相对 Haar 的姿态密度，$A_P$ 是入射测度（几何上可实现的入射点的投影面积，含有限晶体与遮挡），$T_P$ 是光学透过率（Fresnel 与全内反射），$J_{F_P}$ 是 halo map 的法向 Jacobian（代码里叫 $J_\perp$），$d\mathcal H^1$ 是沿纤维的弧长。每个因子单独输出；Haar 常数 $1/(8\pi^2)$ 与 $J_\perp$ 分开保存（契约 §7）。
+其中 $\rho$ 是相对 Haar 的姿态密度，$A_P$ 是入射测度（几何上可实现的入射点的投影面积，含有限晶体与遮挡），$T_P$ 是光学透过率（入射与出射的 Fresnel 透射率，乘以每次内反射的反射率 $R_k$，全反射时 $R_k = 1$；[conventions.md](conventions.md) #18），$J_{F_P}$ 是 halo map 的法向 Jacobian（代码里叫 $J_\perp$），$d\mathcal H^1$ 是沿纤维的弧长。每个因子单独输出；Haar 常数 $1/(8\pi^2)$ 与 $J_\perp$ 分开保存（契约 §7）。
 
 「确定性」不等于精确：求根、continuation、自动微分和求积都是数值的，必须报告各自的误差。
 
@@ -77,8 +77,10 @@ $$
 
 Phase I 于 2026-09-23 收口：全部里程碑完成，条带渲染器在形状和绝对尺度上都与 Lumice 一致。它的成本画像（owner 对点亮像素做 cProfile：`74 %` 在 continuation 循环里，约 95 次校正尝试、每次约 `0.9 ms`，而每次的算术只是 3×3；成本在于逐步的 Python 编排和小 kernel dispatch）正是 Phase II 被要求批量化、无分支的原因，也是没有重写 Phase I continuation 的原因。
 
-已记录、不阻塞的开放项：完整性证书（由 Phase II 的临界点提供，[phase2_zh.md](phase2_zh.md) §3.1）、有限日盘、焦散带的像素平均、契约 §12 的显式事件定位。
+已记录、不阻塞的开放项：完整性证书（由 Phase II 的临界点提供，[phase2_zh.md](phase2_zh.md) §3.1）、有限日盘、焦散带的像素平均、契约 §12 的显式事件定位（其中 Snell 边界这一例已在下文解决）。
 
 **seed 改由 $S^2$ 事件仓库提供（2026-09-25，task `phase1-seeds-from-store`）。** Haar 预扫表与事件仓库是同一个预采样（[phase2_zh.md](phase2_zh.md) §6）：一个 Haar 姿态就是一对 $(\mathbf u, \psi)$，预扫表留下碰巧落在像素附近的 $\psi$，仓库把 $\psi$ 商掉，把像素偏折角带内的每个事件恰好摆到像素方位角上。discovery 现在从仓库取候选（`s2_store.StoreSeeds`，`N = 1e6`，带半宽 `0.2 deg`），`prescan.PrescanTable` 已删除。32 像素探针上，从 `N = 1e5` / `0.02 deg` 起的每个仓库配置都找到了预扫表找到的全部分量（英文版附录 "Seeds from the store"）。同一批事件给出统计性的完整性交叉检查（`discovery.check_band_coverage`：带内每个事件都重访一遍；离所有已追纤维都远的可行纤维姿态记为疑似漏检；`exp(-k_min)` 界住「一个与已找到的最稀疏分量同样多带内事件的分量被整体漏掉」的概率）。一个路径类的所有成员经 `path_class.store_plan` 的 `D6h` 搬运共用一个仓库（与 band-sum 渲染器同一个 plan），且仓库与太阳方向无关。
+
+**内反射是 Fresnel 分裂（2026-09-25，task `phase1-partial-reflection-domain`）。** 纤维的定义域只在入射或出射折射不可能处（Snell 判别式，`tir_boundary`）或够不到某个面处（入射余弦，`path_infeasible`）结束；内反射的临界角是定义域内部的点，被积函数经 $R_k$ 在那里连续变化——$R_k$ 与 $S^2$ 仓库乘进去的是同一个 `optics.fresnel_transmission_path(_batch)`。`optics.path_problem` 的两条适配规则让 continuation 按这个定义域走。(1) 交给 continuation 的只有事件 margin（`optics.validity_margin_names`）：continuation 按收到的每个 margin 限步，内部 TIR 判别式被当成边界时，过了临界角每一步都被钉在 `minimum_step`，A60-10（`3-5-6-7`）的像素对带求和算出 `0`。(2) Snell 判别式不超过 `SNELL_EVENT_TOLERANCE = 1e-8` 即视为 `tir_boundary` 事件：沿纤维出射方向固定，`exit_snell = (d · n_exit)^2` 按弧长二次趋零，纤维切向碰到边界，方向映射里的平方根让校正在最后 `~1e-10` 的 margin 内收敛不了。canonical 条带全是闭环，从未碰到这种情况；`3-5-6-7` 的定义域以出射临界角为界（它等于面 5 的临界角），全是止于那里的开弧。截掉的弧长（`~1e-4` rad）计入端点截断估计。光路 `3-5` 逐字节不变（第 `126` 列 `801` 个像素，对照改动前代码）。在 A60-10 场景上对照带求和（英文版附录「Internal partial reflection」），`3-5-6-7` 与 `3-5-6-7-3` 每个亮像素都 complete 且在 `1/sqrt(K_eff)` 之内，`3-5-6-7-3` 的环大多跨过某个内部临界角。
 
 取向分布：Phase I 假设 $\rho$ 是整个 $\mathrm{SO}(3)$ 上的普通（可能很窄的）密度。精确约束的取向族是低维集合上的奇异测度，需要不同的维数计数，不在 Phase I 范围内。

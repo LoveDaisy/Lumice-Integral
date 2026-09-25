@@ -405,3 +405,38 @@ def test_every_family_renders_the_diagnostic_pixels_on_the_same_fibers(scene, op
     # (parhelia / Parry / Lowitz arcs), see docs/ch11-pose-density-families.md.
     assert results["column"].value > 0.0 and results["random"].value > 0.0
     assert results["plate"].value == 0.0 and results["parry"].value == 0.0 and results["lowitz"].value == 0.0
+
+
+def test_partial_reflection_path_pixel_agrees_with_its_band_sum():
+    """A60-10 member ``3-5-6-7`` (every pose has a partial face-5 reflection) through the production pixel.
+
+    Phase I (continuation + resampled quadrature) against the band sum of
+    the store that seeded it, on the A60-10 scene (h/a = 2, sun on the
+    horizon, Haar, n = 1.3110129): the pixel is complete and within
+    ``4 / sqrt(K_eff)`` of the band sum.  Before task
+    phase1-partial-reflection-domain the internal TIR discriminant pinned the
+    traces at ``minimum_step`` and the pixel was ``0``; before the Snell event
+    tolerance its arcs lost ends to ``step_underflow``.
+    """
+    from lumice_integral.band_sum import class_band_sum_pixel
+    from lumice_integral.camera import sun_direction
+    from lumice_integral.path_class import StoreGroup, Transport
+    from lumice_integral.pose_density import HaarUniformPoseDensity
+    from lumice_integral.strip_pixel import build_strip_scene
+
+    faces, index, row, column = (3, 5, 6, 7), 1.3110129, 80, 220
+    crystal, sun, density = HexPrism.from_ratio(2.0), sun_direction(0.0, 0.0), HaarUniformPoseDensity()
+    render = {"width": 321, "height": 161, "fov_deg": 40.0, "view": {"azimuth": 140.0, "elevation": 0.0}}
+    store = build_event_store(crystal, index, (faces,), 2_000_000, run_checks=False)
+    scene = build_strip_scene(
+        faces, sun_direction=sun, refractive_index=index, crystal=crystal, pose_density=density, render=render,
+        seeds=StoreSeeds(store, faces, sun),
+    )
+    pixel = render_pixel(scene, row, column, PixelOptions())
+    band = class_band_sum_pixel(
+        [(store.events.arrays(), StoreGroup((faces,), (Transport((faces,), None),)))], sun, density, row, column,
+        store.spec.n, render,
+    )
+    assert pixel.completeness == "complete" and pixel.arc_count == pixel.component_count >= 1
+    assert band.K_eff > 50
+    assert abs(pixel.value - band.value) <= 4.0 * band.value / np.sqrt(band.K_eff)

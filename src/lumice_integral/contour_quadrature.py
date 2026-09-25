@@ -131,10 +131,10 @@ from .band_sum import pixel_band
 from .contour import LevelSet, extract_level_sets
 from .dp_field import DPField
 from .dp_field.boundary import EXTREMUM_ATOL
-# Non-underscore dp_field/dp_field.boundary symbols (d_value, margin_vector, EXTREMUM_ATOL) are the
+# Non-underscore dp_field/dp_field.boundary symbols (d_value, validity_margin_vector, EXTREMUM_ATOL) are the
 # package's ordinary public surface and are imported directly; only genuinely private names (leading
 # underscore, e.g. dp_field.field._PROBE_SUN above) get an independent declaration instead.
-from .dp_field.field import d_value, margin_vector
+from .dp_field.field import d_value, validity_margin_vector
 from .quadrature import HAAR_TO_DVOL_G_FACTOR
 from .geometry import HexPrism
 from .optics import normalize_faces, path_id_of
@@ -347,7 +347,7 @@ def _empty_panels() -> _Panels:
 
 @partial(jax.jit, static_argnums=1)
 def _smallest_margin_kernel(u, faces, index):
-    return jax.vmap(lambda v: jnp.min(margin_vector(v, faces, index)))(u)
+    return jax.vmap(lambda v: jnp.min(validity_margin_vector(v, faces, index)))(u)
 
 
 def _smallest_margin(field: DPField, points: Sequence[np.ndarray]) -> np.ndarray:
