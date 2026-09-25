@@ -24,7 +24,7 @@ Queue (tasks in `scratchpad/tasks.md`; dispatched 20 ∥ 21, then 22 ∥ 24, 23 
 | 22 | `band-sum-scatter-renderer`: band sum organised by deviation, class accumulation, GEMM tiles ([phase2.md](phase2.md) §8) — **done 2026-09-24** (canonical strip `30.8 s`, was `169 s`) | 21 |
 | 23 | `lumice-area-weighting-recheck`: absolute scale after Lumice's projected-area fix — **done 2026-09-24** (`K_p = N_sym ȳ Ω_p / (S/2)`, column strip `0.998`, plate / Parry families) | Ice Halo #597 merged |
 | 24 | scrum `phase2-contour-quadrature` (M2): `dp-field-topology` → `dp-field-layer` → `s2-contour-extraction` → `s2-contour-quadrature` → `phase1-seeds-from-store` → `ch10-numerical-verdicts` — `dp-field-layer` **done 2026-09-24** (`lumice_integral.dp_field`, [phase2.md](phase2.md) §3.1); `s2-contour-extraction` **done 2026-09-24** (`lumice_integral.contour`, [phase2.md](phase2.md) §4); `s2-contour-quadrature` **done 2026-09-25** (`lumice_integral.contour_quadrature`, [phase2.md](phase2.md) §4); `phase1-seeds-from-store` **done 2026-09-25** (`s2_store.StoreSeeds`, `discovery.check_band_coverage`; `prescan` deleted; [phase1.md](phase1.md) §5); `ch10-numerical-verdicts` **done 2026-09-25** (`lumice_integral.ch10_verdicts`, `lumice_integral.focusing`, [phase2.md](phase2.md) §10; Liljequist (i), the A60-10 142° edge, blocked on internal partial reflection) | 21 |
-| 25 | scrum `internal-partial-reflection`: `optics-partial-reflection` → `phase1-partial-reflection-domain` → `dp-field-partial-reflection-boundaries` → `contour-fallback-seed-scaling` → `ch10-liljequist-unblock-and-docs` — `optics-partial-reflection` **done 2026-09-25** (internal reflections split by Fresnel $R$, store schema 4, A60-10 against Lumice, §9) | 24 |
+| 25 | scrum `internal-partial-reflection`: `optics-partial-reflection` → `phase1-partial-reflection-domain` → `dp-field-partial-reflection-boundaries` → `contour-fallback-seed-scaling` → `ch10-liljequist-unblock-and-docs` — `optics-partial-reflection` **done 2026-09-25** (internal reflections split by Fresnel $R$, store schema 4, A60-10 against Lumice, §9); `phase1-partial-reflection-domain` **done 2026-09-25** (continuation event margins without internal TIR, Snell event tolerance; `3-5-6-7` / `3-5-6-7-3` against the band sum, [phase1.md](phase1.md) §5, §9) | 24 |
 
 Deferred: the chapter-11 table (path classes × pose families) after 22 and
 M2; divergent light ([phase2.md](phase2.md) §9, backlog); finite solar disk;
@@ -531,3 +531,22 @@ Moved to [overview.md](overview.md) §3.
   domain evaluator already follows `optics.path_domain`) is not yet
   cross-validated on reflecting paths, and the ch10 Liljequist (i) verdict
   text still says "blocked" until it is rerun.
+- **2026-09-25**: Phase I follows the partial-reflection domain (task
+  `phase1-partial-reflection-domain`; [phase1.md](phase1.md) §5 and appendix
+  "Internal partial reflection"). "Already follows `optics.path_domain`" was
+  true of validity and false of the margins: `optics.path_problem` handed
+  continuation every `path_domain` margin, and continuation steers by all of
+  them (event-approach step limit, arc-end truncation), so the internal TIR
+  discriminant pinned steps at `minimum_step` past the critical angle and
+  A60-10 `3-5-6-7` pixels were `0`. The continuation problem now carries the
+  event margins only (`validity_margin_names`; the internal discriminants stay
+  in the event details), and a Snell discriminant within
+  `optics.SNELL_EVENT_TOLERANCE = 1e-8` is the `tir_boundary` event: fibers
+  meet a Snell boundary tangentially and the corrector could not converge
+  there, which the all-closed-loop canonical strip never exercised and
+  `3-5-6-7` (all arcs ending at the exit critical angle) always does. The
+  Fresnel factor of the Phase I integrand is the store's
+  (`fresnel_transmission_path(_batch)`, tested bit for bit). Path `3-5` is
+  unchanged byte for byte (column `126`); `3-5-6-7` and `3-5-6-7-3` are
+  complete and within `1/sqrt(K_eff)` of the band sum on all `26` lit sweep
+  pixels, `11` of the `3-5-6-7-3` loops crossing an internal critical angle.

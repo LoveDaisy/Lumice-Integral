@@ -43,7 +43,8 @@ $$
 with $\rho$ the pose density relative to Haar, $A_P$ the entry measure
 (projected area of the geometrically realisable entry points, finite
 crystal and obstruction included), $T_P$ the optical throughput (Fresnel
-and total internal reflection), $J_{F_P}$ the normal Jacobian of the halo
+transmittance at entry and exit times the reflectance $R_k$ of every internal
+reflection, $R_k = 1$ under TIR; [conventions.md](conventions.md) #18), $J_{F_P}$ the normal Jacobian of the halo
 map ($J_\perp$ in code) and $d\mathcal H^1$ arc length along the fibre.
 Each factor is exposed separately; the Haar constant $1/(8\pi^2)$ and
 $J_\perp$ are kept apart (contract section 7).
@@ -222,7 +223,8 @@ not rewritten.
 Open, recorded, not blocking: a completeness certificate (Phase II's
 critical points supply one, [phase2.md](phase2.md) section 3.1), finite
 solar disk, pixel averaging in the caustic band, the explicit event
-localisation of contract section 12.
+localisation of contract section 12 (one instance, the Snell boundary, is
+settled below).
 
 **Seeds from the $S^2$ event store (2026-09-25, task
 `phase1-seeds-from-store`).** The Haar prescan table and the event store were
@@ -241,6 +243,33 @@ whose band carries as many events as the least-covered one found). A class
 seeds all members from one store through the `D6h` transports of
 `path_class.store_plan`, the band-sum renderer's plan, and a store does not
 depend on the sun.
+
+**Internal reflections are Fresnel splits (2026-09-25, task
+`phase1-partial-reflection-domain`).** A fiber's domain ends only where the
+entry or exit refraction is impossible (Snell discriminant, `tir_boundary`)
+or a face is not reached (incidence cosine, `path_infeasible`); the critical
+angle of an internal reflection is an interior point where the integrand
+changes continuously through $R_k$, which is the same
+`optics.fresnel_transmission_path(_batch)` the $S^2$ store multiplies in.
+Two adapter rules in `optics.path_problem` make continuation follow that
+domain. (1) Its margins are the event margins only
+(`optics.validity_margin_names`): continuation steers by every margin it is
+given, and an internal TIR discriminant read as one pinned each step past
+the critical angle at `minimum_step`, so A60-10 (`3-5-6-7`) pixels came out
+`0` against the band sum. (2) A Snell discriminant at or below
+`SNELL_EVENT_TOLERANCE = 1e-8` is already the `tir_boundary` event: the
+outgoing direction is fixed along a fiber, so
+`exit_snell = (d . n_exit)^2` falls quadratically and the fiber meets the
+boundary tangentially, where the square root of the direction map leaves the
+corrector unconverged in the last `~1e-10` of margin. The canonical strip is
+all closed loops and never met this; `3-5-6-7`, whose domain is bounded by
+the exit critical angle (it equals face 5's), is all arcs ending there. The
+cut-off arclength (`~1e-4` rad) is in the endpoint truncation estimate.
+Path `3-5` is unchanged byte for byte (column `126`, `801` pixels, against
+the pre-change code). Against the band sum on the A60-10 scene (appendix,
+"Internal partial reflection") both `3-5-6-7` and `3-5-6-7-3` are complete
+and within `1/sqrt(K_eff)` on every lit pixel, the `3-5-6-7-3` loops mostly
+crossing an internal critical angle.
 
 Orientation distributions: Phase I assumes $\rho$ is an ordinary, possibly
 narrow, density on all of $\mathrm{SO}(3)$. Exactly constrained orientation
@@ -566,3 +595,24 @@ $\varepsilon \to 0$ value. Evidence under the task's scratchpad (`probe/`,
   `1e-6` and `1e-5`" to `< 1e-8` (measured `4.4e-11`).
   `artifacts/strip-full` was not re-rendered: its values move by at most the
   old estimate (`~1e-4` relative).
+
+### Internal partial reflection (2026-09-25, task `phase1-partial-reflection-domain`)
+
+Phase I pixel (`strip_pixel.render_pixel`, production options) against the
+band sum of a one-member store (`band_sum.class_band_sum_pixel`), A60-10
+scene: `h/a = 2`, `n = 1.3110129`, sun on the horizon, Haar orientations,
+camera `321 x 161`, `40 deg`, azimuth `140 deg`; row `80`, columns `0..320`
+step `20`; `z = rel sqrt(K_eff)`, `rel = (phase1 - band) / band`.
+
+| path | store | lit pixels | complete | max \|z\| | components |
+|---|---|---|---|---|---|
+| `3-5-6-7` | `N = 1e8` | 13 of 17 | 13 | 0.34 | arcs (every band event has a partial face-5 reflection) |
+| `3-5-6-7-3` | `N = 1e7` | 13 of 17 | 13 | 0.79 | closed loops, 11 crossing an internal critical angle |
+
+The four pixels beyond $D_{\max}$ are `0` on both sides. Before the fix the
+same `3-5-6-7` pixels were `0` (every candidate `step_budget`, `z` down to
+`-89`); with the margin fix but without the Snell tolerance `3` of `13` lost
+components to `step_underflow` (`z = -51, -51, -23`). Path `3-5`, column
+`126`: `801` pixels identical to the pre-change code, `strip_float64.bin`
+byte for byte. Evidence:
+`scratchpad/scrum-internal-partial-reflection/task-phase1-partial-reflection-domain/evidence/`.
