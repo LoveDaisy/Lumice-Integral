@@ -65,7 +65,7 @@ from .dp_field import DPField
 from .dp_field.boundary import EXTREMUM_ATOL
 from .dp_field.field import d_value, margin_vector, tangent_basis
 from .geometry import HexPrism, halo_map_rank
-from .optics import domain_margin_names, path_id_of, validity_margin_indices
+from .optics import domain_margin_names, path_domain_batch, path_id_of, validity_margin_indices
 from .pose_density import build_pose_density
 from .s2_store import S2EventStore, align_rotations, build_event_store, evaluate_fields, event_rotations, fibonacci_sphere
 
@@ -733,8 +733,9 @@ class ParhelicCircleOptions:
     # ring cross-section: Gauss-Legendre nodes on +-(half_width_sigmas x sigma) of elevation
     cross_nodes: int = 48
     cross_half_width_sigmas: float = 8.0
-    # theta closer than this many sigma (in ring azimuth) to a jump of the window is not compared
-    jump_exclusion_sigmas: float = 12.0
+    # theta closer than this many sigma (in ring azimuth) to a non-smooth point of the window (a jump, or the
+    # internal TIR onset of R_k, where w is continuous with an unbounded slope) is not compared
+    edge_exclusion_sigmas: float = 12.0
     phi_samples: int = 72000
     relative_tolerance: float = 1e-8
     seed_store_n: int = SEED_STORE_N
@@ -755,11 +756,15 @@ def ring_window(crystal: HexPrism, index: float, sun: np.ndarray, faces: Sequenc
 
     ``phi`` is a periodic uniform grid on ``[0, 2 pi)``.  Returns ``w``, the
     validity, the sky elevation and the ring azimuth ``theta`` (sky azimuth
-    minus the sun's, in ``(-pi, pi]``) of the image, and ``dtheta_dphi``
-    (central differences of the wrapped angle).
+    minus the sun's, in ``(-pi, pi]``) of the image, ``dtheta_dphi``
+    (central differences of the wrapped angle) and ``internal_tir``, the
+    smallest internal TIR discriminant (positive: every internal reflection
+    total, ``R_k = 1``; ``+inf`` without internal reflections).
     """
     rotations = _plate_poses(phi)
     fields = evaluate_fields(rotations, sun, crystal, index, [tuple(faces)])
+    margins = path_domain_batch(rotations, faces, incident_direction_from_sun(sun), index).margins
+    tir = [np.asarray(v) for name, v in margins.items() if name.endswith("_tir_discriminant")]
     sky = -np.einsum("nij,nj->ni", rotations, fields["phi"])
     theta = _wrap(np.arctan2(sky[:, 1], sky[:, 0]) - np.arctan2(sun[1], sun[0]))
     return {
@@ -768,6 +773,7 @@ def ring_window(crystal: HexPrism, index: float, sun: np.ndarray, faces: Sequenc
         "elevation": np.arcsin(np.clip(sky[:, 2], -1.0, 1.0)),
         "theta": theta,
         "dtheta_dphi": _wrap(np.roll(theta, -1) - np.roll(theta, 1)) / (2.0 * (phi[1] - phi[0])),
+        "internal_tir": np.min(tir, axis=0) if tir else np.full(len(phi), np.inf),
     }
 
 
@@ -840,9 +846,15 @@ def parhelic_circle(options: ParhelicCircleOptions = ParhelicCircleOptions()) ->
         other = ring_window(crystal, index, sun, (1, k, 2), phi)["w"]
         # the crystal is invariant under 60 deg turns: face k at phi is face 3 at phi + 60 (k - 3) deg
         shifts[f"1-{k}-2"] = float(np.max(np.abs(other - np.roll(window["w"], -(k - 3) * step))))
-    # jumps of w along phi (the internal-TIR-only gate switching a lit window on or off)
-    jump = np.abs(np.diff(np.r_[window["w"], window["w"][0]])) > 1e-3 * window["w"].max()
+    # non-smooth points of w along phi: jumps (the window switching on or off at a non-zero w) and the internal TIR
+    # onsets (R_k leaves 1: w continuous, slope unbounded); each at the ring azimuth of its first sample
+    w, valid, tir = window["w"], window["valid"], window["internal_tir"]
+    toggle = valid != np.roll(valid, -1)
+    jump = toggle & (np.maximum(w, np.roll(w, -1)) > 1e-3 * w.max())
+    onset = valid & np.roll(valid, -1) & (np.sign(tir) != np.sign(np.roll(tir, -1)))
     jump_thetas = np.mod(window["theta"][np.nonzero(jump)[0]], 2.0 * np.pi)
+    onset_thetas = np.mod(window["theta"][np.nonzero(onset)[0]], 2.0 * np.pi)
+    edge_thetas = np.r_[jump_thetas, onset_thetas]
 
     lit_thetas = np.mod(window["theta"][lit], 2.0 * np.pi)
     lit_thetas = np.where(lit_thetas > np.pi, lit_thetas - 2.0 * np.pi, lit_thetas)
@@ -866,9 +878,9 @@ def parhelic_circle(options: ParhelicCircleOptions = ParhelicCircleOptions()) ->
 
         ring = np.array([ring_cross_integral(values_at, sun, t, elevation, sigma, options)[0] for t in thetas])
         rows.append(ring)
-        near_jump = np.array([np.min(np.abs(np.mod(jump_thetas - t + np.pi, 2 * np.pi) - np.pi)) if len(jump_thetas) else np.inf
-                              for t in thetas]) < options.jump_exclusion_sigmas * sigma
-        compare = (prediction > 0.0) & ~near_jump
+        near_edge = np.array([np.min(np.abs(np.mod(edge_thetas - t + np.pi, 2 * np.pi) - np.pi)) if len(edge_thetas) else np.inf
+                              for t in thetas]) < options.edge_exclusion_sigmas * sigma
+        compare = (prediction > 0.0) & ~near_edge
         relative = ring[compare] / prediction[compare] - 1.0
         residual_stats.append({
             "plate_zenith_std_deg": width,
@@ -883,6 +895,8 @@ def parhelic_circle(options: ParhelicCircleOptions = ParhelicCircleOptions()) ->
                       / np.log(options.plate_widths_deg[0] / options.plate_widths_deg[1]))
 
     jumps_deg = np.degrees(np.unique(np.round(jump_thetas, 6))).tolist()
+    onsets_deg = np.degrees(np.unique(np.round(onset_thetas, 6))).tolist()
+    onset_w = [float(w[i] / w.max()) for i in np.nonzero(onset)[0]]
     numbers = {
         "path": path_id_of(faces),
         "focusing": label.as_json(),
@@ -891,6 +905,8 @@ def parhelic_circle(options: ParhelicCircleOptions = ParhelicCircleOptions()) ->
         "dtheta_dphi_range": slope_range,
         "member_window_shift_max_abs_difference": shifts,
         "window_jump_ring_azimuths_deg": jumps_deg,
+        "window_tir_onset_ring_azimuths_deg": onsets_deg,
+        "window_w_at_tir_onsets_relative_to_max": onset_w,
         "ring_vs_window": residual_stats,
         "residual_order_in_sigma": order,
     }
@@ -902,9 +918,12 @@ def parhelic_circle(options: ParhelicCircleOptions = ParhelicCircleOptions()) ->
         f"The elevation-integrated ring brightness from the contour quadrature under plates equals the window-only prediction "
         f"sum w / (2 pi x 2) to {worst['max_abs_relative_residual']:.1e} (max over {worst['compared_thetas']} ring azimuths at "
         f"sigma = {worst['plate_zenith_std_deg']} deg), shrinking as sigma^{'?' if order is None else f'{order:.2f}'}; "
-        f"within {options.jump_exclusion_sigmas:g} sigma "
-        f"of a jump of the window (the TIR-only gate, ring azimuth {', '.join(f'{t:.2f}' for t in jumps_deg if t <= 180.0)} deg) the "
-        "ring is that jump smoothed by the plate width and is not compared. The six prism members' windows are one function shifted by 60 deg "
+        f"within {options.edge_exclusion_sigmas:g} sigma of a non-smooth point of the window the ring is that point smoothed by "
+        "the plate width and is not compared: "
+        f"{'no jump' if not jumps_deg else 'jumps at ring azimuth ' + ', '.join(f'{t:.2f}' for t in jumps_deg if t <= 180.0) + ' deg'}, "
+        f"{'no internal TIR onset' if not onsets_deg else 'the internal TIR onset at ring azimuth ' + ', '.join(f'{t:.2f}' for t in onsets_deg if t <= 180.0) + ' deg'} "
+        "(w continuous, largest there, then falling with an unbounded slope as R leaves 1). "
+        "The six prism members' windows are one function shifted by 60 deg "
         f"(max difference {max(shifts.values()):.1e}), so under uniform plate azimuth every member draws the same ring."
     )
     arrays = {
@@ -1019,13 +1038,21 @@ def parallel_face(options: ParallelFaceOptions = ParallelFaceOptions()) -> Verdi
     jacobian_paths = sorted({row["path"] for row in table if row["jacobian_focusing"]})
     gain = demo[-1]["peak_value"] / demo[0]["peak_value"]
     narrowing = options.demo_widths_deg[0] / options.demo_widths_deg[-1]
+    focusing_onsets = {
+        row["path"]: sorted({(round(o["value_deg"], 4), o["location"], o["source"], o["profile"]) for o in row["onsets"] if o["jacobian_focusing"]})
+        for row in table if row["jacobian_focusing"] and row["family"] == "random"
+    }
+    focused = "; ".join(
+        f"{path} at {', '.join(f'{v:.4f} deg ({source} on the {location}, {profile})' for v, location, source, profile in onsets)}"
+        for path, onsets in focusing_onsets.items()
+    )
     statement = (
         "Explicit output (lumice_integral.focusing): Jacobian focusing is read off the D_P critical set, dimension collapse off "
         "the density's confined dimensions. On the fixtures "
         f"{', '.join(path_id_of(f) for f in options.paths)} "
-        f"{'no critical value focuses' if not jacobian_paths else 'Jacobian focusing on ' + ', '.join(jacobian_paths)}: 3-5 has a finite jump, the "
-        "parallel-face (wedge 0, M != I) slabs have |grad D_P| bounded away from 0 (cone points, creases and boundary cusps; "
-        "the rotation slab 1-3-5-2 keeps its fold circle outside U_P), and 3-6 is a point mass. Every sharp image of these "
+        f"{'no critical value focuses' if not jacobian_paths else 'Jacobian focusing only on ' + focused}. Otherwise 3-5 has a "
+        "finite jump, the parallel-face (wedge 0, M != I) slabs have |grad D_P| bounded away from 0 (cone points, creases and "
+        "boundary cusps), and 3-6 is a point mass. Every other sharp image of these "
         f"classes is dimension collapse: across the parhelic circle (1-3-2, plates) narrowing sigma {narrowing:g}-fold multiplies "
         f"the peak by {gain:.3f} while the cross integral stays at {demo[0]['cross_integral']:.6g} / {demo[-1]['cross_integral']:.6g}, and the "
         f"random-orientation value at the same pixels is smooth ({demo[-1]['random_value_range'][0]:.4g}-{demo[-1]['random_value_range'][1]:.4g})."
@@ -1034,6 +1061,7 @@ def parallel_face(options: ParallelFaceOptions = ParallelFaceOptions()) -> Verdi
         "table": table,
         "mechanisms": [list(m) for m in mechanisms],
         "paths_with_jacobian_focusing": jacobian_paths,
+        "jacobian_focusing_onsets_random": {k: [list(o) for o in v] for k, v in focusing_onsets.items()},
         "collapse_demo": {"path": "1-3-2", "theta_deg": options.demo_theta_deg, "widths": demo},
     }
     parameters = {

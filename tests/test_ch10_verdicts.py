@@ -136,6 +136,12 @@ def test_parhelic_circle_window_geometry() -> None:
     assert lit.any()
     np.testing.assert_allclose(window["elevation"][lit], np.radians(15.0), atol=1e-12)
     np.testing.assert_allclose(window["dtheta_dphi"][interior], 2.0, atol=1e-6)
+    # partial internal reflection: the window no longer switches off at the TIR onset (122.34 deg), it peaks there
+    valid, tir = window["valid"], window["internal_tir"]
+    assert not np.any((valid != np.roll(valid, -1)) & (np.maximum(window["w"], np.roll(window["w"], -1)) > 1e-3 * window["w"].max()))
+    onset = valid & np.roll(valid, -1) & (np.sign(tir) != np.sign(np.roll(tir, -1)))
+    np.testing.assert_allclose(np.sort(np.degrees(np.mod(window["theta"][onset], 2.0 * np.pi))), [122.34, 237.65], atol=0.1)  # 7200 samples: 0.1 deg of ring azimuth
+    assert np.degrees(np.mod(window["theta"][np.argmax(window["w"])], 2.0 * np.pi)) == pytest.approx(122.34, abs=0.1)
     for k in range(4, 9):
         other = V.ring_window(crystal, INDEX, sun, (1, k, 2), phi)["w"]
         np.testing.assert_allclose(other, np.roll(window["w"], -(k - 3) * 1200), atol=1e-12)
