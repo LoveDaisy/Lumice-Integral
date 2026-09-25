@@ -76,7 +76,7 @@ $D_P(\mathbf u)$. Two quadratures of it:
   source, and sum those in each pixel's deviation band. The canonical strip
   takes `31 s` on four Mac workers (scatter form, 2026-09-24; `169 s` before)
   against Phase I's `34.7 min` on 30;
-- the **contour method** (milestone M2, in preparation): trace the level
+- the **contour method** (milestone M2, done 2026-09-25): trace the level
   sets and integrate along them; with the critical points of $D_P$ it
   certifies that every component was found, which Phase I cannot.
 
@@ -93,7 +93,8 @@ near-term queue: [roadmap.md](roadmap.md) §0; decisions: roadmap §9):
 |---|---|---|---|
 | Phase I | $\mathrm{SO}(3)$ continuation renderer, chapter-6 strip, path classes, five pose families, absolute scale | 6, 7-9, 11 | closed 2026-09-23 |
 | M1 | $S^2$ event store and band-sum renderer in production; $D_{6h}$ transport; conventions and symmetry authority | 6, 11 | done 2026-09-24 |
-| M2 | contour quadrature, critical points and completeness certificate, cross-validation, chapter-10 verdicts | 10 | bootstrapped |
+| M2 | contour quadrature, critical points and completeness certificate, cross-validation, chapter-10 verdicts | 10 | done 2026-09-25 |
+| — | internal reflections as Fresnel splits (the TIR-only gate dropped every partial-reflection branch), store schema 4 | 8, 10, 11 | done 2026-09-25 |
 | next | chapter-11 table (path classes × pose families) with the band sum organised by deviation | 11 | queued |
 | later | divergent light (street lamps), finite solar disk, multiple wavelengths | — | backlog |
 
@@ -166,7 +167,7 @@ boundary, not temporary duplication awaiting a future shared engine.
 The reason is structural. Lumice is optimized for forward stochastic sampling
 and image accumulation. Lumice Integral needs a fixed-path, piecewise-smooth
 computation graph suitable for automatic differentiation and continuation. Face
-changes, obstruction, refraction-domain limits, and TIR boundaries must be
+changes, obstruction, refraction-domain limits, and entry/exit TIR boundaries must be
 represented as explicit events around smooth branches; an opaque Lumice call
 would sever that graph, while finite differences through it would not provide a
 trustworthy foundation near those boundaries or halo-map singularities.
