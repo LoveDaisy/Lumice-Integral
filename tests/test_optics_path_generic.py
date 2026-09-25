@@ -44,6 +44,8 @@ from lumice_integral.optics import (
     problem_path_label,
     validity_margin_names,
 )
+from lumice_integral.continuation import ContinuationOptions, TerminationReason, trace_fiber
+from lumice_integral.discovery import ARC_EVENTS
 from lumice_integral.so3 import haar_rotations
 
 from _geometry_oracles import NORMALS, reflect, refract
@@ -243,7 +245,37 @@ def test_path_problem_labels_and_wrapper_equivalence():
     # Same Phi: the two seeds' targets coincide up to the two arithmetic routes.
     np.testing.assert_allclose(np.asarray(legacy.target_chart.direction), np.asarray(problem.target_chart.direction), rtol=0.0, atol=1e-12)
     evaluation = problem.domain_and_event_evaluator(jnp.asarray(rotation))
-    assert evaluation.valid and set(evaluation.margins) == set(domain_margin_names((3, 1, 2, 5)))
+    # Continuation steers by every margin it is given, so it gets the event margins only.
+    assert evaluation.valid and tuple(evaluation.margins) == validity_margin_names((3, 1, 2, 5))
+
+
+def test_fiber_crosses_the_internal_critical_angle_at_full_step():
+    """A 3-5-6-7-3 fiber runs through ``internal_k_tir_discriminant = 0`` as through any interior point.
+
+    The discriminant gates nothing, so it is not an event margin of the
+    continuation problem: before it was dropped from them, the event-approach
+    step limit read it as a boundary, its negative linear-rate distance
+    pinned every step past the critical angle at ``minimum_step`` and the
+    trace ran out of steps (A60-10 pixels came out 0, task
+    phase1-partial-reflection-domain).
+    """
+    faces = (3, 5, 6, 7, 3)
+    names = [f"internal_{k}_tir_discriminant" for k in range(1, len(faces) - 1)]
+    rotations = haar_rotations(20_000, np.random.default_rng(3))
+    check = path_domain_batch(rotations, faces, INCIDENT, INDEX)
+    near = check.valid & np.any(np.stack([np.abs(check.margins[name]) < 0.05 for name in names]), axis=0)
+    options = ContinuationOptions()
+    crossed = 0
+    for index in np.flatnonzero(near)[:3]:
+        problem = path_problem(jnp.asarray(rotations[index]), faces, jnp.asarray(INCIDENT), refractive_index=jnp.asarray(INDEX))
+        result = trace_fiber(problem, options)
+        assert result.reason in ARC_EVENTS or result.reason == TerminationReason.CLOSED_LOOP
+        assert all(tuple(margins) == validity_margin_names(faces) for margins in result.branch_diagnostics.accepted_margins)
+        margins = path_domain_batch(np.asarray(result.poses), faces, INCIDENT, INDEX).margins
+        crossed += any(margins[name].min() < 0.0 < margins[name].max() for name in names)
+        pinned = sum(d.accepted and d.proposed_step <= options.minimum_step for d in result.step_diagnostics)
+        assert pinned <= 2, pinned
+    assert crossed >= 2
 
 
 def test_face_sequence_helpers():

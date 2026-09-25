@@ -58,7 +58,14 @@ class EventCandidate:
 
 @dataclass(frozen=True)
 class DomainEvaluation:
-    """Discrete validity result evaluated before a smooth direction map."""
+    """Discrete validity result evaluated before a smooth direction map.
+
+    ``margins`` are event margins: each is positive on the smooth branch and
+    reaches zero where the branch ends, so continuation steers by all of them
+    (the event approach step limit and the arc-end truncation estimate).  A
+    quantity that crosses zero inside the domain belongs in the event
+    ``details``, not here.
+    """
 
     valid: bool
     margins: Mapping[str, float] = field(default_factory=dict)

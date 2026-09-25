@@ -604,6 +604,12 @@ def path_problem(
     def direction_evaluator(rotation: Array) -> Array:
         return path_direction(rotation, faces, incident_direction, refractive_index).direction
 
+    # Continuation steers by its margins (event approach step limit, arc-end
+    # truncation estimate), so it gets the event margins only: the internal
+    # TIR discriminants gate nothing (a partial reflection keeps the branch)
+    # and stay in the event details as diagnostics.
+    event_margin_names = validity_margin_names(faces)
+
     def domain_evaluator(rotation: Array) -> DomainEvaluation:
         check = path_domain(rotation, faces, incident_direction, refractive_index)
         event = (
@@ -616,7 +622,8 @@ def path_problem(
             if check.event_kind is not None
             else None
         )
-        return DomainEvaluation(check.valid, check.margins, event)
+        margins = {name: check.margins[name] for name in event_margin_names if name in check.margins}
+        return DomainEvaluation(check.valid, margins, event)
 
     seed_domain = path_domain(seed, faces, incident_direction, refractive_index)
     if target_direction is None:

@@ -241,3 +241,36 @@ def test_batch_evaluation_falls_back_to_the_scalar_loop_and_refuses_missing_fact
         evaluate_weights_batch(evaluators, poses, ("rho_pose", "entry_measure"))
     with pytest.raises(ValueError):
         WeightEvaluator(lambda _: 1.0, "u", "n", evaluate_batch=3)
+
+
+def test_fresnel_weight_is_the_optics_path_power_factor_across_partial_reflections():
+    """The Phase I ``fresnel_transmission`` weight is the S^2 store's power factor, called not copied.
+
+    On a path with three internal reflections, over poses where some are
+    partial (``R < 1``) and some total, both the scalar and the batch
+    evaluator return :func:`.optics.fresnel_transmission_path(_batch)` bit
+    for bit.
+    """
+    from lumice_integral.geometry import HexPrism
+    from lumice_integral.optics import fresnel_transmission_path, fresnel_transmission_path_batch, path_domain_batch
+    from lumice_integral.pose_density import HaarUniformPoseDensity
+    from lumice_integral.so3 import haar_rotations
+    from lumice_integral.weights import build_path_weight_evaluators
+
+    faces = (3, 5, 6, 7, 3)
+    incident = np.asarray(minimum_deviation_incident(), dtype=np.float64)
+    rotations = haar_rotations(4000, np.random.default_rng(11))
+    check = path_domain_batch(rotations, faces, incident, 1.31)
+    partial = check.valid & np.any(
+        np.stack([check.margins[f"internal_{k}_tir_discriminant"] <= 0.0 for k in (1, 2, 3)]), axis=0
+    )
+    assert partial.any() and (check.valid & ~partial).any()
+    weight = build_path_weight_evaluators(
+        faces=faces, incident_direction=incident, refractive_index=1.31,
+        crystal=HexPrism.from_ratio(2.0), pose_density=HaarUniformPoseDensity(),
+    )["fresnel_transmission"]
+    batch = weight.evaluate_batch(rotations)
+    np.testing.assert_array_equal(batch, fresnel_transmission_path_batch(rotations, faces, incident, 1.31))
+    assert np.any((batch > 0.0) & partial)
+    for rotation in rotations[check.valid][:20]:
+        assert weight.evaluate(jnp.asarray(rotation)) == fresnel_transmission_path(rotation, faces, incident, 1.31)
