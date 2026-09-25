@@ -694,32 +694,39 @@ failure: the named prerequisite is outside the current reference core.
   deduplication are outside the single-component interface.
   `lumice_integral.discovery` provides them for one pixel of the 3-5 path as
   a separate module with its own, weaker contract (task-pixel-pipeline-v2):
-  - `discover_components(target_direction, crystal, table, *,
+  - `discover_components(target_direction, seeds, *,
     continuation=ContinuationOptions(), extra_seeds=(),
-    angle_tolerance_deg=2.0, cluster_radius_rad=0.3,
+    band_half_width_deg=0.2, cluster_radius_rad=0.3,
     distance_threshold=continuation.closure_distance)` returns
     `ComponentDiscoveryResult(components, incomplete, completeness,
     pool_count, extra_seed_count, raw_cluster_count, admissible_count,
-    events, trace_seconds)`.  `table` is a scene-level
-    `prescan.PrescanTable` (`build_prescan_table(incident_direction,
-    refractive_index, *, sample_count, rng_seed)`): the Haar samples of
-    `SO(3)` that pass all four smooth-branch gates of
-    `optics.path_3_5_domain_batch` (the single batch authority for the
-    per-pose `path_3_5_domain` gates), stored once per `(path, s, n)` with
-    their outgoing directions and indexed by direction; the table does not
-    depend on the crystal.  The candidate pool is `extra_seeds` (converged
-    poses of any neighbouring pixels, used only as Gauss-Newton starts of
-    their cluster, never traced on their own and never a source of
-    completeness) followed by `table.candidates(d, angle_tolerance_deg)` (a
-    kd-tree chord ball followed by the exact `direction . d >= cos(tol)`
-    test, so the pool equals the brute-force filter); the whole pool is
-    clustered geodesically, one representative per cluster is
-    Gauss-Newton-corrected and gated (`path_3_5_domain`, `entry_measure > 0`),
-    and every admissible candidate is traced *once* with the caller's
-    production `continuation` options.  The incident direction and
-    refractive index are read from `table`, so they have one source;
-    `sample_count`/`rng_seed` are table-build parameters that a batch caller
-    fixes once per run, not per pixel.
+    events, trace_seconds)`.  `seeds` is a scene-level
+    `s2_store.StoreSeeds`: the $S^2$ event store of the path (`w = A T > 0`
+    events of `N` Fibonacci points on the finite crystal, sorted by the
+    deviation `D`, independent of the sun; `docs/phase2.md` section 2)
+    with the sun direction `ŝ`, the member's face sequence and, for a class
+    member served through a `D6h` element `g`, that element.  For a target
+    `d` at deviation `delta` from `s` the band `|D_i - delta| <=
+    band_half_width_deg` is posed with `s2_store.event_rotations` in the
+    azimuth of `d` (and `transported_rotations` for `g`), so a candidate's
+    outgoing direction is `|D_i - delta|` from `d`: the store is the Haar
+    sampling of `SO(3)` with the twist about `ŝ` quotiented out, and the
+    residual of a candidate is one-dimensional.  The candidate pool is
+    `extra_seeds` (converged poses of any neighbouring pixels, used only as
+    Gauss-Newton starts of their cluster, never traced on their own and
+    never a source of completeness) followed by that band; the whole pool
+    is clustered geodesically, one representative per cluster (the band
+    member with the smallest `|D_i - delta|`) is Gauss-Newton-corrected and
+    gated (`path_domain`, `entry_measure > 0`; the store filtered the
+    uncorrected points, the corrected pose is gated again), and every
+    admissible candidate is traced *once* with the caller's production
+    `continuation` options.  The face sequence, incident direction,
+    refractive index and crystal are read from `seeds`, so they have one
+    source; the store size `N` is a scene parameter a batch caller fixes
+    once per run, not per pixel.  Until 2026-09-25 the pool came from a
+    Haar prescan table indexed by outgoing direction (4M samples, 2 deg
+    cone); task `phase1-seeds-from-store` replaced it after a 32-pixel probe
+    found the same components (`docs/ch06-reference-fixture.md` section 7).
   - Components are of two kinds: `closed` (the trace closed) and `arc` (a
     forward and a backward trace of the same seed, each ended by a named
     event, stitched per section 8).  Deduplication happens *before* tracing:
@@ -745,13 +752,28 @@ failure: the named prerequisite is outside the current reference core.
     retired small discovery budget, the production retrace, the arclength
     fingerprint dedup, the arclength-jump gate and the periodic cold check
     of the strip driver no longer exist (every pixel always queries the
-    table, so a warm seed cannot hide a component).
-  - Defaults and regression baselines come from
+    store, so a warm seed cannot hide a component).
+  - The pixel set and the 0.3 rad cluster radius come from
     `scratchpad/scrum-ch06-direct-integration/explore-component-discovery`
-    (400k samples stable to 1.6M, 0.3 rad cluster radius, 34+ pixels) and are
-    locked by `tests/test_discovery.py` with a 400k-sample table; the
-    production table size is `prescan.DEFAULT_SAMPLE_COUNT` (`4_000_000`), pinned by the
-    density survey in `docs/ch06-reference-fixture.md`.  No real open arc
+    (34+ pixels); the baselines are locked by `tests/test_discovery.py` with
+    the production store (`s2_store.DEFAULT_SEED_STORE_N = 1_000_000`, the
+    0.2 deg band), whose size is pinned by the store density survey in
+    `docs/ch06-reference-fixture.md` section 7
+    (`scripts/store_seed_density_survey.py`).
+  - Completeness cross-check (a diagnostic, not a certificate and not in
+    the rendering path): `check_band_coverage(d, seeds, result)` revisits
+    *every* event of the band, not one per cluster.  An event posed within
+    `closure_distance` of a traced curve is covered; every other event is
+    corrected and gated like a candidate, and an admissible fiber pose
+    farther than `distance_threshold` from every traced curve is a
+    *suspect* (evidence of a missed component).  With `k_min` the fewest
+    band events on any traced component, `exp(-k_min)` bounds the chance
+    that `N` independent uniform points leave a component of that band
+    measure without an event (`miss_probability(mu, N) = exp(-N mu / 4
+    pi)`); the Fibonacci lattice is deterministic and quasi-uniform, so
+    this is the Monte Carlo reading of the same density.  The retired
+    prescan's density survey could state stability under doubling but no
+    such bound.  No real open arc
     exists in the current ch06 picture (task-pixel-pipeline-v2 Step 0: every
     10th row and column, 2106 pixels, 1954 lit, all closed), so the arc path
     is validated on the analytic two-sided circle fixture

@@ -126,7 +126,10 @@ on every boundary: corridor boundaries (two polygons separating,
 $A_P \to 0$ continuously), the exit-face TIR boundary of the formula domain
 $U_P$ (Fresnel transmittance $\to 0$ at the critical angle); there is no
 critical angle on entry, and partial reflection on internal steps is a
-continuous weight. A contour cut by $\partial V_P$ is traced on $U_P$ and
+continuous weight. (That last clause is the design, not the code yet: the
+implementation admits total internal reflection only, and a partial one
+cuts the path. See the Liljequist fixture in section 4 and
+[roadmap.md](roadmap.md) §9, 2026-09-25.) A contour cut by $\partial V_P$ is traced on $U_P$ and
 $A_P T_P$ removes the infeasible part; Phase I's rule "keep tracing, weight
 to zero" (contract section 6.3) is the same fact placed inside the tracer.
 The remaining non-smoothness is the kinks of $A_P$ (a vertex crossing an
@@ -145,6 +148,57 @@ certificate that Phase I cannot issue (contract C11: `completeness` is
 procedural) becomes a checkable statement. This is the larger gain of
 Phase II; speed is the smaller one. (**Design**; M2 sub-tasks
 `dp-field-topology`, `dp-field-layer`, `s2-contour-extraction`.)
+
+**Implemented: the field layer** (`lumice_integral.dp_field`, task
+`dp-field-layer`; public surface `DPField` and `TopologyEscape` only, so the
+rank-0 refusal in `DPField.build` cannot be bypassed). For one face
+sequence, independent of the sun:
+
+- *Evaluation.* $D_P(\mathbf u) = ngle(\Phi_P(-\mathbf u), -\mathbf u)$ at
+  the identity pose, batched (`jax.vmap`) value, tangent gradient and
+  Riemannian Hessian $P(H - (\mathbf u\cdot\mathbf g)I)P$ — the curvature
+  term is what makes it independent of how $D_P$ is extended off the sphere
+  (without it the 3-5 minimum reads as a maximum or a saddle, depending on
+  the extension). Taken in `atan2` form; equal to the event store's
+  `evaluate_fields` to `1e-12`.
+- *Fold pre-screen.* $|\mathbf n_a\cdot M^{\mathsf T}\mathbf n_b| = 1$ is a
+  slab: $D_P(\mathbf u) = ngle(M\mathbf u, \mathbf u)$, evaluated in that
+  closed form, whose critical set is $\pm\mathbf n_M$ and the crease
+  $\mathbf u\cdot\mathbf n_M = 0$; otherwise interior critical points come
+  from damped tangent-space Newton, batched over the $U_P$ points of a
+  Fibonacci lattice, classified by the Hessian.
+- *Boundary.* $\partial U_P$ is walked: along the zero set of the active
+  margin with $U_P$ on the left, a corner wherever another margin turns
+  negative (bisection, then a two-margin Newton, residual `<= 2.3e-16`),
+  continuing along the one margin through the corner that keeps the
+  boundary, until the walk is back at its first corner — closing the walk
+  is the completeness statement for the loop. An incidence cosine is walked
+  as a great circle when its normal $\mathbf m = R_{k-1}^{\mathsf T}\mathbf n_k$
+  satisfies $\mathbf m\cdot\mathbf n_a = 0$ (then the margin is linear in
+  $\mathbf u$; checked per path at run time), otherwise marched like every
+  discriminant. Margins equal to an earlier one (three side-face
+  reflections stepping by ±60°) are dropped first; a margin vanishing along
+  a whole piece (a square, such as `exit_snell_discriminant` $=$
+  `entry_incidence_cosine`$^2$ on `3-5-6-7-3`) is recorded as coincident.
+  A corner lists every margin vanishing there; the two it is bounded by;
+  the others as tangent or transversal to them.
+- *Partition.* Critical values are the interior ones, the extrema of $D_P$
+  along the loop, and the corner values. On each interval the number of
+  open arcs is half the number of crossings of $\delta$ along the loop
+  (exact for any topology); closed loops need an interior extremum, and with
+  at most one (a non-degenerate minimum or a slab cone point) there is one
+  closed loop from its value to the loop extremum where the sublevel set
+  first reaches $\partial U_P$ (checked on a small ring). Anything else —
+  $U_P$ or its complement not connected on the lattice, several interior
+  critical points, a saddle, a crease inside $U_P$, a boundary-born sublevel
+  component — raises `TopologyEscape` instead of guessing.
+- *Check.* `scripts/verify_dp_field_intervals.py` recomputes every
+  interval's counts on a dense grid through `evaluate_fields`: closed loops
+  as sub/superlevel regions touching no boundary, arcs as crossings along
+  the traced grid boundary moved onto $\partial U_P$ by bisection (node
+  values alone fail: $D_P$ falls like a square root off an exit-TIR curve).
+  All intervals of the five fixtures agree; the measured values are in the
+  appendix.
 
 ### 3.2 Layered invariance: what a halo shares and what varies
 
@@ -228,19 +282,278 @@ would reproduce the same wall in a new place.
 
 Fixtures the structure suggests:
 
-- *Liljequist* (writing chapter 8): `1-3-2` and `3-5-6-7-3` have the same
-  $\Phi$ (the mirror in the plane of faces 3/6; three reflections in planes
-  at ±60° compose to one) and different windows. The 142° sharp edge
-  ($= 120° +$ the 21.84° minimum deviation) is a $D_P$ critical value and is
-  shape-independent; the narrow peak is the `3-5-6-7-3` window and moves
-  with the cross-section. Two pictures on one sphere.
+- *Liljequist and the 142° parhelion* (writing chapter 8; corrected
+  2026-09-25, task `verify-liljequist-face-numbering`). Two classes, not
+  one. The 142° sharp inner edge ($= 120° +$ the 21.84° minimum
+  deviation) belongs to class A60-10, whose typical members are `3-5-6-7`
+  and `3-4-5-7` (a 60° wedge after a 120° fold, $M$ = rotation by 120°
+  about the c-axis). It is a $D_P$ saddle, $D = 141.839300°$
+  ($\partial^2 D/\partial t^2 = +55.3$ in plane, as on `3-5`;
+  $\partial^2 D/\partial\alpha^2 = -290$ in tilt). It sits on the seam of
+  the two members: their in-plane windows meet at the minimum-deviation
+  azimuth, where the internal ray grazes face 6 or face 4. So it is interior
+  to the class union and a boundary point of each member. It is
+  shape-independent. The narrow brighter peak at 152–158° is Liljequist
+  proper, `3-5-6-7-3` (the A0-02 parallel family, same $\Phi$ as `1-3-2`): a
+  slab with no fold, whose window changes with the cross-section.
+  *Measured (task `dp-field-layer`):* $\{0°, 115.607°\}$ for `1-3-2`,
+  $\{0°, 153.070°, 180°\}$ for `3-5-6-7-3` (normal incidence on face 3
+  is inside, the backscatter cone point). Neither has 142°, correctly.
+  **This repository cannot see A60-10 at all.** Each of its members needs one
+  partial internal reflection (face 5 at 30° incidence, $R \approx 2.2\,\%$
+  at the saddle). The internal-reflection gate of `optics.path_domain` and
+  `path_domain_batch` admits total reflection only, so the class has zero
+  events on every crystal. With only that gate lifted (corridor and entry
+  and exit gates unchanged), `3-5-6-7` and `3-4-5-7` have events whose
+  $A$-weighted $D$ histogram peaks in the 142° bin for $h/a = 0.2$, 1
+  and 2. The same gate loses 114 of the 137 PBD classes of ≤ 5 faces with
+  a reflection at $h/a = 2$, and 96 of 114 at $h/a = 0.2$. It truncates
+  `3-5-6-7-3`, `1-3-2` and `3-1-6` to 92–98 % of their Fresnel-weighted
+  windows. The evidence and the decision are in [roadmap.md](roadmap.md)
+  §9, 2026-09-25.
+  *Measured (task `ch10-numerical-verdicts`, section 10):* `1-3-2` and
+  `3-5-6-7-3` have one field, $D_P = 2\arcsin|\mathbf u\cdot\mathbf n_3|$
+  (to `8.9e-16` rad), $|\nabla D_P| = 2$ on $U_P$, and critical values
+  independent of $h/a$ (`5.7e-14`° over 0.2 / 1 / 2). The Liljequist peak
+  does not move: it sits at the boundary critical value 153.0697° for every
+  $h/a$, finite, approached from below as $\varepsilon^{0.49}$ (a restricted
+  extremum on $\partial U_P$); the window sets its width and the profile below
+  it (half maximum 153.0–158.8° at $h/a = 0.2$, 150.7–157.05° at 2).
 - *Parhelic circle*: $D_P(\mathbf u) = \angle(M\mathbf u, \mathbf u)$ has
-  $\nabla D_P = 0$ only at $\pm\mathbf n_M$, so the ring has **no fold**;
+  $\nabla D_P = 0$ only at $\pm\mathbf n_M$ (on `3-1-6` both lie on the entry
+  great circle but outside the closure of $U_P$, an internal TIR fails
+  there: no interior critical point at all), so the ring has **no fold**;
   its brightness along the ring is entirely the window layer. For plates
   the ring azimuth is linear in the crystal azimuth, so the profile is a sum
   of shifted copies of one window (three mirror planes of the prism): a test
   of the window-sum and transport layers without the Jacobian in the way.
-- *22° halo*: the fold; see section 10.
+  *Measured (task `ch10-numerical-verdicts`, section 10):* the ring member
+  for plates is `1-3-2` (top face in, a prism face reflects, bottom face
+  out: mirror normal horizontal, $|\nabla D_P| = 2$ on $U_P$). `3-1-6`
+  reflects on a basal face (mirror normal $\mathbf z$); under plates
+  $\mathbf u\cdot\mathbf z$ is fixed and its image is one deviation, $2e$,
+  not a ring. For exactly vertical plates the `1-3-2` image stays at the
+  sun's elevation (to `3e-16` rad) and its ring azimuth moves at
+  $d\theta/d\phi = 2$ (to `1e-9`). The contour quadrature's elevation-integrated
+  ring under plates equals the window-only prediction
+  $\sum_\phi w(\phi)/(2\pi\cdot 2)$ to `3.4e-4` ($\sigma = 0.5°$) and `8.6e-5`
+  ($\sigma = 0.25°$), order $\sigma^{2.00}$, on 61 ring azimuths up to 120°,
+  away from the window's jump at 122.34° (the TIR-only gate). The six prism
+  members' windows are one function shifted by 60° (to `1e-16`), so under a
+  uniform plate azimuth the "shifted copies" coincide: every member draws
+  the same ring.
+- *22° halo*: a finite jump for random orientation, $1/\sqrt{\ }$ only
+  through the column density; section 10.
+
+**Why the completeness certificate rarely needs a saddle branch.** A
+systematic search over hexagonal-prism paths (entry face in `{1, 3}`,
+up to four internal reflections, symmetry-deduplicated, filtered by the
+fold discriminant below) found no interior saddle among the 87 non-empty
+candidates it reached: every one has $U_P$ a topological disk (itself and
+its complement on $S^2$ each connected, checked at two lattice densities),
+so Poincaré–Hopf only forces an interior-critical-point index sum of $1$
+(one non-degenerate minimum already satisfies it) — a saddle is only
+topologically required once $U_P$ stops being simply connected. This does
+not prove no hexagonal-prism path ever has a saddle (longer paths were
+only spot-checked, and the yield of non-empty candidates falls by an order
+of magnitude per added reflection), but it explains why the paths this
+project actually renders are unlikely to need the interval-splitting
+machinery for a saddle branch, and gives `task-dp-field-layer` a
+disk-domain default with an explicit, checkable escape hatch (test $U_P$'s
+own and complementary connectivity before assuming Morse-Bott simplicity).
+Measured record: appendix, "$D_P$ field topology probes".
+
+**Implemented: contour extraction** (`lumice_integral.contour`, task
+`s2-contour-extraction`). `extract_level_sets(field, deltas, store)` returns,
+for every $\delta$, every component of $\{D_P = \delta\}\cap U_P$ as a node
+sequence (closed loop, or open arc with both ends on $\partial U_P$ and the
+smallest margin reported there), certified:
+
+- *Seeds, three sources.* The field layer's critical data first: the
+  crossings of $\delta$ by $D_P$ along the boundary loop (bisection along
+  the piece, pulled `1e-14` inside; the ends of every open arc) and the first
+  crossing along a geodesic ray out of the interior extremum (a point of the
+  closed loop around it). They reach what no sampling resolves at
+  $\pm10^{-6}$ rad from a critical value: the arc cut off below a loop
+  maximum is `~1e-6` rad deep, `~1e-12` in margin on an exit-TIR piece where
+  $D_P\sim\sqrt{\text{margin}}$; the loop above the 3-5 minimum is `~2e-3` rad
+  across, the one below the `3-5-6-7-3` cone point $D = \pi$ has radius
+  `5e-7`. The event store's band ($|D-\delta| < h$, $h$ two mean point
+  spacings) and linear crossings on the edges of an orthographic grid of the
+  entry hemisphere are the independent check: any of their seeds farther
+  from the extracted components than its own resolution is refined and
+  walked, and a component it finds is an extra one.
+- *Walking.* Lockstep over every curve of every $\delta$ (one `jax.vmap`-ed
+  step scanned 64 at a time, finished curves compacted out, batches padded
+  to powers of two): geodesic predictor along $\mathbf u\times\nabla D_P$,
+  Newton corrector along $\nabla D_P$; a step is accepted inside $U_P$, on
+  the level set, and with the tangent turned by at most 5°, otherwise
+  halved. Leaving $U_P$ halves down to `1e-13` rad, which puts an arc end on
+  $\partial U_P$. A walk closes when its start is within one current step
+  ahead — relative, never an absolute distance (Phase I defect 1). Next to an
+  exit-TIR piece the curve runs parallel to $\partial U_P$ at a depth of
+  `~1e-12` and the geodesic predictor falls out by the boundary's curvature;
+  there the predictor keeps the first-order value of the smallest margin.
+- *Certificate.* Per $\delta$ the (closed, open) counts are compared with the
+  interval of `DPField.interval_partition()` containing it; a mismatch
+  raises `ContourCertificateError`, a `TopologyEscape` of the partition (a
+  saddle among others) is propagated and nothing is extracted, a $\delta$ at
+  a critical value is refused.
+- *Sharing.* The result depends on $\delta$ only: repeated values are
+  extracted once, and a class member takes `LevelSet.transported(g)`
+  ($\mathbf u\to g\mathbf u$, node order reversed for improper $g$ so that
+  nodes keep running along $\mathbf u\times\nabla D_P$).
+- *Accuracy.* $|D_P - \delta| \le 10^{-12}$ wherever $|\nabla D_P| \le 10^3$;
+  next to an exit-TIR curve ($|\nabla D_P|$ up to `~1e7`) the rounding of
+  $\mathbf u$ alone moves $D_P$ by $\varepsilon|\nabla D_P|$ and nodes are held
+  to $64\,\varepsilon|\nabla D_P|$ (at most `~8e-9` measured). An arc meets
+  such a curve tangentially, so its end is located to `~sqrt(1e-13)` along
+  the curve.
+
+The saddle branch is covered only as an escape: no fixture has an interior
+saddle (above), and extraction refuses to run where the partition escapes.
+Measured record: appendix, "Contour extraction".
+
+**Implemented: contour quadrature** (`lumice_integral.contour_quadrature`,
+task `s2-contour-quadrature`). The line integral of section 2 on the
+extracted components, deterministic, with an error estimate per pixel:
+
+- *The constant, and why the band sum has the same one.* Section 2 gives
+  $I\sin\delta = \frac{1}{8\pi^2}\int_{D_P=\delta}\rho A_PT_P/|\nabla_{S^2}D_P|\,d\ell$
+  from Haar $= \frac{dA}{4\pi}\frac{d\psi}{2\pi}$ with $d\psi = d\alpha$; the
+  $\frac{1}{8\pi^2}$ is Phase I's `HAAR_TO_DVOL_G_FACTOR`, imported, not
+  restated. Integrate over a pixel's band: by the coarea formula on $S^2$,
+  $\int_{\delta_{\mathrm{lo}}}^{\delta_{\mathrm{hi}}} d\delta' \int_{D_P=\delta'} f/|\nabla D_P|\,d\ell
+  = \int_{\delta_{\mathrm{lo}} \le D_P \le \delta_{\mathrm{hi}}} f\,dA$, and $N$
+  equal-area points estimate the right side by
+  $\frac{4\pi}{N}\sum_{D_i\in\text{band}} f(\mathbf u_i)$. So the band average
+  $I_{\mathrm{band}} = \frac{1}{\Delta\delta\,\sin\delta}\int_{\delta_{\mathrm{lo}}}^{\delta_{\mathrm{hi}}} I(\delta',\alpha)\sin\delta'\,d\delta'$
+  is estimated by $\frac{1}{8\pi^2\Delta\delta\sin\delta}\cdot\frac{4\pi}{N}\sum f_i
+  = \sum f_i / (2\pi N\Delta\delta\sin\delta)$: exactly `band_sum_estimate`. The
+  band sum is the contour integral averaged over the band and sampled on the
+  store, one constant, derived twice; the measured zero-fit ratio `~1.000`
+  of task 13 is this identity seen through sampling noise.
+- *Pointwise identity with Phase I.* $\mathrm{SO}(3)$ with the rotation-angle
+  metric is $dA(\mathbf u)\,d\psi$ locally (the map $R \mapsto R^{-1}\hat{\mathbf s}$
+  is a Riemannian submersion with fibers of length $2\pi$, total $8\pi^2$), and
+  the fiber measure of a coarea formula depends only on the volume form and
+  the target area, so $ds/J_\perp = d\ell_u/(|\nabla_{S^2}D_P|\sin\delta)$ on
+  every fiber. Along a Phase I fiber $R' = R\hat{\boldsymbol\xi}$ with
+  $|\boldsymbol\xi| = 1$ (right-trivialised, as `continuation.py`) moves
+  $\mathbf u = R^T\hat{\mathbf s}$ at speed $|\boldsymbol\xi\times\mathbf u|$, hence
+  $$J_\perp F_P(R) = \frac{|\nabla_{S^2}D_P(\mathbf u)|\,\sin\delta}{|\boldsymbol\xi\times\mathbf u|}.$$
+  Closed form, no fitted factor: on all 61 nodes of the canonical fiber it
+  holds to `2.9e-15` relative (`tests/test_contour_quadrature.py`). The
+  "change of coordinates" is the factor $1/|\boldsymbol\xi\times\mathbf u| \in [1.0002, 1.138]$
+  there, the ratio of Phase I's arclength to its projection on $S^2$.
+- *Singularity: the $\varepsilon \to 0$ limit.* By the identity $J_\perp = 0$
+  exactly where $\nabla D_P = 0$, i.e. only at a critical value of $\delta$,
+  where the level set changes topology and extraction refuses the $\delta$.
+  Off it $|\nabla D_P| > 0$ on the whole level set (next to an exit-TIR curve
+  it grows without bound and the integrand goes to zero), so the point value
+  needs no regularisation: it is Phase I's $\rho W/(J_\perp+\varepsilon)$ at
+  $\varepsilon \to 0$. A point pixel within `EXTREMUM_ATOL = 1e-7` rad of a
+  critical value is not integrated (status bit `quadrature_unavailable`,
+  value 0; none in the canonical image); a band pixel splits its band at the
+  critical values inside it, where the band average is finite also for a
+  fold (the loop around a minimum has $\int d\ell/|\nabla D_P| \to$ a finite
+  limit, the finite jump section 10 expects at the random-orientation 22° inner edge).
+- *Points on the curve, exact speed.* A panel is a run of the extraction's
+  nodes $\mathbf a \to \mathbf b$ (first panels merge nodes up to 1° of chord
+  and 20° of turn, never at a node with a margin below `1e-3`, where a chord
+  can leave $U_P$). A point is $\mathbf q(t) = \mathrm{normalize}(\cos s\,\mathbf c(t) + \sin s\,\mathbf n)$,
+  $\mathbf c$ the great-circle chord, $\mathbf n$ its pole, $s(t)$ by Newton so
+  that $D_P(\mathbf q) = \delta$ (to `4e-16`); $|d\mathbf q/dt|$ by the
+  implicit function theorem ($ds/dt = -D_t/D_s$, `jax.jvp`). No chord stands
+  in for an arc and no interpolated point is off the curve.
+- *Quadrature and error.* Five-point Simpson per panel against its
+  three-point subset ($N$ vs $N/2$, estimate $|S_N - S_{N/2}|/15$); a panel
+  above its share of $\max(\mathrm{rtol}\,|I|, \mathrm{atol})$ (by chord length)
+  is halved, reusing its points, up to `max_depth = 24` (never reached in the
+  canonical image; exhaustion would be a status bit). Kinks of $A_P$ lower
+  the local order: a split that cuts the estimate by less than 8 (16 for a
+  smooth panel) is counted as `low_order_splits` (tens per canonical level
+  set), reported per pixel.
+- *Two stages, batched.* The geometry of a level set (points, $w = A_PT_P$
+  from `s2_store.evaluate_fields`, the store's own weight, $|\nabla D_P|$,
+  speed) is independent of the pixel's azimuth and of $\rho$:
+  `LevelSetGeometry.build` refines it on $w/|\nabla D_P|$ for 64 level sets at
+  a time, and `integrate` evaluates $\rho$ at the pose rebuilt by
+  `s2_store.event_rotations` (the point's own deviation, the band-sum
+  construction) for 64 pixels at a time, adding points only where $\rho$
+  needs them. For the random family $\rho = 1$ adds none and the value is a
+  function of $\delta$ alone (four azimuths, bit-identical). Every point
+  evaluation is one `jax.vmap` per refinement round padded to a power of
+  two, and so is every call of the production evaluators (their eager
+  `jax.vmap` compiles per batch size: unpadded, compilation was half the
+  column time).
+- *Pixel models.* `band_nodes = 0` is the point value at the pixel centre
+  (Phase I's model); `band_nodes = k` the band average above by $k$-point
+  Gauss-Legendre on each piece of $[\delta_{\mathrm{lo}}, \delta_{\mathrm{hi}}]$
+  between critical values (the band sum's model), so the two renderers can be
+  compared without the model difference of task 14.
+
+Validation (measured record: appendix, "Contour quadrature"):
+
+- *Against Phase I, pixel by pixel* (`scripts/compare_contour_quadrature_phase1.py`,
+  canonical pixel and rows 150/300/450/600 of column 126, column and random
+  densities): production Phase I at $\varepsilon = 10^{-12}$ and
+  `rtol = 1e-9` agrees to `2.4e-9`-`5.6e-6`, and its own error estimate
+  (`6e-10`) does not cover the larger differences. The cause is in Phase I:
+  `quadrature._parametric_speed` differentiates the phase condition
+  $\boldsymbol\nu(t)\cdot\boldsymbol\delta(t) = 0$ as
+  $\boldsymbol\nu\cdot\boldsymbol\delta' = 0$ and drops $\boldsymbol\nu'\cdot\boldsymbol\delta$;
+  the retraction offset $\boldsymbol\delta$ (`~6e-6` on the canonical loop) is
+  set by the fixed predictor spline, so the arclength speed is biased by
+  $O(|\boldsymbol\delta|)$ at every grid size (the canonical fiber: $\int\lambda\,dt$
+  converges to `2.3806253`, the sum of geodesic distances between the
+  retracted poses to `2.3806315`). With the term restored (a diagnostic in
+  the script; production Phase I unchanged, follow-up in the backlog) Phase I
+  agrees with the contour value to `4.3e-9` or better on all ten pixels,
+  below Phase I's own discretisation at 65537 nodes.
+- *Against Phase I, whole image.* The canonical 251 x 801 point render and
+  `artifacts/strip-full` (production Phase I, `rtol = 1e-4`,
+  $\varepsilon = 10^{-6}$) have the same 187406 non-zero pixels; on the lit
+  ones (above `1e-2` of the column maximum) median `1.2e-5`, p99 `1.2e-4`,
+  max `4.2e-4`, mean `-1.0e-5`: Phase I's tolerance and its $\varepsilon/J_\perp$
+  bias.
+- *Against the band sum, on one pixel model.* The band-average render
+  (`--band-nodes 2`, `rtol = 1e-6`) has the same 187538 non-zero pixels as
+  `artifacts/band-sum-full` ($N = 10^8$). On its 121044 lit pixels the band
+  sum's error is unbiased (mean `-8.6e-7` $\pm$ `4.2e-5`, lit sum ratio
+  `1.0000006`; median $|\mathrm{rel}|$ `3.6e-3`), and
+  $z = \mathrm{rel}\sqrt{K_{\mathrm{eff}}}$ has standard deviation `0.50`,
+  $|z|$ median `0.23`, p99 `1.6`, max `3.7`, none above 4: the noise
+  $K_{\mathrm{eff}}$ predicts, below the i.i.d. scale by the Fibonacci
+  lattice's gain (task 14). At $N = 10^7$ the RMS error is `3.7` times larger
+  ($\sqrt{10} = 3.2$): sampling. Against the point render instead, 25 pixels
+  exceed $|z| = 4$ (up to `17.8`): the pixel-model difference of task 14,
+  here isolated (point against band: median `6.7e-6`, p99 `2.1e-4`, 51 lit
+  pixels above `1e-2`, all on the inner edge, rows 56-57).
+- *Cost structure* (`benchmarks/benchmark_contour_quadrature.py`, 256
+  deviations of column 150, one process, steady state, M2 Max). Curve
+  finding `6.4 ms` per $\delta$; the level set's geometry `16.8 ms` per
+  $\delta$ (`1356` points, most of it the production `entry_measure_batch`);
+  per-pixel integration flat in the number of pixels sharing a $\delta$:
+  `5.2 / 7.3 / 5.5 ms` per pixel at 1 / 4 / 16 pixels per $\delta$ for the
+  canonical density (240-380 points added for the $\rho$ peak), `1.1 ms` for
+  the random family (none added). The design model (curves $\propto$ rings,
+  integration $\propto$ pixels) holds, with the per-ring part dominated by
+  the geometry rather than the curve itself; it is independent of the sun
+  and of $\rho$ as well. On the ch06 strip every pixel has its own $\delta$,
+  so the per-ring part is paid per pixel: the full image took `43 min` on 4
+  workers (CPU `21 %` curves, `57 %` geometry, `22 %` integration), the band
+  average (two deviations a pixel) `70 min`; the band sum takes `2.8 min` at
+  $N = 10^8$, Phase I `35 min` on 30 workers.
+
+**Status as the precision authority.** For a fixed path, the contour value
+is the reference the other two chains are measured against: its error
+estimate is below `4e-10` relative on every lit canonical pixel, it is
+certified complete per $\delta$ (Phase I's completeness is procedural), and
+it located a Phase I bias that Phase I's own estimate does not see. Phase I
+stays as the independent $\mathrm{SO}(3)$ formulation (AGENTS.md: not replaced),
+the band sum as the fast renderer and parameter sweep. Decision: roadmap §9,
+2026-09-25.
 
 ## 5. Quadrature B: the band sum
 
@@ -334,11 +647,11 @@ workers (appendix).
 
 ## 6. One precomputation, three consumers
 
-Phase I also precomputes. `prescan.PrescanTable` draws $4\times10^6$ Haar
-poses on $\mathrm{SO}(3)$ for a fixed sun, keeps the domain-valid ones with
-their outgoing directions, and indexes those with a k-d tree; a pixel asks
-for the samples in a cap around its own direction and uses them as Newton
-seeds.
+Phase I also precomputed. Until 2026-09-25 its `prescan.PrescanTable` drew
+$4\times10^6$ Haar poses on $\mathrm{SO}(3)$ for a fixed sun, kept the
+domain-valid ones with their outgoing directions, and indexed those with a
+k-d tree; a pixel asked for the samples in a cap around its own direction and
+used them as Newton seeds.
 
 The two are the same sampling. A Haar sample $R$ is a pair
 $(\mathbf u, \psi)$: its deviation is $D_P(\mathbf u)$ and its azimuth is
@@ -346,10 +659,10 @@ fixed by $\psi$, which has a closed form given $\mathbf u$ and the target
 azimuth. The prescan table samples $\psi$ at random and keeps what happens
 to land near the pixel; the store quotients $\psi$ out and constructs, for
 every event in the pixel's band, the pose that lands **exactly** on the
-pixel's azimuth (`band_sum.band_poses`). The store is the strictly stronger
-object:
+pixel's azimuth (`band_sum.band_poses`, and for Phase I
+`s2_store.StoreSeeds`). The store is the strictly stronger object:
 
-| | Phase I prescan table | $S^2$ event store |
+| | Phase I prescan table (retired) | $S^2$ event store |
 |---|---|---|
 | samples | Haar poses on $\mathrm{SO}(3)$, random | points $\mathbf u$ on $S^2$, Fibonacci lattice |
 | per pixel | samples in a cap around the pixel direction | events in a $\delta$ band, each at the pixel's exact azimuth |
@@ -365,15 +678,22 @@ pixel and seeds closer to the fibre. It has three consumers:
 1. **The band sum** (section 5): the events are quadrature nodes.
 2. **Contour tracing** (section 4): a band event lies within half a band
    width of $\{D_P = \delta\}$; it seeds Newton onto the contour.
-3. **Phase I seeds** (M2 sub-task `phase1-seeds-from-store`, **design**):
-   band poses replace the prescan candidates, and `PrescanTable` goes if a
-   32-pixel probe loses no component. The same events give Phase I a
-   completeness cross-check: every band event should lie near one of the
-   traced fibres, and an event far from all of them marks a missed
-   component. The check is statistical, but its miss probability is bounded
-   by $N$ times the component's measure in the band, which the density
-   survey behind `DEFAULT_SAMPLE_COUNT` does not give. Because the store
-   does not depend on the source, Phase I also stops rebuilding per sun.
+3. **Phase I seeds** (M2 sub-task `phase1-seeds-from-store`, **done
+   2026-09-25**): band poses replaced the prescan candidates
+   (`s2_store.StoreSeeds`, `N = 1e6`, band half-width `0.2 deg`) and
+   `PrescanTable` is gone; on the 32-pixel probe every store configuration
+   from `N = 1e5` / `0.02 deg` to `N = 1e8` / `2 deg` found the prescan's
+   components ([phase1.md](phase1.md) appendix). The same events give Phase I
+   a completeness cross-check (`discovery.check_band_coverage`): every band
+   event should lie on one of the traced fibres once corrected, and an
+   admissible one far from all of them marks a missed component. The check
+   is statistical, but its miss probability is bounded: $N$ independent
+   uniform points miss a band region of measure $\mu$ with probability
+   $e^{-N\mu/4\pi}$, estimated by $e^{-k_{\min}}$ with $k_{\min}$ the
+   fewest band events on a component found, which the prescan's density
+   survey did not give. A class seeds every member from its one store
+   through the `D6h` transports of `path_class.store_plan`, and because the
+   store does not depend on the source, Phase I no longer rebuilds per sun.
 
 ## 7. Ring invariance and the cost of each route
 
@@ -390,6 +710,9 @@ works pixel by pixel on $\mathrm{SO}(3)$.
 |---|---|---|---|---|
 | Phase I | prescan table | — | discovery, trace, integrate: `0.1-0.3 s` (measured) | pointwise, adaptive error estimate |
 | band sum | store of $N$ events (`80 s` at $10^8$, measured) | — | $K$ band events: $\rho$ of a matrix product, `0.31 ms` CPU (scatter, section 8; gather `3.3 ms`, measured) | band average in $\delta$; $\sim 1/\sqrt{K_{\mathrm{eff}}}$ |
+
+| Phase I | seed store (until 2026-09-25 a prescan table) | — | discovery, trace, integrate: `0.1-0.3 s` (measured) | pointwise, adaptive error estimate |
+| band sum | store of $N$ events (`80 s` at $10^8$, measured) | — | $K$ band events: pose + $\rho$, `3.3 ms` CPU (measured) | band average in $\delta$; $\sim 1/\sqrt{K_{\mathrm{eff}}}$ |
 | contour (design) | $D_P$ field and critical points | extract and refine the level set | $\rho$ along stored nodes | pointwise, deterministic, high order |
 
 Scaling with resolution:
@@ -596,26 +919,44 @@ needs street-lamp halos (backlog).
 
 ## 10. Open questions and where they are settled
 
-- **22° inner edge** (writing chapter 10). For a random orientation the
-  minimum of $D_P$ on $S^2$ is isolated and non-degenerate, and
-  $\int d\ell/\lvert\nabla D\rvert$ near a two-dimensional minimum is finite:
-  the inner edge would be a finite jump, and the
-  $I \sim 1/\sqrt{D - D_{\min}}$ profile would belong to families that
-  confine $\mathbf u$ to a curve (columns, tangent arcs). Chapter 10's
-  statement should be an acceptance test, not a premise. M2 sub-task
-  `ch10-numerical-verdicts`.
-- **Rank-deficient maps.** $W = 0$ classes are point masses in the source
-  direction (task `path-class-rendering-unit`); the degenerate images of
-  parallel-face classes ($M \ne I$, $W = I$) come from $\rho$ confining
-  $\mathbf u$, not from $\Phi$, and need their own accounting ("dimension
-  collapse" vs "Jacobian focusing", as an explicit solver output).
-  `ch10-numerical-verdicts`.
+- **22° inner edge** (writing chapter 10). *Settled (task
+  `ch10-numerical-verdicts`, `lumice_integral.ch10_verdicts.inner_edge`;
+  measured record: appendix, "Chapter-10 verdicts").* For a random
+  orientation the minimum of $D_P$ is isolated and non-degenerate
+  (Hessian `[0.33757, 0.96457]`, AD against finite differences `8e-8`), and
+  the level-set integral tends to $w^*\,2\pi/\sqrt{\det H}$: the inner edge is
+  a finite jump to $I = 0.541535$ (canonical crystal and sun), reached as
+  $1 - 1.956\sqrt\varepsilon$ ($\varepsilon = \delta - D_{\min}$; the kinks of
+  $A_P$ at the minimum-deviation point predict `1.945`), ratio `0.99805` at
+  $\varepsilon = 10^{-6}$, extrapolated `1.000023`. The
+  $I \sim 1/\sqrt{D - D_{\min}}$ profile belongs to the column density, at the
+  ring azimuth where its orientation ridge passes through the minimum (the
+  tangent-arc contact): local slope within `0.1` of $-1/2$ from a cap
+  crossover $\varepsilon_c \propto \sigma^{1.97}$ up to `3e-3` rad, finite below
+  $\varepsilon_c$ (cap $\times\,\sigma$ roughly constant); at the canonical
+  $\sigma = 0.5°$ only `[1e-3, 3e-3]`. Tests: `tests/test_ch10_verdicts.py`
+  (`test_inner_edge_*`), `tests/test_focusing.py::test_3_5_minimum_is_a_finite_jump`.
+- **Rank-deficient maps.** $M = I$, $W = I$ classes (wedge angle 0,
+  `geometry.halo_map_rank` 0) are point masses in the source direction (task
+  `path-class-rendering-unit`). The degenerate images of parallel-face
+  classes ($M \ne I$, $W = I$: wedge angle 0) come from $\rho$ confining
+  $\mathbf u$, not from $\Phi$. *Settled (task `ch10-numerical-verdicts`):*
+  `lumice_integral.focusing` labels a (path, density) pair explicitly:
+  Jacobian focusing is read off the critical set of $D_P$ (finite jump,
+  log, $1/\sqrt{\ }$ fold curve, cone point, crease, boundary cusp), dimension
+  collapse off the density's confined dimensions (random 0, column / plate
+  1, Parry / Lowitz 2); rank 0 is `point_mass`. On `3-5`, `1-3-2`,
+  `3-5-6-7-3`, `3-1-6`, `1-3-5-2` no critical value focuses: the mirror slabs
+  have $|\nabla D_P| = 2$ exactly, the rotation slab `1-3-5-2` keeps its fold
+  circle ($D = 120°$) outside $U_P$. Across the parhelic circle of `1-3-2`
+  under plates, halving $\sigma$ doubles the peak at a fixed cross integral:
+  dimension collapse. Tests: `tests/test_focusing.py`.
 - **Non-uniform $\rho$.** $\psi(\mathbf u,\alpha)$ is single-valued, so $\rho$
   is evaluated pointwise; only the "convolution on the sky" reading of
   chapter 11 needs a uniform $\rho$.
-- **Jacobian alignment.** $1/\lvert\nabla_{S^2} D_P\rvert$ against Phase I's
-  $J_\perp$ under the fibration's change of coordinates is the
-  cross-validation contact point. `s2-contour-quadrature`.
+- **Jacobian alignment.** Settled (task `s2-contour-quadrature`, section 4):
+  $J_\perp = |\nabla_{S^2} D_P|\sin\delta/|\boldsymbol\xi\times\mathbf u|$ in closed
+  form, `3e-15` on the canonical fiber.
 - **Absolute scale against Lumice** after its projected-area fix (Ice Halo
   #597): done 2026-09-24 (task `lumice-area-weighting-recheck`): band-sum
   class renders of the plate and Parry families against Lumice float
@@ -627,9 +968,10 @@ needs street-lamp halos (backlog).
 | band sum, event store, $D_{6h}$ transport, $K_{\mathrm{eff}}$ | measured, in production | appendix; tasks 13-19 |
 | store independent of the source; `.npy` + mmap; bucketed build | measured, in production | appendix; task 21 `s2-store-schema-3` |
 | band sum by deviation (segments, class accumulation, GEMM) | design | task 22 `band-sum-scatter-renderer` |
-| contour quadrature, critical points, certificate | design | scrum 24 `phase2-contour-quadrature` |
+| critical points, certificate (field layer), contour extraction | measured, in production | appendix; tasks `dp-field-layer`, `s2-contour-extraction` |
+| contour quadrature (precision authority), Phase I and band-sum alignment | measured, in production | section 4, appendix; task `s2-contour-quadrature` |
 | Phase I seeds and cross-check from the store | design | scrum 24 sub-task 5 |
-| chapter-10 verdicts | open | scrum 24 sub-task 6 |
+| chapter-10 verdicts (inner edge, Liljequist, parhelic circle, focusing labels) | measured; Liljequist (i), the A60-10 142° edge, blocked on internal partial reflection | section 10, appendix; task `ch10-numerical-verdicts` |
 | divergent light | derived | backlog |
 
 ## Appendix: measured record
@@ -1028,3 +1370,326 @@ longer in wall clock at the same CPU time).
   scatter, one group `111 / 306 MB`; scatter, twelve groups `119 / 313 MB`;
   the gather's load of all twelve `1285 / 1359 MB`. The peak is that of one
   group (in fact of the chunk temporaries), not the sum.
+
+**$D_P$ field topology probes (2026-09-24, scrum `phase2-contour-quadrature`,
+explores `dp-field-topology`, `dp-field-boundary-corners`,
+`dp-field-boundary-deep-internal-faces`, `dp-field-bigon-other-corner-pair`,
+`dp-field-exit-tir-marching-generalize`, `dp-field-saddle-search`).**
+Scratchpad probes (`src/` untouched) ahead of `task-dp-field-layer`, on the
+`R = I` convention with $D_P(\mathbf u) = \arccos(\Phi_P(-\mathbf u)\cdot(-\mathbf u))$.
+
+- *Fold judgement.* $\mathbf n_a\cdot\tilde{\mathbf n}_b = \pm 1$ (entry
+  normal vs. the unfolded exit normal) $\iff$ $\Phi_P$ collapses globally to
+  a fixed orthogonal map ($D_P(\mathbf u) = \arccos(\mathbf u^{\mathsf T}
+  M\mathbf u)$, tangential gradient norm exactly `2`), a zero-cost
+  pre-branch that skips lattice-seed Newton search entirely for
+  no-interior-fold paths (proved via $\|PM\mathbf u\|^2 = 1-f^2$; `3-5` and
+  the `(1,3)` 90° wedge fold, `3-1-6`/parhelic, `1-3-2`, `3-5-6-7-3` do not).
+- *$\partial U_P$ has more than the entry/exit pair.* Beyond the entry
+  glancing great circle ($\mathbf u\cdot\mathbf n_{\text{entry}} = 0$,
+  closed form) and the exit TIR curve, every internal-reflection face
+  contributes its own glancing (`internal_k_incidence_cosine = 0`) and
+  TIR-broken (`internal_k_tir_discriminant = 0`) candidates. On `3-5-6-7-3`
+  three consecutive internal faces whose prism azimuths form an arithmetic
+  progression (step 60°) give an exact identity between the first and last
+  incidence cosine (max difference `3.3e-16` to `1.2e-15` over $2\times10^4$
+  random directions, both on and off $U_P$) — `internal_3_*` duplicates
+  `internal_1_*` and must be deduplicated before enumeration, not counted
+  as a fourth boundary type. A second, unrelated identity was found on the
+  same path: `exit_snell_discriminant ≡ entry_incidence_cosine` as zero
+  sets (max `6.66e-16` over the whole entry great circle); the mechanism is
+  open (deferred, non-blocking — flagged low priority against the queue).
+- *Corners can have algebraic multiplicity `3` with topological multiplicity
+  `2`.* Both corner pairs on `3-5-6-7-3`'s entry great circle are exact
+  triple points (three margins zero to `≤3.3e-16` by 2D Newton), but the
+  third curve is *transversal* at one pair (cuts into the feasible wedge,
+  forming a bigon with the known long arc) and *tangent* at the other
+  (gradients parallel, `internal_2_incidence_cosine` stays one-signed
+  inside the wedge) — algebraic and topological corner multiplicity must be
+  distinguished by a local transversality check, not inferred from the
+  count of margins vanishing.
+- *Marching.* A predictor-corrector (tangent step + Newton correction) on
+  `*_tir_discriminant = 0` reaches machine-precision residuals
+  (`4e-14`-ish) regardless of target path; a two-stage step law (fixed
+  `0.5°` beyond `0.5°` of the target, geometric slowdown
+  `step = distance × 0.5` inside it) brings the endpoint error from `4e-3`
+  rad down to `<1e-10` rad on four structurally different fixtures (`3-5`,
+  `1-3`, `1-3-2`, `3-1-6`) and three margin kinds, unchanged code, provided
+  the target corner itself is solved to matching precision (an 8-decimal
+  literal from an earlier probe was, at `≈6e-5` rad, imprecise enough to
+  look like marching divergence). `*_incidence_cosine`-type boundaries
+  are themselves closed-form great circles under `R = I` (interior faces
+  included, not only entry) and need no marching at all.
+- *No interior saddle found.* A symmetry-deduplicated, fold-judgement- and
+  lattice-domain-filtered search over hexagonal-prism paths (entry face in
+  `{1, 3}`, up to 4 internal reflections: 7692 distinct classes, 86
+  non-empty after two-stage filtering, all 86 exhaustively Newton-checked;
+  plus an 800-sample spot check at 5 internal reflections, 1 non-empty)
+  found zero interior saddles or multi-critical-point candidates; every
+  non-empty $U_P$ tested is a topological disk (see section 4's structural
+  argument). Longer paths were not exhaustively covered (non-empty yield
+  falls by about one order of magnitude per added reflection); the
+  stronger claim "no hexagonal-prism path ever has an interior saddle" is
+  open.
+
+Scratchpad: `scratchpad/scrum-phase2-contour-quadrature/explore-dp-field-*/`
+(hypothesis.md / experiments.md / insights.md / SUMMARY.md per explore;
+local, not part of the source tree).
+
+**$D_P$ field layer (2026-09-24, task `dp-field-layer`,
+`lumice_integral.dp_field`).** Refractive index `1.31`, canonical prism,
+Fibonacci lattice `N = 20000` for seeds, the disk check and the walk's
+start; M2 Max, CPU.
+
+| path | fold dot | interior critical points | corners | critical values (deg) | intervals `(n, closed, open)` |
+|---|---|---|---|---|---|
+| `3-5` | `-0.5` | minimum `21.839300` (`= 2 asin(n sin 30°) - 60°` to `1e-12`), Hessian `[0.338, 0.965]` | 2 (entry ∩ exit TIR) | 21.839300, 42.990858, 43.465157, 50.062619 | `(1,1,0)`, `(4,0,4)`, `(2,0,2)` |
+| `1-3` | `0` | minimum `45.733421` (`= 2 asin(n sin 45°) - 90°`) | 2 (entry ∩ exit TIR) | 45.733421, 57.803628, 73.506892 | `(1,1,0)`, `(2,0,2)` |
+| `3-1-6` | `-1` (slab) | none (`±n_M` outside the closure) | 4 | 0, 115.607259 | `(1,0,1)` |
+| `1-3-2` | `-1` (slab) | none (`±n_M` outside the closure) | 4 | 0, 115.607259 | `(1,0,1)` |
+| `3-5-6-7-3` | `-1` (slab) | `+n_M` (face-3 normal), cone maximum `180` | 4 | 0, 153.069685, 180 | `(2,0,2)`, `(1,1,0)` |
+
+- *Checks.* `D` against `evaluate_fields` on 256 random points of each
+  $U_P$: `<= 1e-12` (points within `1e-3` rad of `0` / `π` excluded, where
+  `arccos` loses `sqrt(eps)`); slab closed form against the optics chain:
+  `<= 1e-12`; gradient against central differences, step scan: plateau
+  `<= 1e-9`; the same critical point from lattices of `2000` and `20000`;
+  corners to residual `<= 2.3e-16`, and on `3-5` equal to an independent
+  bisection on the entry circle with the scalar gates to `1e-10` rad;
+  every edge point of the lattice domain within `1.5` lattice spacings of
+  the walked loop; `D6h` transport `3-5 → 3-7` and
+  `3-5-6-7-3 → 4-8-7-6-4`, proper and improper `g`: corners and interior
+  points to `1e-9` rad, values to `5e-8`, identical partitions; all
+  intervals against the independent grid (`1201²`, ~45 s for the five).
+- *Cost.* Batched on `10^6` points after compilation: `D` `76.6 M/s`,
+  tangent gradient `24.1 M/s`, Riemannian Hessian `7.5 M/s`. A whole
+  `DPField` (critical points, walk, disk check, partition) `0.4-1.9 s` per
+  path.
+- *Corrections to the probe record above.* (i) At all four corners of
+  `3-5-6-7-3` the third curve is *tangent* to the TIR edge it meets
+  (gradient angle `0.0°` at the pair on `internal_2_tir` as at the pair on
+  `internal_1_tir`); the bigon between `internal_1_incidence_cosine` and
+  `internal_2_tir_discriminant` is a lens between two curves tangent at both
+  ends, outside $U_P$; every corner of the five fixtures bounds $U_P$ with
+  two edges, and a fourth margin (`exit_snell_discriminant`) vanishes there
+  as the square of the entry margin. (ii) An internal incidence cosine is a
+  great circle only when $\mathbf m\cdot\mathbf n_a = 0$ (`1-3-2`, `3-1-6`,
+  and the exit margin of `1-3`); on `3-5-6-7-3`, $\mathbf n_5\cdot\mathbf n_3
+  = -1/2$ and it is marched. (iii) On `3-1-6`, $\pm\mathbf n_M$ lie on the
+  entry great circle but `internal_1_tir_discriminant = -0.284` there:
+  outside the closure, not on $\partial U_P$. (iv) `3-5-6-7-3` has no fold
+  but does have an interior critical point, the non-smooth maximum
+  $D = \pi$ at normal incidence on face 3 (the slab set, not found by
+  Newton; Newton on the lattice finds nothing on any slab, where
+  $|\nabla D_P| = 2$). (v) The 3-5 domain's largest deviation is
+  `50.062619°` (the corners), not the `49.16°` of the `N = 200000` lattice.
+- *Accuracy limit.* $D_P$ is Hölder-½ across an exit-TIR curve, so values
+  on such a boundary piece carry `~1e-8` rad (the square root of the
+  `1e-16` margin residual) and the position of a loop extremum on it only
+  `~1e-4` rad; corners and interior points are Newton-exact.
+
+**Contour extraction (2026-09-24, task `s2-contour-extraction`,
+`lumice_integral.contour`).** Canonical crystal, $n = 1.31$, stores of
+`N = 2e5` built in memory, default grid `401²`.
+
+- *Certificate.* On every interval midpoint of the five fixtures and at
+  every critical value $\pm10^{-6}$ and $\pm10^{-3}$ rad (including both
+  ends of $[\min D_P, \max D_P]$) the extracted (closed, open) counts equal
+  the partition's, and each offset pair straddles a count change:
+
+  | path | $\delta$ values | components (closed) | nodes | max $\lvert D-\delta\rvert$, $\lvert\nabla D\rvert\le10^3$ | max overall | nodes above `1e-12` | wall (incl. compile) |
+  |---|---|---|---|---|---|---|---|
+  | `3-5` | 19 | 35 (5) | 9189 | `3.1e-13` | `7.8e-9` | 14 % | 8.1 s |
+  | `1-3` | 14 | 15 (5) | 3416 | `5.0e-13` | `7.9e-9` | 11 % | 5.0 s |
+  | `3-1-6` | 9 | 5 (0) | 3103 | `4.4e-16` | `4.4e-16` | 0 | 5.1 s |
+  | `1-3-2` | 9 | 5 (0) | 3099 | `4.4e-16` | `4.4e-16` | 0 | 6.1 s |
+  | `3-5-6-7-3` | 14 | 15 (5) | 3322 | `4.4e-16` | `4.4e-16` | 0 | 10.1 s |
+
+  The nodes above `1e-12` are all within reach of an exit-TIR curve
+  ($|\nabla D|$ up to `2.4e7`), most in the end clusters of arcs (the last
+  steps halve towards $\partial U_P$). The loop `1e-6` above the 3-5 minimum
+  winds once (tangent-plane angle $2\pi$), radius between `1e-4` and
+  `1e-2` rad, at least 72 nodes; the `3-5-6-7-3` loop at $\pi - 10^{-6}$ has
+  radius `5e-7` about $\mathbf n_M$ to `1e-6` relative.
+- *Independence.* Without the ray seed the 3-5 loop is found by the store
+  and grid seeds alone; with those also disabled (`grid=3`, zero band) the
+  certificate raises (predicted `(1, 0)`, extracted `(0, 0)`); against a
+  partition predicting nothing it raises on the extra loop.
+- *Transport.* `3-5 → 3-7` and `3-5-6-7-3 → 4-8-7-6-4`, proper and improper
+  $g$, interval midpoints: equal counts, every node of either set on the
+  other's polylines (`5 %` of the segment length), except within
+  `3.2e-6` rad of an arc end on an exit-TIR piece.
+- *Cost* (`benchmarks/benchmark_contour_extraction.py`, path 3-5, store
+  `N = 1e6`, M2 Max, one process): 161 equally spaced $\delta$ (the band-sum
+  strip's row count): first call `6.3 s` (XLA compilation included),
+  steady `1.0 s` (`6.3 ms` per $\delta$), 207 components, `115788` nodes;
+  801 $\delta$ (ch06's row count): first call `11.1 s`, steady `6.0 s`
+  (`7.5 ms` per $\delta$), 1027 components, `572885` nodes, peak RSS
+  `2.5 GB` (the in-memory store included; `1.1 GB` at 161). For scale: the
+  ch06 strip took 35 min on 30 workers through Phase I, the band sum 2.8 min
+  on 4 workers at `N = 1e8`. Padding every batched call to a power of two
+  took the first 161-$\delta$ call from `38 s` to `6.3 s`; a new $\delta$ set of
+  another size recompiles only the buckets it has not met.
+
+**Contour quadrature (2026-09-25, task `s2-contour-quadrature`,
+`lumice_integral.contour_quadrature`).** Path 3-5, canonical crystal and
+scene, $n = 1.31$, M2 Max.
+
+- *Pointwise identity.* On the 61 accepted poses of the canonical Phase I
+  loop, $J_\perp$ from `jacobian_diagnostics` against
+  $|\nabla_{S^2}D_P(\mathbf u)|\sin\delta/|\boldsymbol\xi\times\mathbf u|$ (the
+  trace's own unit tangents): max relative difference `2.9e-15`, median
+  `1.1e-15`; $J_\perp \in [0.082, 0.150]$, $|\boldsymbol\xi\times\mathbf u| \in [0.879, 0.9998]$,
+  $\max|D_P(\mathbf u)-\delta| = 7.8\times10^{-16}$.
+- *Per-factor check.* At the same poses $A_P$, $T_P$, the pose rebuilt by
+  `event_rotations` and $\rho$ agree with Phase I's weight observables to
+  `2.2e-16`, `0`, `5.9e-15` (max matrix entry) and `9.2e-13`.
+- *Pixel values against Phase I* (`scripts/compare_contour_quadrature_phase1.py`;
+  contour at `rtol = 1e-11`; Phase I production = discovery + resampled
+  quadrature at $\varepsilon = 10^{-12}$, `rtol = 1e-9`, up to 262145 nodes;
+  "full speed" = the same grids with $\boldsymbol\nu\cdot\boldsymbol\delta' = -\boldsymbol\nu'\cdot\boldsymbol\delta$,
+  $\boldsymbol\nu'$ by central difference, 16385/65537 nodes Richardson at order 2):
+
+  | density | pixel | $\delta$ | contour value | its estimate | production Phase I | full-speed Phase I |
+  |---|---|---|---|---|---|---|
+  | column | (150, 150) | 24.0469° | 6.58152199151 | `1.3e-11` | `-5.63e-6` | `-3.1e-9` |
+  | | (150, 126) | 24.0400° | 7.14327384031 | `1.4e-11` | `-2.85e-7` | `+2.2e-9` |
+  | | (300, 126) | 27.6088° | 5.02167143871 | `1.3e-11` | `-2.47e-7` | `-3.8e-9` |
+  | | (450, 126) | 31.1961° | 2.86623626686 | `6.4e-12` | `-1.55e-7` | `+1.5e-10` |
+  | | (600, 126) | 34.7742° | 0.311740878191 | `7.3e-13` | `+2.4e-9` | `+3.6e-9` |
+  | random | (150, 150) | 24.0469° | 0.234374880559 | `7.1e-13` | `-3.47e-6` | `-1.5e-9` |
+  | | (150, 126) | 24.0400° | 0.234840842632 | `7.2e-13` | `-3.50e-6` | `+2.4e-9` |
+  | | (300, 126) | 27.6088° | 0.0920434482944 | `3.3e-13` | `-4.90e-7` | `-4.3e-9` |
+  | | (450, 126) | 31.1961° | 0.0381016477303 | `1.1e-13` | `-1.91e-7` | `+1.5e-10` |
+  | | (600, 126) | 34.7742° | 0.0147710106485 | `4.3e-14` | `-1.07e-7` | `+1.9e-9` |
+
+  The full-speed Phase I still moves by up to `9e-9` between its last two
+  grids (order 2, the slope jumps of `entry_measure`): the remaining
+  differences are Phase I's discretisation. On the canonical loop the
+  production $\int\lambda\,dt$ converges to `2.38062526` (1025/4097/16385
+  nodes), the geodesic distances between the retracted poses sum to
+  `2.38063152`, and the full-speed $\int\lambda\,dt$ to `2.38063154`; the
+  retraction offset is `5.75e-6` at every grid. An independent rule sharing
+  only the level-set points (trapezoid on geodesic chords, 16/64/256 points
+  per node interval) extrapolates to the contour value to `1e-9`.
+- *Tolerances.* On the canonical level set the value moves by `2e-10` from
+  `rtol = 1e-6` to `1e-10` and by `3e-11` from `1e-8` on; first panels of
+  1° with the default `rtol = 1e-9` need 900-1600 geometry points a level
+  set (2800-5400 with node-interval panels), errors below the estimates.
+- *Full canonical image, point pixels* (`artifacts/contour-quadrature-full`,
+  4 workers, store `N = 1e6` for the seed check): 201051 pixels, 187406 lit,
+  `2555.7 s` wall clock, per pixel `0.051` CPU s; CPU: curve finding
+  `2137 s`, level-set geometry `5698 s`, per-pixel integration `2264 s`;
+  worker peak RSS `2.9 GB`. No critical-$\delta$ pixel, no exhausted panel,
+  no open arc (the image stays below the 3-5 open-arc interval at 42.99°).
+  Relative error estimate on lit pixels (above `1e-2` of the column maximum)
+  at most `3.9e-10`; the `1.3e4` pixels above `1e-8` all have values below
+  `2e-11` (the absolute floor). Against `artifacts/strip-full` (production
+  Phase I, `rtol = 1e-4`, $\varepsilon = 10^{-6}$): the same 187406 non-zero
+  pixels; lit median `1.2e-5`, p99 `1.2e-4`, max `4.2e-4`, mean `-1.0e-5`,
+  lit sum ratio `0.999979`.
+- *Full canonical image, band pixels* (`artifacts/contour-quadrature-band`,
+  `--band-nodes 2 --relative-tolerance 1e-6`, 4 workers): 187538 lit,
+  `4216 s` wall clock; CPU: curve finding `5455 s`, geometry `9479 s`,
+  integration `1721 s`; 269 pixels have a critical value inside the band
+  (more than two deviations); lit relative error estimate at most `3.7e-7`.
+  `scripts/regress_band_sum.py --stage contour` (lit = band average above
+  `1e-2` of the column maximum, 121044 pixels):
+
+  | band sum | median $\lvert$rel$\rvert$ | RMS | mean rel | lit sum ratio | $z$ std | $\lvert z\rvert$ p50 / p99 / max | $\lvert z\rvert > 4$ |
+  |---|---|---|---|---|---|---|---|
+  | $N = 10^8$ vs contour band | `3.56e-3` | `1.46e-2` | `-8.6e-7` $\pm$ `4.2e-5` | `1.0000006` | `0.50` | `0.23 / 1.63 / 3.72` | 0 |
+  | $N = 10^7$ vs contour band | `1.91e-2` | `5.39e-2` | `-2.8e-4` $\pm$ `1.6e-4` | `1.0000145` | `0.67` | `0.37 / 2.01 / 4.97` | 19 |
+  | $N = 10^8$ vs contour point | `3.57e-3` | `1.47e-2` | `-1.0e-6` | `0.99957` | `0.54` | `0.23 / 1.64 / 17.8` | 25 |
+
+  RMS ratio $10^7 / 10^8$: `3.69` ($\sqrt{10} = 3.16$). Point against band
+  contour: median `6.7e-6`, p99 `2.1e-4`, 51 lit pixels above `1e-2`, 24 lit
+  band pixels with a point value 0 (the edge: the band reaches the lit range,
+  the centre does not); the worst band-sum pixels are dim rows 770-794 with
+  $K_{\mathrm{eff}} \approx 500$ and $z < 3.8$.
+- *Cost* (`benchmarks/benchmark_contour_quadrature.py`, column 150 rows
+  100-355, store `N = 1e6`, `rtol = 1e-9`, steady state, one process):
+  extraction `1.65 s` for 256 $\delta$ (`6.4 ms` each, 169369 nodes);
+  geometry `4.29 s` (`16.8 ms` per $\delta$, `1356` points); integration per
+  pixel at 1 / 4 / 16 pixels per $\delta$ (azimuths within $\pm3°$):
+  column density `5.16 / 7.33 / 5.46 ms` (`242 / 383 / 354` points added),
+  random `1.09 / 1.11 / 1.08 ms` (none); peak RSS `1.5 GB`. Before padding the
+  production evaluators' batches to powers of two a column spent `18 s` of
+  `45 s` compiling; before merging the extraction's nodes into first panels
+  of up to 1° a level set took 2800-5400 geometry points.
+
+**Chapter-10 verdicts (2026-09-25, task `ch10-numerical-verdicts`,
+`lumice_integral.ch10_verdicts`, `lumice_integral.focusing`).**
+`scripts/ch10_numerical_verdicts.py --output-dir artifacts/ch10-verdicts`
+writes one `metadata.json` + `arrays.npz` per verdict (schema
+`lumice-integral.ch10-verdict/v1`, statement, numbers, parameters, SHA-256,
+the last commit of every source module) and a top-level `provenance.json`;
+`9.6 min` on an M2 Max, one process. Every pixel value is the contour
+quadrature's (`rtol = 1e-8`), every Hessian and critical value the field
+layer's; seed-check stores `N = 2e5`.
+
+- *22° inner edge, random orientation* (canonical crystal, $n = 1.31$, sun
+  at 15°). Minimum $D_{\min} = 21.839300°$, Riemannian Hessian
+  `[0.337575, 0.964567]`; finite differences of $D_P$ along geodesics
+  (step `1e-4`) agree to `8.2e-8`. $w^* = 1.444561$,
+  $2\pi/\sqrt{\det H} = 11.011045$, so $\int w/|\nabla D|\,d\ell \to 15.906128$
+  and the pixel value to $0.541535$. On $\varepsilon = 10^{-1}\ldots10^{-6}$
+  (quarter decades) the ratio to that limit rises monotonically to `0.99805`;
+  fitted on $\varepsilon \le 10^{-3}$ it is $c - a\sqrt\varepsilon - b\varepsilon$ with
+  $c = 1.000023$, $a = 1.956$. The $\sqrt\varepsilon$ comes from kinks of
+  $w = A_PT_P$ at the minimum-deviation point: $A_P$ depends on $|u_z|$ there
+  (one-sided slopes `-0.827` both ways) and in plane the corridor switches its
+  bounding vertex (`-2.363` / `-0.970`); the mean of $w$ over the ellipse
+  gives $a = \frac{2\sqrt2}{\pi}\sum_i \kappa_i/\sqrt{\lambda_i} = 1.945$.
+- *22° inner edge, column family.* The orientation ridge of the column
+  density passes through the minimum only at the top and bottom of the ring
+  (azimuth 90° / 270°, sky elevation $36.84°$ / $-6.84°$: the tangent-arc
+  contacts); at the top, with first panels of $2\sigma$: local slope within
+  `0.1` of $-1/2$ on `[1e-3, 3.2e-3]` for $\sigma = 0.5°$, `[5.6e-6, 3.2e-3]`
+  for 0.1°, and down to the grid's `3.2e-7` for 0.02° and 0.005°; cap
+  crossover (slope back through $-1/4$) at `6.9e-5` and `2.9e-6` for 0.5° and
+  0.1° ($\varepsilon_c \propto \sigma^{1.97}$); cap $\times\,\sigma$ `0.431` /
+  `0.419` rad. Just above the crossover the slope overshoots to `-0.59`.
+  Above `3e-3` the slope steepens (`-0.7` at `2e-2`, `-1.5` at `1e-1`): the
+  arc leaves the ring. The panel size does not change the values (first
+  panels of $2\sigma$, $\sigma/2$, $\sigma/8$: identical to all printed digits).
+- *Liljequist.* (i) A60-10: `3-5-6-7` and `3-4-5-7` have 0 of `2e5` lattice
+  points in $U_P$; `11083` and `20959` pass every gate except the internal
+  TIR discriminants. Blocked, not computed. (ii) `1-3-2` / `3-5-6-7-3` on
+  $h/a = 0.2$, 1, 2: one field (`8.9e-16` rad), $|\nabla D_P| = 2$ to `1e-15`,
+  critical values spread `5.7e-14`° over $h/a$. Random-orientation profiles
+  on quarter-degree grids: `1-3-2` peaks at 19.25° / 72.25° / 73.5°;
+  `3-5-6-7-3` at 153.25° for all three, and on a 0.05° grid at 153.10°,
+  half maximum 153.00–158.80°, 151.65–157.30°, 150.70–157.05°. At the
+  critical value 153.0697°: from above the value changes by less than
+  `1e-2` relative over $\varepsilon = 10^{-2}\ldots10^{-6}$ rad; from below
+  the gap closes as $\varepsilon^{0.48}$, $\varepsilon^{0.49}$, $\varepsilon^{0.49}$.
+  Max error estimate `1.7e-9` relative; up to `920` exhausted panels per
+  profile (reported, next to the arcs' ends on $\partial U_P$).
+- *Parhelic circle* (`1-3-2`, $h/a = 0.2$, sun at 15°). Exactly vertical
+  plates on a 72000-point azimuth grid: image elevation equals the sun's to
+  `3.3e-16` rad, $d\theta/d\phi = 2$ to `1e-9`; the window jumps once, at
+  ring azimuth 122.34° (the TIR-only gate). Ring cross integrals by 48-point
+  Gauss–Legendre over $\pm 8\sigma\cdot 2\sin(|\theta|/2)$ in elevation (the
+  ring is $\sqrt2\sin(\theta/2)\,\sigma$ wide in RMS by Monte Carlo, `0.05σ` at
+  4°), ring azimuths $-4°\ldots126°$ every 2°: against
+  $\sum w/(2\pi\cdot2)$, max relative residual `3.4e-4` / `8.6e-5` for
+  $\sigma = 0.5°$ / 0.25°, median `1.8e-4` / `4.6e-5`. A 2e6-pose Monte Carlo
+  of tilted plates ($\sigma = 0.1°$, 0.5° bins; a one-off probe, not in the
+  repository) agrees with the prediction at 4°–14° to `1e-2`. The members `1-k-2`, $k = 4\ldots8$: windows equal to
+  `1-3-2`'s shifted by $60°(k-3)$ to `1.1e-16`.
+- *Focusing labels.* Fixtures `3-5`, `1-3-2`, `3-5-6-7-3`, `3-1-6`,
+  `1-3-5-2`, `3-6` × random, column, plate, Parry, Lowitz: no Jacobian
+  focusing on any fixture; `3-5` finite jump (measure limit `11.011045`),
+  `3-5-6-7-3` cone point at 180° (slope 2), the rotation slab `1-3-5-2`
+  cone point at 0° with slope $\sqrt3 = 2\sin60°$ and a lattice $|\nabla D_P|$
+  in `[0.78, 1.73]`, its fold circle ($D = 120°$) outside $U_P$ (max
+  $D_P$ 115.6°); `3-6` point mass. Collapse across the parhelic circle
+  (`1-3-2`, ring azimuth 110°): peak `×1.988` from $\sigma = 0.5°$ to 0.25°,
+  cross integral `0.0022774` / `0.0022776`; the random-orientation value at
+  the same pixels `6.5e-4`–`6.6e-4`.
+- *Limitation found, not changed here.* On `1-3-2` the extraction's
+  critical-data seeds find no component, every $\delta$ relies on the
+  fallback seeds (at most `32 × 6` new components per call), and one call
+  with ~180 deviations raises; `ch10_verdicts` extracts 64 at a time.
+  Backlog.

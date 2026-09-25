@@ -70,6 +70,35 @@ uv run python scripts/regress_band_sum.py --stage k-eff --random-n 10000000 --ou
 # or class [1,3,5] and task 14's profiles rendered both ways (~2 min with the N = 1e7 stores cached)
 uv run python scripts/regress_band_sum.py --stage scatter --band-dir artifacts/band-sum-full-new --baseline-dir artifacts/band-sum-full --output /tmp/regression_scatter.json
 uv run python scripts/regress_band_sum.py --stage scatter --random-n 10000000 --workers 4 --output /tmp/regression_scatter_windows.json
+
+# D_P field layer (lumice_integral.dp_field): interval partition of the five fixtures against an
+# independent dense grid through evaluate_fields (~45 s standalone, ~2 min as the slow test in test_dp_field_certificate.py, M2 Max)
+uv run python scripts/verify_dp_field_intervals.py --grid 1201
+# certified level-set extraction (lumice_integral.contour): a strip's worth of deltas, first call and steady state
+# (3-5, 801 deltas: 11 s first call, 6 s steady on an M2 Max, one process)
+uv run python benchmarks/benchmark_contour_extraction.py --deltas 801
+# contour quadrature (lumice_integral.contour_quadrature): deterministic pixel values on the level sets, the precision
+# authority; smoke window, then the full canonical image (43 min on 4 workers, M2 Max; --band-nodes 2 gives the band-sum
+# pixel model for the like-for-like comparison below)
+uv run python scripts/render_contour_quadrature.py --rows 140:160 --columns 145:155 --output-dir /tmp/contour-quad-smoke
+JAX_PLATFORMS=cpu OMP_NUM_THREADS=1 \
+  uv run python scripts/render_contour_quadrature.py --workers 4 --output-dir artifacts/contour-quadrature-full
+JAX_PLATFORMS=cpu OMP_NUM_THREADS=1 uv run python scripts/render_contour_quadrature.py --band-nodes 2 \
+  --relative-tolerance 1e-6 --workers 4 --output-dir artifacts/contour-quadrature-band
+# ... against Phase I pixel by pixel (canonical + column 126, with the full-derivative arclength-speed diagnostic; ~30 s)
+uv run python scripts/compare_contour_quadrature_phase1.py --output /tmp/contour-phase1.json
+# ... the band sum against it on one pixel model (z = rel sqrt(K_eff)), and the cost structure (curves vs pixels)
+uv run python scripts/regress_band_sum.py --stage contour --band-dir artifacts/band-sum-full \
+  --coarse-dir artifacts/band-sum-full-N1e7 --contour-dir artifacts/contour-quadrature-band \
+  --contour-point-dir artifacts/contour-quadrature-full --reference-dir artifacts/strip-full --output /tmp/regression_contour.json
+uv run python benchmarks/benchmark_contour_quadrature.py
+# chapter-10 numerical verdicts as figure data (lumice_integral.ch10_verdicts on the contour quadrature: 22 deg inner
+# edge, Liljequist, parhelic circle, focusing labels; one metadata.json + arrays.npz per verdict)
+uv run python scripts/ch10_numerical_verdicts.py --output-dir /tmp/ch10-verdicts
+# Phase I seed-store density survey: the 32 strip pixels over store N x band half-width, plus the
+# completeness cross-check (discovery.check_band_coverage) on the production store (minutes; the N = 1e8
+# store is ~1 GB under artifacts/s2-store)
+uv run python scripts/store_seed_density_survey.py --output-dir /tmp/store-seed-density
 # a non-canonical pose-density family (recorded in provenance.json and the resume fingerprint)
 uv run python scripts/render_ch06_strip.py --rows 300:302 --columns 126:127 --output-dir /tmp/strip-parry \
   --pose-density-family parry --pose-density-zenith-std-deg 1 --pose-density-roll-std-deg 1
@@ -90,8 +119,14 @@ The design is `docs/overview.md` (entry), `docs/phase1.md` and `docs/phase2.md`
 ├── src/lumice_integral/   # Differentiable numerical building blocks
 │   ├── geometry/          # Finite-crystal geometry: polyhedra, unfolding, corridor
 │   │                      # intersection, path enumeration, entry_measure (pure numpy)
-│   └── symmetry/          # D6h / G tables, signature and Phi classes, ch3 ground truth,
-│                          # attitude construction (pure numpy, depends on geometry only)
+│   ├── symmetry/          # D6h / G tables, signature and Phi classes, ch3 ground truth,
+│   │                      # attitude construction (pure numpy, depends on geometry only)
+│   ├── dp_field/          # Phase II D_P field layer: evaluation, critical points, dU_P walk,
+│   │                      # delta-interval partition (public: DPField)
+│   ├── contour.py         # level sets {D_P = delta} in U_P, certified against the partition
+│   ├── contour_quadrature.py  # line integrals on them: Phase II pixel values, the precision authority
+│   ├── focusing.py        # explicit label: Jacobian focusing (D_P critical set) vs dimension collapse (rho)
+│   └── ch10_verdicts.py   # the chapter-10 numerical verdicts, measured on the chains above
 ├── tests/                 # Analytic and optical regression fixtures
 ├── benchmarks/            # Reproducible CPU/GPU probes
 ├── docs/

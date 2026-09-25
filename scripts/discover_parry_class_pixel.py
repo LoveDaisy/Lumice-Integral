@@ -11,9 +11,10 @@ symmetry; ``build_pose_density("parry", roll_mean_deg=...)`` exposes it.
 Procedure (parameters are the ``--`` options, defaults recorded in
 ``tests/test_path_class_ac2_symmetry.py``):
 
-1. Build the ``3-5`` and ``3-7`` prescan tables of the canonical incident
-   direction (``--prescan-samples`` Haar poses, ``--prescan-seed``).
-2. Weight each table's poses by the tilted Parry density *widened by
+1. Draw the ``3-5`` and ``3-7`` domain-valid Haar samples of the canonical
+   incident direction (``path_class.haar_domain_samples``, ``--landing-samples``
+   poses, ``--landing-seed``).
+2. Weight each member's samples by the tilted Parry density *widened by
    ``--selection-widening``* (a 1 deg x 1 deg lock leaves only a handful of
    significant Haar samples out of 400k, too few for a map) and bin the
    outgoing *sky* directions on a ``--bin-deg`` elevation/azimuth grid (the
@@ -46,17 +47,19 @@ from typing import Any
 import numpy as np
 
 from lumice_integral.canonical_scene import CANONICAL_REFRACTIVE_INDEX, canonical_incident_direction
-from lumice_integral.path_class import canonical_class_scene, render_class_pixel
+from lumice_integral.path_class import canonical_class_scene, haar_domain_samples, render_class_pixel
 from lumice_integral.pose_density import PoseDensity, build_pose_density
-from lumice_integral.prescan import PrescanTable, build_prescan_table
 from lumice_integral.strip_pixel import PixelOptions
 
 
-def landing_histogram(table: PrescanTable, density: PoseDensity, edges_elevation: np.ndarray, edges_azimuth: np.ndarray) -> np.ndarray:
-    sky = -np.asarray(table.directions, dtype=np.float64)
+def landing_histogram(
+    samples: tuple[np.ndarray, np.ndarray], density: PoseDensity, edges_elevation: np.ndarray, edges_azimuth: np.ndarray
+) -> np.ndarray:
+    rotations, directions = samples
+    sky = -np.asarray(directions, dtype=np.float64)
     elevation = np.degrees(np.arcsin(np.clip(sky[:, 2], -1.0, 1.0)))
     azimuth = np.degrees(np.arctan2(sky[:, 1], sky[:, 0]))
-    weight = density.evaluate_batch(table.rotations)
+    weight = density.evaluate_batch(rotations)
     histogram, _, _ = np.histogram2d(elevation, azimuth, bins=[edges_elevation, edges_azimuth], weights=weight)
     return histogram
 
@@ -81,8 +84,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--roll-mean-deg", type=float, default=20.0)
     parser.add_argument("--roll-std-deg", type=float, default=1.0)
     parser.add_argument("--zenith-std-deg", type=float, default=1.0)
-    parser.add_argument("--prescan-samples", type=int, default=400_000)
-    parser.add_argument("--prescan-seed", type=int, default=20260916)
+    parser.add_argument("--landing-samples", type=int, default=400_000)
+    parser.add_argument("--landing-seed", type=int, default=20260916)
     parser.add_argument("--bin-deg", type=float, default=1.0)
     parser.add_argument("--min-fraction", type=float, default=0.01, help="bin weight as a fraction of the member's total")
     parser.add_argument("--zero-fraction", type=float, default=1e-9, help="'no weight' threshold relative to the member's maximum bin")
@@ -92,11 +95,11 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     incident = canonical_incident_direction()
-    tables = {
-        path_id: build_prescan_table(
-            incident, CANONICAL_REFRACTIVE_INDEX, sample_count=args.prescan_samples, rng_seed=args.prescan_seed, path_id=path_id
+    samples = {
+        path_id: haar_domain_samples(
+            faces, incident, CANONICAL_REFRACTIVE_INDEX, sample_count=args.landing_samples, rng_seed=args.landing_seed
         )
-        for path_id in ("3-5", "3-7")
+        for path_id, faces in (("3-5", (3, 5)), ("3-7", (3, 7)))
     }
     edges_elevation = np.arange(-30.0, 90.0 + args.bin_deg, args.bin_deg)
     edges_azimuth = np.arange(-90.0, 90.0 + args.bin_deg, args.bin_deg)
@@ -111,7 +114,7 @@ def main(argv: list[str] | None = None) -> None:
         roll_mean_deg=args.roll_mean_deg,
         roll_std_deg=args.roll_std_deg * args.selection_widening,
     )
-    maps = {path_id: landing_histogram(table, selector, edges_elevation, edges_azimuth) for path_id, table in tables.items()}
+    maps = {path_id: landing_histogram(pair, selector, edges_elevation, edges_azimuth) for path_id, pair in samples.items()}
     (i, j), rationale = choose_bin(maps["3-5"], maps["3-7"], min_fraction=args.min_fraction, zero_fraction=args.zero_fraction)
     elevation = float(0.5 * (edges_elevation[i] + edges_elevation[i + 1]))
     azimuth = float(0.5 * (edges_azimuth[j] + edges_azimuth[j + 1]))
@@ -119,9 +122,7 @@ def main(argv: list[str] | None = None) -> None:
     centre = (args.window // 2, args.window // 2)
 
     def render_members(density: PoseDensity) -> tuple[dict[str, Any], float, str]:
-        scene = canonical_class_scene(
-            (3, 5), prescan_sample_count=args.prescan_samples, prescan_rng_seed=args.prescan_seed, pose_density=density, render=render
-        )
+        scene = canonical_class_scene((3, 5), pose_density=density, render=render)
         result = render_class_pixel(scene, centre[0], centre[1], PixelOptions())
         members = {
             "-".join(map(str, member)): {
@@ -138,7 +139,7 @@ def main(argv: list[str] | None = None) -> None:
         "script": "scripts/discover_parry_class_pixel.py",
         "command": f"uv run python scripts/discover_parry_class_pixel.py --roll-mean-deg {args.roll_mean_deg:g}",
         "pose_density": {"family": "parry", "zenith_std_deg": args.zenith_std_deg, "roll_mean_deg": args.roll_mean_deg, "roll_std_deg": args.roll_std_deg},
-        "prescan": {"sample_count": args.prescan_samples, "rng_seed": args.prescan_seed},
+        "landing_samples": {"sample_count": args.landing_samples, "rng_seed": args.landing_seed},
         "landing_bin_deg": args.bin_deg,
         "selection_widening": args.selection_widening,
         "bin_weight_3_5_fraction": float(maps["3-5"][i, j] / maps["3-5"].sum()),

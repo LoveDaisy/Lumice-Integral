@@ -8,9 +8,10 @@ a different weight (a footprint near the top edge of face 3 that climbs to
 face 1, drops to face 2 and leaves through face 5).  This script finds where
 that happens in the canonical ch06 scene:
 
-1. Build the ``3-1-2-5`` prescan table (``--prescan-samples`` Haar poses,
-   ``--prescan-seed``) and evaluate ``geometry.entry_measure_batch`` and the
-   canonical column density on its domain-valid poses.
+1. Draw the ``3-1-2-5`` domain-valid Haar samples
+   (``path_class.haar_domain_samples``, ``--landing-samples`` poses,
+   ``--landing-seed``) and evaluate ``geometry.entry_measure_batch`` and the
+   canonical column density on them.
 2. Keep the poses whose footprint is positive and whose outgoing direction
    lies inside the canonical strip window; rank the pixels they land in by
    ``rho_pose * entry_measure`` and take the best one (``--rank`` picks
@@ -45,10 +46,11 @@ from lumice_integral.canonical_scene import (
     canonical_crystal,
     canonical_incident_direction,
     canonical_pose_density,
+    canonical_sun_direction,
 )
 from lumice_integral.geometry import entry_measure_batch
 from lumice_integral.optics import PATH_3_5_FACES, path_3_5
-from lumice_integral.prescan import build_prescan_table
+from lumice_integral.path_class import haar_domain_samples
 from lumice_integral.so3 import log as so3_log
 from lumice_integral.strip_pixel import PixelOptions, build_strip_scene, pixel_target, render_pixel
 
@@ -57,25 +59,25 @@ REFLECTING = (3, 1, 2, 5)
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--prescan-samples", type=int, default=400_000)
-    parser.add_argument("--prescan-seed", type=int, default=20260916)
+    parser.add_argument("--landing-samples", type=int, default=400_000)
+    parser.add_argument("--landing-seed", type=int, default=20260916)
     parser.add_argument("--rank", type=int, default=0, help="which candidate pixel to render (0 = best)")
     args = parser.parse_args(argv)
 
     incident = canonical_incident_direction()
     crystal = canonical_crystal()
     density = canonical_pose_density()
-    table = build_prescan_table(
-        incident, CANONICAL_REFRACTIVE_INDEX, sample_count=args.prescan_samples, rng_seed=args.prescan_seed, path_id="3-1-2-5"
+    rotations, directions = haar_domain_samples(
+        REFLECTING, incident, CANONICAL_REFRACTIVE_INDEX, sample_count=args.landing_samples, rng_seed=args.landing_seed
     )
-    footprint = entry_measure_batch(table.rotations, REFLECTING, incident, crystal, n_ice=CANONICAL_REFRACTIVE_INDEX)
+    footprint = entry_measure_batch(rotations, REFLECTING, incident, crystal, n_ice=CANONICAL_REFRACTIVE_INDEX)
     positive = np.flatnonzero(footprint > 0.0)
-    weight = density.evaluate_batch(table.rotations[positive]) * footprint[positive]
+    weight = density.evaluate_batch(rotations[positive]) * footprint[positive]
     per_pixel: dict[tuple[int, int], float] = defaultdict(float)
     counts: dict[tuple[int, int], int] = defaultdict(int)
     for index, w in zip(positive, weight):
         try:
-            u, v = project_linear(-table.directions[index], **CANONICAL_RENDER)
+            u, v = project_linear(-directions[index], **CANONICAL_RENDER)
         except ValueError:
             continue
         if 0.0 <= u < CANONICAL_RENDER["width"] and 0.0 <= v < CANONICAL_RENDER["height"]:
@@ -88,13 +90,11 @@ def main(argv: list[str] | None = None) -> None:
 
     options = PixelOptions()
     kwargs = dict(
-        incident_direction=incident,
+        sun_direction=canonical_sun_direction(),
         refractive_index=CANONICAL_REFRACTIVE_INDEX,
         crystal=crystal,
         pose_density=density,
         render=CANONICAL_RENDER,
-        prescan_sample_count=args.prescan_samples,
-        prescan_rng_seed=args.prescan_seed,
     )
     results = {
         "3-5": render_pixel(build_strip_scene(PATH_3_5_FACES, **kwargs), row, column, options),
@@ -110,11 +110,11 @@ def main(argv: list[str] | None = None) -> None:
     out: dict[str, Any] = {
         "script": "scripts/discover_3_1_2_5_seed.py",
         "command": "uv run python scripts/discover_3_1_2_5_seed.py" + (f" --rank {args.rank}" if args.rank else ""),
-        "prescan": {"sample_count": args.prescan_samples, "rng_seed": args.prescan_seed},
-        "table_valid_count": int(table.valid_count),
+        "landing_samples": {"sample_count": args.landing_samples, "rng_seed": args.landing_seed},
+        "valid_count": int(len(rotations)),
         "footprint_positive_count": int(positive.size),
         "candidate_pixels": [{"row": r, "column": c, "score": s, "samples": counts[(r, c)]} for (r, c), s in ranked[:8]],
-        "selection": f"rank {args.rank} by summed rho_pose * entry_measure of the landing prescan samples",
+        "selection": f"rank {args.rank} by summed rho_pose * entry_measure of the landing Haar samples",
         "pixel": {"row": row, "column": column, "score": score},
         "members": {
             path_id: {

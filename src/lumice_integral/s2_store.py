@@ -91,8 +91,7 @@ and ``SCHEMA_VERSION``; ``SCHEMA_VERSION`` is bumped by hand when the build
 algorithm changes.  The git commit is recorded in the provenance for
 forensics but deliberately *not* part of the key or of the comparison: a
 large store (``N = 1e8`` takes minutes to hours) must not be invalidated by
-unrelated commits.  Unlike :func:`.prescan.build_or_load_prescan_table`
-(which rebuilds on mismatch), :func:`build_or_load` refuses a cache whose
+unrelated commits.  :func:`build_or_load` refuses a cache whose
 recorded parameters differ from the request, and :meth:`S2EventStore.load`
 refuses an array whose SHA-256 differs from the recorded one --
 neither silently rebuilds nor silently reuses.
@@ -104,6 +103,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
+import functools
 import hashlib
 import json
 import platform
@@ -120,8 +120,8 @@ from . import geometry, optics
 from .camera import incident_direction_from_sun, sun_direction
 from .geometry import HexPrism, Polyhedron
 from .optics import normalize_faces, path_id_of
-from .path_class import phi_key
 from .provenance import git_commit, sha256_of
+from .so3 import haar_rotations
 
 # 3: no sun direction in the spec (the arrays do not depend on it), one .npy per array, task s2-store-schema-3;
 # 2: u = R^-1 s_hat (toward the sun) with the sun direction recorded, task notation-alignment;
@@ -140,6 +140,10 @@ ROTATION_PER_POINT = (
     "R = [s_hat, p_s, s_hat x p_s][u, p_u, u x p_u]^T (any R with R u = s_hat, s_hat toward the sun; section 4.1(a))"
 )
 RANDOM_SEED = 20260923
+# The Phase I seed store (:class:`StoreSeeds`): a 32-pixel probe against the retired 4M Haar prescan found every
+# component already at N = 1e5 with a 0.02 deg band; 1e6 (9.8 MB for 3-5, ~1 s in memory) with the default
+# 0.2 deg band keeps a factor 10 in N and ~100 in pool size over that (task phase1-seeds-from-store).
+DEFAULT_SEED_STORE_N = 1_000_000
 # The reference ``s_hat`` of the build (``R u = s_hat``).  A store does not depend on the sun: validity, ``A``,
 # ``T``, ``phi`` and ``D`` depend on the pose only through ``u = R^-1 s_hat`` (section 4.1(a); measured in
 # ``docs/phase2.md`` section 1.1 and pinned by ``tests/test_s2_store.py``), so any direction gives the same events
@@ -407,18 +411,7 @@ def self_check_haar_mean(
     Checks the fibration claim ``u = R^-1 s_hat`` is uniform on ``S^2`` under Haar together with
     the ``4 pi / N`` area element, independently of the ``u`` parametrisation.
     """
-    rng = np.random.default_rng(20260923)
-    q = rng.normal(size=(n, 4))
-    q /= np.linalg.norm(q, axis=1, keepdims=True)
-    w0, x, y, z = q.T
-    rotations = np.stack(
-        [
-            np.stack([1 - 2 * (y * y + z * z), 2 * (x * y - z * w0), 2 * (x * z + y * w0)], axis=1),
-            np.stack([2 * (x * y + z * w0), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w0)], axis=1),
-            np.stack([2 * (x * z - y * w0), 2 * (y * z + x * w0), 1 - 2 * (x * x + y * y)], axis=1),
-        ],
-        axis=1,
-    )
+    rotations = haar_rotations(n, np.random.default_rng(20260923))
     values = []
     for start in range(0, n, CHUNK):
         values.append(evaluate_fields(rotations[start : start + CHUNK], sun, crystal, index, members)["w"])
@@ -611,6 +604,100 @@ class S2EventStore:
             digest = sha256_of(path)
             if digest != record["sha256"]:
                 raise ValueError(f"{path}: SHA-256 of array {name!r} is {digest}, the provenance records {record['sha256']}")
+
+
+@dataclasses.dataclass(frozen=True, eq=False)
+class StoreSeeds:
+    """Phase I discovery candidates of one path ``faces`` from a store: the band of a target, posed.
+
+    The store is the SO(3) sampling quotiented by the twist about ``s_hat``
+    (section 4.1(a)): for a target direction ``d`` at deviation ``delta``
+    from the propagation ``s = -s_hat`` every event with ``|D_i - delta| <=
+    half_width`` gives, through :func:`event_rotations` with ``d`` as the
+    centre, a pose whose outgoing direction lies at deviation ``D_i`` in the
+    azimuth of ``d``, i.e. ``|D_i - delta|`` from ``d``: the one-dimensional
+    residual of a candidate (:meth:`candidates`).  ``faces`` is the path
+    these candidates seed: a member of the store's ``Phi`` group
+    (``g is None``) or its image under the ``D6h`` element ``g`` (the
+    :class:`.band_sum.Transport` of that member's group; the poses are
+    :func:`transported_rotations`, a rotation also for an improper ``g``).
+    The store's crystal and refractive index are the problem's; the sun is
+    the caller's (a store records none).
+
+    ``eq=False``: it holds arrays (``sun_direction``, ``g``) and a store.
+    """
+
+    store: S2EventStore
+    faces: Faces
+    sun_direction: np.ndarray
+    g: np.ndarray | None = None
+
+    def __post_init__(self) -> None:
+        faces = normalize_faces(self.faces)
+        sun = np.asarray(self.sun_direction, dtype=np.float64)
+        g = None if self.g is None else np.asarray(self.g, dtype=np.float64)
+        if self.store.events.iw is not None:
+            raise ValueError("a seed store must be a uniform point set (no inverse weights)")
+        if g is None:
+            if faces not in self.store.spec.members:
+                raise ValueError(f"{path_id_of(faces)} is not a member of the store {self.store.spec.path_id}")
+        else:
+            from .path_class import _hexprism_normals, _symmetry_image_of_faces  # path_class imports this module
+
+            normals = _hexprism_normals(self.crystal)
+            images = {_symmetry_image_of_faces(g, member, normals) for member in self.store.spec.members}
+            if faces not in images:
+                raise ValueError(f"{path_id_of(faces)} is not the image under g of a member of {self.store.spec.path_id}")
+        object.__setattr__(self, "faces", faces)
+        object.__setattr__(self, "sun_direction", sun)
+        object.__setattr__(self, "g", g)
+
+    @property
+    def path_id(self) -> str:
+        return path_id_of(self.faces)
+
+    @property
+    def incident_direction(self) -> np.ndarray:
+        """The propagation direction ``s = -s_hat`` of the optics."""
+        return incident_direction_from_sun(self.sun_direction)
+
+    @property
+    def refractive_index(self) -> float:
+        return self.store.spec.refractive_index
+
+    @functools.cached_property
+    def crystal(self) -> HexPrism:
+        """The store's crystal (its ``w > 0`` filter), the problem's crystal."""
+        return crystal_from_description(self.store.spec.crystal)
+
+    @property
+    def n(self) -> int:
+        return self.store.spec.n
+
+    def candidates(self, target_direction: np.ndarray, half_width_rad: float) -> tuple[np.ndarray, np.ndarray]:
+        """Poses of the events with ``|D_i - delta| <= half_width_rad`` and their offsets ``|D_i - delta|``.
+
+        ``delta`` is the deviation of ``target_direction`` from ``s``; the
+        poses (``(K, 3, 3)``, in store order, increasing ``D``) put ``u_i`` on
+        ``s_hat`` and ``phi_i`` in the azimuth of the target, so the offset is
+        the angle between a candidate's outgoing direction and the target.
+        """
+        target = np.asarray(target_direction, dtype=np.float64)
+        if target.shape != (3,):
+            raise ValueError("target_direction must have shape (3,)")
+        if half_width_rad <= 0.0:
+            raise ValueError("half_width_rad must be positive")
+        delta = float(np.arccos(np.clip(target @ self.incident_direction, -1.0, 1.0)))
+        band = self.store.band_slice(delta - half_width_rad, np.nextafter(delta + half_width_rad, np.inf))
+        if len(band) == 0:
+            return np.zeros((0, 3, 3)), np.zeros(0)
+        deviation = np.asarray(band.D, dtype=np.float64)
+        rotations = event_rotations(
+            np.asarray(band.u, dtype=np.float64), np.asarray(band.phi, dtype=np.float64), deviation, self.sun_direction, target
+        )
+        if self.g is not None:
+            rotations = transported_rotations(rotations, self.g, self.sun_direction, target)
+        return rotations, np.abs(deviation - delta)
 
 
 def _read_provenance(directory: Path) -> dict[str, Any]:
@@ -814,6 +901,8 @@ def _spec_of(
         deviation_window=deviation_window,
         dtype=dtype,
     )
+    from .path_class import phi_key  # path_class -> strip_pixel -> this module: imported at call time
+
     keys = {phi_key(crystal, m) for m in spec.members}
     if len(keys) != 1:
         raise ValueError(f"members {spec.path_id} do not share one phi_key: {sorted(keys)}")
@@ -957,6 +1046,7 @@ __all__ = [
     "CHUNK",
     "DEFAULT_BUCKET_COUNT",
     "DEFAULT_CACHE_DIR",
+    "DEFAULT_SEED_STORE_N",
     "FIBONACCI_SAMPLING",
     "ROTATION_PER_POINT",
     "SCHEMA_VERSION",
@@ -965,6 +1055,7 @@ __all__ = [
     "S2EventStore",
     "S2Events",
     "S2StoreSpec",
+    "StoreSeeds",
     "align_rotations",
     "build_event_store",
     "build_or_load",

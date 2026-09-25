@@ -43,7 +43,6 @@ from lumice_integral.strip_pixel import PixelOptions
 # so these fixtures bind that crystal explicitly -- the class mechanism under test
 # does not depend on which crystal it runs on.
 RECORDED_CRYSTAL = HexPrism.from_ratio(1.0)
-TEST_PRESCAN_SAMPLES = 400_000  # the tests/test_strip_pixel.py table; the canonical value 2.364412980 is pinned to it
 # The quadrature's relative tolerance is 1e-4 (PixelOptions.quadrature); the
 # members are integrated on independently discovered fibers of the same curve
 # family, so their agreement is bounded by twice that.
@@ -57,7 +56,7 @@ PARRY_DISCOVERY = {
     "script": "scripts/discover_parry_class_pixel.py",
     "command": "uv run python scripts/discover_parry_class_pixel.py --roll-mean-deg 20",
     "pose_density": {"family": "parry", "zenith_std_deg": 1.0, "roll_mean_deg": 20.0, "roll_std_deg": 1.0},
-    "prescan": {"sample_count": 400_000, "rng_seed": 20260916},
+    "prescan": {"sample_count": 400_000, "rng_seed": 20260916},  # of the pixel selection; the renders seed from the store
     "selection": "strong: 3-7 carries no weight where 3-5 does (bin of largest 3-5 weight, 1 deg bins, 5x widened density)",
     "render": {"width": 21, "height": 21, "fov_deg": 6.0, "view": {"azimuth": -32.5, "elevation": 46.5}},
     "pixel": {"row": 10, "column": 10},
@@ -75,7 +74,7 @@ def options() -> PixelOptions:
 
 @pytest.fixture(scope="module")
 def column_class_pixel(options) -> ClassPixelResult:
-    scene = canonical_class_scene((3, 5), prescan_sample_count=TEST_PRESCAN_SAMPLES, crystal=RECORDED_CRYSTAL)
+    scene = canonical_class_scene((3, 5), crystal=RECORDED_CRYSTAL)
     return render_class_pixel(scene, CANONICAL_PIXEL_ROW, CANONICAL_PIXEL_COLUMN, options)
 
 
@@ -83,7 +82,10 @@ def test_column_density_class_value_is_twelve_times_the_single_3_5_value(column_
     result = column_class_pixel
     assert result.completeness == "complete" and len(result.members) == 12
     single = result.members[(3, 5)].value
-    assert single == pytest.approx(2.364412980, rel=1e-6)  # the pinned canonical pixel value
+    # The canonical pixel on this crystal from the seed-store seed; 2.364412980 from the retired prescan seed, the
+    # same loop resampled from another start (2.1e-5 relative, inside the quadrature's 1e-4; task
+    # phase1-seeds-from-store).
+    assert single == pytest.approx(2.364363781, rel=1e-6)
     assert result.value == pytest.approx(12.0 * single, rel=MEMBER_RTOL)
     assert result.error_estimate <= 12.0 * max(member.error_estimate for member in result.members.values())
 
@@ -110,8 +112,6 @@ def _parry_pixel(options, **overrides) -> ClassPixelResult:
     family = parameters.pop("family")
     scene = canonical_class_scene(
         (3, 5),
-        prescan_sample_count=PARRY_DISCOVERY["prescan"]["sample_count"],
-        prescan_rng_seed=PARRY_DISCOVERY["prescan"]["rng_seed"],
         pose_density=build_pose_density(family, **parameters),
         render=PARRY_DISCOVERY["render"],
         crystal=RECORDED_CRYSTAL,

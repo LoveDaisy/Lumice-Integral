@@ -18,7 +18,7 @@ from lumice_integral.optics import (
     path_3_5_domain_batch,
     path_3_5_problem,
 )
-from lumice_integral.prescan import haar_rotations
+from lumice_integral.so3 import haar_rotations
 from lumice_integral.so3 import exp
 from test_analytic_fiber import central_difference_jacobian
 

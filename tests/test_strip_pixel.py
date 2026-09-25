@@ -11,13 +11,16 @@ import lumice_integral.strip_pixel as strip_pixel_module
 from lumice_integral.canonical_scene import (
     CANONICAL_PIXEL_COLUMN,
     CANONICAL_PIXEL_ROW,
+    canonical_crystal,
     canonical_pose_density,
+    canonical_sun_direction,
     canonical_target_direction,
 )
+from lumice_integral.geometry import HexPrism
 from lumice_integral.continuation import ContinuationOptions, FiberStatus, TerminationReason, trace_fiber
 from lumice_integral.discovery import DISCOVERY_EVENT_NAMES, ComponentDiscoveryResult, DiscoveredComponent, retarget_problem
 from lumice_integral.pose_density import build_pose_density
-from lumice_integral.prescan import DEFAULT_SAMPLE_COUNT, build_prescan_table
+from lumice_integral.s2_store import DEFAULT_SEED_STORE_N, StoreSeeds, build_event_store
 from lumice_integral.resample import stitch_open_arc
 from lumice_integral.strip_pixel import (
     EVENT_NAMES,
@@ -46,20 +49,23 @@ from lumice_integral.strip_pixel import (
 # integrated over two traversals).  The retired adaptive integrator's
 # rtol=1e-8 reference (2.364423815) exists only for ``h/a = 1``; the alignment
 # against it lives in tests/test_resample_quadrature.py on that crystal.
-CANONICAL_PIXEL_RESAMPLED_VALUE = 6.581419934
+# 6.581419934 -> 6.581365570 (task phase1-seeds-from-store, 2026-09-25): the
+# seed now comes from the S^2 store instead of the Haar prescan; the same loop
+# (61 poses, 257 nodes) resampled from another seed moves by 8e-6 relative,
+# inside the quadrature's own error estimate (1.2e-4).
+CANONICAL_PIXEL_RESAMPLED_VALUE = 6.581365570
 # tests/test_discovery.py baselines.
 CANONICAL_ARCLENGTH = 2.379121
 ROW_225_ARCLENGTH = 3.121867
 ROW_226_ARCLENGTH = 3.130201
-# The survey's prescan (400k samples, seed 20260916): every count baseline
-# below (``pool_count == 210`` etc.) is pinned to this table, not to the
-# production default of ``prescan.DEFAULT_SAMPLE_COUNT``.
-TEST_PRESCAN_SAMPLES = 400_000
+# Every count baseline below is pinned to the production seed store
+# (``s2_store.DEFAULT_SEED_STORE_N`` points, the default 0.2 deg band).
+KEPT_EVENTS = 160216
 
 
 @pytest.fixture(scope="module")
 def scene():
-    return canonical_strip_scene(prescan_sample_count=TEST_PRESCAN_SAMPLES)
+    return canonical_strip_scene()
 
 
 @pytest.fixture(scope="module")
@@ -79,29 +85,32 @@ def test_pixel_options_defaults_are_the_image_policy(options):
     assert options.continuation.maximum_accepted_steps == 4000
     assert options.distance_threshold == options.continuation.closure_distance == 0.08
     assert set(options.discovery_kwargs()) == {
-        "continuation", "angle_tolerance_deg", "cluster_radius_rad", "distance_threshold"
+        "continuation", "band_half_width_deg", "cluster_radius_rad", "distance_threshold"
     }
     # One budget: the retired discovery/retry budgets and stall window are gone.
     for retired in ("discovery_step_budget", "retry_step_budget", "stall_floor_window", "jump_relative_threshold"):
         assert not hasattr(options, retired)
-    # The prescan sampling is a scene policy (task-scene-prescan-table), not a pixel one.
-    assert not hasattr(options, "rng_seed") and not hasattr(options, "prescan_samples")
+    # The seed store's size is a scene policy (task phase1-seeds-from-store), not a pixel one.
+    assert not hasattr(options, "seed_store_n") and not hasattr(options, "prescan_samples")
     assert set(EVENT_NAMES) >= set(DISCOVERY_EVENT_NAMES)
     assert STAGE_NAMES == ("discovery_s", "trace_s", "quadrature_s", "total_s")
 
 
-def test_canonical_scene_carries_a_matching_prescan_table(scene):
-    table = scene.prescan_table
-    assert table.sample_count == TEST_PRESCAN_SAMPLES and table.valid_count == 64427
-    assert np.array_equal(table.incident_direction, scene.incident_direction)
-    assert table.refractive_index == scene.refractive_index
-    # A supplied table is used as is; one for another scene is rejected.
-    reused = canonical_strip_scene(prescan_table=table)
-    assert reused.prescan_table is table
-    foreign = build_prescan_table(scene.incident_direction, 1.33, sample_count=1_000)
+def test_canonical_scene_carries_matching_seeds(scene):
+    seeds = scene.seeds
+    assert seeds.n == DEFAULT_SEED_STORE_N == 1_000_000 and len(seeds.store.events) == KEPT_EVENTS
+    assert seeds.faces == scene.faces == (3, 5) and seeds.g is None
+    assert np.array_equal(seeds.incident_direction, scene.incident_direction)
+    assert np.array_equal(seeds.sun_direction, canonical_sun_direction())
+    assert seeds.refractive_index == scene.refractive_index
+    # Supplied seeds are used as is; seeds of another index or crystal are rejected.
+    reused = canonical_strip_scene(seeds=seeds)
+    assert reused.seeds is seeds
+    other_index = build_event_store(canonical_crystal(), 1.33, [(3, 5)], 1_000, run_checks=False)
     with pytest.raises(ValueError, match="refractive index"):
-        canonical_strip_scene(prescan_table=foreign)
-    assert DEFAULT_SAMPLE_COUNT >= 4_000_000
+        canonical_strip_scene(seeds=StoreSeeds(other_index, (3, 5), canonical_sun_direction()))
+    with pytest.raises(ValueError, match="crystal"):
+        canonical_strip_scene(seeds=seeds, crystal=HexPrism(1.0, 1.0))
 
 
 def test_pixel_target_matches_the_canonical_scene(scene):
@@ -133,8 +142,8 @@ def test_canonical_pixel_single_component_reproduces_the_fixture_value(canonical
     assert canonical.component_count == 1 and canonical.arc_count == 0
     assert canonical.incomplete_count == 0
     assert canonical.completeness == "complete"
-    assert canonical.pool_count == 415 and canonical.extra_seed_count == 0
-    assert canonical.raw_cluster_count == 7 and canonical.admissible_count == 7
+    assert canonical.pool_count == 5024 and canonical.extra_seed_count == 0
+    assert canonical.raw_cluster_count == 6 and canonical.admissible_count == 6
     component = canonical.components[0]
     assert component.kind == "closed"
     assert component.status == "closed" and component.reason == "closed_loop" and component.start_reason == ""
@@ -150,7 +159,7 @@ def test_canonical_pixel_single_component_reproduces_the_fixture_value(canonical
     # not the 1e-9 of the retired adaptive integrator.
     assert canonical.error_estimate < 1e-4 * canonical.value
     assert set(canonical.events) == set(EVENT_NAMES)
-    assert canonical.events == {**{name: 0 for name in EVENT_NAMES}, "dedup_merged": 6}
+    assert canonical.events == {**{name: 0 for name in EVENT_NAMES}, "dedup_merged": 5}
     assert canonical.status_bits == STATUS_RENDERED | STATUS_HAS_COMPONENT
     assert set(canonical.timings) == set(STAGE_NAMES)
     assert 0.0 < canonical.timings["trace_s"] < canonical.timings["discovery_s"] < canonical.timings["total_s"]
@@ -165,9 +174,12 @@ def test_warm_seeds_from_the_row_above_give_the_cold_value(scene, options, canon
     assert warm.pool_count == cold.pool_count
     assert warm.completeness == cold.completeness == "complete"
     assert warm.component_count == cold.component_count == 1
-    assert warm.value == pytest.approx(cold.value, rel=1e-6)
+    # The same loop from another seed: the resampled quadrature's grid starts at the seed, and its value
+    # moves by up to ~5e-5 relative along a loop (8 seeds on rows 150/151/700, task
+    # phase1-seeds-from-store), i.e. within the quadrature's relative tolerance.
+    assert warm.value == pytest.approx(cold.value, rel=options.quadrature.relative_tolerance)
     assert warm.status_bits == cold.status_bits == STATUS_RENDERED | STATUS_HAS_COMPONENT
-    # The warm seed's cluster is traced first and every prescan cluster on the
+    # The warm seed's cluster is traced first and every store cluster on the
     # same loop is folded without a trace.
     assert warm.events["dedup_merged"] == warm.admissible_count - 1
 
@@ -178,7 +190,7 @@ def test_rows_225_and_226_chain_without_a_jump_gate(scene, options):
     lower = render_pixel(scene, 226, 150, options, warm_seeds=upper.warm_seeds)
     assert lower.components[0].arclength == pytest.approx(ROW_226_ARCLENGTH, rel=1e-3)
     assert lower.completeness == "complete" and lower.component_count == 1
-    assert lower.value == pytest.approx(render_pixel(scene, 226, 150, options).value, rel=1e-6)
+    assert lower.value == pytest.approx(render_pixel(scene, 226, 150, options).value, rel=options.quadrature.relative_tolerance)
 
 
 @pytest.mark.parametrize("row, arclength", [(700, 5.408495), (780, 5.635867)])
@@ -205,7 +217,7 @@ def test_caustic_neighbourhood_pixel_60_126_is_one_short_closed_loop(scene, opti
     result = render_pixel(scene, 60, 126, options)
     assert result.component_count == 1 and result.completeness == "complete"
     assert result.components[0].kind == "closed"
-    assert result.components[0].arclength == pytest.approx(0.466397, rel=1e-4)
+    assert result.components[0].arclength == pytest.approx(0.466117, rel=1e-4)  # 0.466397 from the prescan seed
     # h/a = 1: 19.0379 -> h/a = 2: 39.3657 (2026-09-20); the loop itself is crystal-independent.
     assert result.value == pytest.approx(39.3657, rel=1e-3)
 
@@ -213,7 +225,7 @@ def test_caustic_neighbourhood_pixel_60_126_is_one_short_closed_loop(scene, opti
 def test_dark_pixel_is_complete_with_zero_value(scene, options):
     result = render_pixel(scene, 40, 150, options)
     assert result.component_count == 0 and result.incomplete_count == 0
-    assert result.admissible_count == 0 and result.pool_count == 210
+    assert result.admissible_count == 0 and result.pool_count == 0
     assert result.completeness == "complete"
     assert result.value == 0.0
     assert result.status_bits == STATUS_RENDERED
@@ -222,7 +234,7 @@ def test_dark_pixel_is_complete_with_zero_value(scene, options):
 
 def test_bad_warm_seed_neither_poisons_nor_adds_a_component(scene, options, canonical):
     # The identity pose is nowhere near the canonical fiber: it is either
-    # inadmissible or folded; the prescan pool still finds the loop.
+    # inadmissible or folded; the store pool still finds the loop.
     result = render_pixel(scene, 150, 150, options, warm_seeds=(np.eye(3),))
     assert result.extra_seed_count == 1
     assert result.component_count == 1
@@ -268,7 +280,7 @@ def test_arc_component_is_integrated_and_flagged(monkeypatch, scene, options):
         status=FiberStatus.EVENT_TERMINATED, reason=TerminationReason.TIR_BOUNDARY,
     )
 
-    def fake_discover_components(target, crystal, table, *, template, extra_seeds=(), **kwargs):
+    def fake_discover_components(target, seeds, *, template, extra_seeds=(), **kwargs):
         return ComponentDiscoveryResult(
             components=(component,), incomplete=(), completeness="complete",
             pool_count=1, extra_seed_count=len(extra_seeds), raw_cluster_count=1, admissible_count=1,
@@ -313,7 +325,7 @@ def test_quadrature_unavailable_component_makes_the_pixel_unknown(monkeypatch, s
         arclength=0.0, status=FiberStatus.EVENT_TERMINATED, reason=single.reason,
     )
 
-    def fake_discover_components(target, crystal, table, *, template, extra_seeds=(), **kwargs):
+    def fake_discover_components(target, seeds, *, template, extra_seeds=(), **kwargs):
         return ComponentDiscoveryResult(
             components=(component,), incomplete=(), completeness="complete",
             pool_count=1, extra_seed_count=0, raw_cluster_count=1, admissible_count=1,
@@ -360,7 +372,7 @@ def test_every_family_renders_the_diagnostic_pixels_on_the_same_fibers(scene, op
     target = pixel_target(scene.render, row, FAMILY_PROBE_COLUMN)
     results = {}
     for family, density in FAMILY_DENSITIES.items():
-        family_scene = canonical_strip_scene(prescan_table=scene.prescan_table, pose_density=density)
+        family_scene = canonical_strip_scene(seeds=scene.seeds, pose_density=density)
         assert family_scene.pose_density is density
         result = render_pixel(family_scene, row, FAMILY_PROBE_COLUMN, options)
         results[family] = result

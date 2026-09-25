@@ -65,8 +65,8 @@ from lumice_integral.canonical_scene import (
     CANONICAL_REFRACTIVE_INDEX,
     CANONICAL_RENDER,
     canonical_crystal,
-    canonical_incident_direction,
     canonical_pose_density,
+    canonical_sun_direction,
 )
 from lumice_integral.discovery import discover_components, retarget_problem
 from lumice_integral.geometry import HexPrism
@@ -156,7 +156,7 @@ def integrate(scene: StripScene, target: np.ndarray, component: Any, options: Pi
 def pixel_value(scene: StripScene, target: np.ndarray, options: PixelOptions, warm: tuple[np.ndarray, ...]) -> tuple[float, Any]:
     """``(V, discovery)`` of one target: one discovery, one quadrature per component."""
     found = discover_components(
-        target, scene.crystal, scene.prescan_table, template=scene.discovery_template, extra_seeds=warm, **options.discovery_kwargs()
+        target, scene.seeds, template=scene.discovery_template, extra_seeds=warm, **options.discovery_kwargs()
     )
     return float(sum(integrate(scene, target, c, options) for c in found.components)), found
 
@@ -194,7 +194,7 @@ def main(argv: list[str] | None = None) -> None:
     scene = build_strip_scene(
         PATH_3_5_FACES,
         pose_density=canonical_pose_density(),
-        incident_direction=canonical_incident_direction(),
+        sun_direction=canonical_sun_direction(),
         refractive_index=args.refractive_index,
         crystal=crystal,
         render=CANONICAL_RENDER,

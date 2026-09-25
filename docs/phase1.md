@@ -93,9 +93,11 @@ means (a point value or a solid-angle average). The production pipeline
 (`strip_pixel` / `strip_driver` / `strip_io`, CLI
 `scripts/render_ch06_strip.py`) does, per pixel:
 
-- **Candidates** from one scene-level prescan table (`prescan.PrescanTable`:
-  $4\times10^6$ Haar poses, domain-valid ones indexed by outgoing direction)
-  instead of a per-pixel prescan;
+- **Candidates** from one scene-level seed store (`s2_store.StoreSeeds`: the
+  $S^2$ event store of the path, $10^6$ points, whose deviation band around
+  the pixel is posed exactly in the pixel's azimuth; until 2026-09-25 a
+  $4\times10^6$-pose Haar prescan table indexed by outgoing direction, see
+  section 5) instead of a per-pixel prescan;
 - **Newton** onto the fibre, with the components of the pixel above as warm
   starts (warm starts are never a completeness source);
 - **one production trace** per distinct candidate; a trace that ends at an
@@ -200,10 +202,25 @@ not rewritten.
 Open, recorded, not blocking: a completeness certificate (Phase II's
 critical points supply one, [phase2.md](phase2.md) section 3.1), finite
 solar disk, pixel averaging in the caustic band, the explicit event
-localisation of contract section 12. Planned change: Phase I's seeds come
-from the $S^2$ event store instead of the prescan table, with a statistical
-completeness cross-check (phase2.md section 6; M2 sub-task
-`phase1-seeds-from-store`).
+localisation of contract section 12.
+
+**Seeds from the $S^2$ event store (2026-09-25, task
+`phase1-seeds-from-store`).** The Haar prescan table and the event store were
+the same presampling ([phase2.md](phase2.md) section 6): a Haar pose is a
+pair $(\mathbf u, \psi)$, the prescan kept the $\psi$ that happened to land
+near a pixel, the store quotients $\psi$ out and poses every event of the
+pixel's deviation band exactly in its azimuth. Discovery now draws its
+candidates from the store (`s2_store.StoreSeeds`, `N = 1e6`, band half-width
+`0.2 deg`) and `prescan.PrescanTable` is gone. A 32-pixel probe found the
+prescan's components with every store configuration from `N = 1e5` /
+`0.02 deg` up (appendix, "Seeds from the store"). The same events give a
+statistical completeness cross-check (`discovery.check_band_coverage`: every
+band event is revisited; an admissible fiber pose far from every traced curve
+is a suspect, and `exp(-k_min)` bounds the chance of missing a component
+whose band carries as many events as the least-covered one found). A class
+seeds all members from one store through the `D6h` transports of
+`path_class.store_plan`, the band-sum renderer's plan, and a store does not
+depend on the sun.
 
 Orientation distributions: Phase I assumes $\rho$ is an ordinary, possibly
 narrow, density on all of $\mathrm{SO}(3)$. Exactly constrained orientation
@@ -471,3 +488,19 @@ Phase II scrum. The open items that remain (completeness certificate, finite
 solar disk, caustic-band pixel averaging, the explicit event localisation of
 contract section 12) are recorded, not blocking. Closeout record:
 `scratchpad/task-phase1-closeout-absolute-scale/SUMMARY.md`.
+
+### Seeds from the store (2026-09-25, task `phase1-seeds-from-store`)
+
+Discovery's candidates come from the $S^2$ event store
+(`s2_store.StoreSeeds`, `N = 1e6`, band half-width `0.2 deg`); the Haar
+prescan table (`4M` poses, `2 deg` cone) is deleted. Probe on the `32`
+survey pixels, `12` store configurations (`N = 1e5 .. 1e8`, `2 / 0.2 /
+0.02 deg`): every component the table found, with the same kind, on every
+pixel and configuration. Regression against `artifacts/strip-full` (`833`
+pixels, `775` lit): component counts, kinds and completeness identical;
+values within `1.02e-4` relative (median `1.9e-5`), `773` of `775` inside the
+two error estimates, the two others explained by the quadrature's
+start-point dependence (same loop, `16` starts, `strip-full` inside the
+spread). Details and evidence: `docs/ch06-reference-fixture.md` section 7,
+stage 4.
+

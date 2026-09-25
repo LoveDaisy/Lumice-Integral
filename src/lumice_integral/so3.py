@@ -230,3 +230,22 @@ def continuous_quaternion_signs(quaternions: np.ndarray) -> np.ndarray:
         if float(np.dot(signed[index], signed[index - 1])) < 0.0:
             signed[index] = -signed[index]
     return signed
+
+
+def haar_rotations(count: int, rng: np.random.Generator) -> np.ndarray:
+    """Haar-uniform rotation matrices ``(count, 3, 3)`` from normalised Gaussian quaternions.
+
+    Host-side ``numpy``; one ``rng.standard_normal((count, 4))`` draw, so a
+    generator consumed in chunks gives the same stream whatever the chunking.
+    """
+    quaternion = rng.standard_normal((count, 4))
+    quaternion /= np.linalg.norm(quaternion, axis=1, keepdims=True)
+    w, x, y, z = quaternion.T
+    return np.stack(
+        [
+            np.stack([1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)], -1),
+            np.stack([2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)], -1),
+            np.stack([2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)], -1),
+        ],
+        axis=1,
+    )

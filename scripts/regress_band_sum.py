@@ -49,6 +49,14 @@ Stages (``--stage``):
   class ``[1,3,5]`` (24 members, 12 reached by mirrors only; random density,
   ``--random-n`` Fibonacci points, a 150 deg camera) and on task 14's three
   profiles (class ``[3,5]``, one store, ``--random-n`` points), value and ``K_eff``.
+
+- ``contour``: the band sum (``--band-dir``, optionally ``--coarse-dir``) against a
+  band-average contour-quadrature render (``--contour-dir``,
+  ``scripts/render_contour_quadrature.py --band-nodes k``): the same pixel model,
+  so ``rel`` is the band sum's own error and ``z = rel sqrt(K_eff)`` its noise
+  scale (task ``s2-contour-quadrature``).  ``--contour-point-dir`` (a point
+  render) adds the pixel-model difference and, with ``--reference-dir``, Phase I
+  ``strip-full`` against the point render.
 - ``figure``: log-scale images of render directories (``uv run --with matplotlib``).
 
 Usage::
@@ -61,6 +69,10 @@ Usage::
     uv run python scripts/regress_band_sum.py --stage scatter --band-dir <new> --baseline-dir artifacts/band-sum-full \
         --output <report.json>
     uv run python scripts/regress_band_sum.py --stage scatter --random-n 10000000 --output <report.json>
+
+    uv run python scripts/regress_band_sum.py --stage contour --band-dir artifacts/band-sum-full \\
+        --coarse-dir artifacts/band-sum-full-N1e7 --contour-dir artifacts/contour-quadrature-band \\
+        --contour-point-dir artifacts/contour-quadrature-full --output <report.json>
     uv run --with matplotlib python scripts/regress_band_sum.py --stage figure --band-dir <dir> --output <png>
 """
 
@@ -69,6 +81,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -599,6 +612,109 @@ def stage_scatter_windows(random_n: int, store_cache_dir: Path, workers: int) ->
         block.update(scatter_wall_clock_s=scatter_s, gather_wall_clock_s=time.perf_counter() - start)
         report[f"task14_{family}"] = block
         print("task 14", family, json.dumps({k: v for k, v in block.items() if k != "beyond_tolerance"}))
+
+# --------------------------------------------------------------- contour
+def _z_block(estimate: np.ndarray, reference: np.ndarray, k_eff: np.ndarray, lit: np.ndarray) -> dict[str, Any]:
+    """``rel = estimate / reference - 1`` and ``z = rel sqrt(K_eff)`` on the lit pixels: bias and spread."""
+    rel = estimate[lit] / reference[lit] - 1.0
+    z = rel * np.sqrt(k_eff[lit])
+    return {
+        **lit_statistics(estimate, reference, lit),
+        "mean_rel": float(np.mean(rel)),
+        "mean_rel_standard_error": float(np.std(rel) / np.sqrt(rel.size)),
+        "z_mean": float(np.mean(z)),
+        "z_std": float(np.std(z)),
+        "abs_z_percentiles_50_90_99_max": [float(np.percentile(np.abs(z), q)) for q in (50, 90, 99, 100)],
+        "fraction_abs_z_above_4": float(np.mean(np.abs(z) > NOISE_Z)),
+    }
+
+
+def _max_relative_error_estimate(render_dir: Path, lit: np.ndarray) -> float:
+    """Largest ``error_estimate / value`` of a contour render's ``pixels.csv`` over ``lit``."""
+    worst = 0.0
+    with (render_dir / "pixels.csv").open() as handle:
+        for row in csv.DictReader(handle):
+            if lit[int(row["row"]), int(row["column"])]:
+                worst = max(worst, float(row["error_estimate"]) / float(row["value"]))
+    return worst
+
+
+def stage_contour(
+    band_dir: Path, contour_dir: Path, coarse_dir: Path | None, point_dir: Path | None, reference_dir: Path | None
+) -> dict[str, Any]:
+    """The band sum against the deterministic contour quadrature on the band-sum pixel model (task s2-contour-quadrature, AC4).
+
+    ``contour_dir`` is a ``render_contour_quadrature.py --band-nodes k`` render
+    (band average over the same corners): the difference is the band sum's
+    own error, ``z = rel sqrt(K_eff)``.  ``coarse_dir`` (the band sum at a
+    smaller ``N``) shows whether it shrinks as ``N^-1/2``.  ``point_dir`` (a
+    ``--band-nodes 0`` render) gives the size of the pixel-model difference
+    and what the band sum looks like against the wrong model;
+    ``reference_dir`` (Phase I ``strip-full``) is compared with the point render.
+    """
+    band, band_provenance = read_strip(band_dir)
+    contour, contour_provenance = read_strip(contour_dir)
+    if contour_provenance["options"].get("band_nodes", 0) < 1:
+        raise ValueError(f"{contour_dir} is not a band-average render (band_nodes = 0)")
+    if band.values.shape != contour.values.shape or not (band.rendered & contour.rendered).all():
+        raise ValueError("the regression compares full images of one shape")
+    ref = contour.values
+    lit = ref > LIT_FRACTION * ref.max(axis=0, keepdims=True)
+    k_eff = read_k_eff(band_dir, ref.shape)
+    report: dict[str, Any] = {
+        "band_dir": str(band_dir),
+        "contour_dir": str(contour_dir),
+        "N": band_provenance["options"]["N"],
+        "k_eff_semantics": k_eff_semantics_of(band_provenance),
+        "contour_pixel_model": contour_provenance["options"]["pixel_model"],
+        "contour_relative_error_estimate_max_lit": _max_relative_error_estimate(contour_dir, lit),
+        "lit_definition": f"contour band average > {LIT_FRACTION} x its column maximum",
+        "band_sum_vs_contour_band": _z_block(band.values, ref, k_eff, lit),
+        "whole_image_sum_ratio": float(band.values.sum() / ref.sum()),
+    }
+    rel = np.where(lit, band.values / np.where(lit, ref, 1.0) - 1.0, np.nan)
+    if coarse_dir is not None:
+        coarse, coarse_provenance = read_strip(coarse_dir)
+        coarse_k_eff = read_k_eff(coarse_dir, ref.shape)
+        block = _z_block(coarse.values, ref, coarse_k_eff, lit)
+        n_ratio = band_provenance["options"]["N"] / coarse_provenance["options"]["N"]
+        block["rms_rel_ratio_coarse_over_fine"] = block["rms_rel"] / report["band_sum_vs_contour_band"]["rms_rel"]
+        block["sampling_expectation_sqrt_N_ratio"] = float(np.sqrt(n_ratio))
+        block["N"] = coarse_provenance["options"]["N"]
+        report["coarse_band_sum_vs_contour_band"] = block
+    if point_dir is not None:
+        point, _ = read_strip(point_dir)
+        model = point.values[lit] / ref[lit] - 1.0
+        steep = neighbour_change(point.values)
+        report["pixel_model_point_vs_band"] = {
+            "median_abs": float(np.median(np.abs(model))),
+            "p99_abs": float(np.percentile(np.abs(model), 99)),
+            "max_abs": float(np.max(np.abs(model))),
+            "lit_pixels_above_1e-2": int(np.sum(np.abs(model) > 1e-2)),
+            "lit_pixels_steep": int(np.sum(steep[lit] > STEEP_NEIGHBOUR_CHANGE)),
+        }
+        # an edge pixel whose band reaches the lit range while its centre does not has a point value of 0
+        point_lit = lit & (point.values > 0.0)
+        report["pixel_model_point_vs_band"]["lit_pixels_point_zero"] = int((lit & ~point_lit).sum())
+        report["band_sum_vs_contour_point_wrong_model"] = _z_block(band.values, point.values, k_eff, point_lit)
+        if reference_dir is not None:
+            reference, _ = read_strip(reference_dir)
+            both = lit & (reference.values > 0.0)
+            phase1 = reference.values[both] / point.values[both] - 1.0
+            report["phase1_strip_vs_contour_point"] = {
+                "reference_dir": str(reference_dir),
+                "lit_pixels": int(both.sum()),
+                "median_abs_rel": float(np.median(np.abs(phase1))),
+                "p99_abs_rel": float(np.percentile(np.abs(phase1), 99)),
+                "max_abs_rel": float(np.max(np.abs(phase1))),
+                "mean_rel": float(np.mean(phase1)),
+            }
+    order = np.argsort(np.where(lit, -np.abs(np.nan_to_num(rel * np.sqrt(k_eff))), 0.0), axis=None)[:WORST]
+    report["worst_pixels_by_abs_z"] = [
+        {"row": int(r), "column": int(c), "band_sum": float(band.values[r, c]), "contour_band": float(ref[r, c]),
+         "rel": float(rel[r, c]), "K_eff": float(k_eff[r, c]), "z": float(rel[r, c] * np.sqrt(k_eff[r, c]))}
+        for r, c in (np.unravel_index(flat, ref.shape) for flat in order)
+    ]
     return report
 
 
@@ -638,7 +754,7 @@ def stage_figure(band_dirs: list[Path], output: Path, title: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--stage", choices=("full", "class", "k-eff", "scatter", "figure"), required=True)
+    parser.add_argument("--stage", choices=("full", "class", "k-eff", "scatter", "contour", "figure"), required=True)
     parser.add_argument("--band-dir", type=Path, nargs="+")
     parser.add_argument("--coarse-dir", type=Path, default=None)
     parser.add_argument("--baseline-dir", type=Path, default=None, help="--stage scatter: the render --band-dir is compared with")
@@ -646,9 +762,11 @@ def main() -> None:
     parser.add_argument(
         "--reference-dir",
         type=Path,
-        default=DEFAULT_REFERENCE_DIR,
+        default=None,
         help="strip-full read_strip directory; default is a machine-specific path, pass explicitly on other machines",
     )
+    parser.add_argument("--contour-dir", type=Path, default=None, help="--stage contour: a band-average contour render")
+    parser.add_argument("--contour-point-dir", type=Path, default=None, help="--stage contour: a point-pixel contour render")
     parser.add_argument("--tiers", type=int, nargs="*", default=[1_000_000, 10_000_000, 50_000_000])
     parser.add_argument("--store-n", type=int, default=None)
     parser.add_argument("--store-cache-dir", type=Path, default=DEFAULT_CACHE_DIR)
@@ -658,12 +776,26 @@ def main() -> None:
     parser.add_argument("--title", default="band-sum renderer (log scale, 4 decades)")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    reference_dir_explicit = args.reference_dir is not None
+    if args.reference_dir is None:
+        args.reference_dir = DEFAULT_REFERENCE_DIR
     if args.stage == "figure":
         stage_figure(args.band_dir, args.output, args.title)
         return
     if args.stage == "full":
         report = stage_full(args.band_dir[0], args.reference_dir, args.coarse_dir)
         print(json.dumps({k: v for k, v in report.items() if k not in ("worst_pixels", "per_column_median_abs_rel", "unexplained_pixels")}, indent=1))
+    elif args.stage == "contour":
+        if args.contour_dir is None:
+            parser.error("--stage contour needs --contour-dir")
+        reference = None
+        if args.contour_point_dir is not None:
+            if args.reference_dir.exists():
+                reference = args.reference_dir
+            elif reference_dir_explicit:
+                print(f"warning: --reference-dir {args.reference_dir} does not exist; skipping phase1_strip_vs_contour_point", file=sys.stderr)
+        report = stage_contour(args.band_dir[0], args.contour_dir, args.coarse_dir, args.contour_point_dir, reference)
+        print(json.dumps({k: v for k, v in report.items() if k != "worst_pixels_by_abs_z"}, indent=1))
     elif args.stage == "k-eff":
         report = stage_k_eff(args.random_n)
     elif args.stage == "scatter":

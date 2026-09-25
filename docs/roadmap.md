@@ -13,17 +13,17 @@
 |---|---|---|
 | Phase I: $\mathrm{SO}(3)$ continuation renderer | closed 2026-09-23 (strip agrees with Lumice in shape and absolute scale) | [phase1.md](phase1.md) |
 | M1: $S^2$ event store + band-sum renderer in production; $D_{6h}$ transport; conventions and symmetry authority | done 2026-09-23 / 2026-09-24 | [phase2.md](phase2.md) §1-§3, §5 |
-| M2: contour quadrature, critical points, completeness certificate, cross-validation, chapter-10 verdicts | bootstrapped (scrum 24) | [phase2.md](phase2.md) §3.1, §4, §10 |
+| M2: contour quadrature, critical points, completeness certificate, cross-validation, chapter-10 verdicts | done 2026-09-25 (scrum 24; the A60-10 142° verdict blocked on internal partial reflection, see §9) | [phase2.md](phase2.md) §3.1, §4, §10 |
 
-Queue (tasks in `scratchpad/tasks.md`; dispatch order 20 ∥ 21, then 22 ∥ 24, 23 when unblocked):
+Queue (tasks in `scratchpad/tasks.md`; dispatched 20 ∥ 21, then 22 ∥ 24, 23 in parallel with 24; all merged by 2026-09-25):
 
 | # | task | depends on |
 |---|---|---|
-| 20 | chore `band-sum-small-fixes`: `pixels.csv` value repr, a docstring escape, two missing regression tests | — |
+| 20 | chore `band-sum-small-fixes`: `pixels.csv` value repr, a docstring escape, two missing regression tests — **done 2026-09-24** | — |
 | 21 | `s2-store-schema-3`: store independent of the source, `.npy` + mmap, bucketed build ([phase2.md](phase2.md) §1.1, §8) — **done 2026-09-24** (schema 3) | — |
 | 22 | `band-sum-scatter-renderer`: band sum organised by deviation, class accumulation, GEMM tiles ([phase2.md](phase2.md) §8) — **done 2026-09-24** (canonical strip `30.8 s`, was `169 s`) | 21 |
 | 23 | `lumice-area-weighting-recheck`: absolute scale after Lumice's projected-area fix — **done 2026-09-24** (`K_p = N_sym ȳ Ω_p / (S/2)`, column strip `0.998`, plate / Parry families) | Ice Halo #597 merged |
-| 24 | scrum `phase2-contour-quadrature` (M2): `dp-field-topology` → `dp-field-layer` → `s2-contour-extraction` → `s2-contour-quadrature` → `phase1-seeds-from-store` → `ch10-numerical-verdicts` | 21 |
+| 24 | scrum `phase2-contour-quadrature` (M2): `dp-field-topology` → `dp-field-layer` → `s2-contour-extraction` → `s2-contour-quadrature` → `phase1-seeds-from-store` → `ch10-numerical-verdicts` — `dp-field-layer` **done 2026-09-24** (`lumice_integral.dp_field`, [phase2.md](phase2.md) §3.1); `s2-contour-extraction` **done 2026-09-24** (`lumice_integral.contour`, [phase2.md](phase2.md) §4); `s2-contour-quadrature` **done 2026-09-25** (`lumice_integral.contour_quadrature`, [phase2.md](phase2.md) §4); `phase1-seeds-from-store` **done 2026-09-25** (`s2_store.StoreSeeds`, `discovery.check_band_coverage`; `prescan` deleted; [phase1.md](phase1.md) §5); `ch10-numerical-verdicts` **done 2026-09-25** (`lumice_integral.ch10_verdicts`, `lumice_integral.focusing`, [phase2.md](phase2.md) §10; Liljequist (i), the A60-10 142° edge, blocked on internal partial reflection) | 21 |
 
 Deferred: the chapter-11 table (path classes × pose families) after 22 and
 M2; divergent light ([phase2.md](phase2.md) §9, backlog); finite solar disk;
@@ -88,9 +88,25 @@ Moved to [phase2.md](phase2.md).
 ### 4.1 Design findings (2026-09-20 discussion, before the Phase II scrum)
 
 (a) weights on $S^2$ → [phase2.md](phase2.md) §1; (b) the level-set
-integral and boundaries → §2; (c) topology and completeness → §3.1; (d)
-layered invariance → §3.2 (symmetry: §3.3); (e) fixtures → §4; (f) design
-constraints → §4; (g) open points → §10.
+integral and boundaries → §2 (the level sets themselves, extracted: §4,
+"Implemented: contour extraction"); (c) topology and completeness → §3.1
+(the certificate checked on extracted components: §4); (d)
+layered invariance → §3.2 (symmetry: §3.3); (e) fixtures → §4, measured
+(task `ch10-numerical-verdicts`): Liljequist is one mirror-slab field for
+`1-3-2` / `3-5-6-7-3`, $|\nabla D_P| = 2$, critical values independent of
+$h/a$ to `6e-14`°, the peak pinned at the boundary critical value 153.0697°
+and approached as $\varepsilon^{0.49}$; A60-10 (142°) blocked, 0 valid poses;
+the parhelic circle of plates (`1-3-2`) is the window with $d\theta/d\phi = 2$,
+to `8.6e-5` at $\sigma = 0.25°$ (`tests/test_ch10_verdicts.py::test_liljequist_*`,
+`test_a60_10_is_blocked_by_the_internal_tir_gate`, `test_parhelic_circle_*`);
+(f) design constraints → §4; (g) open points → §10: the 22° inner edge is a
+finite jump for random orientation (limit $w^*2\pi/\sqrt{\det H}$, pixel
+value `0.541535`, reached to `0.99805` at $\varepsilon = 10^{-6}$, extrapolated
+`1.000023`), $1/\sqrt{\ }$ only through the column density between
+$\varepsilon_c \propto \sigma^{1.97}$ and `3e-3` rad
+(`test_inner_edge_*`); the two kinds of focusing are an explicit label,
+`lumice_integral.focusing` (`tests/test_focusing.py`), and no fixture has
+Jacobian focusing.
 
 ### 4.2 Band-sum quadrature (precomputed $S^2$ events)
 
@@ -305,3 +321,158 @@ Moved to [overview.md](overview.md) §3.
   cites Lumice's equal-surface-area convention. Family comparisons need no
   `A_eff` folding; they do need the matched index (`1.3110129`): at the
   canonical `1.31` a sharp caustic edge moves by about half a pixel.
+
+- **2026-09-24**: the $D_P$ field layer is `lumice_integral.dp_field` (task
+  `dp-field-layer`, [phase2.md](phase2.md) §3.1 and appendix). A subpackage
+  (`field` / `boundary` / `certificate`) behind one public class `DPField`
+  (plus its `TopologyEscape`), so that the rank-0 refusal has one entry
+  point. $\partial U_P$ is found by walking it rather than by the explores'
+  entry-great-circle scan plus per-type intersections: the walk meets every
+  corner in order (TIR-TIR and deeper-reflection corners included) and its
+  closure is the completeness statement. Slab paths
+  ($|\mathbf n_a\cdot\tilde{\mathbf n}_b| = 1$) are evaluated by the closed
+  form $\angle(M\mathbf u, \mathbf u)$ (on `3-5-6-7-3` the crease is the entry
+  circle, where the optics chain's exit square root goes `NaN`). The
+  interval counts follow from the critical data under the disk / at most one
+  interior extremum reasoning; every other case raises `TopologyEscape`
+  (none of the five fixtures does). Liljequist: the 142° critical value is
+  not reproduced (`1-3-2` $\{0°, 115.6°\}$, `3-5-6-7-3`
+  $\{0°, 153.1°, 180°\}$), recorded as measured and left to the manual task
+  `verify-liljequist-face-numbering`; the parallel-face ("$\pm\mathbf n_M$")
+  class has both branches among the fixtures (outside the closure on
+  `3-1-6` / `1-3-2`, an interior cone maximum on `3-5-6-7-3`). The
+  explores' "transversal triple point / bigon" on `3-5-6-7-3` is corrected:
+  every corner is two-edged, the third curve tangent.
+- **2026-09-24**: contour extraction is `lumice_integral.contour` (task
+  `s2-contour-extraction`, [phase2.md](phase2.md) §4 and appendix), a module
+  beside `dp_field` whose walker traces `dp_field.field.d_value` /
+  `margin_vector` inside one `jax.jit` (every entry takes a built `DPField`,
+  so the rank-0 refusal still holds). Seeds come first from the field
+  layer's critical data (boundary-loop crossings, a ray out of the interior
+  extremum), because the components within $10^{-6}$ rad of a critical
+  value are thinner than any grid or store resolves; the store's band and a
+  chart grid, the two sources the scrum planned, stay as the independent
+  check that finds extra components. Nodes are on the level set to
+  `1e-12` rad where $|\nabla D_P| \le 10^3$ and to $64\,\varepsilon|\nabla D_P|$
+  next to an exit-TIR curve (the `1e-12` of the scrum is not reachable there
+  in float64). Measured: 801 deviations of 3-5 in 6 s steady in one process (M2 Max).
+- **2026-09-25**: contour quadrature is `lumice_integral.contour_quadrature`
+  (task `s2-contour-quadrature`, [phase2.md](phase2.md) §4 and appendix), and
+  for a fixed path it is the **precision authority** the other two chains are
+  measured against, **beside Phase I, not replacing it** (Phase I stays the
+  independent $\mathrm{SO}(3)$ formulation, AGENTS.md; the band sum stays the
+  fast renderer). Grounds: per-pixel error estimate below `4e-10` on every lit
+  canonical pixel, completeness certified per $\delta$, and the pointwise
+  identity $J_\perp = |\nabla_{S^2}D_P|\sin\delta/|\boldsymbol\xi\times\mathbf u|$
+  closed-form to `3e-15`. The constant is not a second normalisation: the
+  band sum's $1/(2\pi N\Delta\delta\sin\delta)$ is the contour integral
+  averaged over the band and sampled on the store (derivation in §4). Points
+  are solved onto the level set across each chord (never interpolated) with
+  the arclength speed from the implicit function theorem; adaptive Simpson
+  with $N$ vs $N/2$ per panel and kinks reported, not the plan's slerp
+  resampling, which would put points off the curve. The pixel value is the
+  $\varepsilon \to 0$ point value (a $\delta$ at a critical value is not
+  integrated); a band-average mode gives the band sum's pixel model. The
+  cross-check found a Phase I defect: `quadrature._parametric_speed` drops
+  the $\boldsymbol\nu'\cdot\boldsymbol\delta$ term of the differentiated phase
+  condition, a speed bias of $O(|\boldsymbol\delta|)$ (`5.6e-6` on the canonical
+  pixel) that Phase I's own error estimate does not see; restored in a
+  diagnostic, Phase I agrees to `4e-9` on ten pixels. Not fixed here (another
+  root cause; it moves frozen Phase I values), queued in the backlog. The
+  full canonical image takes 43 min on 4 workers (M2 Max), CPU 21 % curve
+  finding, 57 % level-set geometry, 22 % per-pixel integration; the
+  geometry is dominated by the production `entry_measure_batch`.
+- **2026-09-25**: Phase I discovery seeds from the $S^2$ event store; the
+  Haar prescan table (`prescan.PrescanTable`, cKDTree, `.npz` cache) is
+  deleted (task `phase1-seeds-from-store`). Gate first: on the 32 survey
+  pixels every store configuration from `N = 1e5` / `0.02 deg` to
+  `N = 1e8` / `2 deg` found the table's components with the same kinds
+  (arclengths within `1.5e-3`, only on the two `0.17-0.19 rad` caustic
+  loops). Production store `N = 1e6`, band half-width `0.2 deg`
+  (`PixelOptions.band_half_width_deg`, renamed from `angle_tolerance_deg`:
+  a one-dimensional deviation band, not a cone), a factor 10 in `N` and
+  ~100 in pool size above the smallest configuration that found
+  everything. A path class seeds every member from its one store through
+  the `D6h` transports of `path_class.store_plan` (moved there from
+  `band_sum`, which uses the same plan); scene builders take the public
+  `sun_direction` $\hat{\mathbf s}$ (the store needs it; the propagation
+  direction is derived by `incident_direction_from_sun`, still the one
+  conversion). The rank-0 point mass keeps its own Haar stream
+  (`path_class.haar_domain_batches`, the prescan's stream, also the
+  diagnostic scripts' landing maps). New diagnostic
+  `discovery.check_band_coverage`: every band event revisited, suspects
+  reported, miss probability `exp(-k_min)`. Regression against
+  `strip-full`: counts, kinds and completeness identical on `833` pixels,
+  values within `1.02e-4` relative. Finding, not fixed here (a Phase I
+  quadrature property, another root cause): the resampled quadrature's
+  value depends on where the trace starts on a loop (`1.6e-4` relative on
+  the canonical pixel over 16 starts, `4e-3` absolute on caustic loops)
+  and its error estimate is not conservative against that (it varies by
+  1-2 orders along a loop); the seed source only exposes it. Tests that
+  pinned a discovered-seed value to `1e-6`/`1e-9` were re-pinned or moved
+  to the quadrature's `1e-4`, and the integrator alignment test now
+  freezes the seeds its references were recorded from.
+- **2026-09-25**: the 142° parhelion is class A60-10 (`3-5-6-7`,
+  `3-4-5-7`), not Liljequist. This repository renders none of it because
+  its internal reflections are total-only (task
+  `verify-liljequist-face-numbering`; evidence under its scratchpad
+  `evidence/`). The premise that "142° is a $D_P$ critical value of
+  `1-3-2` / `3-5-6-7-3`" was wrong. The owner and the ch8 author
+  re-established that `3-5-6-7-3` is Liljequist (A0-02, narrow peak, no
+  fold) and that the 142° inner edge is A60-10. Face numbering agrees with
+  Lumice. A60-10 has zero events on every crystal because
+  `optics.path_domain` / `path_domain_batch` require
+  `internal_k_tir_discriminant > 0`: every member needs one partial
+  reflection (face 5 at 30° incidence, $R \approx 2.2\,\%$), while Lumice's
+  Monte Carlo keeps the Fresnel-split branch. With only that gate lifted,
+  the class has events on $h/a = 0.2$ / 1 / 2 and its $A$-weighted $D$
+  histogram peaks at 142°. An independent numpy trace puts a $D_P$ saddle
+  at $141.839300° = 120° + 21.839300°$ on the seam between the two members.
+  An audit of all PBD classes of ≤ 5 faces with a reflection (enumerator
+  reachability, which has no internal-TIR gate, against the TIR test;
+  grid zeros re-checked on `4e5` Haar poses) finds 114 of 137 classes lost
+  and 20 truncated at $h/a = 2$, and 96 of 114 lost at $h/a = 0.2$.
+  Ranked by Fresnel-weighted solid angle, the brightest losses are
+  `3-4-5-7` / `3-5-6-7` at $h/a = 2$ and `1-2-1` at $h/a = 0.2$. The
+  canonical products (`strip-full`, `band-sum-full`,
+  `contour-quadrature-full`) are class `[3,5]` with two-face members only,
+  so they are unaffected. Affected: every path with an internal reflection
+  (`dp_field` fixtures `1-3-2` / `3-5-6-7-3` / `3-1-6`, whose $\partial U_P$
+  includes internal-TIR curves; `contour` / `contour_quadrature` on those
+  paths; `--path-class` renders of reflecting classes). The code has
+  drifted from [phase2.md](phase2.md) §2, which calls internal partial
+  reflection a continuous weight; that section now says so. **Open for
+  the owner, not changed here:** whether to model internal partial
+  reflection. That would mean an internal reflectance factor in $T_P$,
+  dropping the internal TIR gate from validity, and the internal critical
+  angle becoming a weight kink in place of a domain boundary. It is an
+  architecture decision: `AGENTS.md` keeps TIR as an explicit event, and
+  Phase I continuation, `dp_field`'s boundary walk and the store's validity
+  all depend on it. No baseline was re-pinned.
+- **2026-09-25**: the chapter-10 verdicts are measurements on the Phase II
+  chains (task `ch10-numerical-verdicts`; [phase2.md](phase2.md) §4, §10 and
+  appendix "Chapter-10 verdicts"; figure data by
+  `scripts/ch10_numerical_verdicts.py`, schema `lumice-integral.ch10-verdict/v1`).
+  (1) The random-orientation 22° inner edge is a finite jump, not a
+  $1/\sqrt{\ }$ divergence; the $1/\sqrt{\ }$ profile belongs to the column
+  density at the tangent-arc contact and is capped at
+  $\varepsilon_c \propto \sigma^2$ (at the canonical $0.5°$ it spans only
+  `[1e-3, 3e-3]` rad). (2) Liljequist item (i), the 142° A60-10 edge, stays
+  **blocked**: `tests/test_ch10_verdicts.py::test_a60_10_is_blocked_by_the_internal_tir_gate`
+  locks the current state (0 valid poses; part of the sphere passes every
+  gate but internal TIR), so the owner decision of the previous entry is
+  the unblocking condition; no number was taken from the scratchpad probe.
+  Item (ii): the Liljequist peak does not move with $h/a$; it is pinned to a
+  shape-independent boundary critical value and the window shapes it (the
+  premise "the window moves with the cross-section" is corrected in
+  phase2.md §4). (3) The parhelic circle's fixture is `1-3-2`, not
+  `3-1-6` (a basal-face mirror: one deviation under plates). (4) "Dimension
+  collapse vs Jacobian focusing" is an explicit output,
+  `lumice_integral.focusing.classify(crystal, faces, density)`: profiles from
+  the $D_P$ critical set, confined dimensions from the density's type (no
+  width threshold). The label is derived from the same critical data and
+  densities the renderers use; the renderers' values are unchanged. In
+  phase2.md §10 "$W = 0$ classes are point masses" now reads $M = I$,
+  $W = I$ ($W$ the unfolded wedge refraction, `docs/conventions.md` row 13).
+  Found, not changed: `contour.extract_level_sets` needs chunking on paths
+  whose critical-data seeds are empty (`1-3-2`); backlog.

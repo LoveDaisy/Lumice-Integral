@@ -51,13 +51,21 @@ $$
 - **等值线法**（§4）：追踪水平集 $\{D_P = \delta\}$ 并沿其积分。逐点、确定性、高阶；配合 $D_P$ 的临界点，能证明所有分量都已找到。
 - **带求和**（§5）：改为在一个带 $[\delta_{\mathrm{lo}}, \delta_{\mathrm{hi}}]$ 上积分，线积分就变成 $S^2$ 上的面积分，再用 $N$ 个预计算的等面积点求值。每个像素一次排序查找、一次区间查询、一次批量 $\rho$ 求值。
 
-**边界不需要事件处理。** 被积函数在每条边界上都连续地归零：走廊边界（两个多边形分离，$A_P$ 连续趋于 0）；公式域 $U_P$ 的出射面 TIR 边界（Fresnel 透过率在临界角处趋于 0）；入射没有临界角；内部反射的部分反射是连续权重，不是边界。被 $\partial V_P$ 截断的等值线在 $U_P$ 上照常追踪，由 $A_P T_P$ 去掉不可行的部分；Phase I 的规则「继续追踪、权重归零」（契约 §6.3）就是把同一个事实放进了追踪器里。剩下的唯一非光滑性是 $A_P$ 的折点（某个顶点越过某条棱），它和 Phase I 一样会让局部求积降阶。
+**边界不需要事件处理。** 被积函数在每条边界上都连续地归零：走廊边界（两个多边形分离，$A_P$ 连续趋于 0）；公式域 $U_P$ 的出射面 TIR 边界（Fresnel 透过率在临界角处趋于 0）；入射没有临界角；内部反射的部分反射是连续权重，不是边界。（最后这一条目前只是设计，实现还没跟上：代码只承认内部全反射，部分反射直接把光路判为不可行。见 §4 的 Liljequist fixture 与 [roadmap.md](roadmap.md) §9，2026-09-25。）被 $\partial V_P$ 截断的等值线在 $U_P$ 上照常追踪，由 $A_P T_P$ 去掉不可行的部分；Phase I 的规则「继续追踪、权重归零」（契约 §6.3）就是把同一个事实放进了追踪器里。剩下的唯一非光滑性是 $A_P$ 的折点（某个顶点越过某条棱），它和 Phase I 一样会让局部求积降阶。
 
 ## 3. 球面揭示的结构
 
 ### 3.1 拓扑与完整性
 
 标量场的水平集由其临界点支配：$\nabla D_P = 0$ 的点（有限个，由格点 seed 出发做 AD Newton 求得），加上 $D_P|_{\partial U_P}$ 的临界点，把 $\delta$ 轴切成若干区间，每个区间内水平集的拓扑不变。每个区间 marching 一次再 Newton 细化，就能得到*全部*分量；于是 Phase I 给不出的完整性证书（契约 C11：`completeness` 只是过程性的）变成了一个可检验的陈述。这是 Phase II 更大的收益，速度是较小的那一个。（**设计**；M2 子任务 `dp-field-topology`、`dp-field-layer`、`s2-contour-extraction`。）
+
+**已实现：场层**（`lumice_integral.dp_field`，任务 `dp-field-layer`；对外只有 `DPField` 与 `TopologyEscape`，秩 0 路径在 `DPField.build` 这一处被拒绝，无法绕过）。针对一条面序列，与太阳方向无关：
+
+- *求值。* 单位姿态下 $D_P(\mathbf u) = \angle(\Phi_P(-\mathbf u), -\mathbf u)$，批量（`jax.vmap`）给出值、切向梯度与 Riemannian Hessian $P(H - (\mathbf u\cdot\mathbf g)I)P$——曲率项使它与 $D_P$ 在球外如何延拓无关（缺了它，3-5 极小点会随延拓方式被读成极大或鞍点）。角度取 `atan2` 形式，与事件仓库的 `evaluate_fields` 一致到 `1e-12`。
+- *折叠前置分流。* $|\mathbf n_a\cdot M^{\mathsf T}\mathbf n_b| = 1$ 为平板（slab）：$D_P(\mathbf u) = \angle(M\mathbf u, \mathbf u)$，按此闭式求值，其临界集为 $\pm\mathbf n_M$ 与折痕 $\mathbf u\cdot\mathbf n_M = 0$；否则内部临界点由阻尼切空间 Newton 给出（对 Fibonacci 格点在 $U_P$ 内的点批量迭代），按 Hessian 分类。
+- *边界。* 沿 $\partial U_P$ 行走：沿当前 active margin 的零集前进、$U_P$ 在左侧，另一个 margin 变负处即角点（二分后做双 margin Newton，残差 `<= 2.3e-16`），再沿过该角点、能延续边界的唯一 margin 继续，直到回到第一个角点——行走闭合即该边界环完整的陈述。入射余弦 margin 的法向 $\mathbf m = R_{k-1}^{\mathsf T}\mathbf n_k$ 满足 $\mathbf m\cdot\mathbf n_a = 0$ 时它对 $\mathbf u$ 线性，按大圆闭式行走（每条路径运行时核验），否则与各判别式一样 marching。与前面某个 margin 恒等的（三次侧面反射、方位角步长相同 ±60°）先删去；沿整段为零的 margin（平方型，如 `3-5-6-7-3` 上 `exit_snell_discriminant` $=$ `entry_incidence_cosine`$^2$）记为重合。角点记录在该处为零的全部 margin、围出它的两条、其余与之相切或横截。
+- *区间划分。* 临界值取内部临界值、$D_P$ 沿边界环的极值与角点值。每个区间上开弧数等于 $\delta$ 沿边界环穿越次数的一半（对任意拓扑都成立）；闭环需要内部极值，至多一个时（非退化极小或平板锥点），从它的值到子水平集首次触及 $\partial U_P$ 的环上极值之间恰有一个闭环（在小圆环上核验）。其余情形——$U_P$ 或其补集在格点上不连通、多个内部临界点、鞍点、折痕穿过 $U_P$、子水平集分量在边界上新生——抛 `TopologyEscape`，不猜。
+- *核验。* `scripts/verify_dp_field_intervals.py` 在稠密网格上经 `evaluate_fields` 重算每个区间的计数：闭环取不触及边界的子/超水平集区域，开弧取沿追踪出的网格边界（经二分移到 $\partial U_P$ 上）的穿越次数（只用节点值不行：$D_P$ 离开 exit TIR 曲线按平方根下降）。五条 fixture 全部区间一致；实测值见英文版附录。
 
 ### 3.2 分层不变性：一个晕共享什么、变化什么
 
@@ -88,9 +96,50 @@ M2 scrum 依次构建：$D_P$ 在 $U_P$ 上的拓扑（从格点 seed 出发用 
 
 这一结构提示的 fixture：
 
-- *Liljequist*（写作第 8 章）：`1-3-2` 与 `3-5-6-7-3` 的 $\Phi$ 相同（面 3/6 所在平面的镜面；三次在 ±60° 平面上的反射合成为一次），窗口不同。142° 锐边（$= 120° +$ 最小偏向 21.84°）是 $D_P$ 的一个临界值，与晶体形状无关；窄峰是 `3-5-6-7-3` 的窗口，随截面移动。一个球面上的两张图。
-- *幻日环*：$D_P(\mathbf u) = \angle(M\mathbf u, \mathbf u)$ 只在 $\pm\mathbf n_M$ 处 $\nabla D_P = 0$，所以环上**没有 fold**；环上的亮度变化全部来自窗口层。对板晶，环上方位角是晶体方位角的线性函数，所以剖面是同一个窗口函数的若干平移叠加（棱柱的三个镜面）：这是一个不受 Jacobian 干扰、检验窗口求和与搬运层的干净测试。
-- *22° 晕*：fold；见 §10。
+- *Liljequist 与 142° 幻日*（写作第 8 章；2026-09-25 更正，任务 `verify-liljequist-face-numbering`）：这是两个类，不是一个。142° 陡峭内缘（$= 120° +$ 最小偏向 21.84°）属于 A60-10 类，典型成员是 `3-5-6-7` 与 `3-4-5-7`：120° 折叠之后接一个 60° 楔，$M$ 是绕 c 轴转 120°。它是 $D_P$ 的鞍点，$D = 141.839300°$；平面内 $\partial^2 D/\partial t^2 = +55.3$（与 `3-5` 相同），倾斜方向 $\partial^2 D/\partial\alpha^2 = -290$。鞍点落在两个成员的接缝上：两者的平面内窗口恰好在最小偏向方位角处相接，那里的内部光线擦过面 6 或面 4。所以它对类的并集是内部点，对每个成员单独看则在边界上。它与晶体形状无关。152–158° 更亮、更窄的峰才是 Liljequist 本身，即 `3-5-6-7-3`（A0-02 平行族，与 `1-3-2` 的 $\Phi$ 相同）。它是没有 fold 的平板，窗口随截面变化。*实测（任务 `dp-field-layer`）：*`1-3-2` 为 $\{0°, 115.607°\}$，`3-5-6-7-3` 为 $\{0°, 153.070°, 180°\}$（面 3 正入射在域内，即后向散射锥点）。两者都没有 142°，这是对的。**本仓库完全看不到 A60-10。** 它的每个成员都需要一次部分内反射：在面 5 上，入射角 30°，鞍点处 $R \approx 2.2\,\%$。`optics.path_domain` / `path_domain_batch` 的内反射门只承认全反射，所以这个类在任何晶体上都是 0 事件。只放开这一道门（走廊门、入射门、出射门都不动）之后，`3-5-6-7` 与 `3-4-5-7` 在 $h/a = 0.2$、1、2 上都有事件，按 $A$ 加权的 $D$ 直方图峰值都落在 142° 那一格。同一道门在 $h/a = 2$ 时让含内反射、≤ 5 面的 137 个 PBD 类里 114 个整类丢失，$h/a = 0.2$ 时是 114 个里丢 96 个。它还把 `3-5-6-7-3`、`1-3-2`、`3-1-6` 截到各自 Fresnel 加权窗口的 92–98 %。证据与决策见 [roadmap.md](roadmap.md) §9，2026-09-25。*实测（任务 `ch10-numerical-verdicts`，§10）：*`1-3-2` 与 `3-5-6-7-3` 是同一个场 $D_P = 2\arcsin|\mathbf u\cdot\mathbf n_3|$（差 `8.9e-16` rad），$U_P$ 上 $|\nabla D_P| = 2$，临界值与 $h/a$ 无关（0.2 / 1 / 2 上差 `5.7e-14`°）。Liljequist 峰不移动：对每个 $h/a$ 它都在边界临界值 153.0697° 处，有限，自下方以 $\varepsilon^{0.49}$ 趋近（$\partial U_P$ 上的受限极值）；窗口决定的是峰宽和峰下方的剖面（半高范围 $h/a = 0.2$ 时 153.0–158.8°，$h/a = 2$ 时 150.7–157.05°）。
+- *幻日环*：$D_P(\mathbf u) = \angle(M\mathbf u, \mathbf u)$ 只在 $\pm\mathbf n_M$ 处 $\nabla D_P = 0$（`3-1-6` 上两者都在 entry 大圆上、但在 $U_P$ 闭包之外，那里某次内反射 TIR 失败：根本没有内部临界点），所以环上**没有 fold**；环上的亮度变化全部来自窗口层。对板晶，环上方位角是晶体方位角的线性函数，所以剖面是同一个窗口函数的若干平移叠加（棱柱的三个镜面）：这是一个不受 Jacobian 干扰、检验窗口求和与搬运层的干净测试。*实测（任务 `ch10-numerical-verdicts`，§10）：*板晶下画出幻日环的成员是 `1-3-2`（顶面入射、柱面反射、底面出射：镜面法向水平，$U_P$ 上 $|\nabla D_P| = 2$）。`3-1-6` 在基面上反射（镜面法向为 $\mathbf z$）；板晶下 $\mathbf u\cdot\mathbf z$ 固定，它的像只有一个偏向角 $2e$，不是环。对严格竖直的板晶，`1-3-2` 的像停在太阳仰角上（`3e-16` rad 以内），环方位角以 $d\theta/d\phi = 2$ 移动（`1e-9` 以内）。板晶下等值线求积对仰角积分后的环亮度等于只含窗口的预言 $\sum_\phi w(\phi)/(2\pi\cdot 2)$：$\sigma = 0.5°$ 时差 `3.4e-4`，$\sigma = 0.25°$ 时 `8.6e-5`，按 $\sigma^{2.00}$ 收敛，覆盖 120° 以内 61 个环方位角，避开了窗口在 122.34° 处的跳变（TIR-only 门）。六个柱面成员的窗口是同一个函数平移 60°（`1e-16` 以内），所以板晶方位均匀时这些「平移副本」彼此重合：每个成员画出同一个环。
+- *22° 晕*：随机取向下是有限跳变，$1/\sqrt{\ }$ 只经由 column 密度出现；见 §10。
+
+**为什么完整性证书很少需要鞍点分支。** 对六棱柱路径空间的系统搜索（entry 面取 `{1,3}`，
+内反射最多 4 次，做过对称去重，并用下述折叠判别式过滤）在测到的 87 个非空候选里没有找到
+一个内部鞍点：每一个的 $U_P$ 都是拓扑圆盘（自身与其在 $S^2$ 上的补集各自连通，两档格点
+密度下均核对过），因此 Poincaré–Hopf 只要求内部临界点指数和为 $1$（单一非退化极小就已
+满足），只有当 $U_P$ 不再单连通时鞍点才是拓扑上必需的。这并不证明六棱柱路径永远没有鞍点
+（更长的路径只做过抽样，且每多一次内反射，非空候选的产出率就下降一个数量级），但它解释了
+为什么本项目实际渲染的路径大概率用不到区间划分机制里的鞍点分支，也给 `task-dp-field-layer`
+提供了一个默认的圆盘定义域假设，配一条明确、可核验的逃生舱口（在假定 Morse-Bott 简单性之前，
+先核对 $U_P$ 自身与其补集的连通性）。实测记录：见附录「$D_P$ 场拓扑探针」。
+
+**已实现：等值线提取**（`lumice_integral.contour`，任务 `s2-contour-extraction`）。`extract_level_sets(field, deltas, store)` 对每个 $\delta$ 返回 $\{D_P = \delta\}\cap U_P$ 的全部分量，以节点序列表示（闭环；或两端都在 $\partial U_P$ 上的开弧，并报告端点处最小的 margin），并附证书：
+
+- *seed，三路。* 先用场层的临界数据：$D_P$ 沿边界环穿越 $\delta$ 的点（沿该段二分，再向 $U_P$ 内拉 `1e-14`；即每条开弧的端点），以及从内部极值出发沿测地射线的首个穿越点（落在绕它的闭环上）。它们能到达任何采样在临界值 $\pm10^{-6}$ rad 处都分辨不了的分量：环上极大值下方被截出的开弧深 `~1e-6` rad，在 exit-TIR 段上（$D_P\sim\sqrt{\text{margin}}$）以 margin 计深 `~1e-12`；3-5 极小值上方的闭环直径 `~2e-3` rad，`3-5-6-7-3` 锥点 $D = \pi$ 下方的闭环半径 `5e-7`。事件仓库的带（$|D-\delta| < h$，$h$ 取两个平均点间距）和入射半球正交投影网格边上的线性穿越点是独立核验：它们的 seed 若离已提取分量超过自身分辨率，就细化后再走，走出的分量即多出来的分量。
+- *行走。* 所有 $\delta$ 的所有曲线 lockstep 推进（一个 `jax.vmap` 化的步进核，每次 scan 64 步，走完的曲线在两批之间压缩掉，批量补齐到 2 的幂）：沿 $\mathbf u\times\nabla D_P$ 做测地预测，沿 $\nabla D_P$ 做 Newton 校正；落在 $U_P$ 内、在水平集上、切向转角不超过 5° 才接受，否则步长减半。走出 $U_P$ 就一路减半到 `1e-13` rad，开弧端点即落在 $\partial U_P$ 上。起点在前方一个当前步长之内时闭合——相对判据，绝不用绝对距离（Phase I 缺陷①）。在 exit-TIR 段旁，曲线以 `~1e-12` 的深度平行于 $\partial U_P$，测地预测点会按边界曲率掉出域外；此时预测点保持最小 margin 的一阶值。
+- *证书。* 每个 $\delta$ 的（闭环，开弧）计数与 `DPField.interval_partition()` 中包含它的区间比较；不一致抛 `ContourCertificateError`；区间划分自身的 `TopologyEscape`（鞍点等）向上传播、不做提取；$\delta$ 恰为临界值时拒绝。
+- *共享。* 结果只依赖 $\delta$：重复的值只提取一次；类成员取 `LevelSet.transported(g)`（$\mathbf u\to g\mathbf u$；非真 $g$ 时节点顺序反转，使节点仍沿 $\mathbf u\times\nabla D_P$ 排列）。
+- *精度。* 在 $|\nabla D_P| \le 10^3$ 处 $|D_P - \delta| \le 10^{-12}$；在 exit-TIR 曲线旁（$|\nabla D_P|$ 可达 `~1e7`），仅 $\mathbf u$ 自身的舍入就让 $D_P$ 变动 $\varepsilon|\nabla D_P|$，节点按 $64\,\varepsilon|\nabla D_P|$ 验收（实测最大 `~8e-9`）。开弧与这种曲线相切相交，端点沿曲线只能定位到 `~sqrt(1e-13)`。
+
+鞍点分支只以转义的形式被覆盖：没有 fixture 带内部鞍点（见上），区间划分转义时提取拒绝执行。实测记录：见英文版附录「Contour extraction」。
+
+**已实现：等值线求积**（`lumice_integral.contour_quadrature`，任务 `s2-contour-quadrature`）。在提取出的分量上做 §2 的线积分，确定性，每个像素带误差估计：
+
+- *常数，以及带求和为什么是同一个。* §2 由 Haar $= \frac{dA}{4\pi}\frac{d\psi}{2\pi}$ 与 $d\psi = d\alpha$ 得到 $I\sin\delta = \frac{1}{8\pi^2}\int_{D_P=\delta}\rho A_PT_P/|\nabla_{S^2}D_P|\,d\ell$；$\frac{1}{8\pi^2}$ 直接引用 Phase I 的 `HAAR_TO_DVOL_G_FACTOR`，不另写一份。对像素的偏折角带积分：$S^2$ 上的余面积公式给出 $\int_{\delta_{\mathrm{lo}}}^{\delta_{\mathrm{hi}}} d\delta' \int_{D_P=\delta'} f/|\nabla D_P|\,d\ell = \int_{\delta_{\mathrm{lo}} \le D_P \le \delta_{\mathrm{hi}}} f\,dA$，$N$ 个等面积点把右边估计为 $\frac{4\pi}{N}\sum_{D_i\in\text{band}} f(\mathbf u_i)$。于是带平均 $I_{\mathrm{band}} = \frac{1}{\Delta\delta\,\sin\delta}\int_{\delta_{\mathrm{lo}}}^{\delta_{\mathrm{hi}}} I(\delta',\alpha)\sin\delta'\,d\delta'$ 的估计是 $\frac{1}{8\pi^2\Delta\delta\sin\delta}\cdot\frac{4\pi}{N}\sum f_i = \sum f_i / (2\pi N\Delta\delta\sin\delta)$，恰好就是 `band_sum_estimate`。带求和就是在带上平均、在仓库上采样的等值线积分：同一个常数推导了两次；任务 13 零拟合比值 `~1.000` 是这个恒等式透过采样噪声的样子。
+- *与 Phase I 的逐点恒等式。* 以转角为度量的 $\mathrm{SO}(3)$ 局部是 $dA(\mathbf u)\,d\psi$（$R \mapsto R^{-1}\hat{\mathbf s}$ 是纤维长 $2\pi$ 的黎曼淹没，总体积 $8\pi^2$）；余面积公式的纤维测度只依赖体积形式和目标面元，所以每条纤维上都有 $ds/J_\perp = d\ell_u/(|\nabla_{S^2}D_P|\sin\delta)$。沿 Phase I 纤维 $R' = R\hat{\boldsymbol\xi}$（$|\boldsymbol\xi| = 1$，右平移，与 `continuation.py` 一致），$\mathbf u = R^T\hat{\mathbf s}$ 以速度 $|\boldsymbol\xi\times\mathbf u|$ 移动，因此
+  $$J_\perp F_P(R) = \frac{|\nabla_{S^2}D_P(\mathbf u)|\,\sin\delta}{|\boldsymbol\xi\times\mathbf u|}.$$
+  这是闭式，没有拟合因子：canonical 纤维全部 61 个节点上相对误差 `2.9e-15`（`tests/test_contour_quadrature.py`）。所谓「坐标变换因子」就是 $1/|\boldsymbol\xi\times\mathbf u|$（那里在 $[1.0002, 1.138]$ 之间），即 Phase I 弧长与其在 $S^2$ 上投影之比。
+- *奇异性：$\varepsilon \to 0$ 极限。* 由恒等式，$J_\perp = 0$ 恰在 $\nabla D_P = 0$ 处，即只在 $\delta$ 取临界值时；那里水平集拓扑改变，提取拒绝该 $\delta$。离开临界值，整条水平集上 $|\nabla D_P| > 0$（在 exit-TIR 曲线旁它无界增大，被积函数趋于零），点值无需正则化：它就是 Phase I $\rho W/(J_\perp+\varepsilon)$ 在 $\varepsilon \to 0$ 的极限。点像素的 $\delta$ 距临界值不到 `EXTREMUM_ATOL = 1e-7` rad 时不积分（状态位 `quadrature_unavailable`，值为 0；canonical 图中没有）；带像素在带内的临界值处把带切开，在那里即使有 fold 带平均也有限（极小值周围的闭环 $\int d\ell/|\nabla D_P|$ 趋于有限极限，正是 §10 对随机取向 22° 内缘预期的有限跳变）。
+- *点在曲线上，速度精确。* 一个 panel 是提取节点的一段 $\mathbf a \to \mathbf b$（首批 panel 合并节点，弦长不超过 1°、转角不超过 20°，margin 低于 `1e-3` 的节点处不合并——弦在那里可能出 $U_P$）。点取 $\mathbf q(t) = \mathrm{normalize}(\cos s\,\mathbf c(t) + \sin s\,\mathbf n)$，$\mathbf c$ 为大圆弦、$\mathbf n$ 为其极点，Newton 解 $s(t)$ 使 $D_P(\mathbf q) = \delta$（到 `4e-16`）；$|d\mathbf q/dt|$ 由隐函数定理给出（$ds/dt = -D_t/D_s$，`jax.jvp`）。没有用弦代替弧，也没有落在曲线外的插值点。
+- *求积与误差。* 每个 panel 五点 Simpson 对其三点子集（$N$ 对 $N/2$，估计 $|S_N - S_{N/2}|/15$）；超出按弦长分得的 $\max(\mathrm{rtol}\,|I|, \mathrm{atol})$ 份额就对半分，复用已有点，最多 `max_depth = 24` 层（canonical 图中从未达到；达到会置状态位）。$A_P$ 的 kink 使局部降阶：一次细分使误差估计下降不到 8 倍（光滑时 16 倍）计入 `low_order_splits`（canonical 每个水平集几十次），逐像素报告。
+- *两阶段，批量。* 水平集的几何（点、取自 `s2_store.evaluate_fields` 即仓库自身权重的 $w = A_PT_P$、$|\nabla D_P|$、速度）与像素方位和 $\rho$ 无关：`LevelSetGeometry.build` 在 $w/|\nabla D_P|$ 上细分，每批 64 个水平集；`integrate` 在 `s2_store.event_rotations` 重建的姿态（用点自身的偏折角，带求和同一构造）上求 $\rho$，每批 64 个像素，只在 $\rho$ 需要处加点。random 族 $\rho = 1$ 不加点，值只是 $\delta$ 的函数（四个方位逐位相同）。每轮细分的所有点是一次补齐到 2 的幂的 `jax.vmap`，生产求值器的每次调用也补齐（它们的 eager `jax.vmap` 按批大小编译；不补齐时编译占一列耗时的一半）。
+- *像素模型。* `band_nodes = 0` 是像素中心的点值（Phase I 的模型）；`band_nodes = k` 是上面的带平均，在 $[\delta_{\mathrm{lo}}, \delta_{\mathrm{hi}}]$ 被临界值切开的每段上做 $k$ 点 Gauss-Legendre（带求和的模型），于是两个渲染器可以不带任务 14 那种模型差异地比较。
+
+核验（实测记录：英文版附录「Contour quadrature」）：
+
+- *逐像素对 Phase I*（`scripts/compare_contour_quadrature_phase1.py`，canonical 像素与第 126 列第 150/300/450/600 行，column 与 random 两族）：生产 Phase I（$\varepsilon = 10^{-12}$、`rtol = 1e-9`）相差 `2.4e-9`-`5.6e-6`，较大的差异不在它自报误差（`6e-10`）之内。原因在 Phase I：`quadrature._parametric_speed` 把相位条件 $\boldsymbol\nu(t)\cdot\boldsymbol\delta(t) = 0$ 求导成 $\boldsymbol\nu\cdot\boldsymbol\delta' = 0$，漏掉 $\boldsymbol\nu'\cdot\boldsymbol\delta$；回缩偏移 $\boldsymbol\delta$（canonical 闭环上 `~6e-6`）由固定的预测样条决定，所以弧长速度在任何网格下都偏 $O(|\boldsymbol\delta|)$（canonical 纤维：$\int\lambda\,dt$ 收敛到 `2.3806253`，回缩姿态间测地距离之和收敛到 `2.3806315`）。补上这一项（脚本内诊断；生产 Phase I 不改，后续见 backlog）后，十个像素上 Phase I 与等值线值相差都在 `4.3e-9` 以内，低于 Phase I 自身 65537 节点的离散误差。
+- *整图对 Phase I。* canonical 251 × 801 点值渲染与 `artifacts/strip-full`（生产 Phase I，`rtol = 1e-4`、$\varepsilon = 10^{-6}$）的非零像素完全相同（187406 个）；亮像素（高于列最大值的 `1e-2`）上 median `1.2e-5`、p99 `1.2e-4`、max `4.2e-4`、mean `-1.0e-5`，即 Phase I 的容差与它的 $\varepsilon/J_\perp$ 偏差。
+- *同一像素模型下对带求和。* 带平均渲染（`--band-nodes 2`，`rtol = 1e-6`）与 `artifacts/band-sum-full`（$N = 10^8$）的非零像素完全相同（187538 个）。在 121044 个亮像素上，带求和的误差无偏（均值 `-8.6e-7` $\pm$ `4.2e-5`，亮区总和比 `1.0000006`；median $|\mathrm{rel}|$ `3.6e-3`），$z = \mathrm{rel}\sqrt{K_{\mathrm{eff}}}$ 标准差 `0.50`，$|z|$ median `0.23`、p99 `1.6`、max `3.7`，没有超过 4 的：正是 $K_{\mathrm{eff}}$ 预测的噪声，因 Fibonacci 格点的增益低于 i.i.d. 尺度（任务 14）。$N = 10^7$ 时 RMS 误差大 `3.7` 倍（$\sqrt{10} = 3.2$）：采样误差。若改与点值渲染比，25 个像素 $|z|$ 超过 4（最高 `17.8`）：这是任务 14 的像素模型差异，在这里被单独分离出来（点值对带平均：median `6.7e-6`、p99 `2.1e-4`，51 个亮像素超过 `1e-2`，都在内缘第 56-57 行）。
+- *成本结构*（`benchmarks/benchmark_contour_quadrature.py`，第 150 列 256 个偏折角，单进程稳态，M2 Max）。找曲线每个 $\delta$ `6.4 ms`；水平集几何每个 $\delta$ `16.8 ms`（`1356` 个点，大部分是生产的 `entry_measure_batch`）；逐像素积分对共享一个 $\delta$ 的像素数是平的：canonical 密度下每 $\delta$ 1 / 4 / 16 个像素时每像素 `5.2 / 7.3 / 5.5 ms`（为 $\rho$ 峰加 240-380 个点），random 族 `1.1 ms`（不加点）。设计模型（曲线 $\propto$ 环数、积分 $\propto$ 像素数）成立，只是每环部分以几何为主而非曲线本身；它也与太阳方向和 $\rho$ 无关。ch06 条带每个像素都有自己的 $\delta$，每环部分等于按像素付：整图 4 个 worker `43 min`（CPU 曲线 `21 %`、几何 `57 %`、积分 `22 %`），带平均（每像素两个偏折角）`70 min`；带求和 $N = 10^8$ 时 `2.8 min`，Phase I 30 个 worker `35 min`。
+
+**作为精度权威的地位。** 对固定光路，等值线值是另外两条链的尺子：canonical 每个亮像素的相对误差估计都低于 `4e-10`，每个 $\delta$ 都有完整性证书（Phase I 的完整性只是流程性的），并且它定位出一个 Phase I 自报误差看不见的偏差。Phase I 保留为独立的 $\mathrm{SO}(3)$ 表述（AGENTS.md：不替换），带求和保留为快速渲染器和参数扫描工具。决策见 roadmap §9，2026-09-25。
 
 ## 5. 求积 B：带求和
 
@@ -132,11 +181,11 @@ $$
 
 ## 6. 一份预计算，三个用户
 
-Phase I 也做预计算。`prescan.PrescanTable` 对固定太阳在 $\mathrm{SO}(3)$ 上抽 $4\times10^6$ 个 Haar 姿态，保留域内有效的并记下出射方向，用 k-d 树建索引；像素查询自己方向周围一个球冠内的样本，用作 Newton seed。
+Phase I 也做过预计算。2026-09-25 之前，它的 `prescan.PrescanTable` 对固定太阳在 $\mathrm{SO}(3)$ 上抽 $4\times10^6$ 个 Haar 姿态，保留域内有效的并记下出射方向，用 k-d 树建索引；像素查询自己方向周围一个球冠内的样本，用作 Newton seed。
 
-两者是同一个采样。一个 Haar 样本 $R$ 就是一对 $(\mathbf u, \psi)$：偏折角是 $D_P(\mathbf u)$，方位角由 $\psi$ 决定，而给定 $\mathbf u$ 和目标方位角时 $\psi$ 有闭式解。预扫表随机采 $\psi$，留下碰巧落在像素附近的；仓库把 $\psi$ 商掉，对像素带内的每个事件直接构造出**恰好**落在像素方位角上的姿态（`band_sum.band_poses`）。仓库是严格更强的对象：
+两者是同一个采样。一个 Haar 样本 $R$ 就是一对 $(\mathbf u, \psi)$：偏折角是 $D_P(\mathbf u)$，方位角由 $\psi$ 决定，而给定 $\mathbf u$ 和目标方位角时 $\psi$ 有闭式解。预扫表随机采 $\psi$，留下碰巧落在像素附近的；仓库把 $\psi$ 商掉，对像素带内的每个事件直接构造出**恰好**落在像素方位角上的姿态（`band_sum.band_poses`，Phase I 用 `s2_store.StoreSeeds`）。仓库是严格更强的对象：
 
-| | Phase I 预扫表 | $S^2$ 事件仓库 |
+| | Phase I 预扫表（已退役） | $S^2$ 事件仓库 |
 |---|---|---|
 | 样本 | $\mathrm{SO}(3)$ 上的 Haar 姿态，随机 | $S^2$ 上的点 $\mathbf u$，Fibonacci 格点 |
 | 每像素用什么 | 像素方向周围球冠内的样本 | $\delta$ 带内的事件，各自恰在像素方位角处 |
@@ -149,7 +198,7 @@ Phase I 也做预计算。`prescan.PrescanTable` 对固定太阳在 $\mathrm{SO}
 
 1. **带求和**（§5）：事件就是求积节点。
 2. **等值线追踪**（§4）：带内事件离 $\{D_P = \delta\}$ 不超过半个带宽，作为 Newton 细化到等值线的 seed。
-3. **Phase I seed**（M2 子任务 `phase1-seeds-from-store`，**设计**）：用带内姿态取代预扫候选；若 32 像素探针没有丢分量，就删掉 `PrescanTable`。同一批事件还给 Phase I 提供一个完整性交叉检查：每个带内事件都应落在某条已追纤维附近，离所有纤维都很远的事件就标记出一个漏掉的分量。这个检查是统计性的，但漏检概率有界——$N$ 乘以该分量在带内的测度——而支撑 `DEFAULT_SAMPLE_COUNT` 的那次密度调查给不出这个界。由于仓库不依赖光源，Phase I 也不必再为每个太阳高度重建预扫表。
+3. **Phase I seed**（M2 子任务 `phase1-seeds-from-store`，**2026-09-25 完成**）：带内姿态取代了预扫候选（`s2_store.StoreSeeds`，`N = 1e6`，带半宽 `0.2 deg`），`PrescanTable` 已删除；32 像素探针上，从 `N = 1e5` / `0.02 deg` 到 `N = 1e8` / `2 deg` 的每个仓库配置都找到了预扫表的全部分量（[phase1.md](phase1.md) 附录）。同一批事件给 Phase I 提供完整性交叉检查（`discovery.check_band_coverage`）：每个带内事件校正后都应落在某条已追纤维上，可行却离所有纤维都远的事件标记出一个漏掉的分量。这个检查是统计性的，但漏检概率有界：$N$ 个独立均匀点整体错过一块带内测度为 $\mu$ 的区域的概率是 $e^{-N\mu/4\pi}$，用 $e^{-k_{\min}}$ 估计（$k_{\min}$ 为已找到分量中带内事件最少者的事件数）——预扫表的密度调查给不出这个界。一个路径类的所有成员经 `path_class.store_plan` 的 `D6h` 搬运共用一个仓库；由于仓库不依赖光源，Phase I 也不再为每个太阳高度重建。
 
 ## 7. 环不变性与各路线的成本
 
@@ -159,6 +208,9 @@ Phase I 也做预计算。`prescan.PrescanTable` 对固定太阳在 $\mathrm{SO}
 |---|---|---|---|---|
 | Phase I | 预扫表 | — | 发现、追踪、积分：`0.1-0.3 s`（实测） | 逐点，自适应误差估计 |
 | 带求和 | $N$ 个事件的仓库（$10^8$ 时 `80 s`，实测） | — | 带内 $K$ 个事件：矩阵乘积后求 $\rho$，CPU `0.31 ms`（scatter，§8；gather `3.3 ms`，实测） | $\delta$ 方向带平均；约 $1/\sqrt{K_{\mathrm{eff}}}$ |
+
+| Phase I | seed 仓库（2026-09-25 前为预扫表） | — | 发现、追踪、积分：`0.1-0.3 s`（实测） | 逐点，自适应误差估计 |
+| 带求和 | $N$ 个事件的仓库（$10^8$ 时 `80 s`，实测） | — | 带内 $K$ 个事件：姿态 + $\rho$，CPU `3.3 ms`（实测） | $\delta$ 方向带平均；约 $1/\sqrt{K_{\mathrm{eff}}}$ |
 | 等值线（设计） | $D_P$ 场与临界点 | 提取并细化水平集 | 沿已存节点求 $\rho$ | 逐点、确定性、高阶 |
 
 随分辨率的变化：
@@ -236,18 +288,22 @@ $R_i$ 按 §5 的方法构造，只是把 $\hat{\mathbf s}$ 换成从 $\mathbf x
 
 ## 10. 开放问题及其归属
 
-- **22° 内缘**（写作第 10 章）。对随机取向，$D_P$ 在 $S^2$ 上的最小值是孤立、非退化的，而二维极小附近的 $\int d\ell/\lvert\nabla D\rvert$ 是有限的：内缘应是有限跳变，而 $I \sim 1/\sqrt{D - D_{\min}}$ 的剖面属于把 $\mathbf u$ 约束到一条曲线上的族（column、切弧）。第 10 章的表述应当是验收项，不是前提。M2 子任务 `ch10-numerical-verdicts`。
-- **秩亏映射。** $W = 0$ 的类是光源方向上的点质量（任务 `path-class-rendering-unit`）；平行面类（$M \ne I$、$W = I$）的退化像来自 $\rho$ 对 $\mathbf u$ 的约束而非 $\Phi$，需要单独记账（「降维聚光」vs「Jacobian 聚光」，作为求解器的显式输出）。`ch10-numerical-verdicts`。
+- **22° 内缘**（写作第 10 章）。*已裁定（任务 `ch10-numerical-verdicts`，`lumice_integral.ch10_verdicts.inner_edge`；实测记录见英文版附录「Chapter-10 verdicts」）。*随机取向下 $D_P$ 的最小值孤立且非退化（Hessian `[0.33757, 0.96457]`，AD 与有限差分差 `8e-8`），水平集积分趋于 $w^*\,2\pi/\sqrt{\det H}$：内缘是跳到 $I = 0.541535$ 的有限跳变（canonical 晶体与太阳），以 $1 - 1.956\sqrt\varepsilon$ 趋近（$\varepsilon = \delta - D_{\min}$；$A_P$ 在最小偏向点的折点预言 `1.945`），$\varepsilon = 10^{-6}$ 时比值 `0.99805`，外推 `1.000023`。$I \sim 1/\sqrt{D - D_{\min}}$ 的剖面属于 column 密度，且只在其取向脊线穿过极小点的环方位角上（切弧切点）：局部斜率与 $-1/2$ 相差不超过 `0.1` 的区间从封顶拐点 $\varepsilon_c \propto \sigma^{1.97}$ 延伸到 `3e-3` rad，$\varepsilon_c$ 以下有限（封顶值 $\times\,\sigma$ 近似为常数）；canonical 的 $\sigma = 0.5°$ 只有 `[1e-3, 3e-3]`。测试：`tests/test_ch10_verdicts.py`（`test_inner_edge_*`）、`tests/test_focusing.py::test_3_5_minimum_is_a_finite_jump`。
+- **秩亏映射。** $M = I$、$W = I$ 的类（楔角 0，`geometry.halo_map_rank` 为 0）是光源方向上的点质量（任务 `path-class-rendering-unit`）；平行面类（$M \ne I$、$W = I$：楔角 0）的退化像来自 $\rho$ 对 $\mathbf u$ 的约束而非 $\Phi$。*已裁定（任务 `ch10-numerical-verdicts`）：*`lumice_integral.focusing` 对（光路，密度）给出显式标签：Jacobian 聚光由 $D_P$ 的临界集读出（有限跳变、对数、$1/\sqrt{\ }$ fold 曲线、锥点、折痕、边界尖点），降维聚光由密度约束的维数读出（random 0、column / plate 1、Parry / Lowitz 2）；秩 0 为 `point_mass`。`3-5`、`1-3-2`、`3-5-6-7-3`、`3-1-6`、`1-3-5-2` 上没有任何临界值聚光：镜面平板 $|\nabla D_P|$ 恒为 2，旋转平板 `1-3-5-2` 的 fold 圆（$D = 120°$）在 $U_P$ 之外。`1-3-2` 在板晶下横穿幻日环：$\sigma$ 减半，峰值加倍而横截积分不变——降维聚光。测试：`tests/test_focusing.py`。
 - **非均匀 $\rho$。** $\psi(\mathbf u,\alpha)$ 是单值的，所以 $\rho$ 逐点求值；只有第 11 章「天空上的卷积」这种读法需要均匀 $\rho$。
 - **Jacobian 对齐。** 在纤维化的坐标变换下，$1/\lvert\nabla_{S^2} D_P\rvert$ 与 Phase I 的 $J_\perp$ 的对齐是交叉验证的接触点。`s2-contour-quadrature`。
 - **与 Lumice 的绝对尺度**，在其投影面积修复（Ice Halo #597）之后：2026-09-24 完成（任务 `lumice-area-weighting-recheck`）：plate 与 Parry 族的带求和光路类渲染对 Lumice 浮点导出，$K_p = \bar y(550)\,\Omega_p/(S/2)$，不拟合（`docs/ch06-reference-fixture.md` 第 7 节 stage 4）。
+
+- **Jacobian 对齐。** 已解决（任务 `s2-contour-quadrature`，§4）：闭式 $J_\perp = |\nabla_{S^2} D_P|\sin\delta/|\boldsymbol\xi\times\mathbf u|$，canonical 纤维上 `3e-15`。
+- **与 Lumice 的绝对尺度**，在其投影面积修复（Ice Halo #597）之后：任务 `lumice-area-weighting-recheck`。
 
 | 部分 | 状态 | 在哪 |
 |---|---|---|
 | 带求和、事件仓库、$D_{6h}$ 搬运、$K_{\mathrm{eff}}$ | 实测，已投产 | 英文版附录；任务 13-19 |
 | 仓库与光源无关；`.npy` + mmap；分桶构建 | 实测，已投产 | 英文版附录；任务 21 `s2-store-schema-3` |
 | 按偏折角组织带求和（分段、逐类累加、GEMM） | 设计 | 任务 22 `band-sum-scatter-renderer` |
-| 等值线求积、临界点、证书 | 设计 | scrum 24 `phase2-contour-quadrature` |
+| 临界点、证书（场层）、等值线提取 | 实测，已投产 | 英文版附录；任务 `dp-field-layer`、`s2-contour-extraction` |
+| 等值线求积（精度权威）、与 Phase I 及带求和对齐 | 实测，已投产 | §4、英文版附录；任务 `s2-contour-quadrature` |
 | 由仓库提供 Phase I seed 与交叉检查 | 设计 | scrum 24 子任务 5 |
-| 第 10 章裁定 | 开放 | scrum 24 子任务 6 |
+| 第 10 章裁定（内缘、Liljequist、幻日环、聚光标签） | 已实测；Liljequist (i)（A60-10 的 142° 锐边）因内部部分反射未建模而阻塞 | §10、英文版附录；任务 `ch10-numerical-verdicts` |
 | 发散光 | 推导 | backlog |

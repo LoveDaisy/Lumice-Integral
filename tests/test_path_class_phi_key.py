@@ -13,7 +13,7 @@ from lumice_integral import optics
 from lumice_integral.canonical_scene import CANONICAL_REFRACTIVE_INDEX, canonical_crystal, canonical_incident_direction
 from lumice_integral.geometry import HexPrism
 from lumice_integral.path_class import phi_key
-from lumice_integral.prescan import haar_rotations
+from lumice_integral.so3 import haar_rotations
 
 ALL_SEQUENCES = [faces for length in (2, 3, 4) for faces in itertools.product(range(1, 9), repeat=length)]
 

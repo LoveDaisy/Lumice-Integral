@@ -108,8 +108,8 @@ def _conjugation_problem(loop_length: float) -> FiberProblem:
 # --- ch06 strip pixels: short loops and a boundary-hugging loop -------------
 #
 # Seeds frozen from ``discovery.discover_components`` on the canonical scene
-# (``rng_seed=20260916``, 400k prescan samples, 2 deg, 0.3 rad; the
-# ``tests/test_discovery.py`` parameters), task-continuation-gates-and-fixtures
+# (then a 400k-sample Haar prescan with ``rng_seed=20260916``, 2 deg, 0.3 rad;
+# retired by task phase1-seeds-from-store), task-continuation-gates-and-fixtures
 # Step 0.  Column 126 rows 100/150/224 sit on the lit band below the inner
 # caustic where the 3-5 loop is shorter than pi; column 150 rows 700/780 are
 # the strip's lower band where the loop runs parallel to the exit TIR boundary

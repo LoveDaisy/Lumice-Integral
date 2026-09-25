@@ -163,7 +163,7 @@ def test_unknown_pose_density_family_is_an_argparse_choice_error(cli, tmp_path):
 
 # --- small-window renders through the CLI (pose density reaches the pixels and provenance) ---
 
-RENDER_WINDOW = ["--rows", "300:302", "--columns", "126:127", "--prescan-samples", "400000", "--quiet"]
+RENDER_WINDOW = ["--rows", "300:302", "--columns", "126:127", "--quiet"]
 PARRY = ["--pose-density-family", "parry", "--pose-density-zenith-std-deg", "1", "--pose-density-roll-std-deg", "1"]
 
 

@@ -26,7 +26,7 @@ The estimator functions (:func:`pixel_band`, :func:`band_rotations`,
 :func:`band_sum_pixel`) are migrated verbatim from ``scripts/probe_band_sum.py``
 (tasks 13/14), which now imports them from here.
 
-Path classes (:func:`store_plan`).  The members of a PBD class are grouped by
+Path classes (:func:`.path_class.store_plan`, shared with the Phase I seeds).  The members of a PBD class are grouped by
 :func:`.path_class.phi_key` (members sharing ``Phi`` share one store with
 summed weights, :mod:`.s2_store`), and the ``Phi`` groups by ``D6h``
 elements, proper and improper (:func:`.path_class.path_class_symmetry`):
@@ -99,11 +99,21 @@ import numpy as np
 
 from .camera import incident_direction_from_sun, linear_pixel_outgoing_direction
 from .canonical_scene import CANONICAL_RENDER
-from .geometry import HexPrism, halo_map_rank, wedge_angle_deg
-from .optics import normalize_faces, path_id_of
-from .path_class import PathClass, build_class_scene, path_class_symmetry, phi_key, render_class_pixel, sun_pixel
+from .geometry import HexPrism
+from .optics import path_id_of
+from .path_class import (
+    RANK0_RNG_SEED,
+    RANK0_SAMPLE_COUNT,
+    PathClass,
+    StoreGroup,
+    Transport,
+    build_class_scene,
+    render_class_pixel,
+    single_path_class,
+    store_plan,
+    sun_pixel,
+)
 from .pose_density import PoseDensity
-from .prescan import DEFAULT_RNG_SEED, DEFAULT_SAMPLE_COUNT
 from .provenance import git_commit, sha256_of
 from .s2_store import (
     DEFAULT_CACHE_DIR,
@@ -214,93 +224,6 @@ def band_sum_pixel(
     )
 
 
-# ------------------------------------------------------------ store plan
-@dataclasses.dataclass(frozen=True, eq=False)
-class Transport:
-    """A ``Phi`` group served by a store through the ``D6h`` element ``g`` (:func:`.s2_store.transported_rotations`).
-
-    ``g`` may be proper or improper.  ``g is None`` is the identity (the
-    store's own group; no multiplication, so the poses are bit-identical to
-    the untransported ones).
-
-    ``eq=False`` (identity comparison): ``g`` is an ``np.ndarray``, which
-    breaks the dataclass-generated ``__eq__``/``__hash__`` (ambiguous truth
-    value / unhashable) if ever compared or hashed.
-    """
-
-    members: tuple[Faces, ...]
-    g: np.ndarray | None
-
-    def as_json(self) -> dict[str, Any]:
-        return {
-            "members": [path_id_of(m) for m in self.members],
-            "g": None if self.g is None else np.round(self.g, 12).tolist(),
-        }
-
-
-@dataclasses.dataclass(frozen=True, eq=False)
-class StoreGroup:
-    """One event store (of the ``Phi`` group ``members``) and the groups it serves.
-
-    ``eq=False`` for the same reason as :class:`Transport`: it holds
-    ``Transport`` instances (which carry an ``np.ndarray`` field), so
-    identity comparison avoids the same ambiguous-truth-value/unhashable trap.
-    """
-
-    members: tuple[Faces, ...]
-    transports: tuple[Transport, ...]
-
-    @property
-    def served_members(self) -> tuple[Faces, ...]:
-        return tuple(m for t in self.transports for m in t.members)
-
-    def as_json(self) -> dict[str, Any]:
-        return {"store_members": [path_id_of(m) for m in self.members], "transports": [t.as_json() for t in self.transports]}
-
-
-def single_path_class(crystal: HexPrism, faces: Sequence[int]) -> PathClass:
-    """A one-member :class:`.path_class.PathClass` of ``faces`` (the single-path renderer's unit)."""
-    faces = normalize_faces(faces)
-    return PathClass(faces, (faces,), wedge_angle_deg(crystal, faces), halo_map_rank(crystal, faces))
-
-
-def store_plan(path_class: PathClass, crystal: HexPrism, *, transport: bool = True) -> tuple[StoreGroup, ...]:
-    """Stores of a rank-2 class: ``Phi`` groups, then one store for the ``D6h`` orbit of groups (module docstring).
-
-    Every member is served exactly once (checked).  A class is one ``D6h``
-    orbit, so with ``transport`` the plan is a single store (the
-    representative's group); a member outside the orbit is a class
-    construction error (``RuntimeError`` from
-    :func:`.path_class.path_class_symmetry`).  ``transport=False`` gives
-    every group its own store.  A rank-0 class has no stores (empty plan).
-    """
-    if path_class.halo_map_rank == 0:
-        return ()
-    by_key: dict[Any, list[Faces]] = {}
-    for member in path_class.members:
-        by_key.setdefault(phi_key(crystal, member), []).append(member)
-    groups = [tuple(sorted(g)) for g in by_key.values()]
-    groups.sort(key=lambda g: (path_class.representative not in g, g))
-    if not transport:
-        plan = tuple(StoreGroup(group, (Transport(group, None),)) for group in groups)
-    else:
-        source = groups[0]
-        rooted = PathClass(source[0], path_class.members, path_class.wedge_deg, path_class.halo_map_rank)
-        symmetry = path_class_symmetry(rooted, crystal)
-        transports = [Transport(source, None)]
-        for group in groups[1:]:
-            # g maps source[0] onto a member of ``group``; Phi_{g m}(u) = g Phi_m(g^-1 u) for every member m
-            # of ``source`` (proper or improper g), so g maps the whole Phi group onto ``group`` (same size).
-            # Any member's element serves; a proper one is preferred (no reflection factor, cheaper).
-            g = next((symmetry[m] for m in group if np.linalg.det(symmetry[m]) > 0.0), symmetry[group[0]])
-            transports.append(Transport(group, g))
-        plan = (StoreGroup(source, tuple(transports)),)
-    served = sorted(m for s in plan for m in s.served_members)
-    if served != sorted(path_class.members):
-        raise RuntimeError(f"store plan serves {served}, class has {sorted(path_class.members)}")
-    return plan
-
-
 # ---------------------------------------------------------------- pixels
 @dataclasses.dataclass(frozen=True)
 class BandSumPixelResult:
@@ -392,8 +315,8 @@ class BandSumScene:
     pose_density: PoseDensity
     render: Mapping[str, Any]
     transport: bool = True
-    rank0_sample_count: int = DEFAULT_SAMPLE_COUNT
-    rank0_rng_seed: int = DEFAULT_RNG_SEED
+    rank0_sample_count: int = RANK0_SAMPLE_COUNT
+    rank0_rng_seed: int = RANK0_RNG_SEED
 
     @property
     def incident_direction(self) -> np.ndarray:
@@ -457,13 +380,13 @@ def _rank0_values(scene: BandSumScene, pixels: Sequence[tuple[int, int]]) -> tup
         return {}, record
     class_scene = build_class_scene(
         scene.path_class,
-        incident_direction=scene.incident_direction,
+        sun_direction=scene.sun_direction,
         refractive_index=scene.refractive_index,
         crystal=scene.crystal,
         pose_density=scene.pose_density,
         render=scene.render,
-        prescan_sample_count=scene.rank0_sample_count,
-        prescan_rng_seed=scene.rank0_rng_seed,
+        rank0_sample_count=scene.rank0_sample_count,
+        rank0_rng_seed=scene.rank0_rng_seed,
     )
     result = render_class_pixel(class_scene, sun[0], sun[1], PixelOptions())
     record.update(result.provenance["rank0"])
