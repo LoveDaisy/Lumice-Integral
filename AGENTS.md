@@ -85,7 +85,7 @@ JAX_PLATFORMS=cpu OMP_NUM_THREADS=1 \
   uv run python scripts/render_contour_quadrature.py --workers 4 --output-dir artifacts/contour-quadrature-full
 JAX_PLATFORMS=cpu OMP_NUM_THREADS=1 uv run python scripts/render_contour_quadrature.py --band-nodes 2 \
   --relative-tolerance 1e-6 --workers 4 --output-dir artifacts/contour-quadrature-band
-# ... against Phase I pixel by pixel (canonical + column 126, with the full-derivative arclength-speed diagnostic; ~30 s)
+# ... against Phase I pixel by pixel (canonical + column 126, with a finite-difference nu' cross-check of the arclength speed; ~40 s)
 uv run python scripts/compare_contour_quadrature_phase1.py --output /tmp/contour-phase1.json
 # ... the band sum against it on one pixel model (z = rel sqrt(K_eff)), and the cost structure (curves vs pixels)
 uv run python scripts/regress_band_sum.py --stage contour --band-dir artifacts/band-sum-full \
