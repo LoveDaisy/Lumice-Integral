@@ -89,7 +89,9 @@ $$
 
 镜面在 $S^2$ 上和旋转一样搬运：$w_{gPg^{-1}}(g\mathbf u) = w_P(\mathbf u)$，$\Phi_{gPg^{-1}}(g\mathbf u) = g\,\Phi_P(\mathbf u)$，有效域相同（对全部 24 个元素**实测**到 `1e-12`）。被搬运事件的姿态由 $(g\mathbf u, g\Phi, D)$ 通过两个正交标架重建，无论 $\det g$ 为何都是旋转；作用在代表姿态 $R$ 上就是 $L_g R g^{\mathsf T}$，其中 $L_g = I - (1-\det g)\,\mathbf m\mathbf m^{\mathsf T}$，$\mathbf m$ 是 $\hat{\mathbf s}$ 与像素所在平面的法向。「镜面成员需要自己的仓库」是 Phase I 的限制（$R g^{-1}$ 必须是 $\mathrm{SO}(3)$ 中的旋转），在 $S^2$ 上不存在；一个仓库服务整个类。
 
-## 4. 求积 A：追踪等值线（M2，设计）
+## 4. 求积 A：追踪等值线（M2）
+
+*状态：已由 scrum `phase2-contour-quadrature` 实现（M2，2026-09-25；模块 `dp_field`、`contour`、`contour_quadrature`、`ch10_verdicts`、`focusing`），自 scrum `internal-partial-reflection` 起工作在含部分反射的定义域上。*
 
 M2 scrum 依次构建：$D_P$ 在 $U_P$ 上的拓扑（从格点 seed 出发用 AD Newton 找内部临界点并按 Hessian 分类，$\partial U_P$ 上的受限临界点与角点，带分量计数的区间划分，并用稠密格点 marching 核对）；做成批量、可 `vmap` 模块的场层；给定 $\delta$ 的等值线提取（seed 取自事件仓库的带和格点 marching，Newton 细化到水平集，得到闭环和被 $\partial U_P$ 截断的弧，分量数对区间划分核验——这就是证书）；带常数的线求积，并与 Phase I 和带求和交叉验证；最后是第 10 章的数值裁定（§10）。
 

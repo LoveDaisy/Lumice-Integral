@@ -304,9 +304,9 @@ of the plane of $\hat{\mathbf s}$ and the pixel. "A mirror needs its own
 store" was a Phase I restriction ($R g^{-1}$ must be a rotation in
 $\mathrm{SO}(3)$), not an $S^2$ one; one store serves a whole class.
 
-## 4. Quadrature A: tracing the contours (M2, design)
+## 4. Quadrature A: tracing the contours (M2)
 
-The M2 scrum builds, in order: the topology of $D_P$ on $U_P$ (interior
+*Status: implemented by scrum `phase2-contour-quadrature` (M2, 2026-09-25; modules `dp_field`, `contour`, `contour_quadrature`, `ch10_verdicts`, `focusing`), on the partial-reflection domain since scrum `internal-partial-reflection`.* The M2 scrum built, in order: the topology of $D_P$ on $U_P$ (interior
 critical points by AD Newton from lattice seeds, Hessian classification,
 restricted critical points and corners on $\partial U_P$, interval
 partition with component counts, checked against dense-lattice marching);
