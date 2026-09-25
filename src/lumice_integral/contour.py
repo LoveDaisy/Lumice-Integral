@@ -12,8 +12,8 @@ extraction.
 Seeds, three sources merged per ``delta``:
 
 - **critical data** of the field layer: the crossings of ``delta`` by
-  ``D_P`` along the boundary loop (bisection along the piece, pulled
-  ``BOUNDARY_SEED_MARGIN`` inside ``U_P``), which are the ends of every open
+  ``D_P`` along the boundary loop (bisection along the piece, pulled inside
+  ``U_P`` by the first of ``BOUNDARY_SEED_MARGINS`` that lands inside), which are the ends of every open
   arc, and the first crossing along a geodesic ray out of the interior
   extremum, which lies on the closed loop around it.  These reach components
   that no finite sampling resolves: next to a boundary maximum at
@@ -111,12 +111,15 @@ ROUNDING_ULPS = 64.0
 SEED_NEWTON_ITERATIONS = 40
 SEED_NEWTON_MAX_STEP_RAD = 0.05
 # ---- seeds --------------------------------------------------------------------------------------------
-# Boundary seeds sit on {margin = this}: below the depth ~1e-12 of the thinnest arc the certificate
-# fixtures reach (an exit-TIR piece at 1e-6 rad from a loop maximum), above the margin's rounding.
-BOUNDARY_SEED_MARGIN = 1e-14
-# A seed pulled 1e-14 inside can have a coincident margin (a square such as exit_snell_discriminant =
-# entry_incidence_cosine^2 on 3-5-6-7-3) at 1e-28, outside by rounding: those are pulled this far instead.
-BOUNDARY_SEED_MARGIN_RETRY = 1e-8
+# Boundary seeds sit on {margin = target}, the targets tried in turn, each only for the seeds still outside
+# after the one before.  The first, 1e-14: below the depth ~1e-12 of the thinnest arc the certificate fixtures
+# reach (an exit-TIR piece at 1e-6 rad from a loop maximum), above the margin's rounding.  A seed pulled
+# 1e-14 inside can have a coincident margin that is a square (exit_snell_discriminant = entry_incidence_cosine^2
+# on 3-5-6-7-3, and along the whole entry piece of 1-3-2 and 3-1-6) at 1e-28, outside by rounding.  1e-8 is
+# enough on 3-5-6-7-3 (its constant differs) but leaves every 1-3-2 / 3-1-6 seed at ~1e-16, below
+# INSIDE_MARGIN_FLOOR; 1e-7 clears it (1e-14) and stays below the ~1e-6 depth of the arc next to their boundary
+# maximum D = pi at delta = pi - 1e-6 (a target of 1e-6 put both seeds on the arc's apex, walked as two arcs).
+BOUNDARY_SEED_MARGINS = (1e-14, 1e-8, 1e-7)
 BISECTION_ITERATIONS = 64
 MARGIN_PROJECTION_ITERATIONS = 8
 RAY_SAMPLES = 400
@@ -581,7 +584,7 @@ def _boundary_seeds(field: DPField, deltas: np.ndarray) -> tuple[np.ndarray, np.
     k = np.concatenate(margins)[item]
     seeds = np.zeros((len(item), 3))
     todo = np.ones(len(item), dtype=bool)
-    for target in (BOUNDARY_SEED_MARGIN, BOUNDARY_SEED_MARGIN_RETRY):
+    for target in BOUNDARY_SEED_MARGINS:
         rows = np.flatnonzero(todo)
         if len(rows) == 0:
             break

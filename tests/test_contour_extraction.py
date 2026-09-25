@@ -243,3 +243,49 @@ def test_delta_at_a_critical_value_is_refused(fields, stores) -> None:
     field = fields[(3, 5)]
     with pytest.raises(ValueError, match="critical value"):
         contour.extract_level_sets(field, field.interior_critical_points[0].value, stores[(3, 5)])
+
+
+@pytest.mark.parametrize("faces", [(1, 3, 2), (3, 1, 6)])
+def test_boundary_seeds_clear_a_square_coincident_margin(fields, faces, monkeypatch) -> None:
+    """Along the entry piece of ``1-3-2`` / ``3-1-6`` the exit Snell discriminant is the entry cosine squared.
+
+    A seed pulled ``1e-8`` inside sits at ``1e-16`` on it, below ``INSIDE_MARGIN_FLOOR``: with the targets
+    ``(1e-14, 1e-8)`` no deviation had a boundary seed and every component came from the fallback seeds,
+    whose rounds ran out past ~180 deviations per call.  The later targets seed every deviation.
+    """
+    field = fields[faces]
+    deltas = np.radians(np.linspace(0.5, 179.5, 179))
+    _, j = contour._boundary_seeds(field, deltas)
+    assert set(j.tolist()) == set(range(len(deltas)))
+    monkeypatch.setattr(contour, "BOUNDARY_SEED_MARGINS", (1e-14, 1e-8))
+    _, j = contour._boundary_seeds(field, deltas)
+    assert len(j) == 0
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("faces", [(1, 3, 2), (3, 1, 6), (3, 5, 6, 7, 3), (3, 5, 6, 7), (3, 4, 5, 7)])
+def test_one_call_certifies_a_column_of_deviations(faces) -> None:
+    """801 deviations in one call (a full column of the canonical strip), certified; no fallback round needed.
+
+    The A60-10 members ``3-5-6-7`` (a necked ``U_P``: 50000 lattice points) and ``3-4-5-7`` included.
+    ~10 s per path on an M2 Max, most of it the store.
+    """
+    field = DPField.build(canonical_crystal(), faces, N, **({"lattice_n": 50000} if faces == (3, 5, 6, 7) else {}))
+    store = build_event_store(canonical_crystal(), N, [faces], STORE_N, run_checks=False)
+    breaks = np.array(_breaks(field))
+    deltas = np.linspace(breaks[0], breaks[-1], 803)[1:-1]
+    deltas = deltas[np.min(np.abs(deltas[:, None] - breaks[None]), axis=1) > 1e-6]
+    rounds = []
+    original = contour._components_of
+
+    def counting(field_, seeds, j, deltas_):
+        rounds.append(len(seeds))
+        return original(field_, seeds, j, deltas_)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(contour, "_components_of", counting)
+        level_sets = contour.extract_level_sets(field, deltas, store)
+    assert len(rounds) == 1
+    assert len(level_sets) == len(deltas) >= 800
+    for level_set in level_sets:
+        assert (level_set.n_closed, level_set.n_open) == (level_set.interval.n_closed, level_set.interval.n_open)
