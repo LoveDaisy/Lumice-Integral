@@ -13,7 +13,7 @@
 |---|---|---|
 | Phase I: $\mathrm{SO}(3)$ continuation renderer | closed 2026-09-23 (strip agrees with Lumice in shape and absolute scale) | [phase1.md](phase1.md) |
 | M1: $S^2$ event store + band-sum renderer in production; $D_{6h}$ transport; conventions and symmetry authority | done 2026-09-23 / 2026-09-24 | [phase2.md](phase2.md) §1-§3, §5 |
-| M2: contour quadrature, critical points, completeness certificate, cross-validation, chapter-10 verdicts | done 2026-09-25 (scrum 24; the A60-10 142° verdict blocked on internal partial reflection, see §9) | [phase2.md](phase2.md) §3.1, §4, §10 |
+| M2: contour quadrature, critical points, completeness certificate, cross-validation, chapter-10 verdicts | done 2026-09-25 (scrum 24; the A60-10 142° verdict measured after scrum 25 modelled internal partial reflection, see §9) | [phase2.md](phase2.md) §3.1, §4, §10 |
 
 Queue (tasks in `scratchpad/tasks.md`; dispatched 20 ∥ 21, then 22 ∥ 24, 23 in parallel with 24; all merged by 2026-09-25):
 
@@ -23,8 +23,8 @@ Queue (tasks in `scratchpad/tasks.md`; dispatched 20 ∥ 21, then 22 ∥ 24, 23 
 | 21 | `s2-store-schema-3`: store independent of the source, `.npy` + mmap, bucketed build ([phase2.md](phase2.md) §1.1, §8) — **done 2026-09-24** (schema 3) | — |
 | 22 | `band-sum-scatter-renderer`: band sum organised by deviation, class accumulation, GEMM tiles ([phase2.md](phase2.md) §8) — **done 2026-09-24** (canonical strip `30.8 s`, was `169 s`) | 21 |
 | 23 | `lumice-area-weighting-recheck`: absolute scale after Lumice's projected-area fix — **done 2026-09-24** (`K_p = N_sym ȳ Ω_p / (S/2)`, column strip `0.998`, plate / Parry families) | Ice Halo #597 merged |
-| 24 | scrum `phase2-contour-quadrature` (M2): `dp-field-topology` → `dp-field-layer` → `s2-contour-extraction` → `s2-contour-quadrature` → `phase1-seeds-from-store` → `ch10-numerical-verdicts` — `dp-field-layer` **done 2026-09-24** (`lumice_integral.dp_field`, [phase2.md](phase2.md) §3.1); `s2-contour-extraction` **done 2026-09-24** (`lumice_integral.contour`, [phase2.md](phase2.md) §4); `s2-contour-quadrature` **done 2026-09-25** (`lumice_integral.contour_quadrature`, [phase2.md](phase2.md) §4); `phase1-seeds-from-store` **done 2026-09-25** (`s2_store.StoreSeeds`, `discovery.check_band_coverage`; `prescan` deleted; [phase1.md](phase1.md) §5); `ch10-numerical-verdicts` **done 2026-09-25** (`lumice_integral.ch10_verdicts`, `lumice_integral.focusing`, [phase2.md](phase2.md) §10; Liljequist (i), the A60-10 142° edge, blocked on internal partial reflection) | 21 |
-| 25 | scrum `internal-partial-reflection`: `optics-partial-reflection` → `phase1-partial-reflection-domain` → `dp-field-partial-reflection-boundaries` → `contour-fallback-seed-scaling` → `ch10-liljequist-unblock-and-docs` — `optics-partial-reflection` **done 2026-09-25** (internal reflections split by Fresnel $R$, store schema 4, A60-10 against Lumice, §9); `phase1-partial-reflection-domain` **done 2026-09-25** (continuation event margins without internal TIR, Snell event tolerance; `3-5-6-7` / `3-5-6-7-3` against the band sum, [phase1.md](phase1.md) §5, §9); `contour-fallback-seed-scaling` **done 2026-09-25** (boundary seeds on a square coincident margin, 801 deviations per call certified, §9) | 24 |
+| 24 | scrum `phase2-contour-quadrature` (M2): `dp-field-topology` → `dp-field-layer` → `s2-contour-extraction` → `s2-contour-quadrature` → `phase1-seeds-from-store` → `ch10-numerical-verdicts` — `dp-field-layer` **done 2026-09-24** (`lumice_integral.dp_field`, [phase2.md](phase2.md) §3.1); `s2-contour-extraction` **done 2026-09-24** (`lumice_integral.contour`, [phase2.md](phase2.md) §4); `s2-contour-quadrature` **done 2026-09-25** (`lumice_integral.contour_quadrature`, [phase2.md](phase2.md) §4); `phase1-seeds-from-store` **done 2026-09-25** (`s2_store.StoreSeeds`, `discovery.check_band_coverage`; `prescan` deleted; [phase1.md](phase1.md) §5); `ch10-numerical-verdicts` **done 2026-09-25** (`lumice_integral.ch10_verdicts`, `lumice_integral.focusing`, [phase2.md](phase2.md) §10; Liljequist (i), the A60-10 142° edge, blocked on internal partial reflection; measured in 25) | 21 |
+| 25 | scrum `internal-partial-reflection`: `optics-partial-reflection` → `phase1-partial-reflection-domain` → `dp-field-partial-reflection-boundaries` → `contour-fallback-seed-scaling` → `ch10-liljequist-unblock-and-docs` — `optics-partial-reflection` **done 2026-09-25** (internal reflections split by Fresnel $R$, store schema 4, A60-10 against Lumice, §9); `phase1-partial-reflection-domain` **done 2026-09-25** (continuation event margins without internal TIR, Snell event tolerance; `3-5-6-7` / `3-5-6-7-3` against the band sum, [phase1.md](phase1.md) §5, §9); `contour-fallback-seed-scaling` **done 2026-09-25** (boundary seeds on a square coincident margin, 801 deviations per call certified, §9); `ch10-liljequist-unblock-and-docs` **done 2026-09-25** (A60-10 saddle 141.839300° on the production chain, the Liljequist peak a TIR onset corner, four verdicts rerun, ch8 strip against Lumice, §9) | 24 |
 
 Deferred: the chapter-11 table (path classes × pose families) after 22 and
 M2; divergent light ([phase2.md](phase2.md) §9, backlog); finite solar disk;
@@ -95,20 +95,21 @@ integral and boundaries → §2 (the level sets themselves, extracted: §4,
 layered invariance → §3.2 (symmetry: §3.3); (e) fixtures → §4, measured
 (task `ch10-numerical-verdicts`): Liljequist is one mirror-slab field for
 `1-3-2` / `3-5-6-7-3`, $|\nabla D_P| = 2$, critical values independent of
-$h/a$ to `6e-14`°, the peak pinned at the boundary critical value 153.0697°
-and approached as $\varepsilon^{0.49}$; A60-10 (142°) blocked, 0 valid poses
-(reachable since task `optics-partial-reflection`, §9; verdict rerun pending);
-the parhelic circle of plates (`1-3-2`) is the window with $d\theta/d\phi = 2$,
-to `8.6e-5` at $\sigma = 0.25°$ (`tests/test_ch10_verdicts.py::test_liljequist_*`,
-`test_a60_10_is_reachable_once_internal_reflections_may_be_partial`, `test_parhelic_circle_*`);
+$h/a$ to `3e-14`°; with partial internal reflections (task
+`ch10-liljequist-unblock-and-docs`, §9) the peak stays at 153.07° as a corner
+at the internal TIR onset of $R_k$, and A60-10 (142°) is the saddle
+141.839300° on the production chain; the parhelic circle of plates (`1-3-2`)
+is the window with $d\theta/d\phi = 2$, to `1.7e-3` at $\sigma = 0.25°$ away
+from that window's TIR onset (`tests/test_ch10_verdicts.py::test_liljequist_*`,
+`test_a60_10_*`, `test_parhelic_circle_*`);
 (f) design constraints → §4; (g) open points → §10: the 22° inner edge is a
 finite jump for random orientation (limit $w^*2\pi/\sqrt{\det H}$, pixel
 value `0.541535`, reached to `0.99805` at $\varepsilon = 10^{-6}$, extrapolated
 `1.000023`), $1/\sqrt{\ }$ only through the column density between
 $\varepsilon_c \propto \sigma^{1.97}$ and `3e-3` rad
 (`test_inner_edge_*`); the two kinds of focusing are an explicit label,
-`lumice_integral.focusing` (`tests/test_focusing.py`), and no fixture has
-Jacobian focusing.
+`lumice_integral.focusing` (`tests/test_focusing.py`); the one fixture with
+Jacobian focusing is `1-3-5-2` at 120°, since partial internal reflections.
 
 ### 4.2 Band-sum quadrature (precomputed $S^2$ events)
 
@@ -566,3 +567,27 @@ Moved to [overview.md](overview.md) §3.
   budget is unchanged: `1-3-2`, `3-1-6`, `3-5-6-7-3` and the A60-10 members
   certify 801 deviations per call with no fallback round (4–7 s each, slow
   test), and `render_contour_quadrature` renders a full `1-3-2` column.
+- **2026-09-25**: the chapter-10 verdicts are rerun with partial internal
+  reflections (task `ch10-liljequist-unblock-and-docs`, closing scrum
+  `internal-partial-reflection`; [phase2.md](phase2.md) section 4 and
+  appendix "Chapter-10 verdicts rerun"). Liljequist (i) is measured on the
+  production chain: the A60-10 saddle is the middle critical value of both
+  members, 141.83929991° on every $h/a$, `-9e-8`° from the numpy probe.
+  (ii) did not move but changed mechanism: 153.069685° is the largest $D_P$
+  on the internal TIR onsets (the old TIR arcs' maximum), no longer a
+  critical value, and the profile has a corner there (continuous, slope `+`
+  below and `-` above), not a one-sided $\sqrt{\ }$ cusp. The new boundary
+  critical value 98.16° is invisible (grazing internal incidence, $w \to 0$).
+  So the plan's "move the cusp test to 98.16°" was replaced by a corner test
+  at 153.07° and a continuity test at 98.16° (a probe first, then
+  `ch10_verdicts.tir_onset_maximum`). Two other verdicts changed for the same
+  reason: the `1-3-2` window no longer jumps at 122.34° but peaks there and
+  has a partial-reflection tail to 180° (ring residual `1.7e-3` at
+  $\sigma = 0.25°$, was `8.6e-5` up to 120°), and `1-3-5-2` focuses at 120°. Both
+  statements now come from the data, not from literals. The inner edge is unchanged.
+  Against Lumice without a filter (ch8 plates, sun at 0°, strip $\pm1.5°$),
+  the 142° step and the 153.75° maximum sit in the same bins. The three
+  classes carry 52 % / 62 % of Lumice's flux in 140–150° / 152–158°; the
+  remainder has the same shape. One basal-insertion class `3-1-5-6-7`
+  gives 3.8 % / 1.7 %, which points to the ~11 single basal insertions
+  (not enumerated; the chapter-11 class table's job).

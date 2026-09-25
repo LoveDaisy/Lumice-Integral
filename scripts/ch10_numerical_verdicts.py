@@ -13,8 +13,9 @@ Usage::
     uv run python scripts/ch10_numerical_verdicts.py --output-dir /tmp/ch10-verdicts
     uv run python scripts/ch10_numerical_verdicts.py --verdict inner-edge --output-dir /tmp/ch10-inner-edge
 
-Wall clock on an M2 Max, one process: inner-edge ~15 s, liljequist ~2 min,
-parhelic-circle ~7.5 min, parallel-face ~15 s (all four ~10 min).
+Wall clock on an M2 Max, one process: inner-edge ~15 s, liljequist ~3 min,
+parhelic-circle ~9 min, parallel-face ~10 s (all four ~12 min; 2026-09-25, task
+``ch10-liljequist-unblock-and-docs``).
 """
 
 from __future__ import annotations

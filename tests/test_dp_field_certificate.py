@@ -104,8 +104,9 @@ def test_liljequist_pair_critical_sets(fields) -> None:
     ``D_P`` on ``U_P`` do not: ``{0, 180}`` degrees on ``1-3-2`` (``-n_M`` on
     the entry arc) and ``{0, 98.161, 180}`` on ``3-5-6-7-3`` (``+n_M``
     inside).  Neither has a value near ``142 = 120 + 21.84`` degrees (the
-    A60-10 members do, :data:`A60_10`); the chapter-8 reading is task
-    ``ch10-liljequist-unblock-and-docs``'.  Before partial internal
+    A60-10 members do, :data:`A60_10`); near 153 degrees ``3-5-6-7-3`` keeps
+    a corner at the internal TIR onset, not a critical value
+    (``ch10_verdicts.tir_onset_maximum``).  Before partial internal
     reflections the TIR arcs gave ``{0, 115.607}`` and ``{0, 153.070, 180}``.
     """
     short, long = fields[(1, 3, 2)], fields[(3, 5, 6, 7, 3)]

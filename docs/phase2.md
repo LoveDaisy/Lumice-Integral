@@ -145,7 +145,13 @@ consumer of the `optics` gates (the $S^2$ store, `weights`, the Phase I
 tracer's domain evaluator) sees the wider domain, and so do the $D_P$ field
 layer and the contour walker since task
 `dp-field-partial-reflection-boundaries` (section 3.1): an internal TIR
-discriminant is not a margin of $\partial U_P$. Phase I on paths with
+discriminant is not a margin of $\partial U_P$. Continuous is not smooth:
+at the onset $1 - R_k \sim \sqrt{-\mathrm{disc}}$, so where a level set of
+$D_P$ leaves an onset curve $\{\mathrm{disc}_k = 0\}$ (its $D$ extremum)
+the profile keeps its value and changes its slope
+($\int\sqrt{c - bx^2}\,dx \propto c$): a corner, not a critical value of
+$D_P$. The Liljequist peak is one (section 4; task
+`ch10-liljequist-unblock-and-docs`). Phase I on paths with
 internal reflections is not yet cross-validated; that is its own task
 (roadmap §0). A contour cut by $\partial V_P$ is traced on $U_P$ and
 $A_P T_P$ removes the infeasible part; Phase I's rule "keep tracing, weight
@@ -350,7 +356,8 @@ Fixtures the structure suggests:
   50.063° (corners) and 141.839300° on the grazing piece of face 6 / face 4
   (the saddle above, of the smooth extension, on $\partial U_P$), maximum
   163.465°; intervals $(2,0,2)$ then $(1,0,1)$, grid-checked.
-  **This repository cannot see A60-10 at all.** Each of its members needs one
+  **Until task `optics-partial-reflection` this repository could not see
+  A60-10 at all** (the rest of this paragraph is that record). Each of its members needs one
   partial internal reflection (face 5 at 30° incidence, $R \approx 2.2\,\%$
   at the saddle). The internal-reflection gate of `optics.path_domain` and
   `path_domain_batch` admits total reflection only, so the class has zero
@@ -370,6 +377,34 @@ Fixtures the structure suggests:
   $h/a$, finite, approached from below as $\varepsilon^{0.49}$ (a restricted
   extremum on $\partial U_P$); the window sets its width and the profile below
   it (half maximum 153.0–158.8° at $h/a = 0.2$, 150.7–157.05° at 2).
+  *Re-measured with partial internal reflections (task
+  `ch10-liljequist-unblock-and-docs`, `ch10_verdicts.liljequist`):* (i)
+  the A60-10 saddle on the production chain (`DPField.critical_values` of
+  both members, $h/a = 0.2$, 1, 2) is 141.83929991°, spread `2.8e-14`°,
+  `-9.0e-8`° from the probe's 141.839300°, and equal to
+  $120° + D_{\min}(\texttt{3-5})$ to `2e-14`°. (ii) The Liljequist peak
+  still sits at 153.0697° for every $h/a$ (0.05° grid: 153.10°), but
+  153.069685° is no longer a critical value of $D_P$: it is the largest
+  $D_P$ on the internal TIR onsets of faces 5, 6 and 7 (all three agree to
+  `5e-11`°; `ch10_verdicts.tir_onset_maximum`, constrained maximum on
+  $U_P$), the old TIR arcs' maximum. The profile is continuous there (the
+  gap closes as $arepsilon^{0.96}$) with a corner: slope `+0.0052`,
+  `+0.0217`, `+0.0405` below and `-0.00017`, `-0.0050`, `-0.0129` above per
+  radian at $h/a = 0.2$, 1, 2 (the slope below approaches its limit as
+  $\sim\varepsilon^{0.4}$, the next order of $1 - R_k$). Light the TIR gate
+  used to drop now fills in below the peak: half maximum 152.55–158.80°,
+  149.80–157.30°, 147.65–157.05°. The one critical value inside, 98.1607°
+  (grazing internal incidence on face 5 or 6), is no visible edge: $w$
+  vanishes there, the profile is continuous with a continuous slope, at
+  `1.7e-4` of the peak or less. Against Lumice (ch8 scene: plates
+  $h/a = 0.2$, $\sigma = 1°$, sun at 0°, the parhelic-circle strip
+  $|e| \le 1.5°$, every raypath, nothing fitted): the 142° step and the
+  153.75° maximum (0.5° bins) sit in the same bins in both. `3-5-6-7`,
+  `3-4-5-7`, `3-5-6-7-3` carry 52 % of Lumice's flux in 140–150° and 62 %
+  in 152–158°; the rest has the same shape, and one basal-reflection
+  insertion class (`3-1-5-6-7`) alone adds 3.8 % / 1.7 % (for plates a
+  basal reflection only mirrors the elevation). Record: appendix,
+  "Chapter-10 verdicts rerun".
 - *Parhelic circle*: $D_P(\mathbf u) = \angle(M\mathbf u, \mathbf u)$ has
   $\nabla D_P = 0$ only at $\pm\mathbf n_M$ (on `3-1-6` both lie on the entry
   great circle; with partial reflection one is on $\partial U_P$, where the
@@ -393,7 +428,17 @@ Fixtures the structure suggests:
   away from the window's jump at 122.34° (the TIR-only gate). The six prism
   members' windows are one function shifted by 60° (to `1e-16`), so under a
   uniform plate azimuth the "shifted copies" coincide: every member draws
-  the same ring.
+  the same ring. *Re-measured with partial internal reflections (task
+  `ch10-liljequist-unblock-and-docs`):* the window has no jump any more. It
+  is largest at the internal TIR onset (ring azimuth 122.34°), falls there
+  with an unbounded slope (the section 2 corner, now along the ring), and
+  goes on as a partial-reflection tail to the anthelion (0.26 of its maximum
+  at 130°, 0.075 at 179°). Excluding 12σ around the onset, the ring
+  matches the window-only prediction to `1.7e-3` at $\sigma = 0.25°$ over 89
+  ring azimuths (`3.8e-3` at 0.5°). The residual is order $\sigma^2$ below
+  the onset (`4.7e-5`) and along the tail, where it is a nearly constant
+  `4e-4` from 130° to 180° at 0.25°. Only the first few degrees past the
+  12σ margin converge more slowly, next to the corner.
 - *22° halo*: a finite jump for random orientation, $1/\sqrt{\ }$ only
   through the column density; section 10.
 
@@ -989,6 +1034,16 @@ needs street-lamp halos (backlog).
   $\varepsilon_c$ (cap $\times\,\sigma$ roughly constant); at the canonical
   $\sigma = 0.5°$ only `[1e-3, 3e-3]`. Tests: `tests/test_ch10_verdicts.py`
   (`test_inner_edge_*`), `tests/test_focusing.py::test_3_5_minimum_is_a_finite_jump`.
+- **Liljequist and the 142° parhelion** (writing chapters 8 and 10).
+  *Settled (task `ch10-liljequist-unblock-and-docs`,
+  `lumice_integral.ch10_verdicts.liljequist`; section 4 and appendix,
+  "Chapter-10 verdicts rerun").* The 142° edge is the A60-10 saddle
+  $120° + D_{\min}(\texttt{3-5}) = 141.839300°$ on the production chain,
+  shape independent; the Liljequist peak of `3-5-6-7-3` stays at 153.07° on
+  every $h/a$, a corner of the profile at the internal TIR onset of $R_k$
+  (not a critical value of $D_P$), its width set by the window. Both layers
+  appear in Lumice's unfiltered ch8 strip at the same azimuths. Tests:
+  `tests/test_ch10_verdicts.py` (`test_a60_10_*`, `test_liljequist_*`).
 - **Rank-deficient maps.** $M = I$, $W = I$ classes (wedge angle 0,
   `geometry.halo_map_rank` 0) are point masses in the source direction (task
   `path-class-rendering-unit`). The degenerate images of parallel-face
@@ -1027,7 +1082,7 @@ needs street-lamp halos (backlog).
 | critical points, certificate (field layer), contour extraction | measured, in production | appendix; tasks `dp-field-layer`, `s2-contour-extraction` |
 | contour quadrature (precision authority), Phase I and band-sum alignment | measured, in production | section 4, appendix; task `s2-contour-quadrature` |
 | Phase I seeds and cross-check from the store | design | scrum 24 sub-task 5 |
-| chapter-10 verdicts (inner edge, Liljequist, parhelic circle, focusing labels) | measured; Liljequist (i), the A60-10 142° edge, blocked on internal partial reflection | section 10, appendix; task `ch10-numerical-verdicts` |
+| chapter-10 verdicts (inner edge, Liljequist, parhelic circle, focusing labels) | measured; rerun with partial internal reflections (A60-10 saddle 141.839300°, the Liljequist peak a TIR onset corner at 153.07°, no jump in the `1-3-2` window, `1-3-5-2` Jacobian focusing at 120°) | section 10, appendix; tasks `ch10-numerical-verdicts`, `ch10-liljequist-unblock-and-docs` |
 | divergent light | derived | backlog |
 
 ## Appendix: measured record
@@ -1867,7 +1922,75 @@ canonical prism, lattice `N = 20000` unless noted.
   lit pixels $z = \mathrm{rel}\sqrt{K_\mathrm{eff}}$ has mean `0.015`, std
   `0.14`, max $|z|$ `1.28`, none above 4; sum ratio `1.00019`; 92 s on 4
   workers.
-- *Left for task `ch10-liljequist-unblock-and-docs`.* `ch10_verdicts.liljequist`
-  looks for the `3-5-6-7-3` boundary critical value in 150–160°, which no
-  longer exists (strict xfail on its cusp test); what remains near 153° is
-  the TIR onset inside $R_k$.
+- *Left for task `ch10-liljequist-unblock-and-docs`* (resolved there, next
+  entry). `ch10_verdicts.liljequist` looked for the `3-5-6-7-3` boundary
+  critical value in 150–160°, which no longer exists (strict xfail on its
+  cusp test); what remains near 153° is the TIR onset inside $R_k$.
+
+**Chapter-10 verdicts rerun (2026-09-25, task `ch10-liljequist-unblock-and-docs`,
+scrum `internal-partial-reflection`).** `scripts/ch10_numerical_verdicts.py`
+at commit `0ec36ef`, all four verdicts, 12.3 min on an M2 Max, one process
+(inner edge 15 s, Liljequist 190 s, parhelic circle 527 s, parallel face 9 s).
+Against the first run (task `ch10-numerical-verdicts`, entry above):
+
+- *22° inner edge*: unchanged to every printed digit (`3-5` has no internal
+  reflection).
+- *Liljequist*, status `measured` (was `partially_blocked`). (i) A60-10:
+  `ch10_verdicts.a60_10_saddle` takes the middle one of the three critical
+  values of each member (`lattice_n = 5e4`, the neck of `3-5-6-7`):
+  141.83929991° on both members and $h/a = 0.2$, 1, 2 (spread `2.8e-14`°),
+  `-9.0e-8`° from the numpy probe's 141.839300°,
+  $120° + D_{\min}(\texttt{3-5})$ to `2e-14`°. Both members now have
+  `11083` / `20959` of `2e5` lattice points in $U_P$, exactly the points
+  that pass every gate but the internal TIR discriminants (0 before). (ii)
+  Shared field and $|\nabla D_P| = 2$ unchanged; critical values
+  $\{0, 180°\}$ on `1-3-2` and $\{0, 98.1607°, 180°\}$ on `3-5-6-7-3`,
+  spread `2.8e-14`° over $h/a$. Quarter-degree profiles: `1-3-2` peaks
+  unchanged (19.25° / 72.25° / 73.5°); `3-5-6-7-3` at 153.25°, 153.25°,
+  153.0°, on the 0.05° grid at 153.10° for all three (unchanged); half
+  maximum 152.55–158.80°, 149.80–157.30°, 147.65–157.05° (upper ends
+  unchanged, lower ends 0.45°, 1.85°, 3.05° lower). The peak at
+  153.069685° is the largest $D_P$ on the internal TIR onsets of faces 5, 6
+  and 7 (`tir_onset_maximum`: lattice starts, SLSQP on a tangent chart with
+  the $U_P$ gates as inequalities; constraint residual `<= 7e-13`, Lagrange
+  sine `<= 1.5e-9`, the three faces within `5e-11`°), not a critical value
+  of $D_P$. One-sided values on $\varepsilon = 10^{-2}\ldots10^{-6}$ rad at
+  `rtol 1e-8`: gap $\propto\varepsilon^{0.96}$ (was $\varepsilon^{0.49}$ at
+  the old boundary critical value), slope below `+0.00516`, `+0.0217`,
+  `+0.0405`, above `-0.000171`, `-0.00501`, `-0.0129` per radian for
+  $h/a = 0.2$, 1, 2: a corner. At 98.1607° the gap is $\propto\varepsilon^{0.96\ldots1.0}$
+  (the profile's own slope, no jump), the value `1.5e-7`, `6.5e-6`,
+  `1.7e-4` of the peak. Max error estimate `4.2e-9` relative; up to `3412`
+  exhausted panels per profile (was `920`).
+- *Parhelic circle*: $d\theta/d\phi$, the image elevation and the member
+  shifts unchanged. The window has no jump (the jump at 122.34° was the
+  internal-TIR gate); the comparison now excludes 12σ around the internal
+  TIR onset instead (`ParhelicCircleOptions.edge_exclusion_sigmas`, was
+  `jump_exclusion_sigmas`), and the ring runs to 180° (89 ring azimuths at
+  0.25°, was 61 up to 120°): max residual `3.8e-3` / `1.7e-3` at
+  $\sigma = 0.5°$ / 0.25° (was `3.4e-4` / `8.6e-5`), median `2.9e-4` /
+  `7.3e-5`. Ratio of the two widths 3.9–4.0 below the onset and from 130°
+  on (order $\sigma^2$), slower within 20° of the onset, which is where the
+  maxima are.
+- *Parallel face*: the table has one change, `1-3-5-2` is Jacobian
+  focusing at 120° (random: `jacobian`, the other families
+  `jacobian+dimension_collapse`) since its fold circle bounds $U_P$ (task
+  `dp-field-partial-reflection-boundaries`); the statement names it from
+  the table instead of the literal it carried. Collapse demo unchanged
+  (`×1.988`, `0.0022774` / `0.00227764`).
+- *Against Lumice, the ch8 scene* (a one-off probe, not in the
+  repository; scrum scratchpad `evidence/ch8-liljequist-compare`): plates
+  $h/a = 0.2$, zenith σ = 1°, sun at 0°, $n = 1.3110129$, 550 nm, point sun,
+  the plate camera of task `optics-partial-reflection` (azimuth 136–168°);
+  Lumice without a filter, `max_hits` 9, `1e8` rays × 2 seeds; band-sum
+  class renders `3-5-6-7`, `3-4-5-7` (store `N = 1e8`), `3-5-6-7-3`,
+  `1-3-2` (`1e7`); strip $|e| \le 1.5°$, 0.5° azimuth bins,
+  $K_p = \bar y\,\Omega_p/(S/2)$, nothing fitted. Both show the 142° step
+  (LI's A60-10 starts in the 141.75° bin) and the maximum in the 153.75° bin.
+  LI over Lumice: 140–150° A60-10 `0.466`, `3-5-6-7-3` `0.058`, sum `0.524`;
+  152–158° `0.219`, `0.405`, `0.624`; `1-3-2` `< 3e-5`. Seed-to-seed
+  window difference `1e-4` / `2e-3`. The remainder has the same two-layer
+  shape; `3-1-5-6-7` (a basal reflection inserted) alone is `0.038` /
+  `0.017`, and there are about eleven single insertions. The author's ch8
+  probe (Lumice filter, σ = 0.5°, D65, PNG) puts A60-10 at `0.53` / `0.27`
+  of all raypaths, the same order as LI's `0.47` / `0.22`.
