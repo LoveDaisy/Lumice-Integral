@@ -192,7 +192,12 @@ class ResampleOptions:
 
     ``initial_node_count`` and every doubled count must be ``4k + 1`` so the
     Simpson rule applies at ``N`` and at the every-other-node subset
-    ``(N + 1) / 2`` that provides the error estimate.  Defaults from the
+    ``(N + 1) / 2`` that provides the error estimate.  ``__post_init__``
+    enforces ``initial_node_count = 4k + 1`` once, at construction, via
+    :func:`_is_simpson_doubling_count`; the ``N -> 2N-1`` doubling in
+    :func:`integrate_fiber_resampled` preserves it for every later grid, and
+    :func:`_simpson_error_estimate` relies on it holding without re-validating
+    it.  Defaults from the
     task-resample-and-integrate Step 5 evidence on the canonical pixel and
     rows 100/300/500 (col 126) of the ch06 strip: the slope jumps of
     ``entry_measure`` make the uniform grid converge at order ~2, so
@@ -388,6 +393,14 @@ def _simpson_error_estimate(values: np.ndarray, spacing: float) -> float:
     global difference was optimistic against the Phase II contour quadrature on
     2-37 % of phases (up to 58x); the panel-wise sum never was (worst 0.7x),
     at 2-5x the global value.
+
+    The ``N = 4k + 1`` requirement below is not a local invariant of this
+    function: it is enforced once, at the source, by
+    :meth:`ResampleOptions.__post_init__` (:func:`_is_simpson_doubling_count`)
+    on ``initial_node_count``, and preserved by the ``N -> 2N-1`` doubling in
+    :func:`integrate_fiber_resampled`. The assert here is a cheap internal
+    sanity check on that already-validated invariant, not the contract's point
+    of enforcement.
     """
     assert len(values) % 4 == 1 and len(values) >= 5
     fine = spacing / 3.0 * (values[0:-1:2] + 4.0 * values[1::2] + values[2::2])

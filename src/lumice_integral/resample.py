@@ -306,7 +306,9 @@ def fiber_spline(result: TraceLike) -> FiberSpline:
     return FiberSpline(closed, knots, quaternions, derivatives)
 
 
-def _hermite_segments(spline: FiberSpline, parameters: np.ndarray):
+def _hermite_segments(
+    spline: FiberSpline, parameters: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
     """Local coordinate ``u``, width and the four Hermite coefficients of the segment of each parameter."""
     t = np.asarray(parameters, dtype=np.float64)
     if np.any(t < 0.0) or np.any(t > spline.total):
