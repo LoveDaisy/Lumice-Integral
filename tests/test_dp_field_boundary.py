@@ -82,12 +82,13 @@ def test_entry_margin_vanishes_on_its_great_circle(faces) -> None:
 EXPECTED_PIECES = {
     (3, 5): ("entry_incidence_cosine", "exit_snell_discriminant"),
     (1, 3): ("entry_incidence_cosine", "exit_snell_discriminant"),
-    (3, 1, 6): ("entry_incidence_cosine", "internal_1_tir_discriminant", "entry_incidence_cosine", "internal_1_incidence_cosine"),
-    (1, 3, 2): ("entry_incidence_cosine", "internal_1_tir_discriminant", "entry_incidence_cosine", "internal_1_incidence_cosine"),
+    # a partial internal reflection keeps the pose in U_P: the slabs are lunes of two great circles
+    (3, 1, 6): ("entry_incidence_cosine", "internal_1_incidence_cosine"),
+    (1, 3, 2): ("entry_incidence_cosine", "internal_1_incidence_cosine"),
     (3, 5, 6, 7, 3): (
-        "internal_1_tir_discriminant",
+        "internal_1_incidence_cosine",
         "entry_incidence_cosine",
-        "internal_2_tir_discriminant",
+        "internal_2_incidence_cosine",
         "entry_incidence_cosine",
     ),
 }
@@ -112,9 +113,10 @@ def test_walk_closes_with_the_expected_pieces(fields, faces) -> None:
 
 @pytest.mark.parametrize("faces", FIXTURES)
 def test_pieces_stay_on_their_zero_set_inside_the_closure(fields, faces) -> None:
-    names = optics.domain_margin_names(faces)
+    """On its own gate, and on the closed side of every other gate (internal TIR discriminants are no gates)."""
+    names = optics.validity_margin_names(faces)
     for piece in fields[faces].boundary.pieces:
-        margins = F.margins_batch(piece.points, faces, N)
+        margins = F.validity_margins_batch(piece.points, faces, N)
         assert np.max(np.abs(margins[:, names.index(piece.margin)])) <= 2e-15
         others = [k for k, name in enumerate(names) if name != piece.margin and name not in piece.coincident]
         assert np.min(margins[:, others]) >= -B.VIOLATION_ATOL
@@ -156,30 +158,29 @@ def test_corners_on_the_entry_circle_match_a_1d_scan_with_path_domain() -> None:
 
 
 def test_liljequist_corners_carry_every_vanishing_margin(fields) -> None:
-    """``3-5-6-7-3``: four margins vanish at every corner, two bound ``U_P``; the third is tangent, ``exit_snell`` coincident.
+    """``3-5-6-7-3``: three gates vanish at every corner, two bound ``U_P``, ``exit_snell`` is coincident.
 
-    Measured structure (gradient test, angle ``0.0``): at the pair on
-    ``internal_1_tir`` the third curve ``internal_2_incidence_cosine`` is
-    tangent to it (explore ``dp-field-bigon-other-corner-pair``), and at the
-    pair on ``internal_2_tir`` the third curve ``internal_1_incidence_cosine``
-    is tangent to *that* edge as well -- explore
-    ``dp-field-boundary-deep-internal-faces`` read this pair as transversal
-    (a bigon); the lens between the two tangent curves lies outside ``U_P``.
+    Each corner joins the entry great circle and the grazing curve of one
+    internal reflection (``internal_k_incidence_cosine``, two corners each);
+    no internal TIR discriminant is a gate, so none is listed (before task
+    ``dp-field-partial-reflection-boundaries`` the pieces were the two TIR
+    curves, with the other incidence cosine tangent at the corner).
     """
     corners = fields[(3, 5, 6, 7, 3)].corners
-    by_edge: dict[str, list] = {"internal_1_tir_discriminant": [], "internal_2_tir_discriminant": []}
+    by_edge: dict[str, list] = {"internal_1_incidence_cosine": [], "internal_2_incidence_cosine": []}
     for corner in corners:
         edges = {corner.incoming, corner.outgoing}
         assert "entry_incidence_cosine" in edges
-        tir = (edges - {"entry_incidence_cosine"}).pop()
-        by_edge[tir].append(corner)
-    for tir, third in (("internal_1_tir_discriminant", "internal_2_incidence_cosine"), ("internal_2_tir_discriminant", "internal_1_incidence_cosine")):
-        assert len(by_edge[tir]) == 2
-        for corner in by_edge[tir]:
-            assert set(corner.margins) == {"entry_incidence_cosine", tir, third, "exit_snell_discriminant"}
-            assert corner.tangent == (third,)
+        by_edge[(edges - {"entry_incidence_cosine"}).pop()].append(corner)
+    for grazing, corners_on_it in by_edge.items():
+        assert len(corners_on_it) == 2
+        for corner in corners_on_it:
+            assert set(corner.margins) == {"entry_incidence_cosine", grazing, "exit_snell_discriminant"}
+            assert corner.tangent == () and corner.transversal == ()
             assert corner.coincident == ("exit_snell_discriminant",)
-            assert "internal_3_tir_discriminant" not in corner.margins  # dropped before walking
+            assert not any(name.endswith("_tir_discriminant") for name in corner.margins)
+            assert "internal_3_incidence_cosine" not in corner.margins  # dropped before walking
+            assert corner.value == pytest.approx(0.0, abs=1e-7)
 
 
 def test_liljequist_corner_positions_on_the_entry_circle(fields) -> None:
@@ -188,19 +189,7 @@ def test_liljequist_corner_positions_on_the_entry_circle(fields) -> None:
     np.testing.assert_allclose(t, [-119.2465917, -60.7534083, 60.7534083, 119.2465917], atol=1e-6)
 
 
-# The walk lists every margin of domain_margin_names as a piece of the boundary, internal TIR discriminants
-# included, while U_P (valid_batch, optics.path_domain_batch) no longer ends there since task
-# optics-partial-reflection; the paths with an internal reflection wait for the boundary enumeration of task
-# dp-field-partial-reflection-boundaries (strict: the xfail must be removed there).
-_PARTIAL_REFLECTION_BOUNDARY = pytest.mark.xfail(
-    strict=True, reason="internal TIR is no longer a boundary of U_P; task dp-field-partial-reflection-boundaries"
-)
-
-
-@pytest.mark.parametrize(
-    "faces",
-    [faces if len(faces) == 2 else pytest.param(faces, marks=_PARTIAL_REFLECTION_BOUNDARY) for faces in FIXTURES],
-)
+@pytest.mark.parametrize("faces", FIXTURES)
 def test_walk_accounts_for_every_lattice_edge_point(fields, faces) -> None:
     """Completeness spot check: every lattice point of ``U_P`` with an outside neighbour is next to the walked loop."""
     lattice = fibonacci_sphere(20000)

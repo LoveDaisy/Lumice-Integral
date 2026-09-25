@@ -83,6 +83,15 @@ def test_liljequist_paths_share_one_mirror_field_and_shape_free_critical_values(
         np.testing.assert_allclose(values[0], values[1], atol=1e-12)
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "153.07 deg was the maximum of D_P on the internal-TIR arcs of dU_P; with partial internal reflections "
+        "those arcs are no gates (task dp-field-partial-reflection-boundaries) and the loop maximum is 98.16 deg, "
+        "so no critical value lies in (150, 160) deg -- here and in ch10_verdicts.liljequist.  What remains near "
+        "153 deg is the TIR onset inside the Fresnel weight: task ch10-liljequist-unblock-and-docs"
+    ),
+)
 def test_liljequist_peak_is_a_one_sided_sqrt_cusp_at_the_boundary_critical_value() -> None:
     crystal = HexPrism.from_ratio(2.0)
     field = DPField.build(crystal, (3, 5, 6, 7, 3), INDEX)

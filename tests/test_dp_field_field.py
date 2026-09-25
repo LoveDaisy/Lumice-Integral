@@ -180,16 +180,26 @@ def test_two_lattice_densities_find_the_same_critical_points(faces) -> None:
 
 @pytest.mark.parametrize("faces", [(3, 1, 6), (1, 3, 2)])
 def test_slab_paths_without_interior_critical_points(fields, faces) -> None:
-    """``+-n_M`` sit on the entry great circle but outside the closure of ``U_P`` (an internal TIR fails there)."""
+    """``+-n_M`` sit on the entry great circle: one on ``dU_P`` (``D = pi``), the other behind the internal face.
+
+    The internal reflection at the ``dU_P`` one is partial
+    (``internal_1_tir_discriminant = -0.284``), a diagnostic, not a gate; it
+    kept that point outside the closure of ``U_P`` before task
+    ``dp-field-partial-reflection-boundaries``.  At the other one the ray
+    does not reach the internal face (``internal_1_incidence_cosine < 0``).
+    """
     field = fields[faces]
     assert field.interior_critical_points == ()
     fold_set = field.degenerate_fold
     assert fold_set is not None
-    assert [where for _, where in fold_set.axis_points] == ["exterior", "exterior"]
-    for point, _ in fold_set.axis_points:
+    assert sorted(where for _, where in fold_set.axis_points) == ["boundary", "exterior"]
+    for point, where in fold_set.axis_points:
         margins = dict(zip(optics.domain_margin_names(faces), F.margins_batch(point[None, :], faces, N)[0]))
         assert abs(margins["entry_incidence_cosine"]) <= 1e-15
         assert margins["internal_1_tir_discriminant"] < -0.2
+        assert (margins["internal_1_incidence_cosine"] > 0.7) == (where == "boundary")
+        if where == "boundary":
+            assert float(field.d_p_batch(point[None, :])[0]) == pytest.approx(np.pi, abs=1e-12)
     assert fold_set.circle_interior_fraction == 0.0
 
 

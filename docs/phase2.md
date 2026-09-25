@@ -142,10 +142,12 @@ angle), the per-interface unpolarized split Lumice applies
 internal reflection only and a partial one cut the path, see the Liljequist
 fixture in section 4 and [roadmap.md](roadmap.md) §9, 2026-09-25). Every
 consumer of the `optics` gates (the $S^2$ store, `weights`, the Phase I
-tracer's domain evaluator) sees the wider domain; the $D_P$ boundary
-enumeration still lists each internal TIR discriminant among the margins of
-$\partial U_P$, and Phase I on paths with internal reflections is not yet
-cross-validated; both are their own tasks (roadmap §0). A contour cut by $\partial V_P$ is traced on $U_P$ and
+tracer's domain evaluator) sees the wider domain, and so do the $D_P$ field
+layer and the contour walker since task
+`dp-field-partial-reflection-boundaries` (section 3.1): an internal TIR
+discriminant is not a margin of $\partial U_P$. Phase I on paths with
+internal reflections is not yet cross-validated; that is its own task
+(roadmap §0). A contour cut by $\partial V_P$ is traced on $U_P$ and
 $A_P T_P$ removes the infeasible part; Phase I's rule "keep tracing, weight
 to zero" (contract section 6.3) is the same fact placed inside the tracer.
 The remaining non-smoothness is the kinks of $A_P$ (a vertex crossing an
@@ -182,8 +184,25 @@ sequence, independent of the sun:
   closed form, whose critical set is $\pm\mathbf n_M$ and the crease
   $\mathbf u\cdot\mathbf n_M = 0$; otherwise interior critical points come
   from damped tangent-space Newton, batched over the $U_P$ points of a
-  Fibonacci lattice, classified by the Hessian.
-- *Boundary.* $\partial U_P$ is walked: along the zero set of the active
+  Fibonacci lattice, classified by the Hessian. A converged point counts
+  only with every gate above `1e-10` (`location` `"interior"`): the smooth
+  extension of $D_P$ can have a critical point *on* $\partial U_P$ (the
+  A60-10 saddle, section 4), which is the walk's loop extremum there.
+- *Boundary.* The margins of $\partial U_P$ are the gates of
+  `optics.validity_margin_names`, the test of `path_domain_batch`: entry
+  and exit incidence cosines and Snell discriminants and each internal
+  reflection's incidence cosine. An internal TIR discriminant is a
+  diagnostic of the margin vector, never walked, cut at or listed at a
+  corner: a partial reflection keeps the pose in $U_P$ with weight $R_k$
+  (task `dp-field-partial-reflection-boundaries`, 2026-09-25; before it the
+  walk ended $U_P$ at every internal critical angle). Every consumer that
+  holds the whole margin vector — the walk, `location`, the slab-circle
+  test, the certificate's ring, the focusing labels, the contour walker
+  and the quadrature's margin check — selects the gates through one index
+  list (`optics.validity_margin_indices`, kernel
+  `dp_field.field.validity_margin_vector`); the in-kernel test is
+  `path_domain_batch` re-expressed for `jax.jit`, kept equal by reading that
+  one list. $\partial U_P$ is walked: along the zero set of the active
   margin with $U_P$ on the left, a corner wherever another margin turns
   negative (bisection, then a two-margin Newton, residual `<= 2.3e-16`),
   continuing along the one margin through the corner that keeps the
@@ -197,7 +216,11 @@ sequence, independent of the sun:
   a whole piece (a square, such as `exit_snell_discriminant` $=$
   `entry_incidence_cosine`$^2$ on `3-5-6-7-3`) is recorded as coincident.
   A corner lists every margin vanishing there; the two it is bounded by;
-  the others as tangent or transversal to them.
+  the others as tangent or transversal to them. Where a third gate vanishes
+  at a corner and the two-margin Newton leaves it at `-2e-16` (the exit
+  Snell discriminant at the `3-4-5-7` / `3-5-6-7` corners), the corner is
+  nudged onto its closed side, as the corrector does on a piece, so that
+  $D_P$ is finite there.
 - *Partition.* Critical values are the interior ones, the extrema of $D_P$
   along the loop, and the corner values. On each interval the number of
   open arcs is half the number of crossings of $\delta$ along the loop
@@ -213,7 +236,9 @@ sequence, independent of the sun:
   as sub/superlevel regions touching no boundary, arcs as crossings along
   the traced grid boundary moved onto $\partial U_P$ by bisection (node
   values alone fail: $D_P$ falls like a square root off an exit-TIR curve).
-  All intervals of the five fixtures agree; the measured values are in the
+  All intervals of the five fixtures and of the A60-10 members `3-5-6-7`,
+  `3-4-5-7` agree (`--lattice-n 50000` for `3-5-6-7`, whose $U_P$ has a neck
+  the default 20000-point lattice splits); the measured values are in the
   appendix.
 
 ### 3.2 Layered invariance: what a halo shares and what varies
@@ -312,9 +337,19 @@ Fixtures the structure suggests:
   shape-independent. The narrow brighter peak at 152–158° is Liljequist
   proper, `3-5-6-7-3` (the A0-02 parallel family, same $\Phi$ as `1-3-2`): a
   slab with no fold, whose window changes with the cross-section.
-  *Measured (task `dp-field-layer`):* $\{0°, 115.607°\}$ for `1-3-2`,
-  $\{0°, 153.070°, 180°\}$ for `3-5-6-7-3` (normal incidence on face 3
-  is inside, the backscatter cone point). Neither has 142°, correctly.
+  *Measured (task `dp-field-layer`, TIR-only internal reflections):*
+  $\{0°, 115.607°\}$ for `1-3-2`, $\{0°, 153.070°, 180°\}$ for
+  `3-5-6-7-3` (normal incidence on face 3 is inside, the backscatter cone
+  point). *Re-measured with partial internal reflections (task
+  `dp-field-partial-reflection-boundaries`):* $\{0°, 180°\}$ for `1-3-2`
+  and $\{0°, 98.161°, 180°\}$ for `3-5-6-7-3` — the 115.6° and 153.07°
+  values were maxima of $D_P$ along internal-TIR arcs, which no longer bound
+  $U_P$; near 153° only the TIR onset inside $R_k$ remains (the chapter-10
+  reading is task `ch10-liljequist-unblock-and-docs`). Neither has 142°,
+  correctly. Each A60-10 member is now a certified disk: loop extrema
+  50.063° (corners) and 141.839300° on the grazing piece of face 6 / face 4
+  (the saddle above, of the smooth extension, on $\partial U_P$), maximum
+  163.465°; intervals $(2,0,2)$ then $(1,0,1)$, grid-checked.
   **This repository cannot see A60-10 at all.** Each of its members needs one
   partial internal reflection (face 5 at 30° incidence, $R \approx 2.2\,\%$
   at the saddle). The internal-reflection gate of `optics.path_domain` and
@@ -337,8 +372,9 @@ Fixtures the structure suggests:
   it (half maximum 153.0–158.8° at $h/a = 0.2$, 150.7–157.05° at 2).
 - *Parhelic circle*: $D_P(\mathbf u) = \angle(M\mathbf u, \mathbf u)$ has
   $\nabla D_P = 0$ only at $\pm\mathbf n_M$ (on `3-1-6` both lie on the entry
-  great circle but outside the closure of $U_P$, an internal TIR fails
-  there: no interior critical point at all), so the ring has **no fold**;
+  great circle; with partial reflection one is on $\partial U_P$, where the
+  ring reaches the anthelion, $D = 180°$, the other behind the basal face:
+  no interior critical point at all), so the ring has **no fold**;
   its brightness along the ring is entirely the window layer. For plates
   the ring azimuth is linear in the crystal azimuth, so the profile is a sum
   of shifted copies of one window (three mirror planes of the prism): a test
@@ -964,8 +1000,11 @@ needs street-lamp halos (backlog).
   collapse off the density's confined dimensions (random 0, column / plate
   1, Parry / Lowitz 2); rank 0 is `point_mass`. On `3-5`, `1-3-2`,
   `3-5-6-7-3`, `3-1-6`, `1-3-5-2` no critical value focuses: the mirror slabs
-  have $|\nabla D_P| = 2$ exactly, the rotation slab `1-3-5-2` keeps its fold
-  circle ($D = 120°$) outside $U_P$. Across the parhelic circle of `1-3-2`
+  have $|\nabla D_P| = 2$ exactly. The rotation slab `1-3-5-2` did too while
+  internal reflections had to be total; with partial ones its fold circle
+  ($D = 120°$) is the entry arc of $\partial U_P$, a one-sided curve of
+  maxima: Jacobian focusing at 120°, $1/\sqrt{\ }$ (task
+  `dp-field-partial-reflection-boundaries`). Across the parhelic circle of `1-3-2`
   under plates, halving $\sigma$ doubles the peak at a fixed cross integral:
   dimension collapse. Tests: `tests/test_focusing.py`.
 - **Non-uniform $\rho$.** $\psi(\mathbf u,\alpha)$ is single-valued, so $\rho$
@@ -1784,7 +1823,51 @@ $R = 2.2316\,\%$). Store schema 4.
   and the `1-3-5-2` focusing slab are strict xfails until task
   `dp-field-partial-reflection-boundaries`): the rotation slab's $D = 120°$
   fold circle, outside $U_P$ before, now lies inside it through a partial
-  reflection (lattice $|\nabla D_P|$ down to `1.7e-4`). Phase I reads its
+  reflection (lattice $|\nabla D_P|$ down to `1.7e-4`). *Done there:* the
+  circle is the entry arc of $\partial U_P$, not inside (next block). Phase I reads its
   domain from `optics.path_domain` and so already continues across an
   internal critical angle; its cross-validation is task
   `phase1-partial-reflection-domain`.
+
+**$D_P$ field layer under partial internal reflection (2026-09-25, task
+`dp-field-partial-reflection-boundaries`).** The walk, `location`, the slab
+set, the certificate and the contour walker take the gates of
+`optics.validity_margin_names` only (section 3.1); refractive index `1.31`,
+canonical prism, lattice `N = 20000` unless noted.
+
+| path | pieces of $\partial U_P$ | interior / slab set | critical values (deg) | intervals `(n, closed, open)` |
+|---|---|---|---|---|
+| `3-5`, `1-3` | unchanged (no internal reflection) | unchanged | unchanged | unchanged |
+| `3-1-6` | entry, `internal_1_incidence_cosine` (two great circles, a lune) | `-n_M` on $\partial U_P$ ($D = 180$), `+n_M` outside | 0, 180 (was 0, 115.607259) | `(1,0,1)` |
+| `1-3-2` | as `3-1-6` | `+n_M` on $\partial U_P$, `-n_M` outside | 0, 180 (was 0, 115.607259) | `(1,0,1)` |
+| `3-5-6-7-3` | entry ×2, `internal_1/2_incidence_cosine` (marched) | `+n_M`, cone maximum `180` | 0, 98.160700, 180 (was 0, 153.069685, 180) | `(2,0,2)`, `(1,1,0)` |
+| `3-4-5-7` | entry, `internal_1_incidence_cosine` | none | 50.062620, 141.839300, 163.465157 | `(2,0,2)`, `(1,0,1)` |
+| `3-5-6-7` (`N = 50000`) | `internal_2_incidence_cosine`, `exit_snell_discriminant` | none | 50.062620, 141.839300, 163.465157 | `(2,0,2)`, `(1,0,1)` |
+| `1-3-5-2` | entry, `internal_1/2_incidence_cosine` (a triangle) | fold circle = the entry arc, $D = 120$ | 0, 120 | `(1,0,1)` |
+
+- *Checks.* Every interval of the seven certified paths equals the
+  independent grid (`scripts/verify_dp_field_intervals.py`, `1201²`); every
+  lattice edge point within `1.5` spacings of the walked loop now on all
+  five fixtures (the three strict xfails are gone). The `3-4-5-7` /
+  `3-5-6-7` corners $(0, -0.48857, \pm 0.87253)$ are triple points of the
+  entry and one internal incidence cosine with the exit Snell discriminant.
+  The 141.8393° saddle of the smooth extension (Hessian `[-5.06, 0.96]`) sits
+  on the grazing piece (gate `1e-16`); counted as interior it made both
+  members escape, it is the loop maximum. `3-5-6-7` on the 20000-point
+  lattice is two components (a neck), one on 50000, 200000 and the grid.
+- *Labels.* `1-3-5-2`: `slab_circle` on the boundary, `inverse_sqrt_divergence`,
+  Jacobian focusing (random: `jacobian`; plate: `jacobian+dimension_collapse`),
+  lattice $|\nabla D_P|$ in `[1.7e-4, 1.73]`; before, the circle missed the
+  closure. The mirror slabs keep $|\nabla D_P| = 2$ and no focusing.
+- *Contour quadrature vs band sum on an internal partial reflection* (the
+  AC4 comparison of task `s2-contour-quadrature`): `3-4-5-7`, random
+  orientation, `61 × 31` pixels, fov 110° around the antisolar point
+  (deviations ~125–163°, across the 141.84° break), band sum on a schema-4
+  store $N = 10^7$, contour quadrature `--band-nodes 2` at `1e-6`: over 1854
+  lit pixels $z = \mathrm{rel}\sqrt{K_\mathrm{eff}}$ has mean `0.015`, std
+  `0.14`, max $|z|$ `1.28`, none above 4; sum ratio `1.00019`; 92 s on 4
+  workers.
+- *Left for task `ch10-liljequist-unblock-and-docs`.* `ch10_verdicts.liljequist`
+  looks for the `3-5-6-7-3` boundary critical value in 150–160°, which no
+  longer exists (strict xfail on its cusp test); what remains near 153° is
+  the TIR onset inside $R_k$.
