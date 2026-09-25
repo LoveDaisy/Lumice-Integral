@@ -641,6 +641,12 @@ def path_problem(
         )
         margins = {name: check.margins[name] for name in event_margin_names if name in check.margins}
         if check.valid:
+            # validity_margin_names(faces) always includes both names (unconditional,
+            # not filtered by faces); check.valid means path_domain ran the gate to
+            # completion, so both are in check.margins too. Asserted rather than left
+            # implicit: a future validity_margin_names change that dropped one would
+            # otherwise surface as a KeyError one line down, away from the real cause.
+            assert set(SNELL_MARGIN_NAMES) <= set(margins), (margins.keys(), SNELL_MARGIN_NAMES)
             name = min(SNELL_MARGIN_NAMES, key=lambda key: margins[key])
             if margins[name] <= SNELL_EVENT_TOLERANCE:
                 return DomainEvaluation(
