@@ -72,7 +72,8 @@ uv run python scripts/regress_band_sum.py --stage scatter --band-dir artifacts/b
 uv run python scripts/regress_band_sum.py --stage scatter --random-n 10000000 --workers 4 --output /tmp/regression_scatter_windows.json
 
 # D_P field layer (lumice_integral.dp_field): interval partition of the five fixtures against an
-# independent dense grid through evaluate_fields (~45 s standalone, ~2 min as the slow test in test_dp_field_certificate.py, M2 Max)
+# independent dense grid through evaluate_fields (~45 s standalone; the slow test in test_dp_field_certificate.py adds the
+# A60-10 members, ~1.5 min, M2 Max; 3-5-6-7 needs --path 3 5 6 7 --lattice-n 50000, its U_P has a neck)
 uv run python scripts/verify_dp_field_intervals.py --grid 1201
 # certified level-set extraction (lumice_integral.contour): a strip's worth of deltas, first call and steady state
 # (3-5, 801 deltas: 11 s first call, 6 s steady on an M2 Max, one process)
