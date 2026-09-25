@@ -202,15 +202,22 @@ class ResampledPredictors:
 
     ``body_velocities`` are ``vee(P^T dP/dt)`` of the normalised spline curve
     (the predictor's velocity in right-trivialized coordinates) and
-    ``phase_tangents`` their unit vectors: the direction the retraction keeps
-    its correction orthogonal to, and the reference the fiber tangent is
-    oriented along.
+    ``phase_tangents`` their unit vectors ``nu``: the direction the retraction
+    keeps its correction orthogonal to, and the reference the fiber tangent is
+    oriented along.  ``phase_tangent_rates`` are ``d nu / dt``, analytic from
+    the spline's second derivative; the phase condition ``nu . delta = 0``
+    differentiates to ``nu . delta' = -nu' . delta``, which the arclength
+    speed of the quadrature needs (:func:`.quadrature._parametric_speed`).
+    The spline is only C^1, so ``nu'`` jumps at the knots; at a parameter
+    that is exactly a knot the segment to its right is used (the last knot:
+    the segment to its left), as for the first derivative.
     """
 
     parameters: np.ndarray
     rotations: np.ndarray
     body_velocities: np.ndarray
     phase_tangents: np.ndarray
+    phase_tangent_rates: np.ndarray
     closed: bool
     total: float
 
@@ -299,8 +306,8 @@ def fiber_spline(result: TraceLike) -> FiberSpline:
     return FiberSpline(closed, knots, quaternions, derivatives)
 
 
-def evaluate_spline(spline: FiberSpline, parameters: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Unnormalised quaternion curve and its ``t`` derivative at ``parameters``."""
+def _hermite_segments(spline: FiberSpline, parameters: np.ndarray):
+    """Local coordinate ``u``, width and the four Hermite coefficients of the segment of each parameter."""
     t = np.asarray(parameters, dtype=np.float64)
     if np.any(t < 0.0) or np.any(t > spline.total):
         raise ValueError("spline parameters must lie in [0, total]")
@@ -308,30 +315,56 @@ def evaluate_spline(spline: FiberSpline, parameters: np.ndarray) -> tuple[np.nda
     left, right = spline.knots[segment], spline.knots[segment + 1]
     width = right - left
     u = (t - left) / width
+    q_left, q_right = spline.quaternions[segment], spline.quaternions[segment + 1]
+    m_left = width[:, None] * spline.derivatives[segment]
+    m_right = width[:, None] * spline.derivatives[segment + 1]
+    return u, width, (q_left, m_left, q_right, m_right)
+
+
+def _combine(basis: tuple[np.ndarray, ...], coefficients: tuple[np.ndarray, ...]) -> np.ndarray:
+    return sum(b[:, None] * c for b, c in zip(basis, coefficients))
+
+
+def evaluate_spline(spline: FiberSpline, parameters: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Unnormalised quaternion curve and its ``t`` derivative at ``parameters``."""
+    u, width, coefficients = _hermite_segments(spline, parameters)
     u2, u3 = u * u, u * u * u
     h00, h10 = 2.0 * u3 - 3.0 * u2 + 1.0, u3 - 2.0 * u2 + u
     h01, h11 = -2.0 * u3 + 3.0 * u2, u3 - u2
     d00, d10 = 6.0 * u2 - 6.0 * u, 3.0 * u2 - 4.0 * u + 1.0
     d01, d11 = -6.0 * u2 + 6.0 * u, 3.0 * u2 - 2.0 * u
-    q_left, q_right = spline.quaternions[segment], spline.quaternions[segment + 1]
-    m_left = width[:, None] * spline.derivatives[segment]
-    m_right = width[:, None] * spline.derivatives[segment + 1]
-    position = (
-        h00[:, None] * q_left + h10[:, None] * m_left + h01[:, None] * q_right + h11[:, None] * m_right
-    )
-    derivative = (
-        d00[:, None] * q_left + d10[:, None] * m_left + d01[:, None] * q_right + d11[:, None] * m_right
-    ) / width[:, None]
+    position = _combine((h00, h10, h01, h11), coefficients)
+    derivative = _combine((d00, d10, d01, d11), coefficients) / width[:, None]
     return position, derivative
 
 
-@jax.jit
-def _rotation_and_body_velocity_kernel(quaternions: jnp.ndarray, derivatives: jnp.ndarray):
-    def one(quaternion, derivative):
-        rotation, rotation_rate = jax.jvp(rotation_from_quaternion, (quaternion,), (derivative,))
-        return rotation, vee(rotation.T @ rotation_rate)
+def _spline_second_derivative(spline: FiberSpline, parameters: np.ndarray) -> np.ndarray:
+    """``d^2 q / dt^2`` of the unnormalised quaternion curve (piecewise linear in ``t``)."""
+    u, width, coefficients = _hermite_segments(spline, parameters)
+    s00, s10 = 12.0 * u - 6.0, 6.0 * u - 4.0
+    s01, s11 = 6.0 - 12.0 * u, 6.0 * u - 2.0
+    return _combine((s00, s10, s01, s11), coefficients) / (width * width)[:, None]
 
-    return jax.vmap(one)(quaternions, derivatives)
+
+def _rotation_and_body_velocity(quaternion: jnp.ndarray, derivative: jnp.ndarray):
+    """``(P, vee(P^T dP/dt))`` of the normalised quaternion curve at one point."""
+    rotation, rotation_rate = jax.jvp(rotation_from_quaternion, (quaternion,), (derivative,))
+    return rotation, vee(rotation.T @ rotation_rate)
+
+
+@jax.jit
+def _rotation_and_body_velocity_kernel(
+    quaternions: jnp.ndarray, derivatives: jnp.ndarray, second_derivatives: jnp.ndarray
+):
+    """``P``, the body velocity ``w`` and its ``t`` derivative ``w'`` (forward over forward)."""
+
+    def one(quaternion, derivative, second_derivative):
+        (rotation, velocity), (_, velocity_rate) = jax.jvp(
+            _rotation_and_body_velocity, (quaternion, derivative), (derivative, second_derivative)
+        )
+        return rotation, velocity, velocity_rate
+
+    return jax.vmap(one)(quaternions, derivatives, second_derivatives)
 
 
 def resample_fiber(result: TraceLike, node_count: int) -> ResampledPredictors:
@@ -350,19 +383,26 @@ def resample_spline(spline: FiberSpline, parameters: np.ndarray) -> ResampledPre
     """Predictor poses, body velocities and phase tangents at ``parameters``."""
     parameters = np.asarray(parameters, dtype=np.float64)
     quaternions, derivatives = evaluate_spline(spline, parameters)
-    rotations, velocities = _rotation_and_body_velocity_kernel(
-        jnp.asarray(quaternions), jnp.asarray(derivatives)
+    second_derivatives = _spline_second_derivative(spline, parameters)
+    rotations, velocities, velocity_rates = _rotation_and_body_velocity_kernel(
+        jnp.asarray(quaternions), jnp.asarray(derivatives), jnp.asarray(second_derivatives)
     )
     rotations = np.asarray(rotations, dtype=np.float64)
     velocities = np.asarray(velocities, dtype=np.float64)
+    velocity_rates = np.asarray(velocity_rates, dtype=np.float64)
     speeds = np.linalg.norm(velocities, axis=1)
     if not np.all(speeds > 0.0):
         raise ValueError("predictor curve has a stationary point; cannot define a phase tangent")
+    phase_tangents = velocities / speeds[:, None]
+    # d(w / |w|) = (w' - nu (nu . w')) / |w|: the part of w' normal to nu.
+    radial = np.sum(phase_tangents * velocity_rates, axis=1)
+    phase_tangent_rates = (velocity_rates - phase_tangents * radial[:, None]) / speeds[:, None]
     return ResampledPredictors(
         parameters=parameters,
         rotations=rotations,
         body_velocities=velocities,
-        phase_tangents=velocities / speeds[:, None],
+        phase_tangents=phase_tangents,
+        phase_tangent_rates=phase_tangent_rates,
         closed=spline.closed,
         total=spline.total,
     )

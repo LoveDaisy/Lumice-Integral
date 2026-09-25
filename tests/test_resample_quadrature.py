@@ -418,6 +418,25 @@ def test_deviation_from_the_reference_shrinks_with_the_grid(canonical):
     assert deviations[1] < 1e-4 and deviations[3] < 1e-5
 
 
+def test_converged_canonical_value_matches_the_adaptive_reference_within_1e_8(canonical):
+    """Driven to ``rtol = 1e-9`` the resampled grid meets the retired adaptive integrator.
+
+    The two share the trace but not the parametrisation or the speed (the adaptive
+    one retracted every node on its own and differentiated no phase condition), and
+    the reference's own estimate is ~2.5e-9 relative.  Before the ``-nu' . delta``
+    term of ``_parametric_speed`` (task phase1-quadrature-start-and-speed) the
+    converged value sat 5.0e-6 low: an ``O(delta)`` bias no grid refinement removes.
+    After it: 1.6e-11.
+    """
+    problem, result = canonical
+    reference = ADAPTIVE_REFERENCE["canonical (150,150)"]
+    quadrature = integrate_fiber_resampled(
+        problem, result, ResampleOptions(relative_tolerance=1e-9, maximum_node_count=262145)
+    )
+    assert not quadrature.node_count_exhausted
+    assert abs(quadrature.value - reference) / reference < 1e-8
+
+
 @pytest.mark.parametrize("initial_step", [0.03, 0.08])
 def test_canonical_pixel_integral_is_invariant_under_initial_step(canonical, initial_step):
     problem, _ = canonical

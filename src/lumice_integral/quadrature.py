@@ -26,10 +26,15 @@ with ``nu`` the predictor's unit body velocity as phase tangent
 (:func:`.continuation.retract_to_fiber_batch`), and the arclength speed
 ``ds/dt = |gamma^{-1} gamma'|`` follows from the implicit function theorem:
 
-    lambda tau - dexp_delta(delta') = exp(delta)^T vee(P^T P'),   nu . delta' = 0,
+    lambda tau - dexp_delta(delta') = exp(delta)^T vee(P^T P'),   nu . delta' = -nu' . delta,
 
 a 4x4 linear system in ``(lambda, delta')`` (:func:`_parametric_speed`) whose
-``dexp`` is taken from ``jax.jacfwd`` of :func:`.so3.exp`.  Composite Simpson
+``dexp`` is taken from ``jax.jacfwd`` of :func:`.so3.exp` and whose ``nu'`` is
+analytic from the spline (:attr:`.resample.ResampledPredictors.phase_tangent_rates`).
+The ``-nu' . delta`` term matters although ``delta`` is small: ``delta`` is set
+by the fixed spline predictor, not by the grid, so dropping it biased ``ds/dt``
+by ``O(delta)`` at every node count (canonical pixel ~5.6e-6 low against the
+Phase II contour quadrature; task phase1-quadrature-start-and-speed).  Composite Simpson
 is applied to ``g(t) = f(gamma(t)) lambda(t)`` on the grid, so the sum is an
 exact parametrisation of the ``dH^1_g`` integral up to the quadrature error;
 the error estimate compares the grid with its every-other-node subset and the
@@ -126,17 +131,19 @@ def pointwise_integrand(result: FiberResult, *, epsilon: float) -> np.ndarray:
 
 
 def _parametric_speed(
-    tangent: Array, predictor_velocity: Array, phase_tangent: Array, delta: Array
+    tangent: Array, predictor_velocity: Array, phase_tangent: Array, phase_tangent_rate: Array, delta: Array
 ) -> Array:
     """``ds/dt`` of ``gamma(t) = P(t) exp(delta(t))`` at one point.
 
     ``P`` is a predictor curve with body velocity ``predictor_velocity``
     (``vee(P^T dP/dt)``), ``delta`` the retraction offset kept orthogonal to
-    ``phase_tangent``, and ``tangent`` the unit fiber tangent at ``gamma``
-    (oriented along ``phase_tangent``).  Differentiating
-    ``gamma^{-1} gamma' = lambda tangent`` gives the 4x4 linear system
+    ``phase_tangent`` (whose ``t`` derivative is ``phase_tangent_rate``), and
+    ``tangent`` the unit fiber tangent at ``gamma`` (oriented along
+    ``phase_tangent``).  Differentiating ``gamma^{-1} gamma' = lambda tangent``
+    and ``phase_tangent . delta = 0`` gives the 4x4 linear system
     ``lambda tangent - dexp_delta(delta') = exp(delta)^T predictor_velocity``,
-    ``phase_tangent . delta' = 0`` in ``(lambda, delta')``; returns ``lambda``.
+    ``phase_tangent . delta' = -phase_tangent_rate . delta`` in
+    ``(lambda, delta')``; returns ``lambda``.
     On a geodesic fiber (the analytic circle) ``delta = 0`` and ``lambda`` is
     the predictor's own speed.
     """
@@ -150,7 +157,7 @@ def _parametric_speed(
     system = system.at[:3, 1:].set(-dexp)
     system = system.at[3, 1:].set(phase_tangent)
     right_hand_side = jnp.concatenate(
-        (rotation.T @ predictor_velocity, jnp.zeros(1, dtype=delta.dtype))
+        (rotation.T @ predictor_velocity, -jnp.dot(phase_tangent_rate, delta)[None])
     )
     return jnp.linalg.solve(system, right_hand_side)[0]
 
@@ -343,6 +350,7 @@ def _evaluate_grid_nodes(
             jnp.asarray(retraction.tangents),
             jnp.asarray(predictors.body_velocities),
             jnp.asarray(predictors.phase_tangents),
+            jnp.asarray(predictors.phase_tangent_rates),
             jnp.asarray(retraction.deltas),
         ),
         dtype=np.float64,
