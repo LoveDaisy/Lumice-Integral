@@ -751,7 +751,8 @@ def parhelic_circle(options: ParhelicCircleOptions = ParhelicCircleOptions()) ->
         f"(to {elevation_error:.1e} rad) and its ring azimuth moves at d theta / d phi = 2 (range {slope_range[0]:.9f}-{slope_range[1]:.9f}). "
         f"The elevation-integrated ring brightness from the contour quadrature under plates equals the window-only prediction "
         f"sum w / (2 pi x 2) to {worst['max_abs_relative_residual']:.1e} (max over {worst['compared_thetas']} ring azimuths at "
-        f"sigma = {worst['plate_zenith_std_deg']} deg), shrinking as sigma^{order:.2f}; within {options.jump_exclusion_sigmas:g} sigma "
+        f"sigma = {worst['plate_zenith_std_deg']} deg), shrinking as sigma^{'?' if order is None else f'{order:.2f}'}; "
+        f"within {options.jump_exclusion_sigmas:g} sigma "
         f"of a jump of the window (the TIR-only gate, ring azimuth {', '.join(f'{t:.2f}' for t in jumps_deg if t <= 180.0)} deg) the "
         "ring is that jump smoothed by the plate width and is not compared. The six prism members' windows are one function shifted by 60 deg "
         f"(max difference {max(shifts.values()):.1e}), so under uniform plate azimuth every member draws the same ring."
@@ -886,7 +887,7 @@ def parallel_face(options: ParallelFaceOptions = ParallelFaceOptions()) -> Verdi
         "collapse_demo": {"path": "1-3-2", "theta_deg": options.demo_theta_deg, "widths": demo},
     }
     parameters = {
-        "crystal": {"type": "hexagonal_prism", "height_ratio_table": 2.0, "height_ratio_demo": options.height_ratio},
+        "crystal": {"type": "hexagonal_prism", "height_ratio_table": CANONICAL_HEIGHT_RATIO, "height_ratio_demo": options.height_ratio},
         "refractive_index": index,
         "options": dataclasses.asdict(options),
     }

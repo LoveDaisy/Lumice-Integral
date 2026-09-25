@@ -10,7 +10,7 @@ import pytest
 
 from lumice_integral import ch10_verdicts as V
 from lumice_integral import contour_quadrature as cq
-from lumice_integral.canonical_scene import CANONICAL_REFRACTIVE_INDEX, canonical_crystal
+from lumice_integral.canonical_scene import CANONICAL_HEIGHT_RATIO, CANONICAL_REFRACTIVE_INDEX, canonical_crystal
 from lumice_integral.camera import sun_direction
 from lumice_integral.dp_field import DPField
 from lumice_integral.figure_data import VERDICT_SCHEMA_VERSION, export_verdict_figure_data
@@ -152,6 +152,54 @@ def test_verdict_figure_data_round_trip(tmp_path) -> None:
         assert set(arrays.files) == {"a", "b"}
     with pytest.raises(ValueError, match="without a note"):
         export_verdict_figure_data(V.Verdict("bad", "measured", "", {}, {}, {"c": np.zeros(1)}, {}), tmp_path / "bad")
+
+
+@pytest.fixture(scope="module")
+def parallel_face() -> V.Verdict:
+    return V.parallel_face(V.ParallelFaceOptions(
+        paths=((3, 5), (1, 3, 2)),
+        families=(("random", {}), ("column", {"zenith_std_deg": 0.5})),
+        demo_widths_deg=(0.5, 0.25),
+        cross_nodes=24,
+        seed_store_n=50_000,
+    ))
+
+
+def test_parallel_face_table_has_no_jacobian_focusing_on_these_fixtures(parallel_face) -> None:
+    """3-5 (finite jump) and 1-3-2 (wedge-0 slab) never focus by Jacobian; only rho confines a dimension."""
+    n = parallel_face.numbers
+    table = n["table"]
+    assert len(table) == 4  # 2 paths x 2 families
+    by_path_family = {(row["path"], row["family"]): row["mechanism"] for row in table}
+    assert by_path_family == {
+        ("3-5", "random"): "none",
+        ("3-5", "column"): "dimension_collapse",
+        ("1-3-2", "random"): "none",
+        ("1-3-2", "column"): "dimension_collapse",
+    }
+    assert n["paths_with_jacobian_focusing"] == []
+    assert n["mechanisms"] == sorted(list(m) for m in (
+        ("1-3-2", "column", "dimension_collapse"), ("1-3-2", "random", "none"),
+        ("3-5", "column", "dimension_collapse"), ("3-5", "random", "none")))
+
+
+def test_parallel_face_collapse_demo_narrows_the_peak_at_fixed_integral(parallel_face) -> None:
+    """1-3-2 under plates: halving sigma roughly doubles the peak while the cross integral stays fixed."""
+    demo = parallel_face.numbers["collapse_demo"]["widths"]
+    wide, narrow = demo
+    assert wide["plate_zenith_std_deg"] > narrow["plate_zenith_std_deg"]
+    gain = narrow["peak_value"] / wide["peak_value"]
+    assert gain > 1.0
+    narrowing = wide["plate_zenith_std_deg"] / narrow["plate_zenith_std_deg"]
+    assert gain == pytest.approx(narrowing, rel=0.1)
+    assert narrow["cross_integral"] == pytest.approx(wide["cross_integral"], rel=1e-2)
+    # random orientation at the same pixels stays smooth (no collapse signature)
+    assert max(narrow["random_value_range"]) < 0.05 * narrow["peak_value"]
+
+
+def test_parallel_face_provenance_reuses_the_canonical_height_ratio(parallel_face) -> None:
+    """The table's crystal is canonical_crystal(); its provenance must not fork a second literal (a56)."""
+    assert parallel_face.parameters["crystal"]["height_ratio_table"] == CANONICAL_HEIGHT_RATIO
 
 
 def test_ring_direction_refuses_a_zenith_sun() -> None:
