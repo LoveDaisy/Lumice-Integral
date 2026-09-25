@@ -24,7 +24,7 @@ Queue (tasks in `scratchpad/tasks.md`; dispatched 20 ∥ 21, then 22 ∥ 24, 23 
 | 22 | `band-sum-scatter-renderer`: band sum organised by deviation, class accumulation, GEMM tiles ([phase2.md](phase2.md) §8) — **done 2026-09-24** (canonical strip `30.8 s`, was `169 s`) | 21 |
 | 23 | `lumice-area-weighting-recheck`: absolute scale after Lumice's projected-area fix — **done 2026-09-24** (`K_p = N_sym ȳ Ω_p / (S/2)`, column strip `0.998`, plate / Parry families) | Ice Halo #597 merged |
 | 24 | scrum `phase2-contour-quadrature` (M2): `dp-field-topology` → `dp-field-layer` → `s2-contour-extraction` → `s2-contour-quadrature` → `phase1-seeds-from-store` → `ch10-numerical-verdicts` — `dp-field-layer` **done 2026-09-24** (`lumice_integral.dp_field`, [phase2.md](phase2.md) §3.1); `s2-contour-extraction` **done 2026-09-24** (`lumice_integral.contour`, [phase2.md](phase2.md) §4); `s2-contour-quadrature` **done 2026-09-25** (`lumice_integral.contour_quadrature`, [phase2.md](phase2.md) §4); `phase1-seeds-from-store` **done 2026-09-25** (`s2_store.StoreSeeds`, `discovery.check_band_coverage`; `prescan` deleted; [phase1.md](phase1.md) §5); `ch10-numerical-verdicts` **done 2026-09-25** (`lumice_integral.ch10_verdicts`, `lumice_integral.focusing`, [phase2.md](phase2.md) §10; Liljequist (i), the A60-10 142° edge, blocked on internal partial reflection) | 21 |
-| 25 | scrum `internal-partial-reflection`: `optics-partial-reflection` → `phase1-partial-reflection-domain` → `dp-field-partial-reflection-boundaries` → `contour-fallback-seed-scaling` → `ch10-liljequist-unblock-and-docs` — `optics-partial-reflection` **done 2026-09-25** (internal reflections split by Fresnel $R$, store schema 4, A60-10 against Lumice, §9); `phase1-partial-reflection-domain` **done 2026-09-25** (continuation event margins without internal TIR, Snell event tolerance; `3-5-6-7` / `3-5-6-7-3` against the band sum, [phase1.md](phase1.md) §5, §9) | 24 |
+| 25 | scrum `internal-partial-reflection`: `optics-partial-reflection` → `phase1-partial-reflection-domain` → `dp-field-partial-reflection-boundaries` → `contour-fallback-seed-scaling` → `ch10-liljequist-unblock-and-docs` — `optics-partial-reflection` **done 2026-09-25** (internal reflections split by Fresnel $R$, store schema 4, A60-10 against Lumice, §9); `phase1-partial-reflection-domain` **done 2026-09-25** (continuation event margins without internal TIR, Snell event tolerance; `3-5-6-7` / `3-5-6-7-3` against the band sum, [phase1.md](phase1.md) §5, §9); `contour-fallback-seed-scaling` **done 2026-09-25** (boundary seeds on a square coincident margin, 801 deviations per call certified, §9) | 24 |
 
 Deferred: the chapter-11 table (path classes × pose families) after 22 and
 M2; divergent light ([phase2.md](phase2.md) §9, backlog); finite solar disk;
@@ -550,3 +550,19 @@ Moved to [overview.md](overview.md) §3.
   unchanged byte for byte (column `126`); `3-5-6-7` and `3-5-6-7-3` are
   complete and within `1/sqrt(K_eff)` of the band sum on all `26` lit sweep
   pixels, `11` of the `3-5-6-7-3` loops crossing an internal critical angle.
+- **2026-09-25**: `contour.extract_level_sets` takes a whole column of
+  deviations in one call (task `contour-fallback-seed-scaling`). The chunking
+  the chapter-10 verdicts needed on `1-3-2` (entry above: "found, not
+  changed") was not a fallback budget and not a `D = 0` fold, as the backlog
+  guessed: along the entry piece of `1-3-2` / `3-1-6` the exit Snell
+  discriminant is the entry cosine squared, so a boundary seed pulled `1e-8`
+  inside sits at `1e-16` on it, below the walker's `INSIDE_MARGIN_FLOOR =
+  1e-15`, and every deviation lost its boundary seed and went to the
+  fallback seeds (32 per round, 6 rounds). The pull-in targets are now
+  `(1e-14, 1e-8, 1e-7)`, each tried only for the seeds still outside, so
+  every seed that already worked is unchanged. The ladder has an upper bound
+  too: a `1e-6` target put both seeds of the `~1e-6` deep arc at
+  $\delta = \pi - 10^{-6}$ on its apex and broke the certificate. The fallback
+  budget is unchanged: `1-3-2`, `3-1-6`, `3-5-6-7-3` and the A60-10 members
+  certify 801 deviations per call with no fallback round (4–7 s each, slow
+  test), and `render_contour_quadrature` renders a full `1-3-2` column.
