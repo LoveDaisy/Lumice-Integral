@@ -36,13 +36,7 @@ repository; ``scripts/ch10_numerical_verdicts.py`` is the command line.
     ``~ 1 / sigma`` at a fixed integral) on a parallel-face (wedge 0,
     ``M != I``) class.
 
-``eps`` is ``delta - D_min`` in radians throughout.  Level sets are
-extracted :data:`LEVEL_SET_CHUNK` deviations per :func:`.contour.extract_level_sets`
-call: on ``1-3-2`` the critical-data seeds find no component and every
-deviation relies on the fallback seeds, whose extra rounds are capped per call
-(``EXTRA_SEEDS_PER_ROUND x MAX_EXTRA_ROUNDS = 192``; a single call with
-~180 deviations there raises), a limitation of :mod:`.contour` recorded in
-the backlog, not changed here.
+``eps`` is ``delta - D_min`` in radians throughout.
 
 Nothing here imports or calls Lumice.
 """
@@ -68,7 +62,6 @@ from .pose_density import build_pose_density
 from .s2_store import S2EventStore, align_rotations, build_event_store, evaluate_fields, event_rotations, fibonacci_sphere
 
 VERDICTS = ("inner-edge", "liljequist", "parhelic-circle", "parallel-face")
-LEVEL_SET_CHUNK = 64
 # The store only seeds the extraction's independent check (contour module docstring); the tests' size.
 SEED_STORE_N = 200_000
 LATTICE_N = 200_000
@@ -122,11 +115,8 @@ def seed_store(crystal: HexPrism, index: float, faces: Sequence[int], n: int = S
 def level_set_geometry(
     field: DPField, deltas: np.ndarray, store: S2EventStore, options: cq.QuadratureOptions
 ) -> cq.LevelSetGeometry:
-    """Stage one of the quadrature for ``deltas`` (level sets extracted :data:`LEVEL_SET_CHUNK` at a time)."""
-    deltas = np.asarray(deltas, dtype=np.float64)
-    level_sets: tuple = ()
-    for first in range(0, len(deltas), LEVEL_SET_CHUNK):
-        level_sets += extract_level_sets(field, deltas[first:first + LEVEL_SET_CHUNK], store)
+    """Stage one of the quadrature for ``deltas``."""
+    level_sets = extract_level_sets(field, np.asarray(deltas, dtype=np.float64), store)
     return cq.LevelSetGeometry.build(field, level_sets, options)
 
 
