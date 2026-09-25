@@ -507,8 +507,9 @@ Validation (measured record: appendix, "Contour quadrature"):
   set by the fixed predictor spline, so the arclength speed is biased by
   $O(|\boldsymbol\delta|)$ at every grid size (the canonical fiber: $\int\lambda\,dt$
   converges to `2.3806253`, the sum of geodesic distances between the
-  retracted poses to `2.3806315`). With the term restored (a diagnostic in
-  the script; production Phase I unchanged, follow-up in the backlog) Phase I
+  retracted poses to `2.3806315`). With the term restored (first a diagnostic
+  in the script; production since task `phase1-quadrature-start-and-speed`,
+  with $\boldsymbol\nu'$ analytic, [phase1.md](phase1.md) §4) Phase I
   agrees with the contour value to `4.3e-9` or better on all ten pixels,
   below Phase I's own discretisation at 65537 nodes.
 - *Against Phase I, whole image.* The canonical 251 x 801 point render and

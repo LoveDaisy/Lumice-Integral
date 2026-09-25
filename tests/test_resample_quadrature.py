@@ -7,6 +7,7 @@ is self-consistency, not proof (task-resample-and-integrate plan D2 / a02).
 
 from __future__ import annotations
 
+import dataclasses
 import time
 
 import jax.numpy as jnp
@@ -96,10 +97,11 @@ def canonical():
 
 # The seeds the adaptive references were recorded from: discovery on ``REFERENCE_CRYSTAL`` with the retired
 # 400k-sample prescan (exponential coordinates, recomputed with that code on 2026-09-25).  Frozen because the
-# quadrature's value and error estimate depend on where the trace starts on the loop: from the seed-store seeds
-# (task phase1-seeds-from-store) row 100 lands 2.45e-6 from its reference, inside ALIGNMENT_RTOL but 1.33x its
-# own error estimate -- the estimate is not conservative against every start point (the speed bias of
-# ``quadrature._parametric_speed``, docs/roadmap.md section 9, 2026-09-25, is one known cause).
+# quadrature's value depends on where the trace starts on the loop (the grid phase against the ``entry_measure``
+# kinks, up to ~1e-4 relative at the default tolerance): from the seed-store seeds (task phase1-seeds-from-store)
+# row 100 landed 2.45e-6 from its reference, 1.33x the global ``|I_N - I_(N+1)/2|`` estimate of that date.  The
+# panel-wise estimate (task phase1-quadrature-start-and-speed) bounds every start point checked; the seeds stay
+# frozen so the pinned node counts and values do not move with the seed store.
 STRIP_PIXEL_SEEDS = {
     100: (-1.506657821759383, 0.3966428317572424, 0.0890374620046359),
     300: (-1.2178814168477645, 0.9704917826539213, 0.014459273801443785),
@@ -400,7 +402,8 @@ def test_default_options_align_with_the_adaptive_reference_within_1e_4(canonical
         assert deviation <= ALIGNMENT_RTOL, (name, deviation, quadrature.node_count)
         # The internal estimate must not be optimistic against the external reference.
         assert deviation <= quadrature.error_estimate / reference + 1e-12, (name, deviation)
-        assert 129 <= quadrature.node_count <= 513, (name, quadrature.node_count)
+        # 129-1025 with the panel-wise estimate (row 300 needs 1025; 129-513 with the global one it replaced).
+        assert 129 <= quadrature.node_count <= 1025, (name, quadrature.node_count)
 
 
 def test_deviation_from_the_reference_shrinks_with_the_grid(canonical):
@@ -416,6 +419,54 @@ def test_deviation_from_the_reference_shrinks_with_the_grid(canonical):
     # Order ~2 at the entry_measure slope jumps (Step 5 evidence: 7e-5, 3e-5, 1e-5, 3e-6).
     assert deviations[0] > deviations[1] > deviations[2] > deviations[3]
     assert deviations[1] < 1e-4 and deviations[3] < 1e-5
+
+
+def test_converged_canonical_value_matches_the_adaptive_reference_within_1e_8(canonical):
+    """Driven to ``rtol = 1e-9`` the resampled grid meets the retired adaptive integrator.
+
+    The two share the trace but not the parametrisation or the speed (the adaptive
+    one retracted every node on its own and differentiated no phase condition), and
+    the reference's own estimate is ~2.5e-9 relative.  Before the ``-nu' . delta``
+    term of ``_parametric_speed`` (task phase1-quadrature-start-and-speed) the
+    converged value sat 5.0e-6 low: an ``O(delta)`` bias no grid refinement removes.
+    After it: 1.6e-11.
+    """
+    problem, result = canonical
+    reference = ADAPTIVE_REFERENCE["canonical (150,150)"]
+    quadrature = integrate_fiber_resampled(
+        problem, result, ResampleOptions(relative_tolerance=1e-9, maximum_node_count=262145)
+    )
+    assert not quadrature.node_count_exhausted
+    assert abs(quadrature.value - reference) / reference < 1e-8
+
+
+def _with_origin_at_knot(result, knot: int):
+    """The same closed trace with its parameter origin moved to accepted pose ``knot`` (no re-trace)."""
+    distinct = len(result.poses) - 1
+    poses = np.roll(np.asarray(result.poses[:distinct]), -knot, axis=0)
+    tangents = np.roll(np.asarray(result.tangents[:distinct]), -knot, axis=0)
+    return dataclasses.replace(
+        result,
+        poses=np.concatenate((poses, poses[:1])),
+        tangents=np.concatenate((tangents, tangents[:1])),
+        arclength_increments=np.roll(np.asarray(result.arclength_increments), -knot),
+    )
+
+
+def test_error_estimate_is_conservative_at_every_grid_origin(canonical):
+    """Moving the grid origin along the same loop moves the grid over the ``entry_measure`` kinks.
+
+    Only the grid phase changes (same spline segments), yet the value moves by up to ~6e-5
+    relative: the start-point dependence of task phase1-quadrature-start-and-speed.  The
+    global ``|I_N - I_(N+1)/2|`` it replaced was optimistic against the reference on some
+    origins (the 16-start probe: up to 5x); the panel-wise estimate must bound every one.
+    """
+    problem, result = canonical
+    reference = ADAPTIVE_REFERENCE["canonical (150,150)"]
+    for knot in range(0, len(result.poses) - 1, 4):
+        quadrature = integrate_fiber_resampled(problem, _with_origin_at_knot(result, knot))
+        assert not quadrature.node_count_exhausted, knot
+        assert abs(quadrature.value - reference) <= quadrature.error_estimate, knot
 
 
 @pytest.mark.parametrize("initial_step", [0.03, 0.08])

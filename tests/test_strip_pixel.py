@@ -53,7 +53,12 @@ from lumice_integral.strip_pixel import (
 # seed now comes from the S^2 store instead of the Haar prescan; the same loop
 # (61 poses, 257 nodes) resampled from another seed moves by 8e-6 relative,
 # inside the quadrature's own error estimate (1.2e-4).
-CANONICAL_PIXEL_RESAMPLED_VALUE = 6.581365570
+# 6.581365570 -> 6.581510519 (task phase1-quadrature-start-and-speed, 2026-09-25):
+# the arclength speed gains its -nu' . delta term and the error estimate is taken
+# panel by panel, which refines this loop to 513 nodes (was 257).  The value driven
+# to rtol = 1e-9 at the same epsilon is 6.581453685: the old pin was 8.8e-5 below it
+# (estimate 1.2e-4), the new one is 5.7e-5 above it (estimate 3.3e-4).
+CANONICAL_PIXEL_RESAMPLED_VALUE = 6.581510519
 # tests/test_discovery.py baselines.
 CANONICAL_ARCLENGTH = 2.379121
 ROW_225_ARCLENGTH = 3.121867
@@ -153,9 +158,10 @@ def test_canonical_pixel_single_component_reproduces_the_fixture_value(canonical
     assert np.isnan(component.start_truncation_estimate) and np.isnan(component.end_truncation_estimate)
     assert canonical.value == component.value
     assert canonical.value == pytest.approx(CANONICAL_PIXEL_RESAMPLED_VALUE, abs=5e-9)
-    assert component.node_count == 257 and component.refinement_rounds == 1
+    # 513 / 2 since the panel-wise error estimate (257 / 1 before; task phase1-quadrature-start-and-speed).
+    assert component.node_count == 513 and component.refinement_rounds == 2
     assert not component.node_count_exhausted and component.non_finite_node_count == 0
-    # |I_257 - I_129| / I at rtol 1e-4: a conservative estimate (order ~2 grid),
+    # sum over panels |S_h - S_2h| / I at rtol 1e-4: a conservative estimate (order ~2 grid),
     # not the 1e-9 of the retired adaptive integrator.
     assert canonical.error_estimate < 1e-4 * canonical.value
     assert set(canonical.events) == set(EVENT_NAMES)

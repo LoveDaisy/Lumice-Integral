@@ -9,17 +9,20 @@ of column 126) this reports
   :func:`.discovery.discover_components` integrated by
   :func:`.quadrature.integrate_fiber_resampled` with ``eps = 1e-12`` (the
   ``eps -> 0`` limit Phase II computes) and ``rtol = 1e-9``;
-- the same Phase I grid with the arclength speed differentiated in full:
-  ``quadrature._parametric_speed`` imposes ``nu . delta' = 0`` for the
-  retraction offset ``delta`` kept orthogonal to the predictor's unit body
-  velocity ``nu(t)``; the derivative of ``nu . delta = 0`` is ``nu . delta' =
-  -nu' . delta``.  ``delta`` (~6e-6 on the canonical loop) is set by the fixed
-  predictor spline and does not shrink with the grid, so the dropped term
-  biases ``ds/dt`` by ``O(delta)`` at every node count.  The corrected speed
-  (``nu'`` by a central difference of the spline) is evaluated at 4097,
-  16385 and 65537 nodes, and the last two are Richardson-extrapolated at
-  order 2 (the slope jumps of ``entry_measure``).  It is a diagnostic here;
-  production Phase I is unchanged.
+- the same Phase I grid with ``nu'`` taken by a central difference of the
+  spline instead of analytically.  The derivative of the phase condition
+  ``nu . delta = 0`` is ``nu . delta' = -nu' . delta``; until task
+  phase1-quadrature-start-and-speed production dropped the right-hand side,
+  an ``O(delta)`` speed bias no grid removes (``delta`` ~6e-6 on the canonical
+  loop is set by the fixed predictor spline), and this column was the
+  diagnostic that exposed it.  Production now uses the analytic ``nu'``
+  (:attr:`.resample.ResampledPredictors.phase_tangent_rates`); this column
+  keeps a second, finite-difference source of ``nu'`` feeding the *same*
+  speed kernel (``quadrature._parametric_speed``, one implementation of the
+  linear system), evaluated at 4097, 16385 and 65537 nodes with the last two
+  Richardson-extrapolated at order 2 (the slope jumps of ``entry_measure``).
+  With the fix, ``relative_difference_production`` and
+  ``relative_difference_corrected`` agree to the quadrature error.
 
 Usage::
 
@@ -52,7 +55,6 @@ from lumice_integral.dp_field import DPField  # noqa: E402
 from lumice_integral.resample import fiber_spline, resample_spline, uniform_parameters  # noqa: E402
 from lumice_integral.pose_density import build_pose_density  # noqa: E402
 from lumice_integral.s2_store import build_event_store  # noqa: E402
-from lumice_integral.so3 import exp, vee  # noqa: E402
 from lumice_integral.strip_pixel import PixelOptions, canonical_strip_scene, pixel_target  # noqa: E402
 
 DEFAULT_PIXELS = ((150, 150), (150, 126), (300, 126), (450, 126), (600, 126))
@@ -62,21 +64,8 @@ CORRECTED_NODE_COUNTS = (4097, 16385, 65537)
 NU_DIFFERENCE_STEP = 1e-5
 
 
-def _speed(tangent, velocity, nu, nu_prime, delta):
-    """``quadrature._parametric_speed`` with the last row ``nu . delta' = -nu' . delta``."""
-    rotation = exp(delta)
-    body = jnp.einsum("ji,jlk->ilk", rotation, jax.jacfwd(exp)(delta))
-    dexp = jnp.stack([vee(body[:, :, k]) for k in range(3)], axis=1)
-    system = jnp.zeros((4, 4), dtype=delta.dtype).at[:3, 0].set(tangent).at[:3, 1:].set(-dexp).at[3, 1:].set(nu)
-    rhs = jnp.concatenate((rotation.T @ velocity, -jnp.dot(nu_prime, delta)[None]))
-    return jnp.linalg.solve(system, rhs)[0]
-
-
-_speed_batch = jax.jit(jax.vmap(_speed))
-
-
 def corrected_phase1(problem, result) -> dict:
-    """Phase I integral with the full-derivative speed on uniform grids (module docstring)."""
+    """Phase I integral with a finite-difference ``nu'`` on uniform grids (module docstring)."""
     spline = fiber_spline(result)
     values = []
     for n in CORRECTED_NODE_COUNTS:
@@ -88,8 +77,9 @@ def corrected_phase1(problem, result) -> dict:
         lo = np.clip(parameters - NU_DIFFERENCE_STEP, 0.0, spline.total)
         hi = np.clip(parameters + NU_DIFFERENCE_STEP, 0.0, spline.total)
         nu_prime = (resample_spline(spline, hi).phase_tangents - resample_spline(spline, lo).phase_tangents) / (hi - lo)[:, None]
-        speed = np.asarray(_speed_batch(jnp.asarray(retraction.tangents), jnp.asarray(predictors.body_velocities),
-                                        jnp.asarray(predictors.phase_tangents), jnp.asarray(nu_prime), jnp.asarray(retraction.deltas)))
+        speed = np.asarray(Q._parametric_speed_batch_kernel(
+            jnp.asarray(retraction.tangents), jnp.asarray(predictors.body_velocities),
+            jnp.asarray(predictors.phase_tangents), jnp.asarray(nu_prime), jnp.asarray(retraction.deltas)))
         spacing = spline.total / (n - 1)
         values.append(Q._composite_simpson(np.where(grid.finite, grid.integrand * speed, 0.0), spacing) * Q.HAAR_TO_DVOL_G_FACTOR)
     return {

@@ -476,3 +476,28 @@ Moved to [overview.md](overview.md) §3.
   $W = I$ ($W$ the unfolded wedge refraction, `docs/conventions.md` row 13).
   Found, not changed: `contour.extract_level_sets` needs chunking on paths
   whose critical-data seeds are empty (`1-3-2`); backlog.
+- **2026-09-25**: Phase I's resampled quadrature is fixed against the Phase
+  II ruler (task `phase1-quadrature-start-and-speed`; [phase1.md](phase1.md)
+  §4 "The quadrature's own errors", appendix "Quadrature start point and
+  speed"). Two defects, two root causes. (1) The arclength speed now solves
+  $\boldsymbol\nu\cdot\boldsymbol\delta' = -\boldsymbol\nu'\cdot\boldsymbol\delta$
+  with $\boldsymbol\nu'$ analytic
+  (`resample.ResampledPredictors.phase_tangent_rates`, forward-over-forward
+  AD on the spline's second derivative): Phase I meets Phase II to `2.6e-9`
+  on seven pixels (was `5.6e-6`), and the retired adaptive integrator's
+  frozen references to `5e-9`. (2) The start-point dependence was not the
+  speed: the same trace with only its grid origin moved reproduces it. The
+  integrand's `entry_measure` kinks give phase-dependent Simpson errors that
+  the global $|I_N - I_{N/2}|$ let cancel; the estimate is now
+  $\sum|S_h - S_{2h}|$ over panels, conservative on every grid phase checked
+  and on all 106 lit pixels of column 126 (was optimistic on 4 at the
+  default tolerance, 69 at `rtol = 1e-7`). Grids get finer (median 257 →
+  513 nodes), the steady column cost does not move (`68.6` → `65.9 ms` per
+  pixel). `continuation.py` is unchanged. Re-pinned: the canonical strip
+  value `6.581365570` → `6.581510519` and its grid `257` → `513`, the `h/a
+  = 1` class member `2.364363781` → `2.364440640`,
+  the Phase I / Phase II agreement test `< 1e-8`. Not re-rendered:
+  `artifacts/strip-full` (values move by at most the old estimate, `~1e-4`
+  relative); the owner decides whether the image is re-rendered. Not done
+  (a cost optimisation, not a correctness issue): aligning the grid with the
+  kinks would restore order 4 and fewer nodes.

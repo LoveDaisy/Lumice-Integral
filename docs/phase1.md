@@ -107,8 +107,9 @@ means (a point value or a solid-angle average). The production pipeline
 - **dedup** by $\mathrm{SO}(3)$ distance of a new seed to the curves already
   traced;
 - **resampled fixed-grid quadrature**: spline resampling of the curve,
-  batched back-projection and batched factors, Simpson with $N$ vs $N/2$ as
-  the error estimate;
+  batched back-projection and batched factors, Simpson with $N$ vs $N/2$
+  compared panel by panel as the error estimate (section 4, "The
+  quadrature's own errors");
 - a per-pixel **procedural completeness** status layer, and the **point
   pixel model** (the sub-pixel model exists, costs 6-10×, and matters only
   in the caustic band near the 22° inner edge).
@@ -188,6 +189,25 @@ the fixed Lumice the factor is $K_p = N_{\mathrm{sym}}\,\bar y(550)\,
 pixel's solid angle, re-checked on the column strip (`0.998`) and on the
 plate and Parry families (total flux `0.9999` / `1.0001`) (task `lumice-area-weighting-recheck`,
 fixture specification section 7, stage 4).
+
+**The quadrature's own errors (2026-09-25, task
+`phase1-quadrature-start-and-speed`).** Phase II's contour quadrature, an
+independent chain, exposed two defects of the resampled quadrature that its
+self-consistency check could not see. (1) The arclength speed differentiated
+the phase condition $\boldsymbol\nu\cdot\boldsymbol\delta = 0$ as
+$\boldsymbol\nu\cdot\boldsymbol\delta' = 0$, dropping
+$\boldsymbol\nu'\cdot\boldsymbol\delta$; $\boldsymbol\delta$ is set by the
+fixed predictor spline, so no grid removed the bias (`5.6e-6` on the
+canonical pixel). $\boldsymbol\nu'$ now comes analytically from the spline's
+second derivative, and Phase I meets Phase II to `3e-9` where it stopped at
+`5.6e-6`. (2) The value moved with the trace's start point by up to `1.6e-4`
+while the $N$ vs $N/2$ estimate often claimed less. That was not the speed:
+the same trace with only its grid origin moved reproduced it. The integrand
+has a few `entry_measure` kinks, each kink's Simpson error changes size and
+sign with the grid phase, and the global $|I_N - I_{N/2}|$ let them cancel.
+The estimate is now summed panel by panel, $\sum|S_h - S_{2h}|$, which bounded
+the error at every grid phase checked, at 2-5× the old size; the grids get
+finer (median 257 → 513 nodes on column 126) at no measurable column cost.
 
 ## 5. Where Phase I stands
 
@@ -504,3 +524,45 @@ start-point dependence (same loop, `16` starts, `strip-full` inside the
 spread). Details and evidence: `docs/ch06-reference-fixture.md` section 7,
 stage 4.
 
+
+### Quadrature start point and speed (2026-09-25, task `phase1-quadrature-start-and-speed`)
+
+Ruler: the Phase II contour quadrature (`rtol = 1e-11`, estimates below
+`1.2e-10` relative); Phase I at $\varepsilon = 10^{-12}$ to match its
+$\varepsilon \to 0$ value. Evidence under the task's scratchpad (`probe/`,
+`data/`).
+
+- **Speed term.** Analytic $\boldsymbol\nu'$ against a central difference:
+  relative difference `9e-6` at step `1e-3`, falling as $h^2$ to a `~5e-10`
+  floor at `3e-6`. Production Phase I at `rtol = 1e-9` against Phase II on
+  seven pixels (canonical, rows 150/300/450/600 and the caustic rows 58/63
+  of column 126): `|rel| <= 2.6e-9` (canonical was `-5.6e-6`). Against the
+  retired adaptive integrator's frozen `h/a = 1` references (rtol `1e-8`):
+  `<= 5e-9` on all four, was up to `5.0e-6`.
+- **Start point.** 16 re-traces along the loop, default options: the spread
+  did not change with the speed term (canonical `1.57e-4` relative, (63,126)
+  `8.4e-5`, (58,126) `7.6e-5`), and the same trace with only its grid origin
+  moved to 16 knots reproduced it (`5.8e-5` / `1.6e-5` / `8.1e-5`). Over 256
+  grid phases per node count (`N = 129 .. 1025`) on the three loops, the
+  global $|I_N - I_{N/2}|$ was optimistic on 2-37 % of phases (worst 58×),
+  the panel-wise $\sum|S_h - S_{2h}|$ on none (worst ratio `0.7`).
+- **Column 126** (rows 48-70 and every 8th row, 106 lit pixels, all
+  complete), before → after:
+  default options `|rel|` median `1.26e-5` → `6.3e-6`, max `6.0e-5` →
+  `5.9e-5`, estimate optimistic `4` → `0` pixels (worst 5.5× → 0.73×), node
+  count median `257` → `513` (max `1025` both, never exhausted);
+  `rtol = 1e-7`: median `1.8e-7` → `5.7e-9`, max `2.0e-5` → `5.8e-8`,
+  optimistic `69` → `0`.
+- **Cost.** `benchmarks/benchmark_column_steady_state.py --column 126 --rows
+  100:160` on an M2 Max: steady median `68.6 ms` → `65.9 ms` per pixel, 5
+  steady compilations both (the quadrature is a small share of a pixel).
+- **Re-pinned.** `tests/test_strip_pixel.py` canonical value `6.581365570` →
+  `6.581510519` (the same loop driven to `rtol = 1e-9` at $\varepsilon =
+  10^{-6}$: `6.581453685`), its grid `257` → `513` nodes (also in
+  `tests/test_figure_data.py`); `tests/test_path_class_ac2_symmetry.py` the
+  `h/a = 1` class member `2.364363781` → `2.364440640` (against the retired
+  adaptive `2.364423815`: `-2.5e-5` → `+7.1e-6`);
+  `tests/test_contour_quadrature.py` Phase I against Phase II from "between
+  `1e-6` and `1e-5`" to `< 1e-8` (measured `4.4e-11`).
+  `artifacts/strip-full` was not re-rendered: its values move by at most the
+  old estimate (`~1e-4` relative).

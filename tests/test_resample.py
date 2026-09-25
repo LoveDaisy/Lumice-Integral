@@ -108,6 +108,60 @@ def test_open_arc_keeps_both_end_samples_exactly(canonical):
     assert float(rotation_distance(predictors.rotations[-1], result.poses[-1])) < 1e-14
 
 
+def _central_difference_phase_tangent_rates(spline: FiberSpline, parameters: np.ndarray, step: float) -> np.ndarray:
+    ahead = resample_spline(spline, parameters + step).phase_tangents
+    behind = resample_spline(spline, parameters - step).phase_tangents
+    return (ahead - behind) / (2.0 * step)
+
+
+def _segment_interior_parameters(spline: FiberSpline) -> np.ndarray:
+    """Quarter, mid and three-quarter points of every segment (``nu'`` jumps at the knots)."""
+    widths = np.diff(spline.knots)
+    return np.concatenate([spline.knots[:-1] + fraction * widths for fraction in (0.25, 0.5, 0.75)])
+
+
+@pytest.mark.parametrize("maximum_accepted_steps", [None, 20])
+def test_phase_tangent_rates_match_central_differences(canonical, maximum_accepted_steps):
+    """Analytic ``nu'`` (second spline derivative, forward over forward AD) against a central difference.
+
+    Step scan on the canonical loop and a 20-step open arc (task
+    phase1-quadrature-start-and-speed, probe/nu_rate_fd_scan.py): the relative
+    difference falls as ``h^2`` (9e-6 at 1e-3, 8e-9 at 3e-5) to a ~5e-10 noise
+    floor at 3e-6, so 3e-5 is inside the truncation regime with 6x margin.
+    """
+    problem, closed = canonical
+    result = closed if maximum_accepted_steps is None else trace_fiber(
+        problem, ContinuationOptions(maximum_accepted_steps=maximum_accepted_steps)
+    )
+    spline = fiber_spline(result)
+    parameters = _segment_interior_parameters(spline)
+    analytic = resample_spline(spline, parameters).phase_tangent_rates
+    scale = np.abs(analytic).max()
+
+    assert scale > 1.0  # a curved fiber: nu really turns
+    assert np.abs(_central_difference_phase_tangent_rates(spline, parameters, 3e-5) - analytic).max() < 5e-8 * scale
+    # nu stays a unit vector, so nu' is orthogonal to it.
+    phase_tangents = resample_spline(spline, parameters).phase_tangents
+    assert np.abs(np.sum(phase_tangents * analytic, axis=1)).max() < 1e-12 * scale
+
+
+def test_phase_tangent_rates_match_central_differences_near_identity_and_half_turn():
+    """The quaternion chart has no branch: a spline through ``q ~ (1, 0, 0, 0)`` and ``q ~ (0, 1, 0, 0)``."""
+    rng = np.random.default_rng(7)
+    quaternions = np.array([[1.0, 1e-3, -2e-3, 5e-4], [0.7, 0.5, -0.3, 0.4], [1e-3, 1.0, 2e-3, -1e-3]])
+    quaternions /= np.linalg.norm(quaternions, axis=1)[:, None]
+    spline = FiberSpline(
+        closed=False,
+        knots=np.array([0.0, 0.8, 1.9]),
+        quaternions=quaternions,
+        derivatives=rng.normal(size=(3, 4)),
+    )
+    parameters = _segment_interior_parameters(spline)
+    analytic = resample_spline(spline, parameters).phase_tangent_rates
+    difference = _central_difference_phase_tangent_rates(spline, parameters, 3e-5) - analytic
+    assert np.abs(difference).max() < 5e-8 * np.abs(analytic).max()
+
+
 def test_spline_evaluation_rejects_parameters_outside_the_range(canonical):
     _, result = canonical
     spline = fiber_spline(result)

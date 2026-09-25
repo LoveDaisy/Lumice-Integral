@@ -84,8 +84,10 @@ def test_column_density_class_value_is_twelve_times_the_single_3_5_value(column_
     single = result.members[(3, 5)].value
     # The canonical pixel on this crystal from the seed-store seed; 2.364412980 from the retired prescan seed, the
     # same loop resampled from another start (2.1e-5 relative, inside the quadrature's 1e-4; task
-    # phase1-seeds-from-store).
-    assert single == pytest.approx(2.364363781, rel=1e-6)
+    # phase1-seeds-from-store).  2.364363781 -> 2.364440640 (task phase1-quadrature-start-and-speed): the speed's
+    # -nu' . delta term and the panel-wise error estimate (finer grid); against the retired adaptive integrator's
+    # 2.364423815 on this crystal the old pin was 2.5e-5 low, the new one is 7.1e-6 high.
+    assert single == pytest.approx(2.364440640, rel=1e-6)
     assert result.value == pytest.approx(12.0 * single, rel=MEMBER_RTOL)
     assert result.error_estimate <= 12.0 * max(member.error_estimate for member in result.members.values())
 

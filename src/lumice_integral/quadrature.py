@@ -26,15 +26,21 @@ with ``nu`` the predictor's unit body velocity as phase tangent
 (:func:`.continuation.retract_to_fiber_batch`), and the arclength speed
 ``ds/dt = |gamma^{-1} gamma'|`` follows from the implicit function theorem:
 
-    lambda tau - dexp_delta(delta') = exp(delta)^T vee(P^T P'),   nu . delta' = 0,
+    lambda tau - dexp_delta(delta') = exp(delta)^T vee(P^T P'),   nu . delta' = -nu' . delta,
 
 a 4x4 linear system in ``(lambda, delta')`` (:func:`_parametric_speed`) whose
-``dexp`` is taken from ``jax.jacfwd`` of :func:`.so3.exp`.  Composite Simpson
+``dexp`` is taken from ``jax.jacfwd`` of :func:`.so3.exp` and whose ``nu'`` is
+analytic from the spline (:attr:`.resample.ResampledPredictors.phase_tangent_rates`).
+The ``-nu' . delta`` term matters although ``delta`` is small: ``delta`` is set
+by the fixed spline predictor, not by the grid, so dropping it biased ``ds/dt``
+by ``O(delta)`` at every node count (canonical pixel ~5.6e-6 low against the
+Phase II contour quadrature; task phase1-quadrature-start-and-speed).  Composite Simpson
 is applied to ``g(t) = f(gamma(t)) lambda(t)`` on the grid, so the sum is an
 exact parametrisation of the ``dH^1_g`` integral up to the quadrature error;
-the error estimate compares the grid with its every-other-node subset and the
-node count doubles until the estimate meets the tolerance or a declared
-maximum.  ``t`` is never reported as arclength.
+the error estimate compares the grid with its every-other-node subset panel by
+panel (:func:`_simpson_error_estimate`) and the node count doubles until the
+estimate meets the tolerance or a declared maximum.  ``t`` is never reported
+as arclength.
 
 Everything here is host-side post-processing of a traced curve (a
 :class:`FiberResult`, or an :class:`.resample.OpenArc` stitched from a forward
@@ -126,17 +132,19 @@ def pointwise_integrand(result: FiberResult, *, epsilon: float) -> np.ndarray:
 
 
 def _parametric_speed(
-    tangent: Array, predictor_velocity: Array, phase_tangent: Array, delta: Array
+    tangent: Array, predictor_velocity: Array, phase_tangent: Array, phase_tangent_rate: Array, delta: Array
 ) -> Array:
     """``ds/dt`` of ``gamma(t) = P(t) exp(delta(t))`` at one point.
 
     ``P`` is a predictor curve with body velocity ``predictor_velocity``
     (``vee(P^T dP/dt)``), ``delta`` the retraction offset kept orthogonal to
-    ``phase_tangent``, and ``tangent`` the unit fiber tangent at ``gamma``
-    (oriented along ``phase_tangent``).  Differentiating
-    ``gamma^{-1} gamma' = lambda tangent`` gives the 4x4 linear system
+    ``phase_tangent`` (whose ``t`` derivative is ``phase_tangent_rate``), and
+    ``tangent`` the unit fiber tangent at ``gamma`` (oriented along
+    ``phase_tangent``).  Differentiating ``gamma^{-1} gamma' = lambda tangent``
+    and ``phase_tangent . delta = 0`` gives the 4x4 linear system
     ``lambda tangent - dexp_delta(delta') = exp(delta)^T predictor_velocity``,
-    ``phase_tangent . delta' = 0`` in ``(lambda, delta')``; returns ``lambda``.
+    ``phase_tangent . delta' = -phase_tangent_rate . delta`` in
+    ``(lambda, delta')``; returns ``lambda``.
     On a geodesic fiber (the analytic circle) ``delta = 0`` and ``lambda`` is
     the predictor's own speed.
     """
@@ -150,7 +158,7 @@ def _parametric_speed(
     system = system.at[:3, 1:].set(-dexp)
     system = system.at[3, 1:].set(phase_tangent)
     right_hand_side = jnp.concatenate(
-        (rotation.T @ predictor_velocity, jnp.zeros(1, dtype=delta.dtype))
+        (rotation.T @ predictor_velocity, -jnp.dot(phase_tangent_rate, delta)[None])
     )
     return jnp.linalg.solve(system, right_hand_side)[0]
 
@@ -167,8 +175,9 @@ RESAMPLED_QUADRATURE_METHOD = (
     "tangents at the knots); every grid node retracted onto the fiber by a fixed "
     "number of batched bordered Newton iterations; arclength speed ds/dt from "
     "the implicit function theorem at the retracted node; error estimate "
-    "|I_N - I_(N+1)/2| with the node count doubled (N -> 2N-1) until it meets the "
-    "relative tolerance or maximum_node_count"
+    "sum over 4h panels of |S_h - S_2h| (the panel-wise |I_N - I_(N+1)/2|) with the "
+    "node count doubled (N -> 2N-1) until it meets the relative tolerance or "
+    "maximum_node_count"
 )
 
 
@@ -183,7 +192,12 @@ class ResampleOptions:
 
     ``initial_node_count`` and every doubled count must be ``4k + 1`` so the
     Simpson rule applies at ``N`` and at the every-other-node subset
-    ``(N + 1) / 2`` that provides the error estimate.  Defaults from the
+    ``(N + 1) / 2`` that provides the error estimate.  ``__post_init__``
+    enforces ``initial_node_count = 4k + 1`` once, at construction, via
+    :func:`_is_simpson_doubling_count`; the ``N -> 2N-1`` doubling in
+    :func:`integrate_fiber_resampled` preserves it for every later grid, and
+    :func:`_simpson_error_estimate` relies on it holding without re-validating
+    it.  Defaults from the
     task-resample-and-integrate Step 5 evidence on the canonical pixel and
     rows 100/300/500 (col 126) of the ch06 strip: the slope jumps of
     ``entry_measure`` make the uniform grid converge at order ~2, so
@@ -191,7 +205,10 @@ class ResampleOptions:
     what keeps every fixture within 1e-4 of the rtol=1e-8 adaptive reference;
     ``1e-3`` stops at 129 nodes and misses that on the longer loops (1e-4 and
     2e-4).  Two Newton iterations take the spline predictor's ~1e-6 residual
-    to round-off (one leaves ~1e-11).
+    to round-off (one leaves ~1e-11).  Since the panel-wise error estimate
+    (task phase1-quadrature-start-and-speed) the same tolerance refines
+    further: 129-1025 nodes on those fixtures, median 513 on 106 lit pixels of
+    column 126, none exhausted at ``maximum_node_count``.
     """
 
     epsilon: float = 1e-6
@@ -343,6 +360,7 @@ def _evaluate_grid_nodes(
             jnp.asarray(retraction.tangents),
             jnp.asarray(predictors.body_velocities),
             jnp.asarray(predictors.phase_tangents),
+            jnp.asarray(predictors.phase_tangent_rates),
             jnp.asarray(retraction.deltas),
         ),
         dtype=np.float64,
@@ -361,6 +379,33 @@ def _evaluate_grid_nodes(
         np.asarray(parameters, dtype=np.float64), integrand, speed,
         retraction.residual_before, retraction.residual_after, finite, weights.seconds,
     )
+
+
+def _simpson_error_estimate(values: np.ndarray, spacing: float) -> float:
+    """``sum |S_h - S_2h|`` over the ``4h`` panels of a ``4k + 1`` node grid.
+
+    The global ``|I_N - I_(N+1)/2|`` lets the panels' errors cancel.  The
+    integrand is only piecewise smooth (``entry_measure`` slope jumps: 2 on the
+    canonical loop, 4 on the (63,126) caustic loop) and each kink's Simpson
+    error changes size and sign with where the grid happens to fall, i.e.
+    with the trace's start point.  Over every grid phase of three loops
+    (task phase1-quadrature-start-and-speed, probe/estimator_phase_scan.py) the
+    global difference was optimistic against the Phase II contour quadrature on
+    2-37 % of phases (up to 58x); the panel-wise sum never was (worst 0.7x),
+    at 2-5x the global value.
+
+    The ``N = 4k + 1`` requirement below is not a local invariant of this
+    function: it is enforced once, at the source, by
+    :meth:`ResampleOptions.__post_init__` (:func:`_is_simpson_doubling_count`)
+    on ``initial_node_count``, and preserved by the ``N -> 2N-1`` doubling in
+    :func:`integrate_fiber_resampled`. The assert here is a cheap internal
+    sanity check on that already-validated invariant, not the contract's point
+    of enforcement.
+    """
+    assert len(values) % 4 == 1 and len(values) >= 5
+    fine = spacing / 3.0 * (values[0:-1:2] + 4.0 * values[1::2] + values[2::2])
+    coarse = 2.0 * spacing / 3.0 * (values[0:-1:4] + 4.0 * values[2::4] + values[4::4])
+    return float(np.sum(np.abs(fine[0::2] + fine[1::2] - coarse)))
 
 
 def _composite_simpson(values: np.ndarray, spacing: float) -> float:
@@ -501,10 +546,10 @@ def integrate_fiber_resampled(
     onto the fiber in one batch (:func:`.continuation.retract_to_fiber_batch`),
     the four named factors and ``J_perp`` are evaluated in batch, and the
     composite Simpson sum of ``f * ds/dt`` over the parameter grid is compared
-    with the same sum over every other node.  Doubling reuses the previous
+    with the same sum over every other node, panel by panel.  Doubling reuses the previous
     grid as the even nodes of the next.  The only correctness evidence is the
     external alignment recorded in ``tests/test_resample_quadrature.py``; the
-    internal ``|I_N - I_(N+1)/2|`` estimate is self-consistency, not proof.
+    internal panel-wise ``|S_h - S_2h|`` estimate is self-consistency, not proof.
     """
     options = options or ResampleOptions()
     status = integrand_availability(problem)
@@ -526,7 +571,7 @@ def integrate_fiber_resampled(
         if not history:
             history.append(((node_count + 1) // 2, coarse))
         history.append((node_count, fine))
-        error = abs(fine - coarse)
+        error = _simpson_error_estimate(grid.weighted, spacing)
         if error <= options.relative_tolerance * abs(fine):
             exhausted = False
             break

@@ -155,8 +155,9 @@ def test_figure_data_exports_the_quadrature_block_and_pointwise_integrand(tmp_pa
     assert block["epsilon"] == 1e-6
     assert block["haar_to_dvol_g_factor"] == 1.0 / (8.0 * np.pi**2)
     assert block["relative_tolerance"] == 1e-4
-    assert block["node_count"] == quadrature.node_count == 257
-    assert block["refinement_rounds"] == quadrature.refinement_rounds == 1
+    # 513 / 2 since the panel-wise error estimate (task phase1-quadrature-start-and-speed; 257 / 1 before).
+    assert block["node_count"] == quadrature.node_count == 513
+    assert block["refinement_rounds"] == quadrature.refinement_rounds == 2
     assert block["node_count_exhausted"] is False
     assert block["node_count_history"] == [[count, value] for count, value in quadrature.node_count_history]
     assert block["residual_after_max"] == quadrature.residual_after_max < 1e-14

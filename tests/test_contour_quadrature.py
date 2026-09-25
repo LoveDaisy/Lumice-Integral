@@ -168,12 +168,12 @@ def test_canonical_pixel_matches_dense_chord_rule(field, canonical) -> None:
 
 
 def test_canonical_pixel_against_phase1(canonical) -> None:
-    """Production Phase I (``eps = 1e-12``, ``rtol = 1e-9``) agrees to ``1e-5``, not better.
+    """Production Phase I (``eps = 1e-12``, ``rtol = 1e-9``) agrees to ``1e-8`` (measured 4.4e-11).
 
-    The remaining ``5.6e-6`` is Phase I's: its arclength speed drops the
-    ``nu' . delta`` term of the differentiated phase condition
-    (``quadrature._parametric_speed``), which ``scripts/compare_contour_quadrature_phase1.py``
-    restores (then ``<= 1e-7``); ``docs/phase2.md`` section 4.
+    Until task phase1-quadrature-start-and-speed the agreement stopped at
+    ``5.6e-6``: Phase I's arclength speed dropped the ``nu' . delta`` term of the
+    differentiated phase condition (``quadrature._parametric_speed``);
+    ``docs/phase2.md`` section 4.
     """
     sun, centre, _, geometry = canonical
     value = geometry.integrate(sun, [centre], canonical_pose_density())[0].value
@@ -182,7 +182,7 @@ def test_canonical_pixel_against_phase1(canonical) -> None:
         problem, trace_fiber(problem), ResampleOptions(epsilon=1e-12, relative_tolerance=1e-9, maximum_node_count=262145)
     )
     assert abs(phase1.error_estimate) < 1e-8 * value
-    assert 1e-6 < abs(phase1.value / value - 1.0) < 1e-5
+    assert abs(phase1.value / value - 1.0) < 1e-8
 
 
 def test_tighter_tolerance_stays_within_the_error_estimate(field, canonical) -> None:
