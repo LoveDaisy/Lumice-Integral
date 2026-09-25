@@ -64,7 +64,7 @@ def test_inner_edge_column_family_is_inverse_sqrt_between_its_cap_and_1e_2(inner
 def test_a60_10_is_reachable_once_internal_reflections_may_be_partial() -> None:
     """Liljequist (i): since task optics-partial-reflection the internal TIR discriminant gates nothing, so the
     A60-10 domain is exactly the set passing every other gate (it was empty while internal TIR was a gate; the
-    verdict itself is rerun by task ch10-liljequist-unblock-and-docs)."""
+    saddle on that domain is test_a60_10_saddle_is_120_plus_the_3_5_minimum_on_every_h_over_a)."""
     status = V.blocked_class_status(((3, 5, 6, 7), (3, 4, 5, 7)), INDEX, lattice_n=20000)
     for member in ("3-5-6-7", "3-4-5-7"):
         assert status[member]["valid_points"] == status[member]["points_passing_all_but_internal_tir"] > 500
@@ -83,29 +83,47 @@ def test_liljequist_paths_share_one_mirror_field_and_shape_free_critical_values(
         np.testing.assert_allclose(values[0], values[1], atol=1e-12)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "153.07 deg was the maximum of D_P on the internal-TIR arcs of dU_P; with partial internal reflections "
-        "those arcs are no gates (task dp-field-partial-reflection-boundaries) and the loop maximum is 98.16 deg, "
-        "so no critical value lies in (150, 160) deg -- here and in ch10_verdicts.liljequist.  What remains near "
-        "153 deg is the TIR onset inside the Fresnel weight: task ch10-liljequist-unblock-and-docs"
-    ),
-)
-def test_liljequist_peak_is_a_one_sided_sqrt_cusp_at_the_boundary_critical_value() -> None:
+def test_a60_10_saddle_is_120_plus_the_3_5_minimum_on_every_h_over_a() -> None:
+    """Liljequist (i) on the production chain: the middle critical value of both members, shape independent."""
+    a60_10 = V.a60_10_saddle(INDEX, (0.2, 2.0))
+    assert a60_10["saddle_deg"] == pytest.approx(V.A60_10_REFERENCE_DEG, abs=5e-6)
+    assert a60_10["spread_deg"] < 1e-6
+    assert set(a60_10["saddle_deg_per_member_and_h_over_a"]) == {"3-5-6-7", "3-4-5-7"}
+    assert abs(a60_10["saddle_minus_120_minus_d_min_3_5_deg"]) < 1e-5
+
+
+@pytest.fixture(scope="module")
+def long_path() -> tuple[DPField, object]:
     crystal = HexPrism.from_ratio(2.0)
-    field = DPField.build(crystal, (3, 5, 6, 7, 3), INDEX)
-    store = V.seed_store(crystal, INDEX, (3, 5, 6, 7, 3))
-    (critical,) = [v for v in field.critical_values if np.radians(150.0) < v < np.radians(160.0)]
-    assert np.degrees(critical) == pytest.approx(153.0697, abs=1e-4)
-    eps = np.array([1e-3, 1e-4, 1e-5])
-    options = cq.QuadratureOptions(relative_tolerance=1e-8)
-    _, above, _ = V._random_profile(field, critical + eps, store, options)
-    _, below, _ = V._random_profile(field, critical - eps, store, options)
-    gap = above[-1] - below
-    assert np.all(gap > 0.0)
-    assert np.polyfit(np.log(eps), np.log(gap), 1)[0] == pytest.approx(0.5, abs=0.05)
-    assert np.all(np.abs(np.diff(above)) / above[-1] < 1e-2)  # finite from above
+    return DPField.build(crystal, (3, 5, 6, 7, 3), INDEX), V.seed_store(crystal, INDEX, (3, 5, 6, 7, 3))
+
+
+def test_liljequist_peak_is_a_corner_at_the_internal_tir_onset(long_path) -> None:
+    """153.07 deg is no critical value of ``D_P`` any more but the largest ``D_P`` on the TIR onsets of ``R_k``:
+    the value is continuous there and the slope jumps from rising to falling (a corner maximum)."""
+    field, store = long_path
+    onsets = V.tir_onset_maximum(field, lattice_n=100_000)
+    found = [v for v in onsets.values() if v is not None]
+    assert len(found) == 3  # faces 5, 6, 7
+    for v in found:
+        assert v["delta_deg"] == pytest.approx(153.0697, abs=1e-4)
+        assert abs(v["constraint"]) < 1e-12 and v["min_gate_margin"] > 0.1 and v["lagrange_sine"] < 1e-6
+    corner = np.radians(max(v["delta_deg"] for v in found))
+    assert not cq.critical_delta(field, corner)
+    sided = V._one_sided(field, corner, np.array([1e-3, 1e-4, 1e-5]), store, cq.QuadratureOptions(relative_tolerance=1e-10))
+    assert sided["gap_exponent"] == pytest.approx(1.0, abs=0.1)  # continuous: the gap is the slopes times eps
+    assert sided["slope_below"][-1] > 0.02 and sided["slope_above"][-1] < -0.01
+    assert np.ptp(sided["slope_above"]) < 1e-3 * abs(sided["slope_above"][-1])  # smooth above
+
+
+def test_liljequist_boundary_critical_value_is_no_visible_edge(long_path) -> None:
+    """98.16 deg, the one boundary critical value inside (0, 180): grazing internal incidence, ``w -> 0``, continuous."""
+    field, store = long_path
+    (boundary,) = [v for v in field.critical_values if 1e-6 < v < np.pi - 1e-6]
+    assert np.degrees(boundary) == pytest.approx(98.1607, abs=1e-4)
+    sided = V._one_sided(field, boundary, np.array([1e-3, 1e-4, 1e-5]), store, cq.QuadratureOptions(relative_tolerance=1e-10))
+    assert sided["gap_relative_at_smallest_eps"] < 1e-3  # no jump
+    assert sided["gap_exponent"] > 0.9  # not the sqrt cusp of a bounded non-zero integrand
 
 
 def test_parhelic_circle_window_geometry() -> None:
