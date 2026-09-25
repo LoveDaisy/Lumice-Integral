@@ -508,7 +508,7 @@ Moved to [overview.md](overview.md) §3.
   the open question of the 142° entry above; scrum `internal-partial-reflection`,
   task `optics-partial-reflection`; [phase2.md](phase2.md) §1, §2 and appendix
   "Internal partial reflection"; [conventions.md](conventions.md) #18). The
-  path's power factor is $T_P = T_{	ext{entry}}\prod_k R_k\,T_{	ext{exit}}$,
+  path's power factor is $T_P = T_{\text{entry}}\prod_k R_k\,T_{\text{exit}}$,
   unpolarized per interface, $R_k = 1$ under TIR, as Lumice's `HitSurface` /
   `GetReflectRatio` (read at `2056f699`, not inferred); the internal TIR
   discriminant stays in `margins` as a diagnostic and gates nothing
