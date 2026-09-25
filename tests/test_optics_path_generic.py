@@ -4,9 +4,12 @@ The oracle side is ``tests/_geometry_oracles.py`` (closed-form normals, vector
 Snell ``refract`` and mirror ``reflect``; it shares no code with ``optics``).
 Three paths are checked pose by pose on Haar samples that pass the smooth
 domain: ``3-5`` (the pre-generalisation baseline), ``3-7`` (the other face
-pair of the same class) and ``3-1-2-5`` (two basal total internal reflections,
+pair of the same class) and ``3-1-2-5`` (two basal internal reflections,
 the ``M = I`` 60-deg wedge of the issue).  The event classification of
-``path_domain`` is checked on analytically constructed boundary poses.
+``path_domain`` is checked on analytically constructed boundary poses.  An
+internal reflection that is not total stays on the smooth branch (a weight,
+not an event); its reflectance is checked against Lumice's ``GetReflectRatio``
+form, written out here independently of ``optics``.
 """
 
 from __future__ import annotations
@@ -26,6 +29,7 @@ from lumice_integral.optics import (
     fresnel_transmission_3_5_batch,
     fresnel_transmission_path,
     fresnel_transmission_path_batch,
+    internal_reflectance,
     minimum_deviation_incident,
     normalize_faces,
     path_3_5,
@@ -38,6 +42,7 @@ from lumice_integral.optics import (
     path_id_of,
     path_problem,
     problem_path_label,
+    validity_margin_names,
 )
 from lumice_integral.so3 import haar_rotations
 
@@ -58,8 +63,6 @@ def oracle_direction(rotation: np.ndarray, faces: tuple[int, ...], incident: np.
         cosine = direction @ normal
         if cosine <= 0.0:
             raise ValueError("internal ray does not reach the face")
-        if INDEX * INDEX * (1.0 - cosine * cosine) <= 1.0:
-            raise ValueError("internal reflection is not total")
         direction = reflect(direction, normal)
     if direction @ normals[-1] <= 0.0:
         raise ValueError("back-face exit")
@@ -117,8 +120,9 @@ def test_3_1_2_5_and_3_5_map_to_the_same_direction_where_both_are_valid():
 
 
 def test_internal_reflection_events_are_classified_in_ray_order():
-    """A pose whose internal ray reaches face 1 but is not totally reflected there, and one whose
-    internal ray misses face 1 (goes to face 2 instead): each stops at its own margin."""
+    """A pose whose internal ray reaches face 1 but is not totally reflected there stays on the branch
+    (its TIR discriminant is a diagnostic margin, not a gate); one whose internal ray misses face 1
+    (goes to face 2 instead) stops at that face's incidence cosine."""
     faces = (3, 1, 2, 5)
     rotations = haar_rotations(20_000, np.random.default_rng(3))
     batch = path_domain_batch(rotations, faces, INCIDENT, INDEX)
@@ -127,12 +131,60 @@ def test_internal_reflection_events_are_classified_in_ray_order():
     not_total = entry_ok & (margins["internal_1_incidence_cosine"] > 0) & (margins["internal_1_tir_discriminant"] <= 0)
     misses = entry_ok & (margins["internal_1_incidence_cosine"] <= 0)
     assert not_total.any() and misses.any()
-    check = path_domain(rotations[np.flatnonzero(not_total)[0]], faces, INCIDENT, INDEX)
-    assert check.event_kind == "tir_boundary" and "reflection 1 at face 1" in check.message
-    assert "exit_incidence_cosine" not in check.margins
+    for index in np.flatnonzero(not_total)[:50]:
+        check = path_domain(rotations[index], faces, INCIDENT, INDEX)
+        assert check.valid == bool(batch.valid[index])
+        assert "internal_2_incidence_cosine" in check.margins
+        assert check.event_kind != "tir_boundary" or check.message.startswith("exit")
+    partial_valid = not_total & batch.valid
+    assert partial_valid.any()
+    check = path_domain(rotations[np.flatnonzero(partial_valid)[0]], faces, INCIDENT, INDEX)
+    assert check.valid and check.event_kind is None and check.margins["internal_1_tir_discriminant"] <= 0
     check = path_domain(rotations[np.flatnonzero(misses)[0]], faces, INCIDENT, INDEX)
     assert check.event_kind == "path_infeasible" and "face 1" in check.message
     assert "internal_1_tir_discriminant" in check.margins and "internal_2_incidence_cosine" not in check.margins
+
+
+def test_validity_margins_leave_out_only_the_internal_tir_discriminants():
+    for faces in PATHS + [(3, 5, 6, 7), (3, 4, 5, 7)]:
+        names = domain_margin_names(faces)
+        gates = validity_margin_names(faces)
+        assert set(names) - set(gates) == {f"internal_{k}_tir_discriminant" for k in range(1, len(faces) - 1)}
+        assert tuple(name for name in names if name in gates) == gates
+    assert validity_margin_names(PATH_3_5_FACES) == DOMAIN_MARGIN_NAMES
+
+
+def lumice_reflect_ratio(delta: float, rr: float) -> float:
+    """``lm_optics::GetReflectRatio`` (Ice Halo ``src/core/shared/optics_shared.h``), transcribed."""
+    d_sqrt = np.sqrt(delta)
+    r_s = ((rr - d_sqrt) / (rr + d_sqrt)) ** 2
+    r_p = ((1.0 - rr * d_sqrt) / (1.0 + rr * d_sqrt)) ** 2
+    return 0.5 * (r_s + r_p)
+
+
+def lumice_internal_reflectance(cos_theta: float, n: float) -> float:
+    """``HitSurface`` from inside (``cos_theta > 0`` so ``rr = n``), ``delta`` clamped at 0 as Lumice does."""
+    rr = n
+    delta = (1.0 - rr * rr) / (cos_theta * cos_theta) + rr * rr
+    return lumice_reflect_ratio(max(delta, 0.0), rr)
+
+
+def test_internal_reflectance_matches_lumice_at_known_angles():
+    # 30 deg internal incidence (the 142-deg parhelion's face-5 reflection at minimum deviation):
+    # R ~ 2.23 %; the critical angle and beyond give R = 1.
+    critical = np.degrees(np.arcsin(1.0 / INDEX))
+    for angle_deg in (0.0, 10.0, 30.0, 45.0, critical - 1e-6, critical + 1e-6, 60.0, 89.0):
+        cosine = np.cos(np.radians(angle_deg))
+        discriminant = INDEX**2 * (1.0 - cosine**2) - 1.0
+        expected = lumice_internal_reflectance(cosine, INDEX)
+        actual = float(internal_reflectance(INDEX, cosine, discriminant))
+        assert actual == pytest.approx(expected, rel=1e-12, abs=1e-15)
+    cosine = np.cos(np.radians(30.0))
+    assert float(internal_reflectance(INDEX, cosine, INDEX**2 * (1 - cosine**2) - 1)) == pytest.approx(0.02231, abs=5e-5)
+    assert float(internal_reflectance(INDEX, 0.3, INDEX**2 * (1 - 0.09) - 1)) == 1.0
+    # Continuous across the critical angle: R -> 1 from the partial side.
+    below = np.cos(np.radians(critical - 1e-7))
+    assert float(internal_reflectance(INDEX, below, INDEX**2 * (1 - below**2) - 1)) == pytest.approx(1.0, abs=1e-3)
 
 
 def test_the_3_5_wrappers_are_the_generic_functions_at_faces_3_5():
@@ -160,12 +212,23 @@ def test_the_3_5_wrappers_are_the_generic_functions_at_faces_3_5():
     )
 
 
-def test_fresnel_of_a_reflecting_path_only_counts_the_two_refracting_interfaces():
-    rotations = _valid_samples((3, 1, 2, 5), 50_000)[:50]
+def test_fresnel_of_a_reflecting_path_multiplies_every_internal_reflectance():
+    """``3-1-2-5`` at a pose = ``3-5`` at the same pose (same entry and exit cosines, M = I) times the two
+    basal reflectances, each recomputed from the oracle's own ray (Lumice's formula, not ``optics``)."""
+    rotations = _valid_samples((3, 1, 2, 5), 50_000)[:200]
     values = fresnel_transmission_path_batch(rotations, (3, 1, 2, 5), INCIDENT, INDEX)
     same_pose_3_5 = fresnel_transmission_path_batch(rotations, (3, 5), INCIDENT, INDEX)
-    # Same entry and exit incidence cosines at the same pose (M = I), so the products coincide.
-    np.testing.assert_allclose(values, same_pose_3_5, rtol=0.0, atol=1e-12)
+    partial_poses = 0
+    for rotation, value, base in zip(rotations, values, same_pose_3_5):
+        direction = refract(INCIDENT, rotation @ NORMALS[3], 1.0, INDEX)
+        reflectance = 1.0
+        for face in (1, 2):
+            normal = rotation @ NORMALS[face]
+            reflectance *= lumice_internal_reflectance(float(direction @ normal), INDEX)
+            direction = reflect(direction, normal)
+        partial_poses += reflectance < 1.0
+        assert value == pytest.approx(base * reflectance, rel=1e-12, abs=1e-15)
+    assert partial_poses > 0
     assert np.all((values > 0.0) & (values < 1.0))
     for rotation, value in zip(rotations[:10], values):
         assert fresnel_transmission_path(rotation, (3, 1, 2, 5), INCIDENT, INDEX) == pytest.approx(value, abs=1e-12)

@@ -2,9 +2,12 @@
 
 A ray path is a face sequence ``(entry, *internal_reflections, exit)``.  The
 smooth branch refracts in through the entry face, reflects off each internal
-face under total internal reflection (no partial transmission: the branch
-where an internal reflection stops being total is an event, not a weight),
-and refracts out through the exit face.  ``path_direction`` /
+face and refracts out through the exit face.  Every interface splits the
+power (Fresnel, unpolarized): the path keeps the transmitted part at entry
+and exit and the reflected part at each internal face, which is total
+(``R = 1``) under TIR and partial otherwise.  A partial internal reflection
+is a weight (:func:`fresnel_transmission_path`), not a domain boundary; only
+the entry/exit Snell discriminants are TIR boundaries.  ``path_direction`` /
 ``path_domain`` / ``path_domain_batch`` / ``fresnel_transmission_path`` /
 ``path_problem`` take the face sequence explicitly; the ``path_3_5*`` names
 are the same functions at ``faces == PATH_3_5_FACES`` (thin wrappers, not a
@@ -105,12 +108,15 @@ class Refraction(NamedTuple):
 
 
 class InternalReflection(NamedTuple):
-    """One internal face under total internal reflection.
+    """One internal face reflection (total or partial).
 
     ``incidence_cosine = d . N`` (``N`` the world outward normal, ``d`` the
     internal ray) must be positive for the ray to reach the face from inside;
-    ``tir_discriminant = n^2 (1 - cos^2) - 1`` must be positive for the
-    reflection to be total.
+    ``tir_discriminant = n^2 (1 - cos^2) - 1`` is positive where the
+    reflection is total.  It is a diagnostic and the input of the face's
+    reflectance, not a domain gate: where it is non-positive the reflection
+    is partial and ``cos_t = sqrt(-tir_discriminant)`` is the escaping ray's
+    cosine (:func:`internal_reflectance`).
     """
 
     direction: Array
@@ -151,7 +157,7 @@ def refract_smooth(
 def reflect_internal(
     direction: Array, outward_normal: Array, refractive_index: Array
 ) -> InternalReflection:
-    """Mirror ``direction`` off an internal face (caller-validated TIR branch)."""
+    """Mirror ``direction`` off an internal face (total or partial reflection alike)."""
     incidence_cosine = jnp.dot(outward_normal, direction)
     tir_discriminant = refractive_index**2 * (1.0 - incidence_cosine**2) - 1.0
     reflected = direction - 2.0 * incidence_cosine * outward_normal
@@ -208,13 +214,32 @@ def domain_margin_names(faces: Sequence[int]) -> tuple[str, ...]:
 
     ``entry_*`` (incidence cosine, Snell discriminant), then
     ``internal_{k}_*`` (incidence cosine, TIR discriminant) for the k-th
-    internal reflection, then ``exit_*``; every margin must be positive on
-    the smooth branch.  For ``PATH_3_5_FACES`` this is :data:`DOMAIN_MARGIN_NAMES`.
+    internal reflection, then ``exit_*``.  Which of them gate the smooth
+    branch is :func:`validity_margin_names`; the internal TIR discriminants
+    are diagnostics only.  For ``PATH_3_5_FACES`` this is :data:`DOMAIN_MARGIN_NAMES`.
     """
     faces = normalize_faces(faces)
     names: list[str] = ["entry_incidence_cosine", "entry_snell_discriminant"]
     for step in range(1, len(faces) - 1):
         names.extend(_internal_margin_names(step))
+    names.extend(("exit_incidence_cosine", "exit_snell_discriminant"))
+    return tuple(names)
+
+
+def validity_margin_names(faces: Sequence[int]) -> tuple[str, ...]:
+    """The margins of :func:`domain_margin_names` that must be positive on the smooth branch.
+
+    Listed explicitly rather than filtered by name: the entry incidence
+    cosine and Snell discriminant, each internal reflection's incidence
+    cosine (the ray reaches the face from inside), the exit incidence cosine
+    and Snell discriminant.  ``internal_{k}_tir_discriminant`` is left out:
+    a non-total internal reflection lowers the path's power
+    (:func:`fresnel_transmission_path`) but keeps the pose in the domain.
+    """
+    faces = normalize_faces(faces)
+    names: list[str] = ["entry_incidence_cosine", "entry_snell_discriminant"]
+    for step in range(1, len(faces) - 1):
+        names.append(_internal_margin_names(step)[0])
     names.extend(("exit_incidence_cosine", "exit_snell_discriminant"))
     return tuple(names)
 
@@ -227,14 +252,17 @@ def path_domain(
 ) -> PathDomainCheck:
     """Check the smooth branch of ``faces`` on the host before any square root is taken.
 
-    Gates in ray order, stopping at the first failure with the margins
-    evaluated so far: the entry incidence cosine and Snell discriminant, each
-    internal reflection's incidence cosine (``path_infeasible`` when the
-    internal ray does not reach the face) and TIR discriminant
-    (``tir_boundary`` when the reflection is not total), then the exit
-    incidence cosine and Snell discriminant.  Event kinds are the two
-    existing :class:`.continuation.TerminationReason` values; which face the
-    event belongs to is in the margin name and the message.
+    Gates in ray order (:func:`validity_margin_names`), stopping at the
+    first failure with the margins evaluated so far: the entry incidence
+    cosine and Snell discriminant, each internal reflection's incidence
+    cosine (``path_infeasible`` when the internal ray does not reach the
+    face), then the exit incidence cosine and Snell discriminant.  Each
+    internal reflection's TIR discriminant is recorded in ``margins`` as a
+    diagnostic but gates nothing: a partial reflection keeps the branch.  So
+    ``valid`` does not imply full power; the path's power factor is
+    :func:`fresnel_transmission_path`.  Event kinds are the two existing
+    :class:`.continuation.TerminationReason` values; which face the event
+    belongs to is in the margin name and the message.
     """
     faces = normalize_faces(faces)
     rotation_array = np.asarray(rotation, dtype=np.float64)
@@ -297,14 +325,6 @@ def path_domain(
                 "path_infeasible",
                 cosine,
                 f"internal ray does not reach face {face} from inside (reflection {step})",
-            )
-        if discriminant <= 0.0:
-            return PathDomainCheck(
-                False,
-                margins,
-                "tir_boundary",
-                discriminant,
-                f"internal reflection {step} at face {face} is not total",
             )
         direction = direction - 2.0 * cosine * normal
 
@@ -370,11 +390,12 @@ def path_domain_batch(
     incident_direction: Array,
     refractive_index: Array = ICE_REFRACTIVE_INDEX,
 ) -> BatchDomainCheck:
-    """Vectorised feasibility of ``faces``: ``valid`` iff every margin is positive.
+    """Vectorised feasibility of ``faces``: ``valid`` iff every validity margin is positive.
 
     The single authority for the batch form of the smooth-branch gates that
-    :func:`path_domain` applies one pose at a time (names and order from
-    :func:`domain_margin_names`); the S^2 event store and component discovery
+    :func:`path_domain` applies one pose at a time (``margins`` carries every
+    name of :func:`domain_margin_names`, ``valid`` tests those of
+    :func:`validity_margin_names`); the S^2 event store and component discovery
     both go through here so the two forms cannot drift apart.  Margins are
     the cosines and discriminants :func:`path_direction` evaluates on its way
     through the faces, read straight off its :class:`PathEvaluation` (no
@@ -402,7 +423,7 @@ def path_domain_batch(
     margins["exit_incidence_cosine"] = np.asarray(evaluation.exit.incidence_cosine)
     margins["exit_snell_discriminant"] = np.asarray(evaluation.exit.discriminant)
     valid = np.ones(rotation_array.shape[0], dtype=bool)
-    for name in domain_margin_names(faces):
+    for name in validity_margin_names(faces):
         valid &= margins[name] > 0
     return BatchDomainCheck(valid, margins, np.asarray(evaluation.direction))
 
@@ -432,22 +453,42 @@ def fresnel_unpolarized_transmittance(
     return 1.0 - 0.5 * (r_s * r_s + r_p * r_p)
 
 
+def internal_reflectance(refractive_index: float, incidence_cosine, tir_discriminant):
+    """Unpolarized power reflectance of one internal face, ``1`` under TIR.
+
+    ``incidence_cosine``/``tir_discriminant`` are the face's
+    :class:`InternalReflection` margins.  Where ``tir_discriminant > 0`` the
+    reflection is total; otherwise the escaping ray's cosine is
+    ``sqrt(-tir_discriminant)`` and ``R = 1 - T(n -> 1)``.  This is
+    Lumice's ``GetReflectRatio(d, n)`` with ``d = -tir_discriminant / cos^2``
+    (the same per-interface s/p average, ``docs/conventions.md`` #18).
+    Scalars or arrays; the total branch never takes a square root.
+    """
+    total = tir_discriminant > 0
+    cos_i = np.where(total, 1.0, incidence_cosine)
+    cos_t = np.sqrt(np.where(total, 1.0, -tir_discriminant))
+    partial = 1.0 - fresnel_unpolarized_transmittance(refractive_index, cos_i, 1.0, cos_t)
+    return np.where(total, 1.0, partial)
+
+
 def fresnel_transmission_path(
     rotation: Array,
     faces: Sequence[int],
     incident_direction: Array,
     refractive_index: Array = ICE_REFRACTIVE_INDEX,
 ) -> float:
-    """Product of the entry and exit unpolarized transmittances of ``faces``.
+    """Power factor of ``faces``: entry ``T`` x each internal ``R_k`` x exit ``T``.
 
-    Internal reflections are total on the smooth branch and transmit no
-    power away, so only the two refracting interfaces enter the product.
-    Reuses the host-side cosines and Snell discriminants that
-    :func:`path_domain` already evaluates (``cos_t = sqrt(discriminant)``)
-    instead of re-deriving the refraction.  Outside the smooth domain (TIR,
-    back-face entry or exit, a non-total internal reflection) the path
-    transmits no power and ``0.0`` is returned; :func:`path_domain` remains
-    the place to read *why*.
+    Unpolarized (s/p averaged) per interface; ``R_k = 1`` where the internal
+    reflection is total (:func:`internal_reflectance`), so a path whose
+    reflections are all total gets the entry and exit transmittances only.
+    The name is kept on purpose: this is the path's power transmission, and
+    the internal factors are what it always should have contained.  Reuses
+    the host-side cosines and discriminants that :func:`path_domain` already
+    evaluates (``cos_t = sqrt(discriminant)``) instead of re-deriving the
+    refraction.  Outside the smooth domain (entry/exit TIR, back-face entry,
+    exit or internal face) the path transmits no power and ``0.0`` is
+    returned; :func:`path_domain` remains the place to read *why*.
     """
     check = path_domain(rotation, faces, incident_direction, refractive_index)
     if not check.valid:
@@ -466,7 +507,11 @@ def fresnel_transmission_path(
         1.0,
         float(np.sqrt(margins["exit_snell_discriminant"])),
     )
-    return float(entry * exit)
+    power = entry * exit
+    for step in range(1, len(normalize_faces(faces)) - 1):
+        cosine_name, discriminant_name = _internal_margin_names(step)
+        power = power * float(internal_reflectance(index, margins[cosine_name], margins[discriminant_name]))
+    return float(power)
 
 
 def fresnel_transmission_3_5(
@@ -486,11 +531,12 @@ def fresnel_transmission_path_batch(
 ) -> np.ndarray:
     """Batch form of :func:`fresnel_transmission_path` over ``(N, 3, 3)`` rotations.
 
-    Reads the cosines and Snell discriminants off :func:`path_domain_batch`
-    (the batch authority of the smooth-domain gates) and applies the same
-    :func:`fresnel_unpolarized_transmittance` arithmetic elementwise; invalid
-    poses get ``0.0`` and their (possibly negative) discriminants are never
-    square-rooted, so no ``RuntimeWarning``/NaN leaks into valid entries.
+    Reads the cosines and discriminants off :func:`path_domain_batch` (the
+    batch authority of the smooth-domain gates) and applies the same
+    :func:`fresnel_unpolarized_transmittance` / :func:`internal_reflectance`
+    arithmetic elementwise; invalid poses get ``0.0`` and their (possibly
+    negative) discriminants are never square-rooted, so no
+    ``RuntimeWarning``/NaN leaks into valid entries.
     """
     check = path_domain_batch(rotations, faces, incident_direction, refractive_index)
     index = float(np.asarray(refractive_index))
@@ -502,7 +548,13 @@ def fresnel_transmission_path_batch(
     exit_transmitted = np.sqrt(np.where(valid, margins["exit_snell_discriminant"], 1.0))
     entry = fresnel_unpolarized_transmittance(1.0, entry_cosine, index, entry_transmitted)
     exit = fresnel_unpolarized_transmittance(index, exit_cosine, 1.0, exit_transmitted)
-    return np.where(valid, entry * exit, 0.0).astype(np.float64)
+    power = entry * exit
+    for step in range(1, len(normalize_faces(faces)) - 1):
+        cosine_name, discriminant_name = _internal_margin_names(step)
+        cosine = np.where(valid, margins[cosine_name], 1.0)
+        discriminant = np.where(valid, margins[discriminant_name], 1.0)
+        power = power * internal_reflectance(index, cosine, discriminant)
+    return np.where(valid, power, 0.0).astype(np.float64)
 
 
 def fresnel_transmission_3_5_batch(
