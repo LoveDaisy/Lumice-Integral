@@ -126,10 +126,18 @@ on every boundary: corridor boundaries (two polygons separating,
 $A_P \to 0$ continuously), the exit-face TIR boundary of the formula domain
 $U_P$ (Fresnel transmittance $\to 0$ at the critical angle); there is no
 critical angle on entry, and partial reflection on internal steps is a
-continuous weight. (That last clause is the design, not the code yet: the
-implementation admits total internal reflection only, and a partial one
-cuts the path. See the Liljequist fixture in section 4 and
-[roadmap.md](roadmap.md) §9, 2026-09-25.) A contour cut by $\partial V_P$ is traced on $U_P$ and
+continuous weight: $T_P$ is the entry and exit transmittances times every
+internal reflectance $R_k$ ($R_k = 1$ under TIR, continuous at the critical
+angle), the per-interface unpolarized split Lumice applies
+([conventions.md](conventions.md) #18). Implemented since task
+`optics-partial-reflection` (2026-09-25; before it, the code admitted total
+internal reflection only and a partial one cut the path, see the Liljequist
+fixture in section 4 and [roadmap.md](roadmap.md) §9, 2026-09-25). Every
+consumer of the `optics` gates (the $S^2$ store, `weights`, the Phase I
+tracer's domain evaluator) sees the wider domain; the $D_P$ boundary
+enumeration still lists each internal TIR discriminant among the margins of
+$\partial U_P$, and Phase I on paths with internal reflections is not yet
+cross-validated; both are their own tasks (roadmap §0). A contour cut by $\partial V_P$ is traced on $U_P$ and
 $A_P T_P$ removes the infeasible part; Phase I's rule "keep tracing, weight
 to zero" (contract section 6.3) is the same fact placed inside the tracer.
 The remaining non-smoothness is the kinks of $A_P$ (a vertex crossing an

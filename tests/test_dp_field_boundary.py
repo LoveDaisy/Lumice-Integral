@@ -188,7 +188,19 @@ def test_liljequist_corner_positions_on_the_entry_circle(fields) -> None:
     np.testing.assert_allclose(t, [-119.2465917, -60.7534083, 60.7534083, 119.2465917], atol=1e-6)
 
 
-@pytest.mark.parametrize("faces", FIXTURES)
+# The walk lists every margin of domain_margin_names as a piece of the boundary, internal TIR discriminants
+# included, while U_P (valid_batch, optics.path_domain_batch) no longer ends there since task
+# optics-partial-reflection; the paths with an internal reflection wait for the boundary enumeration of task
+# dp-field-partial-reflection-boundaries (strict: the xfail must be removed there).
+_PARTIAL_REFLECTION_BOUNDARY = pytest.mark.xfail(
+    strict=True, reason="internal TIR is no longer a boundary of U_P; task dp-field-partial-reflection-boundaries"
+)
+
+
+@pytest.mark.parametrize(
+    "faces",
+    [faces if len(faces) == 2 else pytest.param(faces, marks=_PARTIAL_REFLECTION_BOUNDARY) for faces in FIXTURES],
+)
 def test_walk_accounts_for_every_lattice_edge_point(fields, faces) -> None:
     """Completeness spot check: every lattice point of ``U_P`` with an outside neighbour is next to the walked loop."""
     lattice = fibonacci_sphere(20000)

@@ -91,7 +91,25 @@ def test_3_5_minimum_is_a_finite_jump(labels) -> None:
     assert focusing.classify(canonical_crystal(), (3, 5), PARRY, INDEX).confined_dimensions == 2
 
 
-@pytest.mark.parametrize("faces", SLABS)
+@pytest.mark.parametrize(
+    "faces",
+    [
+        pytest.param(
+            faces,
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason=(
+                    "the rotation slab's D = 120 deg fold circle (|grad D| -> 0) lies in U_P once internal "
+                    "reflections may be partial (task optics-partial-reflection); its label is task "
+                    "dp-field-partial-reflection-boundaries' / ch10-liljequist-unblock-and-docs'"
+                ),
+            ),
+        )
+        if faces == (1, 3, 5, 2)
+        else faces
+        for faces in SLABS
+    ],
+)
 def test_parallel_face_slabs_have_no_jacobian_focusing(labels, faces) -> None:
     """Wedge 0, ``M != I``: cone points, creases and boundary cusps only; their sharp images are ``rho``'s."""
     label = labels[faces]

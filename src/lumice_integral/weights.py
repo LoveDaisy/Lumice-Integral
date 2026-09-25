@@ -7,7 +7,8 @@ section 7 that Phase I can evaluate today:
 
 - ``rho_pose``: :mod:`.pose_density` (relative to Haar probability);
 - ``entry_measure``: :func:`.geometry.entry_measure` (absolute area);
-- ``fresnel_transmission``: :func:`.optics.fresnel_transmission_path`;
+- ``fresnel_transmission``: :func:`.optics.fresnel_transmission_path`
+  (entry ``T`` x each internal ``R_k`` x exit ``T``);
 - ``path_validity``: boolean gate ``path_domain(...).valid`` and
   ``entry_measure > 0``.
 
@@ -318,7 +319,8 @@ def build_path_weight_evaluators(
             (
                 "product of unpolarized (s/p averaged) power transmittances at "
                 f"the face-{faces[0]} entry and face-{faces[-1]} exit interfaces "
-                "(internal reflections are total on the smooth branch); "
+                "and power reflectances at every internal face (1 where the "
+                "reflection is total); "
                 f"0 outside the smooth {path_id} domain"
             ),
             evaluate_batch=lambda rotations: fresnel_transmission_path_batch(

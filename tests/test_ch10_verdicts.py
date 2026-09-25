@@ -61,12 +61,13 @@ def test_inner_edge_column_family_is_inverse_sqrt_between_its_cap_and_1e_2(inner
     assert np.all(np.abs(slopes[:, -1]) < 0.1)  # capped at the smallest eps
 
 
-def test_a60_10_is_blocked_by_the_internal_tir_gate() -> None:
-    """Liljequist (i): no A60-10 pose is valid, while the gates other than internal TIR pass on part of the sphere."""
+def test_a60_10_is_reachable_once_internal_reflections_may_be_partial() -> None:
+    """Liljequist (i): since task optics-partial-reflection the internal TIR discriminant gates nothing, so the
+    A60-10 domain is exactly the set passing every other gate (it was empty while internal TIR was a gate; the
+    verdict itself is rerun by task ch10-liljequist-unblock-and-docs)."""
     status = V.blocked_class_status(((3, 5, 6, 7), (3, 4, 5, 7)), INDEX, lattice_n=20000)
     for member in ("3-5-6-7", "3-4-5-7"):
-        assert status[member]["valid_points"] == 0
-        assert status[member]["points_passing_all_but_internal_tir"] > 500
+        assert status[member]["valid_points"] == status[member]["points_passing_all_but_internal_tir"] > 500
 
 
 def test_liljequist_paths_share_one_mirror_field_and_shape_free_critical_values() -> None:
