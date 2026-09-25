@@ -182,8 +182,10 @@ workflows as a black-box Monte Carlo oracle or source of analysis artifacts.
 - Keep physical weight factors independently observable before multiplying
   them into the final integrand.
 - Own the differentiable geometry, optics, and event-boundary handling required
-  by continuation; fixed-path smooth branches may use AD, while TIR, face
-  changes, and obstruction boundaries must remain explicit events.
+  by continuation; fixed-path smooth branches may use AD, while entry/exit
+  TIR, face changes, and obstruction boundaries must remain explicit events.
+  An internal reflection is a Fresnel split, not an event: the path keeps the
+  reflected branch with weight `R` (`1` under TIR; `docs/conventions.md` #18).
 - Validate with analytic fixtures, historical direct-integration data, and
   independently converged Lumice Monte Carlo results. Validation tooling may
   run Lumice explicitly and ingest its files, but this must not become a product

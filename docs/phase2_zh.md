@@ -29,6 +29,7 @@ $$
 - **实测**（owner 探针，2026-09-24，`scratchpad/task-s2-store-schema-3/owner_probe_sun_indep.py`）：$h/a = 2$、$n = 1.31$、$N = 2\times10^5$，太阳取 (15°, 0°)、(60°, 37°)、(−30°, 200°)；光路 `[3,5]` 与 `[1,3,2]`：事件数相同，$\mathbf u$ 逐位相等，$\Phi$、$D$、$w$ 差在 `1.6e-11` 以内。
 - 推论：换太阳高度或方位、换姿态密度、换相机，都复用仓库、只需重新渲染；换波长要一份新仓库；换晶体形状或光路也要新仓库。
 - 已投产（schema 3，任务 `s2-store-schema-3`，2026-09-24）：`S2StoreSpec` 与缓存 key 不再含太阳方向；构建时把 $R\mathbf u = \hat{\mathbf s}_0$ 对齐到一个固定参考方向，其数值取 canonical 太阳，以便逐位复现 schema 2 的 canonical 构建；一份仓库服务所有太阳高度。`tests/test_s2_store.py::test_events_are_independent_of_the_reference_direction` 把探针转成回归（三个方向 × `[3,5]`、`[1,3,2]`、`[1,3,5,2]`，保留的点相同，$\Phi$、$D$、$w$ 差在 `1e-10` 以内），`tests/test_band_sum.py::test_one_store_serves_every_sun_altitude` 钉住换一个太阳高度不重建。schema 2（key 含太阳方向、单个 `events.npz`）已逐位复现，加载时拒绝。
+- schema 4（任务 `optics-partial-reflection`，2026-09-25）：事件权重 $w = A_P T_P$ 中的 $T_P$ 乘入了每次内反射的反射率 $R_k$（§2），部分内反射因此是一个权重较小的保留事件，而不是不可行的位姿；`w > 0` 判据与 $A_P$ 不变。不含内反射的光路，其仓库与 schema 3 逐位相同（canonical `[3,5]`、$N = 10^8$：四个数组 SHA-256 相同；英文版附录 "Internal partial reflection"）。schema 3 加载时拒绝。
 
 光源进入渲染只有两处：把事件放到某个像素上的那个姿态，以及该姿态下的 $\rho$。
 

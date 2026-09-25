@@ -24,6 +24,7 @@ Queue (tasks in `scratchpad/tasks.md`; dispatched 20 ∥ 21, then 22 ∥ 24, 23 
 | 22 | `band-sum-scatter-renderer`: band sum organised by deviation, class accumulation, GEMM tiles ([phase2.md](phase2.md) §8) — **done 2026-09-24** (canonical strip `30.8 s`, was `169 s`) | 21 |
 | 23 | `lumice-area-weighting-recheck`: absolute scale after Lumice's projected-area fix — **done 2026-09-24** (`K_p = N_sym ȳ Ω_p / (S/2)`, column strip `0.998`, plate / Parry families) | Ice Halo #597 merged |
 | 24 | scrum `phase2-contour-quadrature` (M2): `dp-field-topology` → `dp-field-layer` → `s2-contour-extraction` → `s2-contour-quadrature` → `phase1-seeds-from-store` → `ch10-numerical-verdicts` — `dp-field-layer` **done 2026-09-24** (`lumice_integral.dp_field`, [phase2.md](phase2.md) §3.1); `s2-contour-extraction` **done 2026-09-24** (`lumice_integral.contour`, [phase2.md](phase2.md) §4); `s2-contour-quadrature` **done 2026-09-25** (`lumice_integral.contour_quadrature`, [phase2.md](phase2.md) §4); `phase1-seeds-from-store` **done 2026-09-25** (`s2_store.StoreSeeds`, `discovery.check_band_coverage`; `prescan` deleted; [phase1.md](phase1.md) §5); `ch10-numerical-verdicts` **done 2026-09-25** (`lumice_integral.ch10_verdicts`, `lumice_integral.focusing`, [phase2.md](phase2.md) §10; Liljequist (i), the A60-10 142° edge, blocked on internal partial reflection) | 21 |
+| 25 | scrum `internal-partial-reflection`: `optics-partial-reflection` → `phase1-partial-reflection-domain` → `dp-field-partial-reflection-boundaries` → `contour-fallback-seed-scaling` → `ch10-liljequist-unblock-and-docs` — `optics-partial-reflection` **done 2026-09-25** (internal reflections split by Fresnel $R$, store schema 4, A60-10 against Lumice, §9) | 24 |
 
 Deferred: the chapter-11 table (path classes × pose families) after 22 and
 M2; divergent light ([phase2.md](phase2.md) §9, backlog); finite solar disk;
@@ -95,10 +96,11 @@ layered invariance → §3.2 (symmetry: §3.3); (e) fixtures → §4, measured
 (task `ch10-numerical-verdicts`): Liljequist is one mirror-slab field for
 `1-3-2` / `3-5-6-7-3`, $|\nabla D_P| = 2$, critical values independent of
 $h/a$ to `6e-14`°, the peak pinned at the boundary critical value 153.0697°
-and approached as $\varepsilon^{0.49}$; A60-10 (142°) blocked, 0 valid poses;
+and approached as $\varepsilon^{0.49}$; A60-10 (142°) blocked, 0 valid poses
+(reachable since task `optics-partial-reflection`, §9; verdict rerun pending);
 the parhelic circle of plates (`1-3-2`) is the window with $d\theta/d\phi = 2$,
 to `8.6e-5` at $\sigma = 0.25°$ (`tests/test_ch10_verdicts.py::test_liljequist_*`,
-`test_a60_10_is_blocked_by_the_internal_tir_gate`, `test_parhelic_circle_*`);
+`test_a60_10_is_reachable_once_internal_reflections_may_be_partial`, `test_parhelic_circle_*`);
 (f) design constraints → §4; (g) open points → §10: the 22° inner edge is a
 finite jump for random orientation (limit $w^*2\pi/\sqrt{\det H}$, pixel
 value `0.541535`, reached to `0.99805` at $\varepsilon = 10^{-6}$, extrapolated
@@ -501,3 +503,31 @@ Moved to [overview.md](overview.md) §3.
   relative); the owner decides whether the image is re-rendered. Not done
   (a cost optimisation, not a correctness issue): aligning the grid with the
   kinks would restore order 4 and fewer nodes.
+
+- **2026-09-25**: internal partial reflection is modelled (owner ruling on
+  the open question of the 142° entry above; scrum `internal-partial-reflection`,
+  task `optics-partial-reflection`; [phase2.md](phase2.md) §1, §2 and appendix
+  "Internal partial reflection"; [conventions.md](conventions.md) #18). The
+  path's power factor is $T_P = T_{	ext{entry}}\prod_k R_k\,T_{	ext{exit}}$,
+  unpolarized per interface, $R_k = 1$ under TIR, as Lumice's `HitSurface` /
+  `GetReflectRatio` (read at `2056f699`, not inferred); the internal TIR
+  discriminant stays in `margins` as a diagnostic and gates nothing
+  (`optics.validity_margin_names`); entry/exit TIR remain boundaries.
+  `fresnel_transmission_path(_batch)` keeps its name (the product is the
+  path's transmission; the internal factors are what it lacked). Store
+  schema 4, schema 3 refused. Paths without an internal reflection are
+  unchanged bit for bit (canonical `[3,5]` store arrays and full image, plate
+  / Parry class windows, against the pre-change code). A60-10 now has
+  events (exactly the relaxed-gate counts of the previous entry); the
+  saddle is reproduced on production at $141.839300°$, and both A60-10
+  classes agree with Lumice in absolute flux (ratios `0.9993`–`1.0002`,
+  within the seed spread, nothing fitted) under random orientation
+  ($h/a = 2$) and plates ($h/a = 0.2$); without $R$ the ratio would be
+  `0.13`. All 114 / 96 classes the audit found lost now render. `AGENTS.md`
+  no longer lists internal TIR among the explicit events. Left to the
+  scrum's next tasks: `dp_field`'s boundary walk still treats internal TIR
+  as $\partial U_P$ (three tests and the `1-3-5-2` focusing slab strict-xfailed;
+  that slab's $D = 120°$ fold circle is now inside $U_P$), Phase I (whose
+  domain evaluator already follows `optics.path_domain`) is not yet
+  cross-validated on reflecting paths, and the ch10 Liljequist (i) verdict
+  text still says "blocked" until it is rerun.

@@ -84,6 +84,14 @@ source**.
   `tests/test_band_sum.py::test_one_store_serves_every_sun_altitude` pins
   that a second altitude does not rebuild. Schema 2 (sun direction in the
   key, one `events.npz`) was reproduced bit for bit and is refused on load.
+- Schema 4 (task `optics-partial-reflection`, 2026-09-25): the event
+  weight $w = A_P T_P$ takes $T_P$ with every internal reflectance $R_k$
+  (section 2), so a partial internal reflection is a kept event with a
+  smaller weight instead of an invalid pose; the `w > 0` criterion and
+  $A_P$ are unchanged. Stores of paths without an internal reflection are
+  the schema 3 ones bit for bit (canonical `[3,5]`, $N = 10^8$: the four
+  arrays have the same SHA-256; appendix "Internal partial reflection").
+  Schema 3 is refused on load.
 
 The source enters a rendering only through the pose that places an event
 on a pixel and through $\rho$ of that pose.
@@ -1702,3 +1710,81 @@ layer's; seed-check stores `N = 2e5`.
   fallback seeds (at most `32 × 6` new components per call), and one call
   with ~180 deviations raises; `ch10_verdicts` extracts 64 at a time.
   Backlog.
+
+**Internal partial reflection (2026-09-25, task `optics-partial-reflection`,
+scrum `internal-partial-reflection`).** $T_P$ is the entry transmittance times
+every internal reflectance $R_k$ times the exit transmittance, per interface
+and unpolarized, $R_k = 1$ under TIR; the internal TIR discriminant is a
+diagnostic margin, not a gate (`optics.validity_margin_names`). Lumice
+(`2056f699`): `HitSurface` splits every hit deterministically, `R w` reflected
+and `(1 - R) w` refracted, with `GetReflectRatio` the same s/p average
+([conventions.md](conventions.md) #18); with $d\cos^2\theta = -$`tir_discriminant`
+the two formulas are one, and `optics.internal_reflectance` agrees with a
+transcription of `GetReflectRatio` to `1e-12` relative (30° internal incidence:
+$R = 2.2316\,\%$). Store schema 4.
+- *Invariance.* Canonical `[3,5]`, $N = 10^8$: the schema 4 arrays `D`, `u`,
+  `phi`, `w` have the SHA-256 of the schema 3 store; the $251\times801$ band sum
+  rendered from it is byte-identical (all five output files) to the same
+  renderer at the pre-change commit `8e7198c` on the schema 3 store. The
+  `[3,5]` class under plate ($\sigma = 1°$) and Parry ($1°/1°$), $321\times161$,
+  $N = 10^7$: byte-identical as well. (Against the historical
+  `artifacts/band-sum-full` of 2026-09-23, from the gather renderer, float64
+  differs by at most `7.9e-15` relative: summation order of the scatter
+  renderer, not this change.)
+- *A60-10.* On $4\times10^5$ Haar poses (the draws of task
+  `verify-liljequist-face-numbering`, sun on the horizon) production now gives
+  exactly that task's relaxed-gate counts: $h/a = 0.2$: `3-5-6-7` 2881,
+  `3-4-5-7` 5146; $h/a = 2$: 20566 / 38375 (0 before). The $A$-weighted $D$
+  histogram peaks in the 142° bin for both members at $h/a = 0.2$, 1, 2; the
+  $A T$-weighted one, the event weight, peaks at 143–151° (the partial branch
+  at 142° carries $R \approx 2.2\,\%$, poses whose face-5 reflection is total
+  carry up to $T = 0.245$). The saddle on production: the in-plane minimum of
+  $D$ over the class union is $141.839300°$ ($-2.8\times10^{-14}°$ from the
+  independent numpy trace), $\partial^2D/\partial\alpha^2 = -289.84$, and $T$ there
+  is the `3-5` entry/exit product times $R = 0.0223156$ (the numpy trace's
+  face-5 reflectance to `6e-11`).
+- *Lumice, absolute and shape.* Each A60-10 class (`3-5-6-7`, `3-4-5-7`, 12
+  members each) against a Lumice raypath filter (`symmetry: PBD`,
+  `max_hits` 4, $2\times10^8$ rays, seeds 7 and 11), $n = 1.3110129$, sun on the
+  horizon, band sum $N = 10^8$, `scripts/compare_lumice_family.py`
+  ($K_p = \bar y\,\Omega_p/(S/2)$, nothing fitted):
+
+  | scene | class | flux ratio (seeds) | bright median | profile RMS row / column (seeds) |
+  |---|---|---|---|---|
+  | random, $h/a = 2$, 321×161, fov 40°, az 140° | `3-5-6-7` | 0.9993 (1.0001, 0.9985) | 1.0129 | 0.148 / 0.258 (0.088 / 0.134) |
+  | | `3-4-5-7` | 0.9993 (1.0004, 0.9983) | 1.0121 | 0.163 / 0.328 (0.103 / 0.158) |
+  | plate $\sigma = 1°$, $h/a = 0.2$, fov 16°, az 152° | `3-5-6-7` | 1.0002 (1.0002, 1.0001) | 1.0007 | 0.047 / 0.044 (0.048 / 0.045) |
+  | | `3-4-5-7` | 1.0001 (1.0004, 0.9997) | 1.0009 | 0.053 / 0.040 (0.039 / 0.032) |
+
+  The flux ratios differ from 1 by `-6.8e-4`, `-6.7e-4`, `+1.5e-4`, `+8.5e-5`,
+  each at most the difference of its two seeds (`1.6e-3`, `2.0e-3`, `1.6e-4`,
+  `7.2e-4`; the plate `3-5-6-7` one at about twice the merged seed noise);
+  every image half is within `0.0016` of 1. Dropping $R$ would move the ratio to `0.12`–`0.13`
+  ($\sum A T_{\text{no }R}/\sum A T = 7.8$ at $h/a = 2$, 8.4 at 0.2), so the
+  comparison separates the two semantics by a factor ~8 against a noise of
+  `1e-3`. The random-orientation profiles' RMS above the seed RMS is the max
+  normalisation on a noisy Lumice peak: normalised by their sums instead, the
+  LI-vs-Lumice RMS is below the seed RMS (row 0.054 / 0.053 vs 0.084 / 0.083,
+  column 0.079 / 0.094 vs 0.130 / 0.131).
+- *Reach.* Task `verify-liljequist-face-numbering`'s audit, recomputed on
+  production ($4\times10^5$ Haar poses per $h/a$): all 114 classes it found lost
+  at $h/a = 2$ and all 96 at $h/a = 0.2$ now have events; the 20 truncated
+  classes at $h/a = 2$ gain events by `1.01`–`17.7`× (`1-3-6-2`, `1-3-4-6-2`,
+  `1-3-5-6-2` 17×; `3-5-6-7-3` 4.6×, $\sum AT$ 1.19×; `1-3-2` 1.27×, $\sum AT$
+  1.04×), the 4 at $h/a = 0.2$ by `1.01`–`351`× (`3-1-5-2-7`).
+- *Cost.* Paths without an internal reflection: none (same arrays). Class
+  stores, $N = 10^7$, $h/a = 2$: `1-3-2` 2.88 M → 3.65 M kept events (its $D$
+  range now reaches 180°, was 115.6°; mean $w$ +3.8 %), `3-5-6-7-3` 0.21 M →
+  0.96 M (mean $w$ +18 %); size scales with the kept events, build time is the
+  evaluation of all $N$ points and did not change measurably (loaded machine).
+  The A60-10 stores, which schema 3 could not build (no event), hold 0.71–9.6 M
+  events at $N = 10^8$.
+- *Not in this task.* `dp_field`'s boundary walk still lists each internal TIR
+  discriminant among the margins of $\partial U_P$ (three boundary-walk tests
+  and the `1-3-5-2` focusing slab are strict xfails until task
+  `dp-field-partial-reflection-boundaries`): the rotation slab's $D = 120°$
+  fold circle, outside $U_P$ before, now lies inside it through a partial
+  reflection (lattice $|\nabla D_P|$ down to `1.7e-4`). Phase I reads its
+  domain from `optics.path_domain` and so already continues across an
+  internal critical angle; its cross-validation is task
+  `phase1-partial-reflection-domain`.
