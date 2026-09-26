@@ -72,6 +72,16 @@ $$
 
 边界应当从第一个能跑通的切片中长出来，而不是要求在追踪第一个环之前先搭好六个框架。
 
+### 4.1 晶体的闭式构造与晶体自身对称群
+
+两个 phase 都从 `lumice_integral.geometry` 取晶体，所以它的构造写在这里而不是某个 phase 文档里（任务 `crystal-closed-form`，scrum `crystal-native-geometry`，2026-09-27；conventions #19）。
+
+- **语义跟 Lumice**（`doc/configuration.md`）：棱柱有高度与 6 个 `face_distance`，后者以正六边形边心距 `a·√3/2` 为单位、允许负值；`HexPrism(a, h, face_distance)`，Lumice 的 `height = h / (2a)` 用 `HexPrism.from_lumice(height, face_distance, a)`。`Pyramid` 覆盖对称子集（正六边形横截面、上下同为截顶锥 `upper_h = lower_h`）；上下不对称与单侧锥留给后续阶段，构造方式不堵死它们。
+- **闭式，不从数值上发现拓扑**（Lumice 在 PR #214 弃用的路线，`doc/crystal-geometry-representation.md` §1、§4）：6 个侧面是固定的方向星，每个侧面的直线被其余 5 个半平面截成一个解析区间，区间长度为正（尺度相对 `1e-9`）即该面*存在*。角点是相邻存在面的交点，写成正六边形角点加精确的线性修正，所以正六棱柱与历史实现逐位相同。面号是常量表 1/2、3–8（锥晶另有 13–18、23–28）中存在的那部分；查不存在的面号是 `KeyError`，不会静默返回错误法向。
+- **拒绝即异常**：存在的侧面少于 3 个意味着横截面没有面积，构造函数抛 `ValueError`（Lumice 是丢弃晶体）。只看每对对置面宽度为正是不够的：`[1, 1, -0.5, -0.9, -0.9, 1]` 三条板带宽度都为正，却没有公共部分。
+- **`G_true`**（`symmetry.crystal_group.true_symmetry_group`）：所有法向都在六方向星或 `±c` 上，所以晶体自身对称群就是 `signature.D6H` 中把存在面的（法向，相对顶点质心的偏移）集合映到自身的那些元素，并核验为群。正六棱柱与对称双锥 24，`[1, d, 1, d, 1, d]` 12，`[1.9, 1, 1, 1.9, 1, 1]` 与 `[2, 1, 1, 2, 1, 1]` 8，一般形状 2（`{E, σh}`）。下游仍假定 `D6h`；改用 `G_true`、法向从晶体读是下一阶段的事。
+- **在验证边界上对照 Lumice**：`scripts/verify_crystal_closed_form.py` 经 `ctypes` 调 Lumice 的 `LUMICE_GetCrystalMesh`，在临界形状（远面恰擦角点）和 3000 组随机 `face_distance` 上对照存在面、法向与角点（含拒绝判定，全部一致），并行跑独立几何校验（半空间包含、`V − E + F = 2`）。
+
 ## 5. 与其他项目的关系
 
 ### 5.1 Lumice

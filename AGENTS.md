@@ -71,6 +71,9 @@ uv run python scripts/regress_band_sum.py --stage k-eff --random-n 10000000 --ou
 uv run python scripts/regress_band_sum.py --stage scatter --band-dir artifacts/band-sum-full-new --baseline-dir artifacts/band-sum-full --output /tmp/regression_scatter.json
 uv run python scripts/regress_band_sum.py --stage scatter --random-n 10000000 --workers 4 --output /tmp/regression_scatter_windows.json
 
+# closed-form crystals (geometry.closed_form, symmetry.crystal_group) against Lumice's LUMICE_GetCrystalMesh via ctypes
+# (validation boundary; --lumice-lib or $LUMICE_LIB, falls back to the independent geometry check alone; ~5 s)
+uv run python scripts/verify_crystal_closed_form.py --random 3000
 # D_P field layer (lumice_integral.dp_field): interval partition of the five fixtures against an
 # independent dense grid through evaluate_fields (~45 s standalone; the slow test in test_dp_field_certificate.py adds the
 # A60-10 members, ~1.5 min, M2 Max; 3-5-6-7 needs --path 3 5 6 7 --lattice-n 50000, its U_P has a neck)
@@ -118,10 +121,12 @@ The design is `docs/overview.md` (entry), `docs/phase1.md` and `docs/phase2.md`
 ├── README.md              # Concise project identity and navigation
 ├── pyproject.toml         # Python package, dependencies, and test config
 ├── src/lumice_integral/   # Differentiable numerical building blocks
-│   ├── geometry/          # Finite-crystal geometry: polyhedra, unfolding, corridor
-│   │                      # intersection, path enumeration, entry_measure (pure numpy)
+│   ├── geometry/          # Finite-crystal geometry: closed-form construction (Lumice
+│   │                      # face_distance), polyhedra, unfolding, corridor intersection,
+│   │                      # path enumeration, entry_measure (pure numpy)
 │   ├── symmetry/          # D6h / G tables, signature and Phi classes, ch3 ground truth,
-│   │                      # attitude construction (pure numpy, depends on geometry only)
+│   │                      # attitude construction, the crystal's own group G_true
+│   │                      # (pure numpy, depends on geometry only)
 │   ├── dp_field/          # Phase II D_P field layer: evaluation, critical points, dU_P walk,
 │   │                      # delta-interval partition (public: DPField)
 │   ├── contour.py         # level sets {D_P = delta} in U_P, certified against the partition

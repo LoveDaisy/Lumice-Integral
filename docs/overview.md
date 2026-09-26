@@ -150,6 +150,51 @@ that each must become a package immediately:
 The boundaries should emerge from the first working slice. They are not a
 request to build six frameworks before tracing one loop.
 
+### 4.1 Crystal construction (closed form) and the crystal's own group
+
+Both phases take the crystal from `lumice_integral.geometry`, so its
+construction is described here rather than in a phase document (task
+`crystal-closed-form`, scrum `crystal-native-geometry`, 2026-09-27;
+conventions #19).
+
+- **Semantics are Lumice's** (`doc/configuration.md`): a prism has a height
+  and six `face_distance` ratios of the regular apothem `a·√3/2`, negative
+  values allowed; `HexPrism(a, h, face_distance)`, with
+  `HexPrism.from_lumice(height, face_distance, a)` for Lumice's
+  `height = h / (2a)`. `Pyramid` covers the symmetric subset (regular cross
+  section, `upper_h = lower_h` truncated cones); asymmetric and one-sided
+  cones are a later stage and the construction does not preclude them.
+- **Closed form, no topology discovery** (the route Lumice abandoned in
+  PR #214, `doc/crystal-geometry-representation.md` §1, §4): the six side
+  planes are a fixed star, so for each side face the other five half-planes
+  cut its line to one analytic interval; the face is *present* iff the
+  interval has positive length (scale-relative `1e-9`). Corners are the
+  intersections of consecutive present faces, written as the regular
+  hexagon's corner plus the exact linear correction, so the regular prism
+  is the historical one bit for bit. Faces are the present subset of the
+  constant numbers 1/2, 3–8 (13–18, 23–28 on the pyramid); an absent face
+  number is a `KeyError`, not a silently wrong normal.
+- **Rejection is fail-fast**: fewer than three present side faces means the
+  cross-section has no area and the constructor raises `ValueError` where
+  Lumice drops the crystal. (Positive width of each opposite pair is not
+  enough: `[1, 1, -0.5, -0.9, -0.9, 1]` has three positive-width slabs that
+  do not meet.)
+- **`G_true`** (`symmetry.crystal_group.true_symmetry_group`): every normal
+  lies in the six-direction star or on `±c`, so the crystal's own symmetry
+  group is the subset of `signature.D6H` that maps the present faces'
+  (normal, offset from the vertex centroid) onto themselves, verified to be
+  a group. Regular prism and symmetric pyramid 24, `[1, d, 1, d, 1, d]` 12,
+  `[1.9, 1, 1, 1.9, 1, 1]` and `[2, 1, 1, 2, 1, 1]` 8, a generic shape 2
+  (`{E, σh}`). Consumers still assume `D6h`; switching them to `G_true` and
+  reading normals from the crystal is the next stage.
+- **Checked against Lumice at the validation boundary**:
+  `scripts/verify_crystal_closed_form.py` calls Lumice's
+  `LUMICE_GetCrystalMesh` through `ctypes` and compares present faces,
+  normals and corners on the critical shapes (far faces exactly touching a
+  corner) and 3000 random `face_distance` sets (all agree, rejections
+  included), next to an independent check (half-space containment,
+  `V − E + F = 2`).
+
 ## 5. Relationship to other projects
 
 ### 5.1 Lumice
