@@ -303,8 +303,13 @@ LOW_SYMMETRY = [HexPrism(1.0, 1.0, (2, 1, 1, 2, 1, 1)), HexPrism(1.0, 1.0, (1.0,
 
 
 def test_the_d6h_orbit_is_not_the_crystal_orbit_on_a_low_symmetry_prism():
-    assert len(path_class.pbd_orbit_hexprism((3, 5))) == 12
+    """design.md 4 / explore H4: ``3-5`` has 12 ``D6h`` images but one ``G_true`` image on the ``|G| = 2`` prism."""
     assert [len(true_symmetry_group(c)) for c in LOW_SYMMETRY] == [8, 2]
+    generic = LOW_SYMMETRY[1]
+    assert len(path_class.pbd_orbit_hexprism((3, 5))) == 12
+    normals = {f.number: generic.normal(f) for f in generic.faces}
+    own_orbit = {path_class._symmetry_image_of_faces(g, (3, 5), normals) for g in true_symmetry_group(generic)}
+    assert own_orbit == {(3, 5)}
 
 
 @pytest.mark.parametrize("crystal", LOW_SYMMETRY)
@@ -327,3 +332,12 @@ def test_reduced_cluster_fails_fast_below_d6h(crystal):
     foreign = [g for g in path_class.hexprism_symmetry_matrices() if not any(np.allclose(g, h) for h in own)]
     with pytest.raises(ValueError, match="G_true"):
         path_class.path_class_symmetry(representative_only, crystal, symmetry_elements=foreign[:1])
+
+
+@pytest.mark.parametrize("crystal", LOW_SYMMETRY)
+def test_the_store_does_not_build_below_d6h(crystal):
+    """Downstream of the gate: the S^2 store refuses the crystal (``crystal_description`` rejects it first)."""
+    from lumice_integral.s2_store import build_event_store
+
+    with pytest.raises(ValueError):
+        build_event_store(crystal, N, [(4, 8)], 1000, run_checks=False)
