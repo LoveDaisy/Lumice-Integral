@@ -185,7 +185,7 @@ def entry_measure_weight(
     return float(
         entry_measure(
             np.asarray(rotation, dtype=np.float64),
-            normalize_faces(faces),
+            normalize_faces(faces, crystal),
             np.asarray(incident_direction, dtype=np.float64),
             crystal,
             n_ice=refractive_index,
@@ -194,13 +194,20 @@ def entry_measure_weight(
 
 
 def fresnel_transmission_weight(
-    rotation: np.ndarray, *, faces: Sequence[int], incident_direction: np.ndarray, refractive_index: float
+    rotation: np.ndarray,
+    *,
+    faces: Sequence[int],
+    incident_direction: np.ndarray,
+    refractive_index: float,
+    crystal: HexPrism | None = None,
 ) -> float:
+    """:func:`.optics.fresnel_transmission_path` of ``faces`` on ``crystal`` (``None``: the canonical prism)."""
     return fresnel_transmission_path(
         np.asarray(rotation, dtype=np.float64),
         faces,
         np.asarray(incident_direction, dtype=np.float64),
         refractive_index,
+        crystal=crystal,
     )
 
 
@@ -218,7 +225,7 @@ class _EntryMeasureBatch:
     def __init__(
         self, *, faces: Sequence[int], incident_direction: np.ndarray, crystal: HexPrism, refractive_index: float
     ) -> None:
-        self._faces = normalize_faces(faces)
+        self._faces = normalize_faces(faces, crystal)
         self._incident = np.asarray(incident_direction, dtype=np.float64)
         self._crystal = crystal
         self._index = float(refractive_index)
@@ -249,7 +256,7 @@ def path_validity_weight(
     """``1.0`` when the smooth branch of ``faces`` is valid and the entry footprint is nonempty."""
     rotation = np.asarray(rotation, dtype=np.float64)
     incident = np.asarray(incident_direction, dtype=np.float64)
-    if not path_domain(rotation, faces, incident, refractive_index).valid:
+    if not path_domain(rotation, faces, incident, refractive_index, crystal=crystal).valid:
         return 0.0
     measure = entry_measure_weight(
         rotation,
@@ -277,8 +284,8 @@ def build_path_weight_evaluators(
     ``pixel_factor`` and ``other_radiometric`` are deliberately absent so that
     they stay ``unavailable`` downstream.
     """
-    faces = normalize_faces(faces)
-    path_id = path_id_of(faces)
+    faces = normalize_faces(faces, crystal)
+    path_id = path_id_of(faces, crystal)
     incident = np.asarray(incident_direction, dtype=np.float64)
     index = float(refractive_index)
     entry_measure_batch = _EntryMeasureBatch(
@@ -286,7 +293,7 @@ def build_path_weight_evaluators(
     )
 
     def path_validity_batch(rotations: np.ndarray) -> np.ndarray:
-        valid = path_domain_batch(rotations, faces, incident, index).valid
+        valid = path_domain_batch(rotations, faces, incident, index, crystal=crystal).valid
         return np.where(valid & (entry_measure_batch(rotations) > 0.0), 1.0, 0.0)
 
     return {
@@ -313,7 +320,7 @@ def build_path_weight_evaluators(
         ),
         "fresnel_transmission": WeightEvaluator(
             lambda rotation: fresnel_transmission_weight(
-                rotation, faces=faces, incident_direction=incident, refractive_index=index
+                rotation, faces=faces, incident_direction=incident, refractive_index=index, crystal=crystal
             ),
             "dimensionless",
             (
@@ -324,7 +331,7 @@ def build_path_weight_evaluators(
                 f"0 outside the smooth {path_id} domain"
             ),
             evaluate_batch=lambda rotations: fresnel_transmission_path_batch(
-                rotations, faces, incident, index
+                rotations, faces, incident, index, crystal=crystal
             ),
         ),
         "path_validity": WeightEvaluator(

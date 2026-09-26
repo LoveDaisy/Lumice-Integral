@@ -95,6 +95,8 @@ from .strip_pixel import (
     render_pixel,
     seed_store,
 )
+from .symmetry.crystal_group import true_symmetry_group
+from .symmetry.reflection_group import key as rg_key
 from .symmetry.signature import D6H
 
 Faces = tuple[int, ...]
@@ -128,6 +130,23 @@ _D6H = hexprism_symmetry_matrices()
 NORMAL_MATCH_ATOL = 1e-9
 
 
+def _require_d6h(crystal: Polyhedron) -> None:
+    """Fail fast unless ``crystal``'s own symmetry group ``G_true`` is all of ``D6h``.
+
+    The reduced cluster (PBD orbits, the ``Phi`` key, the class transports and, through them,
+    :mod:`.s2_store` / :mod:`.strip_pixel` / :mod:`.band_sum`) takes ``D6h`` as the crystal's symmetry.
+    On a crystal with fewer symmetries (Lumice ``face_distance``, a pyramid) it would silently merge
+    paths that are not images of each other; generalising it to ``G_true`` is not done yet.
+    """
+    group = true_symmetry_group(crystal)
+    if len(group) != len(_D6H):
+        raise ValueError(
+            f"{type(crystal).__name__} has |G_true| = {len(group)}, not D6h ({len(_D6H)}): the reduced cluster "
+            "(pbd_orbit_hexprism / phi_key / path_class_symmetry, and s2_store / strip_pixel / band_sum through "
+            "them) supports D6h crystals only"
+        )
+
+
 def _hexprism_normals(crystal: HexPrism) -> dict[int, np.ndarray]:
     return {face.number: crystal.normal(face) for face in crystal.faces}
 
@@ -153,8 +172,10 @@ def pbd_orbit_hexprism(faces: Sequence[int], crystal: HexPrism | None = None) ->
     the face sequence is mapped elementwise.  Only the point group acts, so
     the result does not depend on the prism's aspect ratio.
     """
+    crystal = HexPrism() if crystal is None else crystal
+    _require_d6h(crystal)
     faces = normalize_faces(faces)
-    normals = _hexprism_normals(HexPrism() if crystal is None else crystal)
+    normals = _hexprism_normals(crystal)
     return frozenset(_symmetry_image_of_faces(element, faces, normals) for element in _D6H)
 
 
@@ -186,6 +207,7 @@ def phi_key(crystal: Polyhedron, faces: Sequence[int]) -> tuple[int, int, int]:
     """
     if not isinstance(crystal, HexPrism):
         raise TypeError("phi_key is implemented for the hexagonal prism only")
+    _require_d6h(crystal)
     faces = normalize_faces(faces)
     normals = _hexprism_normals(crystal)
     M = fold_matrix(crystal, faces)
@@ -208,15 +230,25 @@ def path_class_symmetry(
     domain are the representative's transported by ``g`` (:mod:`.s2_store`,
     roadmap section 4.1(d)); on ``S^2`` a mirror transports like a rotation.
     The representative maps to the identity.  ``symmetry_elements`` (default
-    all 24 of ``D6h``) restricts the search; proper elements are tried
+    all 24 of ``D6h``, which requires ``G_true = D6h``) restricts the search to
+    elements of the crystal's ``G_true`` (``ValueError`` otherwise); proper elements are tried
     first, then improper ones, each in order, and the first match wins.
     Any matching element serves: two of them differ by an element fixing
     the representative's face sequence, which fixes its fields.  A member
     that no element reaches is not in the representative's orbit -- the
     class was built wrong -- and raises ``RuntimeError``.
     """
-    normals = _hexprism_normals(HexPrism() if crystal is None else crystal)
-    elements = _D6H if symmetry_elements is None else tuple(np.asarray(e, dtype=np.float64) for e in symmetry_elements)
+    crystal = HexPrism() if crystal is None else crystal
+    if symmetry_elements is None:
+        _require_d6h(crystal)
+        elements = _D6H
+    else:
+        elements = tuple(np.asarray(e, dtype=np.float64) for e in symmetry_elements)
+        own = {rg_key(g) for g in true_symmetry_group(crystal)}
+        foreign = [rg_key(e) for e in elements if rg_key(e) not in own]
+        if foreign:
+            raise ValueError(f"symmetry_elements {foreign} are not in G_true of the {type(crystal).__name__}")
+    normals = _hexprism_normals(crystal)
     ordered = [e for e in elements if np.linalg.det(e) > 0.0] + [e for e in elements if np.linalg.det(e) < 0.0]
     images = [(_symmetry_image_of_faces(e, path_class.representative, normals), e) for e in ordered]
     out: dict[Faces, np.ndarray] = {}

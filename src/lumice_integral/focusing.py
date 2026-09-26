@@ -314,16 +314,16 @@ def classify(
     same path (its layers are cached).  A rank-0 path is labelled
     ``point_mass`` without building a field.
     """
-    faces = optics.normalize_faces(faces)
+    faces = optics.normalize_faces(faces, crystal)
     dims, widths = confined_dimensions(density)
     rank = halo_map_rank(crystal, faces)
-    path = optics.path_id_of(faces)
+    path = optics.path_id_of(faces, crystal)
     if rank == 0:
         return FocusingClassification(path, 0, (), None, dims, widths)
     if field is None:
         field = DPField.build(crystal, faces, index)
     elif field.faces != faces:
-        raise ValueError(f"field is for {optics.path_id_of(field.faces)}, not {path}")
+        raise ValueError(f"field is for {optics.path_id_of(field.faces, field.crystal)}, not {path}")
     return FocusingClassification(path, rank, field_onsets(field), gradient_norm_range(field), dims, widths)
 
 

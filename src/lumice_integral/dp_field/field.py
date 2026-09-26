@@ -66,20 +66,33 @@ _PROBE_SUN = np.array([0.0, 0.0, 1.0])
 # ---- scalar field and margins (JAX, differentiable) ------------------------------------------------
 
 
-def _evaluation(u: jax.Array, faces: Faces, index: jax.Array) -> optics.PathEvaluation:
-    return optics.path_direction(jnp.eye(3, dtype=u.dtype), faces, -u, index)
+def body_normals(crystal: Polyhedron | None, faces: Faces) -> jax.Array:
+    """The kernels' ``normals`` argument: :func:`.optics.face_normals` of ``faces`` on ``crystal``.
+
+    ``crystal=None`` is the canonical hexagonal prism.  Resolved once on the
+    host and passed into the jitted kernels as a traced array, so ``faces``
+    alone keys the compilation and every crystal reuses it.
+    """
+    return jnp.asarray(optics.face_normals(crystal, faces))
 
 
-def d_p(u: jax.Array, faces: Faces, index: jax.Array) -> jax.Array:
+def _evaluation(u: jax.Array, faces: Faces, index: jax.Array, normals: jax.Array | None) -> optics.PathEvaluation:
+    if normals is None:
+        normals = body_normals(None, faces)
+    return optics.trace_path(jnp.eye(3, dtype=u.dtype), normals, -u, index)
+
+
+def d_p(u: jax.Array, faces: Faces, index: jax.Array, normals: jax.Array | None = None) -> jax.Array:
     """``D_P(u)`` in radians for one unit ``u`` (module docstring).
 
     The angle is taken in ``atan2`` form: ``arccos`` of the dot product (the
     form of :func:`.s2_store.evaluate_fields`, equal to ``1e-15`` elsewhere)
     loses ``sqrt(eps) ~ 1e-8`` rad next to ``D = 0`` and ``D = pi``, which a
     slab path reaches on a whole boundary arc (``1-3-2``) or at an interior
-    point (``3-5-6-7-3``).
+    point (``3-5-6-7-3``).  ``normals`` is :func:`body_normals` (``None``:
+    the canonical prism), likewise for every kernel below.
     """
-    phi = _evaluation(u, faces, index).direction
+    phi = _evaluation(u, faces, index, normals).direction
     return jnp.arctan2(jnp.linalg.norm(jnp.cross(phi, -u)), jnp.dot(phi, -u))
 
 
@@ -96,9 +109,9 @@ def d_slab(u: jax.Array, m: jax.Array) -> jax.Array:
     return jnp.arctan2(jnp.linalg.norm(jnp.cross(mu, u)), jnp.dot(mu, u))
 
 
-def margin_vector(u: jax.Array, faces: Faces, index: jax.Array) -> jax.Array:
+def margin_vector(u: jax.Array, faces: Faces, index: jax.Array, normals: jax.Array | None = None) -> jax.Array:
     """Every margin of :func:`.optics.domain_margin_names` at ``u``, in that order (gates: :func:`validity_margin_vector`)."""
-    evaluation = _evaluation(u, faces, index)
+    evaluation = _evaluation(u, faces, index, normals)
     values = [evaluation.entry.incidence_cosine, evaluation.entry.discriminant]
     for reflection in evaluation.internal:
         values.extend((reflection.incidence_cosine, reflection.tir_discriminant))
@@ -106,14 +119,14 @@ def margin_vector(u: jax.Array, faces: Faces, index: jax.Array) -> jax.Array:
     return jnp.stack(values)
 
 
-def validity_margin_vector(u: jax.Array, faces: Faces, index: jax.Array) -> jax.Array:
+def validity_margin_vector(u: jax.Array, faces: Faces, index: jax.Array, normals: jax.Array | None = None) -> jax.Array:
     """The gates of ``U_P`` at ``u``: :func:`margin_vector` at :func:`.optics.validity_margin_indices`.
 
     ``u in U_P`` iff every entry is positive, the test of
     :func:`.optics.path_domain_batch` (:func:`valid_batch`) in a form that
     runs inside a JAX kernel; the two agree by sharing the one list of gates.
     """
-    return margin_vector(u, faces, index)[np.asarray(optics.validity_margin_indices(faces))]
+    return margin_vector(u, faces, index, normals)[np.asarray(optics.validity_margin_indices(faces))]
 
 
 def tangent_basis(u: jax.Array) -> jax.Array:
@@ -124,47 +137,53 @@ def tangent_basis(u: jax.Array) -> jax.Array:
     return jnp.stack([e1, jnp.cross(u, e1)])
 
 
-def d_value(u: jax.Array, faces: Faces, index: jax.Array, slab: jax.Array | None) -> jax.Array:
+def d_value(
+    u: jax.Array, faces: Faces, index: jax.Array, slab: jax.Array | None, normals: jax.Array | None = None
+) -> jax.Array:
     """The field as evaluated by this package: :func:`d_slab` for a slab path (``slab`` its fold matrix), :func:`d_p` otherwise."""
-    return d_p(u, faces, index) if slab is None else d_slab(u, slab)
+    return d_p(u, faces, index, normals) if slab is None else d_slab(u, slab)
 
 
-def _tangent_gradient(u: jax.Array, faces: Faces, index: jax.Array, slab: jax.Array | None) -> jax.Array:
-    g = jax.grad(d_value)(u, faces, index, slab)
+def _tangent_gradient(u: jax.Array, faces: Faces, index: jax.Array, slab: jax.Array | None, normals: jax.Array) -> jax.Array:
+    g = jax.grad(d_value)(u, faces, index, slab, normals)
     return g - jnp.dot(g, u) * u
 
 
-def _tangent_hessian(u: jax.Array, faces: Faces, index: jax.Array, slab: jax.Array | None) -> tuple[jax.Array, jax.Array]:
+def _tangent_hessian(
+    u: jax.Array, faces: Faces, index: jax.Array, slab: jax.Array | None, normals: jax.Array
+) -> tuple[jax.Array, jax.Array]:
     """Riemannian Hessian in :func:`tangent_basis` coordinates and that basis (module docstring)."""
-    g = jax.grad(d_value)(u, faces, index, slab)
-    h = jax.hessian(d_value)(u, faces, index, slab)
+    g = jax.grad(d_value)(u, faces, index, slab, normals)
+    h = jax.hessian(d_value)(u, faces, index, slab, normals)
     basis = tangent_basis(u)
     return basis @ (h - jnp.dot(u, g) * jnp.eye(3, dtype=u.dtype)) @ basis.T, basis
 
 
 @partial(jax.jit, static_argnums=1)
-def _d_batch(u: jax.Array, faces: Faces, index: jax.Array, slab: jax.Array | None) -> jax.Array:
-    return jax.vmap(d_value, in_axes=(0, None, None, None))(u, faces, index, slab)
+def _d_batch(u: jax.Array, faces: Faces, index: jax.Array, slab: jax.Array | None, normals: jax.Array) -> jax.Array:
+    return jax.vmap(d_value, in_axes=(0, None, None, None, None))(u, faces, index, slab, normals)
 
 
 @partial(jax.jit, static_argnums=1)
-def _gradient_batch(u: jax.Array, faces: Faces, index: jax.Array, slab: jax.Array | None) -> jax.Array:
-    return jax.vmap(_tangent_gradient, in_axes=(0, None, None, None))(u, faces, index, slab)
+def _gradient_batch(u: jax.Array, faces: Faces, index: jax.Array, slab: jax.Array | None, normals: jax.Array) -> jax.Array:
+    return jax.vmap(_tangent_gradient, in_axes=(0, None, None, None, None))(u, faces, index, slab, normals)
 
 
 @partial(jax.jit, static_argnums=1)
-def _hessian_batch(u: jax.Array, faces: Faces, index: jax.Array, slab: jax.Array | None) -> tuple[jax.Array, jax.Array]:
-    return jax.vmap(_tangent_hessian, in_axes=(0, None, None, None))(u, faces, index, slab)
+def _hessian_batch(
+    u: jax.Array, faces: Faces, index: jax.Array, slab: jax.Array | None, normals: jax.Array
+) -> tuple[jax.Array, jax.Array]:
+    return jax.vmap(_tangent_hessian, in_axes=(0, None, None, None, None))(u, faces, index, slab, normals)
 
 
 @partial(jax.jit, static_argnums=1)
-def _margins_batch(u: jax.Array, faces: Faces, index: jax.Array) -> jax.Array:
-    return jax.vmap(margin_vector, in_axes=(0, None, None))(u, faces, index)
+def _margins_batch(u: jax.Array, faces: Faces, index: jax.Array, normals: jax.Array) -> jax.Array:
+    return jax.vmap(margin_vector, in_axes=(0, None, None, None))(u, faces, index, normals)
 
 
 @partial(jax.jit, static_argnums=1)
-def _validity_margins_batch(u: jax.Array, faces: Faces, index: jax.Array) -> jax.Array:
-    return jax.vmap(validity_margin_vector, in_axes=(0, None, None))(u, faces, index)
+def _validity_margins_batch(u: jax.Array, faces: Faces, index: jax.Array, normals: jax.Array) -> jax.Array:
+    return jax.vmap(validity_margin_vector, in_axes=(0, None, None, None))(u, faces, index, normals)
 
 
 def _as_points(u: np.ndarray | jax.Array) -> jax.Array:
@@ -178,42 +197,56 @@ def _as_slab(slab: np.ndarray | None) -> jax.Array | None:
     return None if slab is None else jnp.asarray(slab, dtype=jnp.float64)
 
 
-def d_p_batch(u: np.ndarray, faces: Faces, index: float, slab: np.ndarray | None = None) -> np.ndarray:
+# The host-side functions below take ``crystal`` (default ``None``: the canonical hexagonal prism) and
+# read its face normals through :func:`body_normals`; :class:`.DPField` passes its own crystal.
+
+
+def d_p_batch(
+    u: np.ndarray, faces: Faces, index: float, slab: np.ndarray | None = None, *, crystal: Polyhedron | None = None
+) -> np.ndarray:
     """``D_P`` at each row of ``u`` (``(N, 3)`` unit vectors), one ``jax.vmap``; meaningful only on the closure of ``U_P``.
 
     ``slab`` (the fold matrix of a degenerate-fold path) selects :func:`d_slab`.
     """
-    return np.asarray(_d_batch(_as_points(u), faces, jnp.float64(index), _as_slab(slab)))
+    return np.asarray(_d_batch(_as_points(u), faces, jnp.float64(index), _as_slab(slab), body_normals(crystal, faces)))
 
 
-def gradient_batch(u: np.ndarray, faces: Faces, index: float, slab: np.ndarray | None = None) -> np.ndarray:
+def gradient_batch(
+    u: np.ndarray, faces: Faces, index: float, slab: np.ndarray | None = None, *, crystal: Polyhedron | None = None
+) -> np.ndarray:
     """The tangent (``S^2``) gradient of ``D_P`` at each row of ``u``, ``(N, 3)`` ambient vectors orthogonal to ``u``."""
-    return np.asarray(_gradient_batch(_as_points(u), faces, jnp.float64(index), _as_slab(slab)))
+    return np.asarray(
+        _gradient_batch(_as_points(u), faces, jnp.float64(index), _as_slab(slab), body_normals(crystal, faces))
+    )
 
 
 def hessian_tangent_batch(
-    u: np.ndarray, faces: Faces, index: float, slab: np.ndarray | None = None
+    u: np.ndarray, faces: Faces, index: float, slab: np.ndarray | None = None, *, crystal: Polyhedron | None = None
 ) -> tuple[np.ndarray, np.ndarray]:
     """The Riemannian Hessian of ``D_P`` at each row of ``u``: ``(N, 2, 2)`` in the basis returned alongside, ``(N, 2, 3)``."""
-    hessian, basis = _hessian_batch(_as_points(u), faces, jnp.float64(index), _as_slab(slab))
+    hessian, basis = _hessian_batch(
+        _as_points(u), faces, jnp.float64(index), _as_slab(slab), body_normals(crystal, faces)
+    )
     return np.asarray(hessian), np.asarray(basis)
 
 
-def margins_batch(u: np.ndarray, faces: Faces, index: float) -> np.ndarray:
+def margins_batch(u: np.ndarray, faces: Faces, index: float, *, crystal: Polyhedron | None = None) -> np.ndarray:
     """:func:`margin_vector` at each row of ``u``, ``(N, len(domain_margin_names(faces)))``."""
-    return np.asarray(_margins_batch(_as_points(u), faces, jnp.float64(index)))
+    return np.asarray(_margins_batch(_as_points(u), faces, jnp.float64(index), body_normals(crystal, faces)))
 
 
-def validity_margins_batch(u: np.ndarray, faces: Faces, index: float) -> np.ndarray:
+def validity_margins_batch(
+    u: np.ndarray, faces: Faces, index: float, *, crystal: Polyhedron | None = None
+) -> np.ndarray:
     """:func:`validity_margin_vector` at each row of ``u``, ``(N, len(validity_margin_names(faces)))``."""
-    return np.asarray(_validity_margins_batch(_as_points(u), faces, jnp.float64(index)))
+    return np.asarray(_validity_margins_batch(_as_points(u), faces, jnp.float64(index), body_normals(crystal, faces)))
 
 
-def valid_batch(u: np.ndarray, faces: Faces, index: float) -> np.ndarray:
+def valid_batch(u: np.ndarray, faces: Faces, index: float, *, crystal: Polyhedron | None = None) -> np.ndarray:
     """``u in U_P`` for each row, decided by :func:`.optics.path_domain_batch` (the single authority of the gates)."""
     u = np.asarray(u, dtype=np.float64)
     rotations = align_rotations(u, _PROBE_SUN)
-    return optics.path_domain_batch(rotations, faces, -_PROBE_SUN, index).valid
+    return optics.path_domain_batch(rotations, faces, -_PROBE_SUN, index, crystal=crystal).valid
 
 
 # ---- fold pre-screen ---------------------------------------------------------------------------------
@@ -234,10 +267,11 @@ class FoldScreen:
 
 
 def fold_screen(crystal: Polyhedron, faces: Faces) -> FoldScreen:
-    """``n_a . M^T n_b`` with the body normals of :data:`.optics.HEXPRISM_BODY_NORMALS` and ``M`` from :func:`.geometry.fold_matrix`."""
+    """``n_a . M^T n_b`` with the body normals of ``crystal`` (:func:`.optics.face_normals`) and ``M`` from :func:`.geometry.fold_matrix`."""
     m = fold_matrix(crystal, faces)
-    n_a = np.asarray(optics.HEXPRISM_BODY_NORMALS[faces[0]])
-    n_tilde_b = m.T @ np.asarray(optics.HEXPRISM_BODY_NORMALS[faces[-1]])
+    normals = optics.face_normals(crystal, faces)
+    n_a = normals[0]
+    n_tilde_b = m.T @ normals[-1]
     dot = float(n_a @ n_tilde_b)
     return FoldScreen(dot, abs(abs(dot) - 1.0) <= FOLD_DOT_ATOL, m, fold_axis(m))
 
@@ -295,9 +329,9 @@ class DegenerateFoldSet:
     circle_interior_fraction: float
 
 
-def location(u: np.ndarray, faces: Faces, index: float) -> str:
+def location(u: np.ndarray, faces: Faces, index: float, *, crystal: Polyhedron | None = None) -> str:
     """``"interior"``, ``"boundary"`` (smallest gate ``<= BOUNDARY_MARGIN_ATOL`` in size) or ``"exterior"``."""
-    margins = validity_margins_batch(np.asarray(u, dtype=np.float64)[None, :], faces, index)[0]
+    margins = validity_margins_batch(np.asarray(u, dtype=np.float64)[None, :], faces, index, crystal=crystal)[0]
     smallest = float(np.min(margins))
     if not np.isfinite(smallest):
         return "exterior"
@@ -306,27 +340,31 @@ def location(u: np.ndarray, faces: Faces, index: float) -> str:
     return "interior" if smallest > 0.0 else "exterior"
 
 
-def degenerate_fold_set(screen: FoldScreen, faces: Faces, index: float, *, circle_samples: int = 7200) -> DegenerateFoldSet:
+def degenerate_fold_set(
+    screen: FoldScreen, faces: Faces, index: float, *, circle_samples: int = 7200, crystal: Polyhedron | None = None
+) -> DegenerateFoldSet:
     """Locate the slab critical set ``{+-n_M} U {u . n_M = 0}`` relative to ``U_P``."""
     if screen.axis is None:
         return DegenerateFoldSet(None, (), 0.0)
     axis = screen.axis
-    points = tuple((sign * axis, location(sign * axis, faces, index)) for sign in (1.0, -1.0))
+    points = tuple((sign * axis, location(sign * axis, faces, index, crystal=crystal)) for sign in (1.0, -1.0))
     e = np.asarray(tangent_basis(jnp.asarray(axis)))
     t = np.linspace(0.0, 2.0 * np.pi, circle_samples, endpoint=False)
     circle = np.cos(t)[:, None] * e[0] + np.sin(t)[:, None] * e[1]
-    margins = validity_margins_batch(circle, faces, index)
+    margins = validity_margins_batch(circle, faces, index, crystal=crystal)
     inside = np.all(margins > BOUNDARY_MARGIN_ATOL, axis=1)
     return DegenerateFoldSet(axis, points, float(inside.mean()))
 
 
 @partial(jax.jit, static_argnums=(1, 3))
-def _newton_batch(u0: jax.Array, faces: Faces, index: jax.Array, iterations: int, max_step: jax.Array) -> jax.Array:
+def _newton_batch(
+    u0: jax.Array, faces: Faces, index: jax.Array, iterations: int, max_step: jax.Array, normals: jax.Array
+) -> jax.Array:
     """Damped tangent-space Newton on ``grad_{S^2} D_P = 0`` from every row of ``u0`` (fixed iteration count, branch free)."""
 
     def step(u: jax.Array) -> jax.Array:
-        g = jax.grad(d_p)(u, faces, index)
-        hessian, basis = _tangent_hessian(u, faces, index, None)
+        g = jax.grad(d_p)(u, faces, index, normals)
+        hessian, basis = _tangent_hessian(u, faces, index, None, normals)
         delta = jnp.linalg.solve(hessian, -(basis @ g))
         norm = jnp.linalg.norm(delta)
         delta = delta * jnp.minimum(1.0, max_step / jnp.maximum(norm, 1e-300))
@@ -348,7 +386,13 @@ def classify(hessian_eigenvalues: np.ndarray) -> tuple[str, int | None]:
 
 
 def lattice_newton_critical_points(
-    faces: Faces, index: float, *, lattice_n: int = 20000, iterations: int = 40, max_step_rad: float = 0.05
+    faces: Faces,
+    index: float,
+    *,
+    lattice_n: int = 20000,
+    iterations: int = 40,
+    max_step_rad: float = 0.05,
+    crystal: Polyhedron | None = None,
 ) -> tuple[InteriorCriticalPoint, ...]:
     """Every interior critical point reached by Newton from the ``U_P`` points of a Fibonacci lattice.
 
@@ -358,19 +402,23 @@ def lattice_newton_critical_points(
     Riemannian Hessian.  A path with no seeds returns ``()``.
     """
     lattice = fibonacci_sphere(lattice_n)
-    seeds = lattice[valid_batch(lattice, faces, index)]
+    seeds = lattice[valid_batch(lattice, faces, index, crystal=crystal)]
     if len(seeds) == 0:
         return ()
-    ends = np.asarray(_newton_batch(jnp.asarray(seeds), faces, jnp.float64(index), iterations, jnp.float64(max_step_rad)))
+    ends = np.asarray(
+        _newton_batch(
+            jnp.asarray(seeds), faces, jnp.float64(index), iterations, jnp.float64(max_step_rad), body_normals(crystal, faces)
+        )
+    )
     finite = np.all(np.isfinite(ends), axis=1)
     ends = ends[finite]
     if len(ends) == 0:
         return ()
-    gradient_norm = np.linalg.norm(gradient_batch(ends, faces, index), axis=1)
+    gradient_norm = np.linalg.norm(gradient_batch(ends, faces, index, crystal=crystal), axis=1)
     # inside the open U_P, not on dU_P: a critical point of the smooth extension that sits on a grazing
     # internal-reflection piece (3-4-5-7, D = 141.84 deg, gate 1e-16) is the walk's loop extremum, not interior
-    off_boundary = np.min(validity_margins_batch(ends, faces, index), axis=1) > BOUNDARY_MARGIN_ATOL
-    converged = ends[(gradient_norm < CRITICAL_GRADIENT_TOL) & valid_batch(ends, faces, index) & off_boundary]
+    off_boundary = np.min(validity_margins_batch(ends, faces, index, crystal=crystal), axis=1) > BOUNDARY_MARGIN_ATOL
+    converged = ends[(gradient_norm < CRITICAL_GRADIENT_TOL) & valid_batch(ends, faces, index, crystal=crystal) & off_boundary]
     unique: list[np.ndarray] = []
     for point in converged:
         if all(np.arccos(np.clip(point @ other, -1.0, 1.0)) > CRITICAL_POINT_MERGE_RAD for other in unique):
@@ -378,9 +426,9 @@ def lattice_newton_critical_points(
     if not unique:
         return ()
     points = np.stack(unique)
-    values = d_p_batch(points, faces, index)
-    hessians, _ = hessian_tangent_batch(points, faces, index)
-    norms = np.linalg.norm(gradient_batch(points, faces, index), axis=1)
+    values = d_p_batch(points, faces, index, crystal=crystal)
+    hessians, _ = hessian_tangent_batch(points, faces, index, crystal=crystal)
+    norms = np.linalg.norm(gradient_batch(points, faces, index, crystal=crystal), axis=1)
     out = []
     for point, value, hessian, norm in zip(points, values, hessians, norms):
         eigenvalues = np.linalg.eigvalsh(0.5 * (hessian + hessian.T))
@@ -390,7 +438,7 @@ def lattice_newton_critical_points(
 
 
 def interior_critical_points(
-    screen: FoldScreen, faces: Faces, index: float, *, lattice_n: int = 20000
+    screen: FoldScreen, faces: Faces, index: float, *, lattice_n: int = 20000, crystal: Polyhedron | None = None
 ) -> tuple[tuple[InteriorCriticalPoint, ...], DegenerateFoldSet | None]:
     """Interior critical points of ``D_P``: the slab set for a degenerate fold, lattice Newton otherwise.
 
@@ -401,11 +449,11 @@ def interior_critical_points(
     non-degenerate path.
     """
     if not screen.degenerate:
-        return lattice_newton_critical_points(faces, index, lattice_n=lattice_n), None
-    fold_set = degenerate_fold_set(screen, faces, index)
+        return lattice_newton_critical_points(faces, index, lattice_n=lattice_n, crystal=crystal), None
+    fold_set = degenerate_fold_set(screen, faces, index, crystal=crystal)
     points = []
     for point, where in fold_set.axis_points:
         if where == "interior":
-            value = float(d_p_batch(point[None, :], faces, index, screen.fold_matrix)[0])
+            value = float(d_p_batch(point[None, :], faces, index, screen.fold_matrix, crystal=crystal)[0])
             points.append(InteriorCriticalPoint(point, value, np.full(2, np.nan), "degenerate", None, 0.0))
     return tuple(points), fold_set

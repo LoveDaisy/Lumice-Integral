@@ -290,7 +290,7 @@ def _admissible_seed(
     corrected, residual_norm = _newton_correct(template, raw_rotation, tolerance * 1e-2)
     corrected_np = np.asarray(corrected)
     incident = np.asarray(template.incident_direction)
-    domain = path_domain(corrected_np, faces, incident, refractive_index)
+    domain = path_domain(corrected_np, faces, incident, refractive_index, crystal=crystal)
     measure = entry_measure(corrected_np, faces, incident, crystal, n_ice=refractive_index)
     if not (residual_norm <= tolerance and domain.valid and measure.value > 0):
         return None
@@ -365,12 +365,13 @@ def _problem_template(
     refractive_index: float,
     seed: np.ndarray,
     template: FiberProblem | None,
+    crystal: Polyhedron,
 ) -> FiberProblem:
     if template is not None:
         incident = np.asarray(template.incident_direction)
         if not np.allclose(incident, np.asarray(incident_direction, dtype=np.float64)):
             raise ValueError("template incident direction does not match incident_direction")
-        expected = problem_path_label(faces, refractive_index)
+        expected = problem_path_label(faces, refractive_index, crystal)
         if template.path != expected:
             raise ValueError(f"template path {template.path!r} does not match the {expected!r} problem")
         return retarget_problem(template, target_direction, seed)
@@ -380,6 +381,7 @@ def _problem_template(
         jnp.asarray(incident_direction, dtype=jnp.float64),
         target_direction=jnp.asarray(target_direction, dtype=jnp.float64),
         refractive_index=jnp.asarray(refractive_index, dtype=jnp.float64),
+        crystal=crystal,
     )
 
 
@@ -439,6 +441,7 @@ def discover_components(
         refractive_index,
         pool_rotations[0] if len(pool_rotations) else np.eye(3),
         template,
+        crystal,
     )
     events: Counter = Counter({name: 0 for name in DISCOVERY_EVENT_NAMES})
     timings: Counter = Counter({"trace_s": 0.0})
@@ -560,7 +563,9 @@ def check_band_coverage(
             counts[int(np.argmin(distances))] += 1
             continue
         if problem is None:
-            problem = _problem_template(target, seeds.faces, seeds.incident_direction, seeds.refractive_index, rotation, template)
+            problem = _problem_template(
+                target, seeds.faces, seeds.incident_direction, seeds.refractive_index, rotation, template, seeds.crystal
+            )
         corrected_count += 1
         seed = _admissible_seed(problem, options, seeds.crystal, seeds.faces, seeds.refractive_index, jnp.asarray(rotation))
         if seed is None:

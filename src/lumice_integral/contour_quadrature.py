@@ -209,8 +209,11 @@ class QuadratureOptions:
 # ---- JAX kernel ---------------------------------------------------------------------------------------
 
 
-def _panel_point(a: jax.Array, b: jax.Array, t: jax.Array, delta: jax.Array, faces, index, slab, iterations: int):
-    """``(q, |dq/dt|, |grad D(q)|, D(q) - delta)`` of the level-set point at chord parameter ``t`` of the panel ``a -> b``."""
+def _panel_point(a: jax.Array, b: jax.Array, t: jax.Array, delta: jax.Array, faces, index, slab, iterations: int, normals):
+    """``(q, |dq/dt|, |grad D(q)|, D(q) - delta)`` of the level-set point at chord parameter ``t`` of the panel ``a -> b``.
+
+    ``normals`` is :attr:`.DPField.normals` (the crystal's face normals in path order).
+    """
     axis = jnp.cross(a, b)
     sine = jnp.linalg.norm(axis)
     theta = jnp.arctan2(sine, jnp.dot(a, b))
@@ -223,7 +226,7 @@ def _panel_point(a: jax.Array, b: jax.Array, t: jax.Array, delta: jax.Array, fac
         return v / jnp.linalg.norm(v)
 
     def residual(tt, ss):
-        return d_value(point(tt, ss), faces, index, slab) - delta
+        return d_value(point(tt, ss), faces, index, slab, normals) - delta
 
     reach = jnp.maximum(theta, 1e-12)
 
@@ -237,14 +240,16 @@ def _panel_point(a: jax.Array, b: jax.Array, t: jax.Array, delta: jax.Array, fac
     _, r_s = jax.jvp(lambda ss: residual(t, ss), (s,), (jnp.ones_like(s),))
     s_t = -r_t / r_s
     q, q_t = jax.jvp(point, (t, s), (jnp.ones_like(t), s_t))
-    g = jax.grad(d_value)(q, faces, index, slab)
+    g = jax.grad(d_value)(q, faces, index, slab, normals)
     g = g - jnp.dot(g, q) * q
     return q, jnp.linalg.norm(q_t), jnp.linalg.norm(g), r
 
 
 @partial(jax.jit, static_argnums=(4, 7))
-def _panel_points(a, b, t, delta, faces, index, slab, iterations: int):
-    return jax.vmap(_panel_point, in_axes=(0, 0, 0, 0, None, None, None, None))(a, b, t, delta, faces, index, slab, iterations)
+def _panel_points(a, b, t, delta, faces, index, slab, iterations: int, normals):
+    return jax.vmap(_panel_point, in_axes=(0, 0, 0, 0, None, None, None, None, None))(
+        a, b, t, delta, faces, index, slab, iterations, normals
+    )
 
 
 def _bucket(n: int) -> int:
@@ -318,7 +323,7 @@ def _evaluate_points(field: DPField, delta: np.ndarray, a: np.ndarray, b: np.nda
     q, speed, gradient, residual = (
         np.asarray(x)
         for x in _panel_points(a, pad(b), pad(t), pad(np.asarray(delta, dtype=np.float64)), field.faces,
-                               jnp.float64(field.index), slab, iterations)
+                               jnp.float64(field.index), slab, iterations, field.normals)
     )
     finite = np.all(np.isfinite(q), axis=1) & np.isfinite(speed) & np.isfinite(gradient)
     q_safe = np.where(finite[:, None], q, a)
@@ -346,8 +351,8 @@ def _empty_panels() -> _Panels:
 
 
 @partial(jax.jit, static_argnums=1)
-def _smallest_margin_kernel(u, faces, index):
-    return jax.vmap(lambda v: jnp.min(validity_margin_vector(v, faces, index)))(u)
+def _smallest_margin_kernel(u, faces, index, normals):
+    return jax.vmap(lambda v: jnp.min(validity_margin_vector(v, faces, index, normals)))(u)
 
 
 def _smallest_margin(field: DPField, points: Sequence[np.ndarray]) -> np.ndarray:
@@ -355,7 +360,7 @@ def _smallest_margin(field: DPField, points: Sequence[np.ndarray]) -> np.ndarray
     u = np.vstack(points)
     n = len(u)
     padded = np.concatenate([u, np.repeat(u[:1], _bucket(n) - n, axis=0)])
-    return np.asarray(_smallest_margin_kernel(padded, field.faces, jnp.float64(field.index)))[:n]
+    return np.asarray(_smallest_margin_kernel(padded, field.faces, jnp.float64(field.index), field.normals))[:n]
 
 
 def _panel_breaks(points: np.ndarray, closed: bool, max_chord: float, near_boundary: np.ndarray) -> np.ndarray:

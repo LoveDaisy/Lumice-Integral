@@ -40,7 +40,10 @@ Margin identities are removed before walking, never assumed absent:
   (hence also the TIR discriminants, which are not walked) the same function (explore
   ``dp-field-boundary-deep-internal-faces``: two reflections compose to a
   rotation that carries the third normal onto the first); the third step's
-  margins are dropped and reported in ``identical_margins``;
+  margins are dropped and reported in ``identical_margins``.  The triple is
+  found by face number and confirmed on the crystal's own normals (the two
+  incidence normals must agree): equal azimuth steps are what the identity
+  needs, so a crystal with a side face off its regular azimuth keeps both;
 - a margin that vanishes along a whole piece of the walk (for example
   ``exit_snell_discriminant = entry_incidence_cosine^2`` on ``3-5-6-7-3``,
   explore ``dp-field-bigon-other-corner-pair``; mechanism not needed) is
@@ -75,9 +78,9 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 from .. import optics
-from ..geometry import Polyhedron, fold_matrix
+from ..geometry import HexPrism, Polyhedron, fold_matrix
 from ..s2_store import fibonacci_sphere
-from .field import Faces, d_value, margin_vector, valid_batch
+from .field import Faces, body_normals, d_value, margin_vector, valid_batch
 
 # March step along a boundary piece (rad).
 WALK_STEP_RAD = np.radians(0.25)
@@ -93,6 +96,8 @@ VIOLATION_ATOL = 1e-13
 TOUCHING_GRADIENT_ATOL = 1e-8
 # |m . n_a| below this makes an incidence cosine linear in u (great circle).
 GREAT_CIRCLE_ATOL = 1e-12
+# A side-face triple's two incidence normals within this are one margin (they agree to ~1e-16 on a regular prism).
+IDENTITY_NORMAL_ATOL = 1e-9
 # Two gradients whose unit tangent parts have |cross| below this are parallel (tangent curves).
 TANGENT_SINE_ATOL = 1e-6
 # The walk is closed when it meets its first corner again within this (rad).
@@ -107,18 +112,18 @@ EXTREMUM_ATOL = 1e-7
 
 
 @partial(jax.jit, static_argnums=1)
-def _margins_and_jacobian(u: jax.Array, faces: Faces, index: jax.Array) -> tuple[jax.Array, jax.Array]:
-    return margin_vector(u, faces, index), jax.jacfwd(margin_vector)(u, faces, index)
+def _margins_and_jacobian(u: jax.Array, faces: Faces, index: jax.Array, normals: jax.Array) -> tuple[jax.Array, jax.Array]:
+    return margin_vector(u, faces, index, normals), jax.jacfwd(margin_vector)(u, faces, index, normals)
 
 
 @partial(jax.jit, static_argnums=1)
-def _margins(u: jax.Array, faces: Faces, index: jax.Array) -> jax.Array:
-    return margin_vector(u, faces, index)
+def _margins(u: jax.Array, faces: Faces, index: jax.Array, normals: jax.Array) -> jax.Array:
+    return margin_vector(u, faces, index, normals)
 
 
 @partial(jax.jit, static_argnums=1)
-def _d(u: jax.Array, faces: Faces, index: jax.Array, slab: jax.Array | None) -> jax.Array:
-    return d_value(u, faces, index, slab)
+def _d(u: jax.Array, faces: Faces, index: jax.Array, slab: jax.Array | None, normals: jax.Array) -> jax.Array:
+    return d_value(u, faces, index, slab, normals)
 
 
 def _unit(v: np.ndarray) -> np.ndarray:
@@ -214,20 +219,31 @@ def _side_azimuth(face: int) -> int | None:
     return (face - 3) * 60 if 3 <= face <= 8 else None
 
 
-def identical_margins(faces: Faces) -> dict[str, str]:
+def identical_margins(faces: Faces, crystal: Polyhedron | None = None) -> dict[str, str]:
     """Margins that equal an earlier one as functions: the ``+-60`` degree side-face triples (module docstring).
 
     Returns ``{dropped name: kept name}`` for both the incidence cosine and
-    the TIR discriminant of the third reflection of each such triple.
+    the TIR discriminant of the third reflection of each such triple.  The
+    triple is found by face number and kept only where ``crystal`` (default:
+    the canonical hexagonal prism) bears the identity out: the two incidence
+    normals (:func:`_incidence_normals`) agree to ``IDENTITY_NORMAL_ATOL``.
+    A side face off its regular azimuth breaks the identity and keeps both margins.
     """
     internal = faces[1:-1]
+    normals = _incidence_normals(crystal, faces)
     out: dict[str, str] = {}
     for j in range(len(internal) - 2):
         azimuths = [_side_azimuth(face) for face in internal[j : j + 3]]
         if any(a is None for a in azimuths):
             continue
         first, second = (azimuths[1] - azimuths[0]) % 360, (azimuths[2] - azimuths[1]) % 360
-        if first == second and first in (60, 300):
+        agree = np.allclose(
+            normals[f"internal_{j + 3}_incidence_cosine"],
+            normals[f"internal_{j + 1}_incidence_cosine"],
+            rtol=0.0,
+            atol=IDENTITY_NORMAL_ATOL,
+        )
+        if first == second and first in (60, 300) and agree:
             kept, dropped = j + 1, j + 3
             while f"internal_{kept}_incidence_cosine" in out:  # chains of triples all map to the first
                 kept = int(out[f"internal_{kept}_incidence_cosine"].split("_")[1])
@@ -236,14 +252,18 @@ def identical_margins(faces: Faces) -> dict[str, str]:
     return out
 
 
-def _incidence_normals(crystal: Polyhedron, faces: Faces) -> dict[str, np.ndarray]:
-    """``m`` of every incidence cosine: ``n_a`` (entry), ``R_{k-1}^T n_k`` (step ``k``), ``M^T n_b`` (exit)."""
-    normals = {name: np.asarray(n) for name, n in optics.HEXPRISM_BODY_NORMALS.items()}
-    out = {"entry_incidence_cosine": normals[faces[0]]}
+def _incidence_normals(crystal: Polyhedron | None, faces: Faces) -> dict[str, np.ndarray]:
+    """``m`` of every incidence cosine: ``n_a`` (entry), ``R_{k-1}^T n_k`` (step ``k``), ``M^T n_b`` (exit).
+
+    Body normals and fold matrices are both ``crystal``'s (``None``: the canonical hexagonal prism).
+    """
+    crystal = HexPrism() if crystal is None else crystal
+    normals = optics.face_normals(crystal, faces)
+    out = {"entry_incidence_cosine": normals[0]}
     for k in range(1, len(faces) - 1):
         # fold_matrix of (a, m_1, ..., m_{k-1}, m_k) folds the reflections m_1..m_{k-1}: R_{k-1}.
-        out[f"internal_{k}_incidence_cosine"] = fold_matrix(crystal, faces[: k + 1]).T @ normals[faces[k]]
-    out["exit_incidence_cosine"] = fold_matrix(crystal, faces).T @ normals[faces[-1]]
+        out[f"internal_{k}_incidence_cosine"] = fold_matrix(crystal, faces[: k + 1]).T @ normals[k]
+    out["exit_incidence_cosine"] = fold_matrix(crystal, faces).T @ normals[-1]
     return out
 
 
@@ -255,20 +275,24 @@ def great_circle_margins(crystal: Polyhedron, faces: Faces, index: float, *, sam
     (run-time check of the derivation in the module docstring).
     """
     names = optics.domain_margin_names(faces)
-    n_a = np.asarray(optics.HEXPRISM_BODY_NORMALS[faces[0]])
+    incidence = _incidence_normals(crystal, faces)
+    n_a = incidence["entry_incidence_cosine"]
+    normals = body_normals(crystal, faces)
     t = np.linspace(0.0, 2.0 * np.pi, samples, endpoint=False)
     out: dict[str, np.ndarray] = {}
-    for name, m in _incidence_normals(crystal, faces).items():
+    for name, m in incidence.items():
         if abs(m @ n_a) > GREAT_CIRCLE_ATOL and name != "entry_incidence_cosine":
             continue
         m = _unit(m)
         e1 = _unit(np.cross(m, np.eye(3)[int(np.argmin(np.abs(m)))]))
         e2 = np.cross(m, e1)
         k = names.index(name)
-        on_circle = [float(_margins(jnp.asarray(np.cos(s) * e1 + np.sin(s) * e2), faces, jnp.float64(index))[k]) for s in t]
+        on_circle = [
+            float(_margins(jnp.asarray(np.cos(s) * e1 + np.sin(s) * e2), faces, jnp.float64(index), normals)[k]) for s in t
+        ]
         if max(abs(v) for v in on_circle) > COINCIDENT_ATOL:
             continue
-        sign = np.sign(float(_margins(jnp.asarray(m), faces, jnp.float64(index))[k]))
+        sign = np.sign(float(_margins(jnp.asarray(m), faces, jnp.float64(index), normals)[k]))
         out[name] = sign * m
     return out
 
@@ -280,12 +304,14 @@ class _Walker:
     """Stateful helper holding the path, the margin bookkeeping and the curve steppers."""
 
     def __init__(self, crystal: Polyhedron, faces: Faces, index: float, slab: np.ndarray | None) -> None:
+        self.crystal = crystal
         self.faces = faces
+        self._normals = body_normals(crystal, faces)
         self.index = float(index)
         self._index = jnp.float64(index)
         self._slab = None if slab is None else jnp.asarray(slab, dtype=jnp.float64)
         self.names = optics.domain_margin_names(faces)  # margin_vector's layout: indices only
-        self.identical = identical_margins(faces)
+        self.identical = identical_margins(faces, crystal)
         self.circles = great_circle_margins(crystal, faces, index)
         # the gates of U_P (the authority of path_domain_batch), identities removed; entry_snell_discriminant
         # = 1 - (1 - c^2) / n^2 > 0 for n > 1 stays a gate but never vanishes, so it never becomes a piece.
@@ -293,18 +319,22 @@ class _Walker:
 
     # -- evaluation
     def margins(self, u: np.ndarray) -> np.ndarray:
-        return np.asarray(_margins(jnp.asarray(u), self.faces, self._index))
+        return np.asarray(_margins(jnp.asarray(u), self.faces, self._index, self._normals))
 
     def margins_jacobian(self, u: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        m, j = _margins_and_jacobian(jnp.asarray(u), self.faces, self._index)
+        m, j = _margins_and_jacobian(jnp.asarray(u), self.faces, self._index, self._normals)
         return np.asarray(m), np.asarray(j)
 
     def d(self, u: np.ndarray) -> float:
         """``D_P`` at a point of the closure of ``U_P`` (``RuntimeError`` if not finite: the point is outside)."""
-        value = float(_d(jnp.asarray(u), self.faces, self._index, self._slab))
+        value = float(_d(jnp.asarray(u), self.faces, self._index, self._slab, self._normals))
         if not np.isfinite(value):
-            raise RuntimeError(f"D_P is not finite at {u} on {optics.path_id_of(self.faces)}")
+            raise RuntimeError(f"D_P is not finite at {u} on {self.path_id}")
         return value
+
+    @property
+    def path_id(self) -> str:
+        return optics.path_id_of(self.faces, self.crystal)
 
     def k(self, name: str) -> int:
         return self.names.index(name)
@@ -379,7 +409,7 @@ class _Walker:
         point of the closure.  The step is the one of :meth:`correct`; a corner with a finite ``D_P`` is kept.
         """
         for _ in range(8):
-            if np.isfinite(float(_d(jnp.asarray(u), self.faces, self._index, self._slab))):
+            if np.isfinite(float(_d(jnp.asarray(u), self.faces, self._index, self._slab, self._normals))):
                 break
             m, j = self.margins_jacobian(u)
             rounding = [n for n in self.active if -VIOLATION_ATOL <= m[self.k(n)] < 0.0]
@@ -411,15 +441,15 @@ class _Walker:
 def _start_point(walker: _Walker, lattice_n: int) -> tuple[np.ndarray, str]:
     """A point of ``dU_P`` and its margin: bisect between a lattice point of ``U_P`` and an outside neighbour."""
     lattice = fibonacci_sphere(lattice_n)
-    valid = valid_batch(lattice, walker.faces, walker.index)
+    valid = valid_batch(lattice, walker.faces, walker.index, crystal=walker.crystal)
     if not valid.any():
-        raise ValueError(f"U_P of {optics.path_id_of(walker.faces)} has no point on a {lattice_n}-point lattice")
+        raise ValueError(f"U_P of {walker.path_id} has no point on a {lattice_n}-point lattice")
     if valid.all():
         raise ValueError("U_P covers the whole lattice: no boundary")
     _, neighbours = cKDTree(lattice).query(lattice, k=7)
     rows = np.flatnonzero(valid & np.any(~valid[neighbours[:, 1:]], axis=1))
     if len(rows) == 0:
-        raise ValueError(f"U_P of {optics.path_id_of(walker.faces)} has no lattice point next to its boundary")
+        raise ValueError(f"U_P of {walker.path_id} has no lattice point next to its boundary")
     row = rows[0]
     inside = lattice[row]
     out = lattice[next(c for c in neighbours[row, 1:] if not valid[c])]
@@ -476,7 +506,7 @@ def _walk_piece(
         corner = walker.refine_corner(walker.advance(u, name, tangent, lo), name, crossing)
         points.append(corner)
         return points, corner, coincident
-    raise RuntimeError(f"boundary walk of {optics.path_id_of(walker.faces)} did not reach a corner in {MAX_WALK_STEPS} steps")
+    raise RuntimeError(f"boundary walk of {walker.path_id} did not reach a corner in {MAX_WALK_STEPS} steps")
 
 
 def _outgoing(walker: _Walker, corner: np.ndarray, incoming: str, incoming_coincident: set[str]) -> str:
@@ -495,7 +525,7 @@ def _outgoing(walker: _Walker, corner: np.ndarray, incoming: str, incoming_coinc
             accepted.append(name)
     if len(accepted) != 1:
         raise RuntimeError(
-            f"corner {corner} of {optics.path_id_of(walker.faces)} continues along {accepted} "
+            f"corner {corner} of {walker.path_id} continues along {accepted} "
             f"(vanishing margins {zero}): not a simple boundary loop"
         )
     return accepted[0]
@@ -605,7 +635,7 @@ def walk_boundary(
             if _angle(nxt, first) <= CORNER_CLOSE_RAD:
                 break
         else:
-            raise RuntimeError(f"boundary walk of {optics.path_id_of(faces)} did not close")
+            raise RuntimeError(f"boundary walk of {walker.path_id} did not close")
         # the loop starts and ends at `first`: pieces[i] runs from corner i - 1 to corner i
         pieces[-1] = _replace_last_point(walker, pieces[-1], first)
         for i, piece in enumerate(pieces):

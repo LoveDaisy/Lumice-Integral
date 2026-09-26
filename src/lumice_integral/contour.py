@@ -216,13 +216,17 @@ class LevelSet:
 # ---- JAX kernels --------------------------------------------------------------------------------------
 
 
+def _path_id(field: DPField) -> str:
+    return optics.path_id_of(field.faces, field.crystal)
+
+
 def _angle(a: jax.Array, b: jax.Array) -> jax.Array:
     return jnp.arctan2(jnp.linalg.norm(jnp.cross(a, b)), jnp.dot(a, b))
 
 
-def _residual_and_gradient(u: jax.Array, delta: jax.Array, faces, index, slab) -> tuple[jax.Array, jax.Array]:
-    """``D_P(u) - delta`` and the tangent gradient of ``D_P``."""
-    value, g = jax.value_and_grad(d_value)(u, faces, index, slab)
+def _residual_and_gradient(u: jax.Array, delta: jax.Array, faces, index, slab, normals) -> tuple[jax.Array, jax.Array]:
+    """``D_P(u) - delta`` and the tangent gradient of ``D_P`` (``normals``: :attr:`.DPField.normals`, likewise below)."""
+    value, g = jax.value_and_grad(d_value)(u, faces, index, slab, normals)
     return value - delta, g - jnp.dot(g, u) * u
 
 
@@ -230,11 +234,13 @@ def _residual_tolerance(gradient_norm: jax.Array) -> jax.Array:
     return jnp.maximum(LEVEL_RESIDUAL_TOL, ROUNDING_ULPS * jnp.finfo(jnp.float64).eps * gradient_norm)
 
 
-def _project_onto_level(u: jax.Array, delta: jax.Array, faces, index, slab, iterations: int, max_step: jax.Array) -> jax.Array:
+def _project_onto_level(
+    u: jax.Array, delta: jax.Array, faces, index, slab, iterations: int, max_step: jax.Array, normals
+) -> jax.Array:
     """Damped Newton along ``grad D`` onto ``{D_P = delta}`` (fixed iteration count, branch free)."""
 
     def body(_, v):
-        r, g = _residual_and_gradient(v, delta, faces, index, slab)
+        r, g = _residual_and_gradient(v, delta, faces, index, slab, normals)
         step = -r * g / jnp.maximum(jnp.dot(g, g), 1e-300)
         norm = jnp.linalg.norm(step)
         moved = v + step * jnp.minimum(1.0, max_step / jnp.maximum(norm, 1e-300))
@@ -243,39 +249,41 @@ def _project_onto_level(u: jax.Array, delta: jax.Array, faces, index, slab, iter
     return jax.lax.fori_loop(0, iterations, body, u)
 
 
-def _inside(u: jax.Array, faces, index) -> tuple[jax.Array, jax.Array]:
+def _inside(u: jax.Array, faces, index, normals) -> tuple[jax.Array, jax.Array]:
     """``u in U_P`` (every gate finite and above ``INSIDE_MARGIN_FLOOR``) and the smallest gate (module docstring)."""
-    margins = validity_margin_vector(u, faces, index)
+    margins = validity_margin_vector(u, faces, index, normals)
     smallest = jnp.min(margins)
     return jnp.all(jnp.isfinite(margins)) & (smallest > INSIDE_MARGIN_FLOOR), smallest
 
 
 @partial(jax.jit, static_argnums=(2, 5))
-def _project_batch(u, delta, faces, index, slab, iterations: int, max_step):
-    return jax.vmap(_project_onto_level, in_axes=(0, 0, None, None, None, None, None))(u, delta, faces, index, slab, iterations, max_step)
+def _project_batch(u, delta, faces, index, slab, iterations: int, max_step, normals):
+    return jax.vmap(_project_onto_level, in_axes=(0, 0, None, None, None, None, None, None))(
+        u, delta, faces, index, slab, iterations, max_step, normals
+    )
 
 
 @partial(jax.jit, static_argnums=1)
-def _inside_batch(u, faces, index) -> jax.Array:
-    return jax.vmap(lambda v: _inside(v, faces, index)[0])(u)
+def _inside_batch(u, faces, index, normals) -> jax.Array:
+    return jax.vmap(lambda v: _inside(v, faces, index, normals)[0])(u)
 
 
 @partial(jax.jit, static_argnums=2)
-def _residual_batch(u, delta, faces, index, slab) -> tuple[jax.Array, jax.Array]:
+def _residual_batch(u, delta, faces, index, slab, normals) -> tuple[jax.Array, jax.Array]:
     """``D - delta`` and its tolerance at each row."""
 
     def one(v, d):
-        r, g = _residual_and_gradient(v, d, faces, index, slab)
+        r, g = _residual_and_gradient(v, d, faces, index, slab, normals)
         return r, _residual_tolerance(jnp.linalg.norm(g))
 
     return jax.vmap(one)(u, delta)
 
 
-def _margin_projection(u: jax.Array, k: jax.Array, target: jax.Array, faces, index) -> jax.Array:
+def _margin_projection(u: jax.Array, k: jax.Array, target: jax.Array, faces, index, normals) -> jax.Array:
     """Newton along the gradient of margin ``k`` onto ``{margin_k = target}``."""
 
     def margin(v):
-        return validity_margin_vector(v, faces, index)[k]
+        return validity_margin_vector(v, faces, index, normals)[k]
 
     def body(_, v):
         m, g = jax.value_and_grad(margin)(v)
@@ -287,7 +295,7 @@ def _margin_projection(u: jax.Array, k: jax.Array, target: jax.Array, faces, ind
 
 
 @partial(jax.jit, static_argnums=5)
-def _boundary_bisection(a, b, k, delta, sign_a, faces, index, slab, target) -> jax.Array:
+def _boundary_bisection(a, b, k, delta, sign_a, faces, index, slab, target, normals) -> jax.Array:
     """The point of ``{margin_k = target}`` between ``a`` and ``b`` where ``D_P = delta`` (bisection).
 
     ``a``, ``b`` are consecutive samples of a boundary piece of margin ``k``
@@ -296,13 +304,13 @@ def _boundary_bisection(a, b, k, delta, sign_a, faces, index, slab, target) -> j
 
     def point(lam, a, b, k):
         chord = (1.0 - lam) * a + lam * b
-        return _margin_projection(chord / jnp.linalg.norm(chord), k, target, faces, index)
+        return _margin_projection(chord / jnp.linalg.norm(chord), k, target, faces, index, normals)
 
     def one(a, b, k, delta, sign_a):
         def body(_, bracket):
             lo, hi = bracket
             mid = 0.5 * (lo + hi)
-            same = sign_a * (d_value(point(mid, a, b, k), faces, index, slab) - delta) > 0.0
+            same = sign_a * (d_value(point(mid, a, b, k), faces, index, slab, normals) - delta) > 0.0
             return jnp.where(same, mid, lo), jnp.where(same, hi, mid)
 
         lo, hi = jax.lax.fori_loop(0, BISECTION_ITERATIONS, body, (0.0, 1.0))
@@ -323,10 +331,10 @@ class _WalkState(NamedTuple):
     left_domain: jax.Array
 
 
-def _walk_step(s: _WalkState, faces, index, slab) -> tuple[_WalkState, jax.Array]:
+def _walk_step(s: _WalkState, faces, index, slab, normals) -> tuple[_WalkState, jax.Array]:
     """One predictor-corrector step of one curve (module docstring); returns the new state and whether a node was added."""
     active = s.status == _ACTIVE
-    _, g = _residual_and_gradient(s.u, s.delta, faces, index, slab)
+    _, g = _residual_and_gradient(s.u, s.delta, faces, index, slab, normals)
     tangent = s.sign * jnp.cross(s.u, g) / jnp.maximum(jnp.linalg.norm(g), 1e-300)
     closes = active & (s.accepted >= 2) & (_angle(s.u, s.start) <= s.step) & (jnp.dot(s.start - s.u, tangent) > 0.0)
 
@@ -335,19 +343,21 @@ def _walk_step(s: _WalkState, faces, index, slab) -> tuple[_WalkState, jax.Array
     # geodesic predictor leaves U_P by the boundary's curvature alone: when the smallest margin, to first order
     # along the tangent, stays above half its value but the predictor loses more than that, the predictor is
     # moved onto that first-order margin (a curve heading out of U_P is left alone and ends by halving)
-    margins = validity_margin_vector(s.u, faces, index)
+    margins = validity_margin_vector(s.u, faces, index, normals)
     k = jnp.argmin(margins)
     depth = margins[k]
-    slope = jnp.dot(jax.grad(lambda v: validity_margin_vector(v, faces, index)[k])(s.u), tangent)
+    slope = jnp.dot(jax.grad(lambda v: validity_margin_vector(v, faces, index, normals)[k])(s.u), tangent)
     target = depth + jnp.sin(s.step) * slope
-    sagging = (target > 0.5 * depth) & (validity_margin_vector(predictor, faces, index)[k] < 0.5 * target)
-    predictor = jnp.where(sagging, _margin_projection(predictor, k, target, faces, index), predictor)
-    candidate = _project_onto_level(predictor, s.delta, faces, index, slab, CORRECTOR_ITERATIONS, CORRECTOR_REACH * s.step)
-    residual, g_new = _residual_and_gradient(candidate, s.delta, faces, index, slab)
+    sagging = (target > 0.5 * depth) & (validity_margin_vector(predictor, faces, index, normals)[k] < 0.5 * target)
+    predictor = jnp.where(sagging, _margin_projection(predictor, k, target, faces, index, normals), predictor)
+    candidate = _project_onto_level(
+        predictor, s.delta, faces, index, slab, CORRECTOR_ITERATIONS, CORRECTOR_REACH * s.step, normals
+    )
+    residual, g_new = _residual_and_gradient(candidate, s.delta, faces, index, slab, normals)
     g_norm = jnp.linalg.norm(g_new)
     new_tangent = s.sign * jnp.cross(candidate, g_new) / jnp.maximum(g_norm, 1e-300)
     turn = _angle(tangent, new_tangent)
-    inside, _ = _inside(candidate, faces, index)
+    inside, _ = _inside(candidate, faces, index, normals)
     good = (
         inside
         & (jnp.abs(residual) <= _residual_tolerance(g_norm))
@@ -373,11 +383,11 @@ def _walk_step(s: _WalkState, faces, index, slab) -> tuple[_WalkState, jax.Array
 
 
 @partial(jax.jit, static_argnums=(1, 4))
-def _walk_chunk(state: _WalkState, faces, index, slab, steps: int):
-    step = jax.vmap(_walk_step, in_axes=(0, None, None, None))
+def _walk_chunk(state: _WalkState, faces, index, slab, steps: int, normals):
+    step = jax.vmap(_walk_step, in_axes=(0, None, None, None, None))
 
     def body(s, _):
-        s, accepted = step(s, faces, index, slab)
+        s, accepted = step(s, faces, index, slab, normals)
         return s, (s.u, accepted)
 
     return jax.lax.scan(body, state, None, length=steps)
@@ -433,7 +443,7 @@ def _walk(field: DPField, seeds: np.ndarray, deltas: np.ndarray, signs: np.ndarr
     done_steps = 0
     while np.any(status == _ACTIVE):
         if done_steps >= MAX_WALK_STEPS:
-            raise RuntimeError(f"{np.sum(status == _ACTIVE)} level curve walk(s) of {optics.path_id_of(field.faces)} "
+            raise RuntimeError(f"{np.sum(status == _ACTIVE)} level curve walk(s) of {_path_id(field)} "
                                f"did not finish in {MAX_WALK_STEPS} steps")
         rows = np.flatnonzero(status == _ACTIVE)
         size = _bucket(len(rows))
@@ -446,7 +456,7 @@ def _walk(field: DPField, seeds: np.ndarray, deltas: np.ndarray, signs: np.ndarr
             batch(u, [0.0, 0.0, 1.0]), batch(start, [0.0, 0.0, 1.0]), batch(delta, 0.0), batch(step, 1.0),
             batch(sign, 1.0), batch(status, _PADDING), batch(accepted, 0), batch(calm, 0), batch(left, False),
         )
-        state, (nodes, added) = _walk_chunk(state, field.faces, index, slab, WALK_CHUNK_STEPS)
+        state, (nodes, added) = _walk_chunk(state, field.faces, index, slab, WALK_CHUNK_STEPS, field.normals)
         n = len(rows)
         u[rows] = np.asarray(state.u)[:n]
         step[rows] = np.asarray(state.step)[:n]
@@ -589,7 +599,9 @@ def _boundary_seeds(field: DPField, deltas: np.ndarray) -> tuple[np.ndarray, np.
         if len(rows) == 0:
             break
         seeds[rows] = _in_buckets(
-            lambda a_, b_, k_, d_, s_: _boundary_bisection(a_, b_, k_, d_, s_, field.faces, jnp.float64(field.index), slab, jnp.float64(target)),
+            lambda a_, b_, k_, d_, s_: _boundary_bisection(
+                a_, b_, k_, d_, s_, field.faces, jnp.float64(field.index), slab, jnp.float64(target), field.normals
+            ),
             a[item][rows], b[item][rows], k[rows], deltas[j][rows], sign_a[rows],
         )
         todo[rows] = ~_seeds_inside(field, seeds[rows])
@@ -604,7 +616,7 @@ def _seeds_inside(field: DPField, seeds: np.ndarray) -> np.ndarray:
     out = np.zeros(len(seeds), dtype=bool)
     rows = np.flatnonzero(finite)
     if len(rows):
-        inside = _in_buckets(lambda u: _inside_batch(jnp.asarray(u), field.faces, jnp.float64(field.index)), seeds[rows])
+        inside = _in_buckets(lambda u: _inside_batch(jnp.asarray(u), field.faces, jnp.float64(field.index), field.normals), seeds[rows])
         out[rows] = inside & _in_buckets(field.valid_batch, seeds[rows])
     return out
 
@@ -653,7 +665,7 @@ def _extremum_seeds(field: DPField, deltas: np.ndarray) -> tuple[np.ndarray, np.
 
 def _grid_seeds(field: DPField, deltas: np.ndarray, grid: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Linear crossings of ``D - delta`` on the edges of a ``grid x grid`` chart of the entry hemisphere, with the edge lengths."""
-    n_a = np.asarray(optics.HEXPRISM_BODY_NORMALS[field.faces[0]], dtype=np.float64)
+    n_a = np.asarray(field.normals[0], dtype=np.float64)
     e1 = np.cross(n_a, np.eye(3)[int(np.argmin(np.abs(n_a)))])
     e1 /= np.linalg.norm(e1)
     e2 = np.cross(n_a, e1)
@@ -706,7 +718,10 @@ def _refine(field: DPField, seeds: np.ndarray, deltas: np.ndarray) -> tuple[np.n
         return seeds, np.zeros(0, dtype=bool)
     slab = None if field.slab is None else jnp.asarray(field.slab)
     points = _in_buckets(
-        lambda u, d: _project_batch(u, d, field.faces, jnp.float64(field.index), slab, SEED_NEWTON_ITERATIONS, jnp.float64(SEED_NEWTON_MAX_STEP_RAD)),
+        lambda u, d: _project_batch(
+            u, d, field.faces, jnp.float64(field.index), slab, SEED_NEWTON_ITERATIONS, jnp.float64(SEED_NEWTON_MAX_STEP_RAD),
+            field.normals,
+        ),
         seeds, deltas,
     )
     finite = np.all(np.isfinite(points), axis=1)
@@ -719,7 +734,9 @@ def _refine(field: DPField, seeds: np.ndarray, deltas: np.ndarray) -> tuple[np.n
 
 def _residuals(field: DPField, points: np.ndarray, deltas: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     slab = None if field.slab is None else jnp.asarray(field.slab)
-    return _in_buckets(lambda u, d: _residual_batch(u, d, field.faces, jnp.float64(field.index), slab), points, deltas)
+    return _in_buckets(
+        lambda u, d: _residual_batch(u, d, field.faces, jnp.float64(field.index), slab, field.normals), points, deltas
+    )
 
 
 # ---- components ---------------------------------------------------------------------------------------
@@ -734,7 +751,7 @@ def _components_of(field: DPField, seeds: np.ndarray, j: np.ndarray, deltas: np.
         kinds = {forward.status, backward.status}
         if _STALLED in kinds:
             raise RuntimeError(
-                f"level curve walk of {optics.path_id_of(field.faces)} stalled at delta = {deltas[j[i]]!r} "
+                f"level curve walk of {_path_id(field)} stalled at delta = {deltas[j[i]]!r} "
                 f"from seed {seeds[i]} (step below {WALK_MIN_STEP_RAD} away from dU_P)"
             )
         if kinds == {_CLOSED}:
@@ -743,7 +760,7 @@ def _components_of(field: DPField, seeds: np.ndarray, j: np.ndarray, deltas: np.
             out.append((int(j[i]), "open", np.vstack([backward.nodes[::-1], forward.nodes[1:]])))
         else:
             raise RuntimeError(
-                f"level curve of {optics.path_id_of(field.faces)} at delta = {deltas[j[i]]!r} closes one way and "
+                f"level curve of {_path_id(field)} at delta = {deltas[j[i]]!r} closes one way and "
                 f"ends on dU_P the other (seed {seeds[i]})"
             )
     return out
@@ -789,7 +806,7 @@ def _extract_unique(field: DPField, deltas: np.ndarray, store: S2EventStore, gri
         if len(candidates) == 0:
             break
         if extra_round == MAX_EXTRA_ROUNDS:
-            raise RuntimeError(f"{len(candidates)} seed(s) of {optics.path_id_of(field.faces)} still off every component "
+            raise RuntimeError(f"{len(candidates)} seed(s) of {_path_id(field)} still off every component "
                                f"after {MAX_EXTRA_ROUNDS} rounds")
         pick = np.linspace(0, len(candidates) - 1, min(len(candidates), EXTRA_SEEDS_PER_ROUND)).astype(int)
         kept += _deduplicate(_components_of(field, candidates[pick], candidate_j[pick], deltas), kept)
@@ -876,5 +893,5 @@ def extract_level_sets(
                               f"{(level_set.n_closed, level_set.n_open)}")
         level_sets.append(level_set)
     if mismatches:
-        raise ContourCertificateError(f"{optics.path_id_of(field.faces)}: " + "; ".join(mismatches))
+        raise ContourCertificateError(f"{_path_id(field)}: " + "; ".join(mismatches))
     return tuple(level_sets[i] for i in back)

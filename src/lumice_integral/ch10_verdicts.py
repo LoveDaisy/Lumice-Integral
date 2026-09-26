@@ -508,7 +508,7 @@ def tir_onset_maximum(field: DPField, lattice_n: int = LATTICE_N, starts: int = 
     between the tangent gradients of ``D_P`` and the discriminant (``0`` at
     a tangency inside ``U_P``); ``None`` for a face without a feasible onset.
     """
-    faces, index = field.faces, jnp.asarray(field.index)
+    faces, index, normals = field.faces, jnp.asarray(field.index), field.normals
     slab = None if field.slab is None else jnp.asarray(field.slab)
     names = domain_margin_names(faces)
     gates = np.asarray(validity_margin_indices(faces))
@@ -517,7 +517,7 @@ def tir_onset_maximum(field: DPField, lattice_n: int = LATTICE_N, starts: int = 
     d, margins = field.d_p_batch(u), field.margins_batch(u)
 
     def stacked(v: jax.Array) -> jax.Array:  # (D_P, every margin) at unit v
-        return jnp.concatenate([d_value(v, faces, index, slab)[None], margin_vector(v, faces, index)])
+        return jnp.concatenate([d_value(v, faces, index, slab, normals)[None], margin_vector(v, faces, index, normals)])
 
     evaluate, stacked_jacobian = jax.jit(stacked), jax.jit(jax.jacfwd(stacked))
     out: dict[str, Any] = {}
@@ -763,7 +763,7 @@ def ring_window(crystal: HexPrism, index: float, sun: np.ndarray, faces: Sequenc
     """
     rotations = _plate_poses(phi)
     fields = evaluate_fields(rotations, sun, crystal, index, [tuple(faces)])
-    margins = path_domain_batch(rotations, faces, incident_direction_from_sun(sun), index).margins
+    margins = path_domain_batch(rotations, faces, incident_direction_from_sun(sun), index, crystal=crystal).margins
     tir = [np.asarray(v) for name, v in margins.items() if name.endswith("_tir_discriminant")]
     sky = -np.einsum("nij,nj->ni", rotations, fields["phi"])
     theta = _wrap(np.arctan2(sky[:, 1], sky[:, 0]) - np.arctan2(sun[1], sun[0]))

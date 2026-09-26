@@ -49,6 +49,7 @@ from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 from scipy.spatial import cKDTree
 
+from ..geometry import Polyhedron
 from ..s2_store import fibonacci_sphere
 from .boundary import EXTREMUM_ATOL, BoundaryLoop
 from .field import DegenerateFoldSet, Faces, InteriorCriticalPoint, d_p_batch, tangent_basis, valid_batch, validity_margins_batch
@@ -99,28 +100,34 @@ def _component_count(points: np.ndarray) -> int:
     return int(connected_components(graph, directed=False)[0])
 
 
-def domain_topology(faces: Faces, index: float, *, lattice_n: int = 20000) -> DomainTopology:
+def domain_topology(
+    faces: Faces, index: float, *, lattice_n: int = 20000, crystal: Polyhedron | None = None
+) -> DomainTopology:
     """Component counts of ``U_P`` and ``S^2 \\ U_P`` on the ``lattice_n``-point Fibonacci lattice."""
     lattice = fibonacci_sphere(lattice_n)
-    valid = valid_batch(lattice, faces, index)
+    valid = valid_batch(lattice, faces, index, crystal=crystal)
     return DomainTopology(lattice_n, _component_count(lattice[valid]), _component_count(lattice[~valid]))
 
 
-def _side_values(point: np.ndarray, faces: Faces, index: float, slab: np.ndarray | None) -> np.ndarray:
+def _side_values(
+    point: np.ndarray, faces: Faces, index: float, slab: np.ndarray | None, crystal: Polyhedron | None
+) -> np.ndarray:
     """``D_P`` on the part of a ``SIDE_RING_RAD`` ring around ``point`` inside ``U_P``."""
     e = np.asarray(tangent_basis(point))
     angles = np.linspace(0.0, 2.0 * np.pi, SIDE_RING_DIRECTIONS, endpoint=False)
     ring = np.cos(SIDE_RING_RAD) * point + np.sin(SIDE_RING_RAD) * (np.cos(angles)[:, None] * e[0] + np.sin(angles)[:, None] * e[1])
-    inside = np.all(validity_margins_batch(ring, faces, index) > 0.0, axis=1)
-    return d_p_batch(ring[inside], faces, index, slab)
+    inside = np.all(validity_margins_batch(ring, faces, index, crystal=crystal) > 0.0, axis=1)
+    return d_p_batch(ring[inside], faces, index, slab, crystal=crystal)
 
 
-def _interior_extremum(point: InteriorCriticalPoint, faces: Faces, index: float, slab: np.ndarray | None) -> str:
+def _interior_extremum(
+    point: InteriorCriticalPoint, faces: Faces, index: float, slab: np.ndarray | None, crystal: Polyhedron | None
+) -> str:
     """``"minimum"`` / ``"maximum"`` of a critical point (a slab point by its ring), else ``TopologyEscape``."""
     if point.kind in ("minimum", "maximum"):
         return point.kind
     if point.kind == "degenerate" and slab is not None:
-        ring = _side_values(point.position, faces, index, slab)
+        ring = _side_values(point.position, faces, index, slab, crystal)
         if len(ring) == SIDE_RING_DIRECTIONS and np.all(ring > point.value):
             return "minimum"
         if len(ring) == SIDE_RING_DIRECTIONS and np.all(ring < point.value):
@@ -154,8 +161,13 @@ def interval_partition(
     loop: BoundaryLoop,
     topology: DomainTopology,
     slab: np.ndarray | None,
+    *,
+    crystal: Polyhedron | None = None,
 ) -> tuple[DeviationInterval, ...]:
-    """The partition of ``[min D_P, max D_P]`` with the counts of every interval (module docstring)."""
+    """The partition of ``[min D_P, max D_P]`` with the counts of every interval (module docstring).
+
+    ``crystal`` (default: the canonical hexagonal prism) supplies the face normals of the ring probes.
+    """
     if not topology.is_disk:
         raise TopologyEscape(
             f"U_P is not a disk on the {topology.lattice_n}-point lattice: {topology.domain_components} component(s), "
@@ -172,12 +184,12 @@ def interval_partition(
     values = np.array([p.value for p in extrema])
     closed_range: tuple[float, float] | None = None
     if interior:
-        kind = _interior_extremum(interior[0], faces, index, slab)
+        kind = _interior_extremum(interior[0], faces, index, slab, crystal)
         v = interior[0].value
         edge = values.min() if kind == "minimum" else values.max()
         touching = [p for p in extrema if p.kind == kind and abs(p.value - edge) <= EXTREMUM_ATOL]
         sign = 1.0 if kind == "minimum" else -1.0
-        reaches = any(np.any(sign * (_side_values(p.position, faces, index, slab) - edge) < -1e-12) for p in touching)
+        reaches = any(np.any(sign * (_side_values(p.position, faces, index, slab, crystal) - edge) < -1e-12) for p in touching)
         if not reaches or sign * (edge - v) <= 0.0:
             raise TopologyEscape(
                 f"interior {kind} D = {v} and loop {kind} {edge}: the sublevel component of the interior extremum "
