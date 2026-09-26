@@ -26,7 +26,7 @@ Queue (tasks in `scratchpad/tasks.md`; dispatched 20 ∥ 21, then 22 ∥ 24, 23 
 | 24 | scrum `phase2-contour-quadrature` (M2): `dp-field-topology` → `dp-field-layer` → `s2-contour-extraction` → `s2-contour-quadrature` → `phase1-seeds-from-store` → `ch10-numerical-verdicts` — `dp-field-layer` **done 2026-09-24** (`lumice_integral.dp_field`, [phase2.md](phase2.md) §3.1); `s2-contour-extraction` **done 2026-09-24** (`lumice_integral.contour`, [phase2.md](phase2.md) §4); `s2-contour-quadrature` **done 2026-09-25** (`lumice_integral.contour_quadrature`, [phase2.md](phase2.md) §4); `phase1-seeds-from-store` **done 2026-09-25** (`s2_store.StoreSeeds`, `discovery.check_band_coverage`; `prescan` deleted; [phase1.md](phase1.md) §5); `ch10-numerical-verdicts` **done 2026-09-25** (`lumice_integral.ch10_verdicts`, `lumice_integral.focusing`, [phase2.md](phase2.md) §10; Liljequist (i), the A60-10 142° edge, blocked on internal partial reflection; measured in 25) | 21 |
 | 25 | scrum `internal-partial-reflection`: `optics-partial-reflection` → `phase1-partial-reflection-domain` → `dp-field-partial-reflection-boundaries` → `contour-fallback-seed-scaling` → `ch10-liljequist-unblock-and-docs` — `optics-partial-reflection` **done 2026-09-25** (internal reflections split by Fresnel $R$, store schema 4, A60-10 against Lumice, §9); `phase1-partial-reflection-domain` **done 2026-09-25** (continuation event margins without internal TIR, Snell event tolerance; `3-5-6-7` / `3-5-6-7-3` against the band sum, [phase1.md](phase1.md) §5, §9); `contour-fallback-seed-scaling` **done 2026-09-25** (boundary seeds on a square coincident margin, 801 deviations per call certified, §9); `ch10-liljequist-unblock-and-docs` **done 2026-09-25** (A60-10 saddle 141.839300° on the production chain, the Liljequist peak a TIR onset corner, four verdicts rerun, ch8 strip against Lumice, §9) | 24 |
 | 26 | `phase1-quadrature-start-and-speed`: analytic `ν′` in the arc-length speed, panel-wise Simpson error estimate ([phase1.md](phase1.md)) — **done 2026-09-25** | — |
-| 29 | scrum `crystal-native-geometry` (design: explore `crystal-geometry-design`, owner rulings 2026-09-27): `crystal-closed-form` → `optics-reads-crystal` → explore `ch9-offfamily-focusing` — `crystal-closed-form` **done 2026-09-27** (closed-form prism with Lumice `face_distance`, `face_present`, fail-fast rejection, `G_true`; [overview.md](overview.md) §4.1, conventions #19, §9); `optics-reads-crystal` next (normals from the crystal, `G_true ≠ D6h` fail-fast in the reduction cluster) | — |
+| 29 | scrum `crystal-native-geometry` (design: explore `crystal-geometry-design`, owner rulings 2026-09-27): `crystal-closed-form` → `optics-reads-crystal` → explore `ch9-offfamily-focusing` — `crystal-closed-form` **done 2026-09-27** (closed-form prism with Lumice `face_distance`, `face_present`, fail-fast rejection, `G_true`; [overview.md](overview.md) §4.1, conventions #19, §9); `optics-reads-crystal` **done 2026-09-27** (normals from the crystal through `optics.face_normals`, `D_P` kernels take them as an argument, `G_true ≠ D6h` fail-fast in the reduction cluster; [overview.md](overview.md) §4.1, §9); explore `ch9-offfamily-focusing` next | — |
 
 Deferred: the chapter-11 table (path classes × pose families) after 22 and
 M2; divergent light ([phase2.md](phase2.md) §9, backlog); finite solar disk;
@@ -621,3 +621,28 @@ Moved to [overview.md](overview.md) §3.
   still read `HEXPRISM_BODY_NORMALS` and assume `D6h`; a prism with absent
   faces is not yet valid input for `optics` / `dp_field` / the store (next
   task, `optics-reads-crystal`).
+- **2026-09-27**: the single-path layer reads its normals from the crystal
+  (task `optics-reads-crystal`, scrum `crystal-native-geometry`,
+  [overview.md](overview.md) §4.1). Every `optics` single-path function takes
+  `crystal` (default `None`, the regular prism) and `optics.face_normals` is
+  the one lookup; before, `path_direction` / `DPField` gave bit-identical
+  output on a crystal with face 4 turned 10° (explore `ch12-anchor-probes`
+  #3), and `dp_field.boundary` / `focusing` / `weights` /
+  `s2_store.evaluate_fields` / discovery held a crystal without passing it
+  down. Decided in the task: the `D_P` kernels (`dp_field`, `contour`,
+  `contour_quadrature`, `ch10_verdicts`) take the normals as a traced array
+  (`DPField.normals`) with `faces` still the static key, rather than a
+  hashable crystal in `static_argnums` (no equality semantics on
+  `Polyhedron`, one compilation serves every crystal); `HexPrism().normal`
+  is ~1e-16 off the historical exact table (the plan assumed bit identity;
+  deriving the table from it alone broke three ulp-level tests), so
+  `face_normals` takes the exact star direction of faces 1–8 when the
+  crystal's normal is on it to `1e-12`, which keeps the regular prism bit
+  for bit; the boundary walk's `+-60°` margin identity is confirmed on the
+  crystal's incidence normals (equal azimuth steps are what it needs; a
+  twisted face breaks it). The reduced cluster (`path_class` orbits, `phi_key`,
+  class transports, and `s2_store` / `strip_pixel` / `band_sum` through them)
+  raises `ValueError` unless `|G_true| = 24` (owner ruling: fail fast now,
+  generalise to `G_true` in stage 2). The pyramid's paths `13-15-26-28`,
+  `13-5-26-28`, `13-24-26` reach `focusing.classify` (their reading is the
+  explore `ch9-offfamily-focusing`).
