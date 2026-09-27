@@ -279,6 +279,94 @@ def test_transport_and_store_group_compare_by_identity():
     assert plan[0] in plan and plan[0].transports[3] in plan[0].transports
 
 
+# ------------------------------------------ members under a roll-locked family
+# Explore #40 (pbd-ensemble-family-matrix): Lumice merges P / B images without an applicability
+# check; the class here evaluates every member through its own transport.  Scenes are the explore's
+# band-sum renders (artifacts/{parry-3-5,parry-4-6,random-1-5,random-2-5}/provenance.json) at N_SMALL.
+PARRY_1 = build_pose_density("parry", zenith_std_deg=1.0, roll_std_deg=1.0)
+PARRY_RENDER = {"width": 41, "height": 41, "fov_deg": 40.0, "view": {"azimuth": 0.0, "elevation": 40.0}}
+SIGMA_H_RENDER = {"width": 61, "height": 31, "fov_deg": 150.0, "view": {"azimuth": 0.0, "elevation": 20.0}}
+
+
+def member_values(events, store_members, transport, density, pixels, render) -> np.ndarray:
+    group = StoreGroup(store_members, (transport,))
+    return np.array([class_band_sum_pixel([(events, group)], SUN, density, r, c, N_SMALL, render).value for r, c in pixels])
+
+
+def test_parry_members_are_evaluated_one_by_one_and_4_6_is_zero():
+    """Parry, class ``[3,5]``: each member is its own render; ``4-6`` (a C6 image) is exactly ``0``.
+
+    ``4-6`` is ``3-5`` turned by C6 (60 deg about the c axis).  Its poses
+    that would light this window have a c-axis roll at least 38.5 deg from
+    the Parry mean 0 (measured over the sampled pixels), i.e. 38 roll ``std``:
+    ``rho`` underflows to ``0.0`` in float64, not a small number.  So ``4-6``
+    is exactly zero although its band holds events (explore #40: 0 lit
+    pixels against 1117 for ``3-5`` at ``N = 1e6``).  Per member, the transported value is zero on the window
+    exactly when the member's own store (``render_band_sum.py --path``) is:
+    eight members vanish, four do not (``3-5``, ``3-7``, ``4-8``, ``8-4``).
+    Their nonzero values agree only to the store noise of this narrow
+    density; the same-points comparison is
+    ``test_class_value_equals_the_sum_over_every_groups_own_store``.
+    """
+    crystal = canonical_crystal()
+    (group,) = store_plan(build_path_class(crystal, (3, 5)), crystal)
+    events = build([(3, 5)], N_SMALL).events.arrays()
+    pixels = [(r, c) for r in range(0, 41, 2) for c in range(0, 41, 2)]
+    values = {t.members: member_values(events, group.members, t, PARRY_1, pixels, PARRY_RENDER) for t in group.transports}
+    lit = values[((3, 5),)] > 0.0
+    assert lit.sum() >= 100
+    np.testing.assert_array_equal(values[((4, 6),)], 0.0)
+    vanishing = set()
+    for t in group.transports:
+        own = build(t.members, N_SMALL).events.arrays()
+        mine = member_values(own, t.members, Transport(t.members, None), PARRY_1, pixels, PARRY_RENDER)
+        assert (values[t.members] > 0.0).any() == (mine > 0.0).any(), t.members
+        if not (mine > 0.0).any():
+            vanishing.add(t.members)
+    assert len(vanishing) == 8 and ((4, 6),) in vanishing and ((3, 5),) not in vanishing
+    # The zero is the density, not an empty band: 4-6 has events, and rho vanishes at its transported poses.
+    (t46,) = [t for t in group.transports if t.members == ((4, 6),)]
+    row, column = pixels[int(np.argmax(values[((3, 5),)]))]
+    result = class_band_sum_pixel([(events, StoreGroup(group.members, (t46,)))], SUN, PARRY_1, row, column, N_SMALL, PARRY_RENDER)
+    assert result.K > 100 and result.K_rho_pos == 0 and result.value == 0.0
+    centre, _, lo, hi = pixel_band(row, column, SUN, PARRY_RENDER)
+    rotations, _ = band_poses(events, SUN, centre, lo, hi)
+    np.testing.assert_array_equal(PARRY_1.evaluate_batch(s2_store.transported_rotations(rotations, t46.g, SUN, centre)), 0.0)
+    assert PARRY_1.evaluate_batch(rotations).max() > 0.0
+    # The class value is the sum of the members' own transports: nothing merged, nothing skipped.
+    for (row, column), expected in zip(pixels, sum(values.values())):
+        whole = class_band_sum_pixel([(events, group)], SUN, PARRY_1, row, column, N_SMALL, PARRY_RENDER)
+        assert whole.value == pytest.approx(expected, rel=1e-12, abs=1e-300)
+
+
+def test_random_sigma_h_images_agree_within_store_noise():
+    """Positive control of the Parry test: under the Haar density ``1-5`` and its sigma_h image ``2-5`` agree.
+
+    Analytic leg: ``rho`` is constant, so the ``2-5`` transport of the
+    ``1-5`` store equals ``1-5`` bit for bit.  Render leg (explore #40's
+    comparison, ``render_band_sum.py --path`` per member): two stores, the
+    brightest 20 % of the lit pixels.  The explore measured a relative gap of
+    0.085 % median / 1.1 % max at ``N = 1e6``; at ``N_SMALL`` (10x fewer
+    points, ``sqrt(10)`` more noise) it is 0.37 % / 1.3 %, bounded here by
+    1 % / 5 %.  The same comparison under the Parry density gives 100 % /
+    100 % (``2-5`` dark where ``1-5`` is lit; recorded in the task's progress.md),
+    so the bound tells equal from unequal members.
+    """
+    crystal = canonical_crystal()
+    (group,) = store_plan(build_path_class(crystal, (1, 5)), crystal)
+    (t15, t25) = [t for m in ((1, 5), (2, 5)) for t in group.transports if t.members == (m,)]
+    pixels = [(r, c) for r in range(0, 31) for c in range(0, 61, 2)]
+    e15 = build([(1, 5)], N_SMALL).events.arrays()
+    a = member_values(e15, group.members, t15, UNIFORM, pixels, SIGMA_H_RENDER)
+    np.testing.assert_array_equal(member_values(e15, group.members, t25, UNIFORM, pixels, SIGMA_H_RENDER), a)
+    b = member_values(build([(2, 5)], N_SMALL).events.arrays(), ((2, 5),), Transport(((2, 5),), None), UNIFORM, pixels, SIGMA_H_RENDER)
+    lit = int(np.count_nonzero(a > 0.0))
+    assert lit >= 100 and np.count_nonzero(b > 0.0) >= 100
+    top = np.argsort(a)[::-1][: int(np.ceil(0.2 * lit))]
+    gap = np.abs(a[top] - b[top]) / np.maximum(a[top], b[top])
+    assert np.median(gap) < 0.01 and gap.max() < 0.05, (np.median(gap), gap.max())
+
+
 TASK14_WINDOWS = Path(__file__).resolve().parents[1] / "scratchpad/task-narrow-density-band-sum-probe/artifacts/profile_windows.json"
 
 
