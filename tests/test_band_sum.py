@@ -50,6 +50,7 @@ from lumice_integral.canonical_scene import (
     canonical_sun_direction,
 )
 from lumice_integral.camera import sun_direction
+from lumice_integral.geometry import HexPrism
 from lumice_integral.optics import path_id_of
 from lumice_integral.path_class import build_path_class, pixel_solid_angle
 from lumice_integral.pose_density import build_pose_density
@@ -75,10 +76,10 @@ def rotated_lattice(g: np.ndarray, n: int):
     return sampler
 
 
-def build(members, n: int, g: np.ndarray | None = None) -> s2_store.S2EventStore:
+def build(members, n: int, g: np.ndarray | None = None, crystal: HexPrism | None = None) -> s2_store.S2EventStore:
     extra = {} if g is None else {"sampler": rotated_lattice(g, n), "sampling": f"Fibonacci lattice rotated by {g.round(12).tolist()}"}
     return build_event_store(
-        canonical_crystal(), CANONICAL_REFRACTIVE_INDEX, members, n, run_checks=False, **extra
+        canonical_crystal() if crystal is None else crystal, CANONICAL_REFRACTIVE_INDEX, members, n, run_checks=False, **extra
     )
 
 
@@ -152,23 +153,28 @@ def test_store_plan_is_one_store_per_class():
     assert single_path_class(crystal, (3, 5)).members == ((3, 5),)
 
 
-@pytest.mark.parametrize("representative", [(3, 5), (1, 3, 5, 2)])
-def test_class_value_equals_the_sum_over_every_groups_own_store(representative):
+@pytest.mark.parametrize(
+    "face_distance, representative",
+    [(None, (3, 5)), (None, (1, 3, 5, 2)), ((1.9, 1, 1, 1.9, 1, 1), (3, 5)), ((1, 1.2, 1, 1.2, 1, 1.2), (3, 5))],
+)
+def test_class_value_equals_the_sum_over_every_groups_own_store(face_distance, representative):
     """One store per class with its transports vs each ``Phi`` group's own store on the ``g``-moved lattice.
 
-    Same points, so the totals agree to rounding (``1e-10``) and so do the
+    Same points, so the totals agree to rounding (``1e-12``) and so do the
     per-event diagnostics of each group.  ``1-3-5-2`` has ``Phi`` groups of
     six members, two of them reached by mirrors only: the ``Phi`` sum and the
-    improper transport (``L_g R g^T``) both enter.
+    improper transport (``L_g R g^T``) both enter.  Below ``D6h`` (task
+    ``reduction-cluster-g-true``: the D2h prism ``(1.9, 1, 1, 1.9, 1, 1)``, the D3h prism ``(1, 1.2, ...)``)
+    the class is the ``G_true`` orbit and the groups' own stores are built on that crystal.
     """
-    crystal = canonical_crystal()
+    crystal = canonical_crystal() if face_distance is None else HexPrism(1.0, 1.0, face_distance)
     cls = build_path_class(crystal, representative)
     plan = store_plan(cls, crystal)
     # A roll-locked density: rho(R g^T) != rho(R) for the rotations about the c axis, so the factor matters.
     density = build_pose_density("parry", zenith_std_deg=2.0, roll_std_deg=20.0)
-    stores = [(build(group.members, N_SMALL).events.arrays(), group) for group in plan]
+    stores = [(build(group.members, N_SMALL, crystal=crystal).events.arrays(), group) for group in plan]
     own_by_group = {
-        t.members: (build(t.members, N_SMALL, g=t.g).events.arrays(), identity_group(t.members))
+        t.members: (build(t.members, N_SMALL, g=t.g, crystal=crystal).events.arrays(), identity_group(t.members))
         for group in plan
         for t in group.transports
     }
@@ -188,12 +194,12 @@ def test_class_value_equals_the_sum_over_every_groups_own_store(representative):
         b = class_band_sum_pixel(own, SUN, density, row, column, N_SMALL, render)
         # Distinct events: one store's band against the groups' own bands, which hold as many events each.
         assert a.K * len(own) == b.K and a.K_rho_pos <= b.K_rho_pos
-        assert a.value == pytest.approx(b.value, rel=1e-10, abs=1e-300), (row, column)
+        assert a.value == pytest.approx(b.value, rel=1e-12, abs=1e-300), (row, column)
         lit += a.value > 0.0
         for transported, mine in per_group:
             x = class_band_sum_pixel(transported, SUN, density, row, column, N_SMALL, render)
             y = class_band_sum_pixel(mine, SUN, density, row, column, N_SMALL, render)
-            assert x.value == pytest.approx(y.value, rel=1e-10, abs=1e-300), (row, column, mine[0][1].members)
+            assert x.value == pytest.approx(y.value, rel=1e-12, abs=1e-300), (row, column, mine[0][1].members)
             assert (x.K, x.K_rho_pos) == (y.K, y.K_rho_pos)
             assert x.K_eff == pytest.approx(y.K_eff, rel=1e-8, abs=1e-300)
     assert lit >= 5
