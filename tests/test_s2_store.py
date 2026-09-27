@@ -478,12 +478,13 @@ def test_cache_refuses_mismatched_recorded_parameters(tmp_path) -> None:
         _cached(tmp_path)
 
 
-@pytest.mark.parametrize("schema", [1, 2, 3])
+@pytest.mark.parametrize("schema", [1, 2, 3, 4])
 def test_cache_refuses_an_older_schema(tmp_path, schema: int) -> None:
-    """Schema 1 (``u = R^-1 s``, propagation), schema 2 (sun direction in the key) and schema 3 (internal
-    reflections admitted only when total) are refused, never converted."""
+    """Schema 1 (``u = R^-1 s``, propagation), schema 2 (sun direction in the key), schema 3 (internal
+    reflections admitted only when total) and schema 4 (no ``face_distance`` in the crystal) are refused,
+    never converted."""
     built = _cached(tmp_path)
-    assert s2_store.SCHEMA_VERSION == 4
+    assert s2_store.SCHEMA_VERSION == 5
     directory = tmp_path / built.spec.cache_key()
     provenance_path = directory / "provenance.json"
     provenance = json.loads(provenance_path.read_text())
@@ -506,12 +507,28 @@ def test_cache_refuses_an_interrupted_save_and_never_overwrites(tmp_path) -> Non
         _cached(tmp_path)
 
 
-def test_crystal_must_be_an_untransformed_hexprism() -> None:
-    crystal = canonical_crystal()
-    assert s2_store.crystal_from_description(s2_store.crystal_description(crystal)).h == crystal.h
+@pytest.mark.parametrize(
+    "crystal",
+    [
+        canonical_crystal(),
+        geometry.HexPrism(1.0, 1.0, (1.9, 1, 1, 1.9, 1, 1)),
+        geometry.HexPrism.from_lumice(0.7, (1.0, 1.3, 0.7, 1.9, 1.1, 0.4)),
+    ],
+)
+def test_crystal_must_be_an_untransformed_hexprism(crystal) -> None:
+    """The description round-trips every closed-form prism (``face_distance`` included), not a moved one."""
+    restored = s2_store.crystal_from_description(s2_store.crystal_description(crystal))
+    assert (restored.a, restored.h) == (crystal.a, crystal.h)
+    assert restored.face_distance_ratios == crystal.face_distance_ratios
+    assert np.array_equal(restored.vertices, crystal.vertices)
     moved = crystal.transformed(np.eye(3), np.array([0.1, 0.0, 0.0]))
     with pytest.raises(ValueError, match="untransformed"):
         s2_store.crystal_description(moved)
+
+
+def test_pyramid_is_refused_with_a_forward_pointer_to_its_own_task() -> None:
+    with pytest.raises(TypeError, match="pyramid-lumice-semantics"):
+        s2_store.crystal_description(geometry.Pyramid())
 
 
 # ------------------------------------------------------- task 13 regression

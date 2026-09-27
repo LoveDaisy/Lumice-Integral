@@ -7,8 +7,12 @@ one representative face sequence into its class and drives the single-path
 pipeline of :mod:`.strip_pixel` once per member:
 
 1. :func:`pbd_orbit_hexprism` expands the representative under the face
-   permutations induced by ``D6h`` acting on the prism (Lumice ``PBD``: the
-   six rotations about the c axis, the vertical mirrors and the basal swap).
+   permutations induced by the crystal's own symmetry group ``G_true``
+   (:func:`.symmetry.crystal_group.true_symmetry_group`, a subgroup of
+   ``D6h``).  On the regular prism ``G_true`` is all of ``D6h`` (Lumice
+   ``PBD``: the six rotations about the c axis, the vertical mirrors and the
+   basal swap); on a prism with unequal ``face_distance`` it is smaller, and
+   a ``D6h`` image outside it is a different ray path, not the same physics.
    It is an independent implementation -- group elements are orthogonal
    matrices acting on the crystal's face normals, faces are matched by normal
    -- and ``tests/test_path_class.py`` cross-checks it against the index
@@ -22,7 +26,7 @@ pipeline of :mod:`.strip_pixel` once per member:
    per member, :func:`.strip_pixel.render_pixel` per member, contributions
    summed.  The members' discovery seeds come from the class's
    :func:`store_plan` (:class:`ClassScene`): one S^2 event store for the
-   ``D6h`` orbit, each member's candidates posed through its ``Phi`` group's
+   ``G_true`` orbit, each member's candidates posed through its ``Phi`` group's
    element ``g`` (:class:`.s2_store.StoreSeeds`) -- the plan the band-sum
    renderer uses, not a store per member.  Members are neither merged nor assumed equal: the
    symmetric-density identity "3-7 equals 3-5 pointwise" is a *test* of the
@@ -47,7 +51,7 @@ pipeline of :mod:`.strip_pixel` once per member:
    premise is false there.
 5. :func:`phi_key` groups face sequences by their outgoing-direction map
    ``Phi`` (``3-5`` and ``3-1-2-5`` share one), and
-   :func:`path_class_symmetry` gives each class member a ``D6h`` element
+   :func:`path_class_symmetry` gives each class member a ``G_true`` element
    (proper or improper) that transports the representative's S^2 event
    store onto it (:mod:`.s2_store`); :func:`store_plan` combines the two
    into the stores of a class (:class:`StoreGroup`, :class:`Transport`).
@@ -55,6 +59,16 @@ pipeline of :mod:`.strip_pixel` once per member:
    ``D6h`` table; the store itself (building, caching, I/O) lives in
    :mod:`.s2_store`, not here.  Everything in this module is
    specific to the hexagonal prism.
+
+Two different uses of ``D6h`` meet here and must not be confused.  The
+*candidate symmetry group* -- which elements map this crystal onto itself --
+is ``G_true`` and nothing larger (orbits, class transports).  The fixed
+24-element table :func:`hexprism_symmetry_matrices` and the six-direction
+star of prism normals are *geometric lookup tables*: every side normal of any
+closed-form prism, whatever its ``face_distance``, points along one of the
+six directions, so every fold matrix is one of the 24 and every unfolded
+normal is one of the eight directions (:func:`phi_key`), whether or not the
+crystal is symmetric under that element or still has a face there.
 
 Nothing here imports or calls Lumice.
 """
@@ -126,29 +140,27 @@ def hexprism_symmetry_matrices() -> tuple[np.ndarray, ...]:
     return D6H
 
 
+# A geometric lookup table (the fold matrices of any closed-form prism), not a candidate symmetry group:
+# a crystal's candidate group is its own G_true (true_symmetry_group; module docstring).
 _D6H = hexprism_symmetry_matrices()
 NORMAL_MATCH_ATOL = 1e-9
 
 
-def _require_d6h(crystal: Polyhedron) -> None:
-    """Fail fast unless ``crystal``'s own symmetry group ``G_true`` is all of ``D6h``.
-
-    The reduced cluster (PBD orbits, the ``Phi`` key, the class transports and, through them,
-    :mod:`.s2_store` / :mod:`.strip_pixel` / :mod:`.band_sum`) takes ``D6h`` as the crystal's symmetry.
-    On a crystal with fewer symmetries (Lumice ``face_distance``, a pyramid) it would silently merge
-    paths that are not images of each other; generalising it to ``G_true`` is not done yet.
-    """
-    group = true_symmetry_group(crystal)
-    if len(group) != len(_D6H):
-        raise ValueError(
-            f"{type(crystal).__name__} has |G_true| = {len(group)}, not D6h ({len(_D6H)}): the reduced cluster "
-            "(pbd_orbit_hexprism / phi_key / path_class_symmetry, and s2_store / strip_pixel / band_sum through "
-            "them) supports D6h crystals only"
-        )
-
-
 def _hexprism_normals(crystal: HexPrism) -> dict[int, np.ndarray]:
     return {face.number: crystal.normal(face) for face in crystal.faces}
+
+
+# The eight prism normal directions, faces 1..8 of the regular prism.  Another face_distance moves a face
+# plane along its normal or removes the face, never turns it, so this is a lookup table of directions for
+# every closed-form prism (phi_key), like _D6H; a crystal's own faces are _hexprism_normals(crystal).
+_DIRECTION_STAR = _hexprism_normals(HexPrism())
+
+
+def _require_faces_of(crystal: HexPrism, faces: Faces) -> None:
+    """``ValueError`` unless every face of ``faces`` exists on ``crystal`` (a large ``face_distance`` removes one)."""
+    missing = sorted({f for f in faces if f not in {face.number for face in crystal.faces}})
+    if missing:
+        raise ValueError(f"{path_id_of(faces)}: faces {missing} do not exist on this {type(crystal).__name__}")
 
 
 def _face_of_normal(target: np.ndarray, normals: Mapping[int, np.ndarray]) -> int:
@@ -165,18 +177,21 @@ def _symmetry_image_of_faces(element: np.ndarray, faces: Faces, normals: Mapping
 
 
 def pbd_orbit_hexprism(faces: Sequence[int], crystal: HexPrism | None = None) -> frozenset[Faces]:
-    """Orbit of a face sequence under ``D6h`` (Lumice ``PBD``) as a set of face sequences.
+    """Orbit of a face sequence under the crystal's ``G_true`` as a set of face sequences.
 
-    Each group element ``g`` maps face ``f`` to the face whose outward normal
-    is ``g @ n_f`` (normals from ``crystal``, default :class:`.geometry.HexPrism`);
-    the face sequence is mapped elementwise.  Only the point group acts, so
-    the result does not depend on the prism's aspect ratio.
+    Each element ``g`` of :func:`.symmetry.crystal_group.true_symmetry_group`
+    maps face ``f`` to the face whose outward normal is ``g @ n_f`` (normals
+    from ``crystal``, default :class:`.geometry.HexPrism`, whose ``G_true`` is
+    all of ``D6h``: Lumice ``PBD``); the face sequence is mapped elementwise.
+    Only the point group acts, so on the regular prism the result does not
+    depend on the aspect ratio.  A face the crystal does not have raises
+    ``ValueError``.
     """
     crystal = HexPrism() if crystal is None else crystal
-    _require_d6h(crystal)
     faces = normalize_faces(faces)
+    _require_faces_of(crystal, faces)
     normals = _hexprism_normals(crystal)
-    return frozenset(_symmetry_image_of_faces(element, faces, normals) for element in _D6H)
+    return frozenset(_symmetry_image_of_faces(element, faces, normals) for element in true_symmetry_group(crystal))
 
 
 def phi_key(crystal: Polyhedron, faces: Sequence[int]) -> tuple[int, int, int]:
@@ -185,12 +200,15 @@ def phi_key(crystal: Polyhedron, faces: Sequence[int]) -> tuple[int, int, int]:
     ``Phi`` of a face sequence is fixed by the fold matrix ``M``
     (:func:`.geometry.fold_matrix`), the entry normal ``n_a`` and the
     unfolded exit normal ``n_tilde_b = M^T n_b``: refract in through ``n_a``,
-    refract out through ``n_tilde_b``, apply ``M``.  On the hexagonal prism
-    every mirror is an element of ``D6h`` and ``D6h`` permutes the face
-    normals, so ``M`` is one of :func:`hexprism_symmetry_matrices` and
-    ``n_a``, ``n_tilde_b`` are face normals: the key is the exact integer
-    triple ``(index of M, face of n_a, face of n_tilde_b)``, matched against
-    those finite sets (``RuntimeError`` if a match fails -- the closure
+    refract out through ``n_tilde_b``, apply ``M``.  On any closed-form
+    hexagonal prism every mirror is an element of ``D6h`` and ``D6h`` permutes
+    the eight normal directions, so ``M`` is one of
+    :func:`hexprism_symmetry_matrices` and ``n_a``, ``n_tilde_b`` are among
+    those directions: the key is the exact integer triple
+    ``(index of M, face of n_a, direction of n_tilde_b)``, the direction
+    numbered by the regular prism's face along it -- the crystal need not
+    have a face there, nor be symmetric under ``M`` (module docstring: lookup
+    tables, not the candidate group) -- matched against those finite sets (``RuntimeError`` if a match fails -- the closure
     argument would be broken, not a new key).  ``3-5`` and ``3-1-2-5`` share
     a key; ``3-5`` and ``3-7`` do not.  The key is compared for equality
     only: the index of ``M`` is a position in :func:`hexprism_symmetry_matrices`,
@@ -207,14 +225,14 @@ def phi_key(crystal: Polyhedron, faces: Sequence[int]) -> tuple[int, int, int]:
     """
     if not isinstance(crystal, HexPrism):
         raise TypeError("phi_key is implemented for the hexagonal prism only")
-    _require_d6h(crystal)
     faces = normalize_faces(faces)
+    _require_faces_of(crystal, faces)
     normals = _hexprism_normals(crystal)
     M = fold_matrix(crystal, faces)
     matches = [i for i, element in enumerate(_D6H) if np.allclose(M, element, atol=NORMAL_MATCH_ATOL)]
     if len(matches) != 1:
         raise RuntimeError(f"fold matrix of {path_id_of(faces)} matched D6h elements {matches}")
-    return matches[0], faces[0], _face_of_normal(M.T @ normals[faces[-1]], normals)
+    return matches[0], faces[0], _face_of_normal(M.T @ normals[faces[-1]], _DIRECTION_STAR)
 
 
 def path_class_symmetry(
@@ -223,15 +241,16 @@ def path_class_symmetry(
     *,
     symmetry_elements: Sequence[np.ndarray] | None = None,
 ) -> dict[Faces, np.ndarray]:
-    """Per member, a ``D6h`` element ``g`` (proper or improper) mapping the representative's faces onto it.
+    """Per member, a ``G_true`` element ``g`` (proper or improper) mapping the representative's faces onto it.
 
     ``g`` maps face ``f`` to the face with normal ``g @ n_f`` (the action of
     :func:`pbd_orbit_hexprism`), so the member's ``Phi``, weights and valid
     domain are the representative's transported by ``g`` (:mod:`.s2_store`,
     roadmap section 4.1(d)); on ``S^2`` a mirror transports like a rotation.
-    The representative maps to the identity.  ``symmetry_elements`` (default
-    all 24 of ``D6h``, which requires ``G_true = D6h``) restricts the search to
-    elements of the crystal's ``G_true`` (``ValueError`` otherwise); proper elements are tried
+    The representative maps to the identity.  The candidates are the
+    crystal's ``G_true`` (:func:`.symmetry.crystal_group.true_symmetry_group`;
+    all 24 of ``D6h`` on the regular prism); ``symmetry_elements`` restricts
+    them further and must lie in ``G_true`` (``ValueError`` otherwise); proper elements are tried
     first, then improper ones, each in order, and the first match wins.
     Any matching element serves: two of them differ by an element fixing
     the representative's face sequence, which fixes its fields.  A member
@@ -240,8 +259,7 @@ def path_class_symmetry(
     """
     crystal = HexPrism() if crystal is None else crystal
     if symmetry_elements is None:
-        _require_d6h(crystal)
-        elements = _D6H
+        elements = true_symmetry_group(crystal)
     else:
         elements = tuple(np.asarray(e, dtype=np.float64) for e in symmetry_elements)
         own = {rg_key(g) for g in true_symmetry_group(crystal)}
@@ -255,6 +273,8 @@ def path_class_symmetry(
     for member in path_class.members:
         found = next((e for image, e in images if image == member), None)
         if found is None:
+            # "D6h image" is the historical wording (tests match it); the candidates are the crystal's G_true,
+            # which is D6h on the regular prism.
             raise RuntimeError(
                 f"{path_id_of(member)} is not a D6h image of {path_id_of(path_class.representative)}: "
                 "the class is not one orbit"
@@ -312,7 +332,7 @@ class PathClass:
 
 
 def build_path_class(crystal: Polyhedron, representative: Sequence[int]) -> PathClass:
-    """The PBD class of ``representative`` on the hexagonal prism, with verified invariants."""
+    """The ``G_true`` class of ``representative`` on the hexagonal prism (Lumice ``PBD`` on the regular one), with verified invariants."""
     if not isinstance(crystal, HexPrism):
         raise TypeError("path classes are implemented for the hexagonal prism only")
     representative = normalize_faces(representative)
@@ -333,7 +353,7 @@ def build_path_class(crystal: Polyhedron, representative: Sequence[int]) -> Path
 # ---- store plan ----------------------------------------------------------------
 @dataclass(frozen=True, eq=False)
 class Transport:
-    """A ``Phi`` group served by a store through the ``D6h`` element ``g`` (:func:`.s2_store.transported_rotations`).
+    """A ``Phi`` group served by a store through the ``G_true`` element ``g`` (:func:`.s2_store.transported_rotations`).
 
     ``g`` may be proper or improper.  ``g is None`` is the identity (the
     store's own group; no multiplication, so the poses are bit-identical to
@@ -377,13 +397,14 @@ class StoreGroup:
 def single_path_class(crystal: HexPrism, faces: Sequence[int]) -> PathClass:
     """A one-member :class:`.path_class.PathClass` of ``faces`` (the single-path renderer's unit)."""
     faces = normalize_faces(faces)
+    _require_faces_of(crystal, faces)
     return PathClass(faces, (faces,), wedge_angle_deg(crystal, faces), halo_map_rank(crystal, faces))
 
 
 def store_plan(path_class: PathClass, crystal: HexPrism, *, transport: bool = True) -> tuple[StoreGroup, ...]:
-    """Stores of a rank-2 class: ``Phi`` groups, then one store for the ``D6h`` orbit of groups (module docstring).
+    """Stores of a rank-2 class: ``Phi`` groups, then one store for the ``G_true`` orbit of groups (module docstring).
 
-    Every member is served exactly once (checked).  A class is one ``D6h``
+    Every member is served exactly once (checked).  A class is one ``G_true``
     orbit, so with ``transport`` the plan is a single store (the
     representative's group); a member outside the orbit is a class
     construction error (``RuntimeError`` from

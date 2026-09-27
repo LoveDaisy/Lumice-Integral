@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import inspect
+
 import numpy as np
 import pytest
 
@@ -9,6 +11,8 @@ from lumice_integral.canonical_scene import (
     canonical_fixture_metadata,
     canonical_pose_density,
 )
+from lumice_integral.geometry.closed_form import hex_cross_section
+from lumice_integral.geometry.core import HexPrism
 from lumice_integral.pose_density import (
     POSE_DENSITY_FAMILIES,
     HaarUniformPoseDensity,
@@ -242,6 +246,56 @@ def test_roll_locked_density_integrates_to_one_against_independent_haar_samples(
     mean, standard_error = haar_expectation(density, samples, 20260920)
     assert abs(mean - 1.0) <= 4.0 * standard_error, family
     assert standard_error < standard_error_bound, family
+
+
+@pytest.mark.parametrize(
+    "face_distance, face_present",
+    [
+        ((2.0, 1.0, 1.0, 2.0, 1.0, 1.0), (False, True, True, False, True, True)),  # faces 3 and 6 vanish
+        ((1.0, 1.2, 1.0, 1.2, 1.0, 1.2), (True,) * 6),  # every side face present, face 3 = body +x
+    ],
+    ids=["face-3-absent", "face-3-present"],
+)
+def test_roll_reference_is_body_plus_x_whether_or_not_face_3_exists(face_distance, face_present):
+    """Parry/Lowitz roll zero is the body ``+x`` azimuth, a frame fact (Lumice ``BuildCrystalRotation``).
+
+    Face 3's outward normal is ``+x`` on a crystal that has face 3; on
+    ``face_distance = [2, 1, 1, 2, 1, 1]`` face 3 is gone and no side face
+    points along ``+x``, yet the roll reference, the density and its
+    normalisation are the same objects: nothing in ``pose_density`` takes a
+    crystal, so there is no face whose existence it could consult.
+    """
+    assert hex_cross_section(face_distance=face_distance).face_present == face_present
+    prism = HexPrism(face_distance=face_distance)
+    body_x = np.array([1.0, 0.0, 0.0])
+    side_normals = {f.number: prism.normal(f) for f in prism.faces if f.number >= 3}
+    if face_present[0]:
+        np.testing.assert_allclose(prism.normal(prism.face(3)), body_x, atol=1e-12)
+    else:
+        with pytest.raises(KeyError):
+            prism.face(3)
+        assert all(normal @ body_x < 0.9 for normal in side_normals.values())
+
+    # No crystal or face parameter anywhere in the roll path.
+    assert list(inspect.signature(c_axis_roll).parameters) == ["rotation"]
+    for method in ("__call__", "evaluate_batch", "evaluate_axis_zeniths"):
+        names = set(inspect.signature(getattr(ZenithRollGaussianPoseDensity, method)).parameters)
+        assert not {n for n in names if "crystal" in n or "face" in n or "prism" in n}, method
+
+    for family, zenith_deg, samples, standard_error_bound in (("parry", 90.0, 4_000_000, 0.05), ("lowitz", 40.0, 1_000_000, 0.02)):
+        density = build_pose_density(family, zenith_std_deg=1.0 if family == "parry" else 40.0, roll_std_deg=1.0)
+        # roll = 0: body +x lies in the vertical plane through the c axis, on the upper side, and the
+        # roll factor peaks there -- regardless of whether this crystal has a face along +x.
+        rotation = chain_rotation(np.radians(37.0), np.radians(zenith_deg), 0.0)
+        axis, up_x = rotation @ np.array([0.0, 0.0, 1.0]), rotation @ body_x
+        vertical_normal = np.cross(axis, [0.0, 0.0, 1.0])
+        assert up_x @ vertical_normal == pytest.approx(0.0, abs=1e-12) and up_x[2] > 0.0
+        assert c_axis_roll(rotation) == pytest.approx(0.0, abs=1e-12)
+        spun = [density(chain_rotation(np.radians(37.0), np.radians(zenith_deg), np.radians(d))) for d in (-2.0, 2.0)]
+        assert density(rotation) > max(spun)
+        mean, standard_error = haar_expectation(density, samples, 20260927)
+        assert abs(mean - 1.0) <= 4.0 * standard_error, family
+        assert standard_error < standard_error_bound, family
 
 
 def haar_integral_by_scipy(density) -> float:

@@ -45,10 +45,13 @@ from .canonical_scene import (
     CANONICAL_WAVELENGTH_NM,
     CANONICAL_ZENITH_MEAN_DEG,
     CANONICAL_ZENITH_STD_DEG,
+    canonical_crystal,
 )
+from .geometry import HexPrism
 from .pose_density_provenance import pose_density_provenance
 from .provenance import git_commit as _git_commit, sha256_of
 from .quadrature import INTEGRAND_FACTOR_NAMES, RESAMPLED_QUADRATURE_METHOD
+from .s2_store import crystal_description, crystal_from_description
 from .strip_pixel import (
     EVENT_NAMES,
     STAGE_NAMES,
@@ -266,13 +269,22 @@ def environment_block() -> dict[str, Any]:
     }
 
 
-def scene_block(pose_density: Mapping[str, Any] | None = None) -> dict[str, Any]:
+def scene_block(
+    pose_density: Mapping[str, Any] | None = None,
+    *,
+    crystal: HexPrism | None = None,
+    refractive_index: float | None = None,
+) -> dict[str, Any]:
     """Canonical scene constants, each tagged with its ``docs/ch06-reference-fixture.md`` provenance.
 
     ``pose_density`` is the flat block of the density the run actually used
     (:meth:`.strip_driver.DriverOptions.pose_density_block`); ``None`` records
     the canonical column density.  A non-canonical family is a run option, so
-    it is tagged ``run-option`` instead of ``canonical-new``.
+    it is tagged ``run-option`` instead of ``canonical-new``.  ``crystal`` and
+    ``refractive_index`` are the ones the run used, the same way: ``None`` or
+    the canonical value keeps the canonical entry; anything else is recorded as
+    a ``run-option``, the crystal as :func:`.s2_store.crystal_description` plus
+    its ``height_ratio`` (:func:`scene_crystal` reads either form back).
     """
     canonical = pose_density_provenance(
         CANONICAL_POSE_DENSITY_FAMILY,
@@ -280,18 +292,27 @@ def scene_block(pose_density: Mapping[str, Any] | None = None) -> dict[str, Any]
         zenith_std_deg=CANONICAL_ZENITH_STD_DEG,
     )
     density = canonical if pose_density is None else dict(pose_density)
+    crystal_entry: dict[str, Any] = {
+        "value": {"type": "hexagonal_column", "height_ratio": CANONICAL_HEIGHT_RATIO},
+        "provenance": "canonical-new",
+    }
+    if crystal is not None and crystal_description(crystal) != crystal_description(canonical_crystal()):
+        crystal_entry = {
+            "value": {**crystal_description(crystal), "height_ratio": crystal.h / crystal.a},
+            "provenance": "run-option",
+        }
+    index_entry: dict[str, Any] = {"value": CANONICAL_REFRACTIVE_INDEX, "provenance": "canonical-new"}
+    if refractive_index is not None and float(refractive_index) != CANONICAL_REFRACTIVE_INDEX:
+        index_entry = {"value": float(refractive_index), "provenance": "run-option"}
     return {
         "specification": "docs/ch06-reference-fixture.md section 3.3",
         "path": {"value": [3, 5], "provenance": "historical-direct"},
-        "crystal": {
-            "value": {"type": "hexagonal_column", "height_ratio": CANONICAL_HEIGHT_RATIO},
-            "provenance": "canonical-new",
-        },
+        "crystal": crystal_entry,
         "sun": {
             "value": {"altitude_deg": CANONICAL_SUN_ALTITUDE_DEG, "azimuth_deg": CANONICAL_SUN_AZIMUTH_DEG, "diameter_deg": 0.0},
             "provenance": "historical-inferred",
         },
-        "refractive_index": {"value": CANONICAL_REFRACTIVE_INDEX, "provenance": "canonical-new"},
+        "refractive_index": index_entry,
         "wavelength_nm": {"value": CANONICAL_WAVELENGTH_NM, "provenance": "canonical-new"},
         "pose_density": {
             "value": density,
@@ -300,6 +321,19 @@ def scene_block(pose_density: Mapping[str, Any] | None = None) -> dict[str, Any]
         "camera": {"value": {"lens": "linear", **CANONICAL_RENDER}, "provenance": "canonical-new"},
         "image_shape": {"value": [CANONICAL_RENDER["height"], CANONICAL_RENDER["width"]], "provenance": "historical-direct"},
     }
+
+
+def scene_crystal(scene: Mapping[str, Any]) -> HexPrism:
+    """The crystal a ``provenance.json`` ``scene`` block records (:func:`scene_block`'s two forms).
+
+    A :func:`.s2_store.crystal_description` value (``"type": "HexPrism"``) is rebuilt exactly; the
+    canonical ``hexagonal_column`` form (and older renders that only wrote ``height_ratio``) is the
+    regular prism of that height ratio.
+    """
+    value = scene["crystal"]["value"]
+    if value.get("type") == "HexPrism":
+        return crystal_from_description(value)
+    return HexPrism.from_ratio(float(value["height_ratio"]))
 
 
 def options_block(options: PixelOptions, seed_store: Mapping[str, Any] | None = None) -> dict[str, Any]:

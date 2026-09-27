@@ -19,14 +19,18 @@ Examples::
         --width 301 --height 201 --fov-deg 40 --view-elevation 15 --output-dir /tmp/band-sum-plate
 
 Scene: the canonical ch06 constants (hexagonal column ``h/a = 2``, ``n = 1.31``,
-sun at 15 deg) and, by default, the canonical 251 x 801 camera; ``--width`` /
+sun at 15 deg) and, by default, the canonical 251 x 801 camera.  ``--face-distance``
+gives the prism Lumice's ``face_distance`` (height unchanged: Lumice ``height 1.0``)
+and ``--refractive-index`` replaces ``n``; both are recorded in ``provenance.json``
+as run options (``strip_io.scene_block``).  ``--width`` /
 ``--height`` / ``--fov-deg`` / ``--view-azimuth`` / ``--view-elevation`` replace
 the camera (linear lens).  ``--pose-density-*`` are ``render_ch06_strip.py``'s
 flags with the same validation (``pose_density.resolve_pose_density_parameters``).
 
 Stores: ``--path`` (face sequence, default ``3 5``) alone renders that one
-path; ``--path-class`` expands it to its PBD class, one store for all its
-``Phi`` groups, each served through a ``D6h`` element, mirrors included
+path; ``--path-class`` expands it to its class under the crystal's own group
+``G_true`` (the PBD class on the regular prism), one store for all its
+``Phi`` groups, each served through a ``G_true`` element, mirrors included
 (``band_sum.store_plan``; ``--no-symmetry-transport`` gives every ``Phi``
 group its own store, a verification mode).  Stores are built once in the parent (``--store-n``
 Fibonacci points, cached under ``--store-cache-dir`` by parameter hash,
@@ -62,9 +66,11 @@ from lumice_integral.canonical_scene import (
     CANONICAL_REFRACTIVE_INDEX,
     CANONICAL_RENDER,
     CANONICAL_ZENITH_STD_DEG,
+    LUMICE_HEIGHT_OVER_DIAMETER,
     canonical_crystal,
     canonical_sun_direction,
 )
+from lumice_integral.geometry import HexPrism
 from lumice_integral.optics import path_id_of
 from lumice_integral.path_class import build_path_class
 from lumice_integral.pose_density import POSE_DENSITY_FAMILIES, build_pose_density
@@ -90,11 +96,25 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--overwrite", action="store_true", help="write into an existing non-empty --output-dir")
     parser.add_argument("--store-n", type=int, required=True, help="Fibonacci points of each S^2 event store (e.g. 100000000)")
     parser.add_argument("--path", type=int, nargs="+", default=[3, 5], help="face sequence (default 3 5)")
-    parser.add_argument("--path-class", action="store_true", help="render the PBD class of --path, not the path alone")
+    parser.add_argument("--path-class", action="store_true", help="render the class of --path under the crystal's G_true (PBD on the regular prism), not the path alone")
     parser.add_argument(
         "--no-symmetry-transport",
         action="store_true",
         help="with --path-class: one store per Phi group instead of one per class (verification mode)",
+    )
+    parser.add_argument(
+        "--face-distance",
+        type=float,
+        nargs=6,
+        default=None,
+        metavar="D",
+        help="the six side-face distances of Lumice's prism (faces 3..8; default: the regular hexagon); height stays h/a = 2",
+    )
+    parser.add_argument(
+        "--refractive-index",
+        type=float,
+        default=CANONICAL_REFRACTIVE_INDEX,
+        help=f"refractive index (default {CANONICAL_REFRACTIVE_INDEX}, canonical; Lumice's own n(550) is 1.3110129)",
     )
     parser.add_argument("--store-cache-dir", type=Path, default=DEFAULT_CACHE_DIR)
     parser.add_argument("--skip-store-self-checks", action="store_true", help="build new stores without the section 4.1(a) checks")
@@ -164,7 +184,12 @@ def main(argv: list[str] | None = None) -> None:
         pose_density_block = pose_density_provenance(args.pose_density_family, **density_arguments)
     except ValueError as exc:
         parser.error(str(exc))
-    crystal = canonical_crystal()
+    try:
+        crystal = canonical_crystal() if args.face_distance is None else HexPrism.from_lumice(LUMICE_HEIGHT_OVER_DIAMETER, args.face_distance)
+    except ValueError as exc:
+        parser.error(f"--face-distance {' '.join(map(str, args.face_distance))}: {exc}")
+    if not args.refractive_index > 1.0:
+        parser.error("--refractive-index must exceed 1")
     try:
         path_class = build_path_class(crystal, args.path) if args.path_class else single_path_class(crystal, args.path)
     except (ValueError, KeyError, IndexError) as exc:
@@ -182,7 +207,7 @@ def main(argv: list[str] | None = None) -> None:
     scene = BandSumScene(
         path_class=path_class,
         crystal=crystal,
-        refractive_index=CANONICAL_REFRACTIVE_INDEX,
+        refractive_index=args.refractive_index,
         sun_direction=canonical_sun_direction(),
         pose_density=pose_density,
         render=render,

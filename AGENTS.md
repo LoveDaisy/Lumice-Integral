@@ -68,6 +68,11 @@ JAX_PLATFORMS=cpu OMP_NUM_THREADS=1 \
 uv run python scripts/render_band_sum.py --store-n 10000000 --path 3 5 --path-class --workers 3 \
   --pose-density-family plate --pose-density-zenith-std-deg 1 \
   --width 321 --height 161 --fov-deg 32 --view-elevation 15 --output-dir /tmp/band-sum-plate
+# ... a low-symmetry prism (Lumice face_distance; the class is the orbit under the crystal's own G_true) at Lumice's
+# n(550), recorded in provenance.json; compare_lumice_family.py then wants exact member raypath filters (no P/B/D fold)
+uv run python scripts/render_band_sum.py --store-n 10000000 --path 3 5 --path-class --face-distance 1 1.2 1 1.2 1 1.2 \
+  --refractive-index 1.3110129 --pose-density-family random --width 401 --height 401 --fov-deg 100 --view-elevation 15 \
+  --workers 4 --output-dir /tmp/band-sum-d3h
 # ... and its regressions (against strip-full; against task 14's profiles) and log-scale figures
 uv run python scripts/regress_band_sum.py --stage full --band-dir artifacts/band-sum-full --output /tmp/regression_full.json
 # ... the K_eff ruler: two i.i.d. stores of class [3,5] on task 14's profiles (z of their difference, ~1 min)

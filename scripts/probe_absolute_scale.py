@@ -143,7 +143,7 @@ def merged_relative_noise(a: np.ndarray, b: np.ndarray) -> float:
 def load_run(run_dir: Path) -> tuple[np.ndarray, dict[str, Any], str]:
     arr = np.load(run_dir / "img_01.npy")
     meta = json.loads((run_dir / "img_01.json").read_text())
-    symmetry = json.loads((run_dir / "config.json").read_text())["filter"][0]["symmetry"]
+    symmetry = json.loads((run_dir / "config.json").read_text())["filter"][0].get("symmetry", "")  # absent = no fold
     return np.asarray(arr[:, :, 1], dtype=np.float64), meta, symmetry
 
 

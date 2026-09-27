@@ -46,7 +46,9 @@ normal and unfolded exit normal, hence the same ``Phi(u)`` and ``D(u)``);
 their weights are then summed on the same ``u`` (``w_Phi = sum_m w_m``) and
 an event is kept where any member has ``w_m > 0``.
 
-Symmetry transport.  For any crystal symmetry ``g`` of ``D6h``, proper or
+Symmetry transport.  For any crystal symmetry ``g`` -- an element of the
+crystal's own ``G_true`` (:func:`.symmetry.crystal_group.true_symmetry_group`,
+a subgroup of ``D6h``, all of it on the regular prism) -- proper or
 improper, mapping the representative's faces onto a member's
 (:func:`.path_class.path_class_symmetry`), section 4.1(d) gives
 ``Phi_member(-u) = g Phi_rep(-g^-1 u)`` with ``D``, ``w`` and the valid domain
@@ -61,7 +63,7 @@ on the representative's poses: ``L_g R g^T`` with ``L_g = I`` for a proper
 ``g`` and the reflection in the plane of ``s_hat`` and the pixel centre for an
 improper one (equal to :func:`event_rotations` of the transported events,
 pinned by ``tests/test_s2_store_symmetry.py`` for all 24 elements), so one
-store in memory serves the whole ``D6h`` orbit.  Symmetry saves repeated
+store in memory serves the whole ``G_true`` orbit.  Symmetry saves repeated
 evaluation, not samples: the transported events are the same precomputed
 events.
 
@@ -123,17 +125,19 @@ import numpy as np
 
 from . import geometry, optics
 from .camera import incident_direction_from_sun, sun_direction
-from .geometry import HexPrism, Polyhedron
+from .geometry import HexPrism, Polyhedron, Pyramid
 from .optics import normalize_faces, path_id_of
 from .provenance import git_commit, sha256_of
 from .so3 import haar_rotations
 
+# 5: the crystal description records face_distance (any closed-form HexPrism; the reduction cluster's candidate
+#    group is the crystal's own G_true, not a fixed D6h), task reduction-cluster-g-true; arrays unchanged;
 # 4: T = entry T x each internal reflectance R_k x exit T (partial internal reflections are weights, not
 #    gaps; task optics-partial-reflection), arrays of paths without internal reflections unchanged bit for bit;
 # 3: no sun direction in the spec (the arrays do not depend on it), one .npy per array, task s2-store-schema-3;
 # 2: u = R^-1 s_hat (toward the sun) with the sun direction recorded, task notation-alignment;
-# 1: u = R^-1 s (propagation).  Schemas 1 to 3 are refused on load.
-SCHEMA_VERSION = 4
+# 1: u = R^-1 s (propagation).  Schemas 1 to 4 are refused on load.
+SCHEMA_VERSION = 5
 CHUNK = 250_000  # rotations per batch call: ~0.5 GB transient in the eager jax.vmap (task 13/14 value)
 DEFAULT_CACHE_DIR = Path("artifacts/s2-store")
 DEFAULT_BUCKET_COUNT = 1024  # equal-width D buckets of the build (0.18 deg on [0, pi]); an I/O knob, not in the key
@@ -437,18 +441,30 @@ def self_check_haar_mean(
 
 # ------------------------------------------------------------------ store
 def crystal_description(crystal: Polyhedron) -> dict[str, Any]:
-    """JSON description of an untransformed :class:`.geometry.HexPrism` (the only crystal supported)."""
+    """JSON description of an untransformed closed-form :class:`.geometry.HexPrism` (the only crystal supported).
+
+    ``face_distance`` is the Lumice field of that name (``HexPrism.face_distance_ratios``); with ``a`` and
+    ``h`` it fixes the crystal, including one built by ``HexPrism.from_lumice``.
+    """
+    # New crystal types extend this chain of branches, not a check elsewhere.
+    if isinstance(crystal, Pyramid):
+        raise TypeError(
+            "the S^2 event store does not support the pyramid yet: its store waits for task "
+            "pyramid-lumice-semantics (the pyramid's Lumice semantics)"
+        )
     if not isinstance(crystal, HexPrism):
         raise TypeError("the S^2 event store is implemented for the hexagonal prism only")
-    if not np.array_equal(crystal.vertices, HexPrism(crystal.a, crystal.h).vertices):
+    face_distance = tuple(crystal.face_distance_ratios)
+    if not np.array_equal(crystal.vertices, HexPrism(crystal.a, crystal.h, face_distance).vertices):
         raise ValueError("the crystal must be an untransformed HexPrism (body frame, centred at the origin)")
-    return {"type": "HexPrism", "a": crystal.a, "h": crystal.h}
+    return {"type": "HexPrism", "a": crystal.a, "h": crystal.h, "face_distance": list(face_distance)}
 
 
 def crystal_from_description(description: Mapping[str, Any]) -> HexPrism:
     if description.get("type") != "HexPrism":
         raise ValueError(f"unsupported crystal description {description!r}")
-    return HexPrism(float(description["a"]), float(description["h"]))
+    face_distance = tuple(float(x) for x in description["face_distance"])
+    return HexPrism(float(description["a"]), float(description["h"]), face_distance)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -626,7 +642,7 @@ class StoreSeeds:
     azimuth of ``d``, i.e. ``|D_i - delta|`` from ``d``: the one-dimensional
     residual of a candidate (:meth:`candidates`).  ``faces`` is the path
     these candidates seed: a member of the store's ``Phi`` group
-    (``g is None``) or its image under the ``D6h`` element ``g`` (the
+    (``g is None``) or its image under the ``G_true`` element ``g`` (the
     :class:`.band_sum.Transport` of that member's group; the poses are
     :func:`transported_rotations`, a rotation also for an improper ``g``).
     The store's crystal and refractive index are the problem's; the sun is
@@ -716,7 +732,9 @@ def _read_provenance(directory: Path) -> dict[str, Any]:
             f"{directory}: schema_version {schema} is not {SCHEMA_VERSION} (schema 1 stored u = R^-1 s with the "
             "propagation direction s; schema 2 u = R^-1 s_hat with the sun direction in the key and one events.npz; "
             "schema 3 is independent of the sun, one .npy per array, with internal reflections admitted only when "
-            "total; schema 4 weights partial internal reflections by their reflectance); rebuild the store, it is "
+            "total; schema 4 weights partial internal reflections by their reflectance; schema 5 records face_distance "
+            "in the crystal description, the reduction cluster's default candidate group being G_true, not a fixed "
+            "D6h); rebuild the store, it is "
             "not converted"
         )
     return provenance
