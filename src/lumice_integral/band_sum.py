@@ -26,11 +26,12 @@ The estimator functions (:func:`pixel_band`, :func:`band_rotations`,
 :func:`band_sum_pixel`) are migrated verbatim from ``scripts/probe_band_sum.py``
 (tasks 13/14), which now imports them from here.
 
-Path classes (:func:`.path_class.store_plan`, shared with the Phase I seeds).  The members of a PBD class are grouped by
+Path classes (:func:`.path_class.store_plan`, shared with the Phase I seeds).  The members of a class (the representative's
+``G_true`` orbit, Lumice PBD on the regular prism) are grouped by
 :func:`.path_class.phi_key` (members sharing ``Phi`` share one store with
-summed weights, :mod:`.s2_store`), and the ``Phi`` groups by ``D6h``
-elements, proper and improper (:func:`.path_class.path_class_symmetry`):
-a class is one ``D6h`` orbit, so one store serves every group, each through
+summed weights, :mod:`.s2_store`), and the ``Phi`` groups by the crystal's
+``G_true`` elements, proper and improper (:func:`.path_class.path_class_symmetry`):
+a class is one ``G_true`` orbit, so one store serves every group, each through
 its element ``g`` (:func:`.s2_store.transported_rotations`: the poses of
 the events moved to ``(g u, g phi)``, ``L_g R g^T``; ``D`` and ``w`` are
 invariant).  The class value is the sum of the member contributions.  The
@@ -46,7 +47,7 @@ event the contributions of all its transports are summed first,
 plate density on ``[3,5]``).  ``transport=False`` gives every ``Phi`` group
 its own store (a verification mode: on the same points it is the task 14
 layout, whose member stores are independent samples).  The Fibonacci
-lattice is not closed under ``D6h``, so the two modes sample different
+lattice is not closed under ``G_true``, so the two modes sample different
 points and agree to the discretisation level, not bit for bit.
 
 A rank-0 class (``halo_map_rank == 0``) is not a band sum: its contribution
