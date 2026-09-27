@@ -41,9 +41,12 @@ def test_member_critical_set_is_the_transported_representative(representative, m
     exact = (dataclasses.replace(mine, boundary=()), dataclasses.replace(moved, boundary=()))
     angle, value = exact[0].mismatch(exact[1])
     assert angle <= 1e-9 and value <= 5e-8
-    # loop extrema: values to the ~1e-8 of the exit-TIR pieces; positions of a flat extremum only to ~sqrt of that
+    # loop extrema: an exit-TIR piece is searched on d_p_grazing, value noise ~1e-14 (was ~1e-8 on d_p); a flat
+    # extremum (3-5: curvature 0.043) then sits within sqrt(2e-14 / 0.043) = 7e-7 of its place, so a mismatch
+    # <= 1.4e-6, and 2x that is the bound (measured 1.3e-7 on M2 Max and on Zen5 under both OpenBLAS kernels;
+    # searched on d_p it was 8e-5 / 5.5e-4, task home-wsl-dp-field-diffs); values 2 x (2 x 1e-14), measured 9e-16
     angle, value = mine.mismatch(moved)
-    assert angle <= 3e-4 and value <= 5e-8
+    assert angle <= 3e-6 and value <= 4e-14
     assert len(other.corners) == len(rep.corners)
     assert len(other.interior_critical_points) == len(rep.interior_critical_points)
     for mine, theirs in zip(other.interval_partition(), rep.interval_partition()):
