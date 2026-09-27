@@ -52,7 +52,9 @@ handled explicitly.
 
 The two are independent implementations of one physics, so agreement
 between them is evidence: Lumice is this project's external validation
-oracle, never a dependency (section 5.1).
+oracle for the primitive layer and any module LI still researches; a mature
+algorithmic module may later be consumed through Lumice's shared library
+instead (section 5.1, section 5.3).
 
 ## 2. Phase I and Phase II
 
@@ -106,8 +108,9 @@ Explicit non-goals:
 - Exact lower-dimensional orientation measures.
 - A production GUI.
 - GPU optimization before the CPU reference result is trustworthy.
-- Any production dependency on Lumice or extraction of a Lumice engine API for
-  this project.
+- A production dependency on Lumice for the primitive layer or for any module
+  LI is still researching, or extracting a Lumice engine API outside the
+  bounded shared-library consumption described in section 5.1 / 5.3.
 
 ## 4. Architecture layers
 
@@ -265,19 +268,40 @@ Lumice is the forward Monte Carlo simulator and the primary independent
 validation oracle. Lumice Integral is a sibling product line with a different
 numerical method.
 
-Lumice Integral intentionally does **not** consume Lumice's source code, C API,
-libraries, or executable as part of its production computation. The solver must
-own the complete differentiable path from pose through geometry and optics to
-direction, physical weights, and derivatives. This is a permanent design
-boundary, not temporary duplication awaiting a future shared engine.
+Lumice Integral's dependence on Lumice is layered by role and module maturity
+(repository-roles ruling, section 5.3). The **primitive and convention layer**
+— crystal geometry, face numbering, symmetry reduction and `G_true`,
+Snell/Fresnel optics — stays permanently independent: LI does **not** consume
+Lumice's source code, C API, libraries, or executable for it, and the solver
+owns the complete differentiable path from pose through geometry and optics to
+direction, physical weights, and derivatives. Keeping two independent
+implementations here is deliberate, not temporary duplication awaiting a
+future shared engine: on 2026-09-27, Lumice's `fn_period_` hardcoded to 6
+(ignoring `face_distance`) was caught precisely because it diverged from LI's
+independent implementation (Lumice PR #429); a shared primitive
+implementation would let both sides be wrong together, invisibly.
 
-The reason is structural. Lumice is optimized for forward stochastic sampling
-and image accumulation. Lumice Integral needs a fixed-path, piecewise-smooth
-computation graph suitable for automatic differentiation and continuation. Face
-changes, obstruction, refraction-domain limits, and entry/exit TIR boundaries must be
-represented as explicit events around smooth branches; an opaque Lumice call
-would sever that graph, while finite differences through it would not provide a
-trustworthy foundation near those boundaries or halo-map singularities.
+The **algorithmic layer** — single-path inversion and fiber walk, the S²
+event store, band sum, `dp_field`/`focusing` critical-point classification —
+follows a different rule: while a module is still young and changing under
+research, each side keeps its own implementation (JAX authoritative, C++
+derived, locked by a parity fixture; section 5.3's "Compute landing point"
+ruling). Once a module has matured and LI is no longer researching it, it
+converges to a single Lumice C++ implementation exposed through a shared
+library that Lumice formally publishes; LI consumes it through a Python
+binding, and LI's own JAX version for that module retires. A module LI is
+still researching keeps its JAX-authoritative maintenance regardless of
+Lumice's status.
+
+This reasoning governs the primitive layer and any module LI is still
+researching. Lumice is optimized for forward stochastic sampling and image
+accumulation; those parts of LI need a fixed-path, piecewise-smooth
+computation graph suitable for automatic differentiation and continuation.
+Face changes, obstruction, refraction-domain limits, and entry/exit TIR
+boundaries must be represented as explicit events around smooth branches; an
+opaque Lumice call would sever that graph, while finite differences through it
+would not provide a trustworthy foundation near those boundaries or halo-map
+singularities.
 
 Lumice may be used only across an explicit validation boundary:
 
@@ -286,9 +310,10 @@ Lumice may be used only across an explicit validation boundary:
 - check shared physical and coordinate conventions such as face numbering,
   direction signs, refractive indices, Fresnel factors, and pose distributions.
 
-Validation tools may invoke Lumice and read its files when explicitly requested,
-but Lumice must not be required to build or run the Lumice Integral solver. The
-two independent implementations strengthen cross-validation: agreement is more
+Validation tools may invoke Lumice and read its files when explicitly
+requested, but Lumice must not be a precondition for building or running LI's
+primitive layer or any module LI is still researching. The two independent
+implementations at that layer strengthen cross-validation: agreement is more
 meaningful when it cannot arise from a shared geometry or optics bug.
 
 ### 5.2 Modern Ice Halo Research Notes
@@ -390,8 +415,9 @@ The ruling:
    are equally young); the C++ side uses the same forward hyper-dual template
    for scalar derivatives, not an AD framework.
 5. Whether a module that has been stable for a long time should also move LI
-   itself onto the C++ path (retiring the JAX version) is left for a later
-   decision.
+   itself onto the C++ path, retiring the JAX version, is answered by the
+   repository-roles ruling below: yes for the algorithmic layer, no for the
+   primitive layer.
 6. This supersedes the earlier "main session leans toward (c), extract a
    portable C++ core" wording: (c)'s shape is kept as the eventual post-port
    form, but its timing is governed by the trigger in point 2, not decided up
@@ -406,6 +432,53 @@ synchronized against the parity fixture before touching C++.
 To be verified later (not in this chore, flagged only): whether the panel's
 symmetry-reduced row semantics (Lumice `doc/raypath-symmetry.md`'s P/B/D) and
 LI's `G_true` orbit are the same convention.
+
+**Repository roles (owner ruling 2026-09-28):** the mirror of this ruling on
+the Lumice side lives in that repository's
+[`doc/raypath-analysis.md`](https://github.com/LoveDaisy/ice_halo_sim) §5.1.6
+and [`doc/api-layering-and-product-lines.md`](https://github.com/LoveDaisy/ice_halo_sim),
+changed the same day by that repository's own chore; link to the section
+number rather than asserting its content has merged.
+
+1. **Role split replaces the forward/inverse split.** The old binary split
+   conflated three axes that happened to coincide: numerical method (forward
+   MC vs. inverse direct integration), role (product vs. research), runtime
+   (C++ vs. Python/JAX). Raypath analysis becomes Lumice's second product
+   core, introducing the new combination "inverse method + product role", so
+   splitting by method no longer holds; splitting by role still does.
+   **Lumice = product**: every computation an end user touches, in C++, one
+   product implementation per semantics — including the inverse capabilities
+   the raypath-analysis runtime needs (single-path inversion and fiber walk,
+   S² fields, band sum, critical-point classification). **LI = research and
+   reference**: where new methods are born, the mathematical spec, support
+   for the writing series, and Lumice's independent cross-check. LI's other
+   non-goals are unchanged (no product GUI, no multi-scattering scene
+   rendering, not a replacement for Lumice's Monte Carlo renderer).
+2. **Shared criterion: "stable, and not each other's cross-check object."**
+   The primitive and convention layer keeps two deliberately independent
+   copies (section 5.1's `fn_period_` evidence); the algorithmic layer
+   converges to one Lumice C++ implementation behind a shared library once a
+   module has matured and LI has stopped researching it, detailed in section
+   5.1 above.
+3. **Shared library and timing.** Lumice publishes a new, narrow interface
+   covering only the stable side (geometry / raypath / inverse-solve
+   related), not Lumice's existing GUI-facing C API; LI is its first external
+   consumer. Lumice builds the release infrastructure first; the shared
+   library's actual content lands together with the first mature algorithmic
+   module. **First candidate: single-path inversion and fiber walk** (LI's
+   Phase I closed 2026-09-23, semantics stable; Lumice's Analyze workspace
+   stage 1 already needs a C++ implementation of it, for parity against LI).
+   LI's dependency on Lumice is therefore bounded: only for algorithmic
+   modules that have retired their JAX version, through a binding; the
+   primitive layer and modules LI is still researching keep LI's build and
+   run independent of Lumice. The existing rule that validation tooling may
+   invoke Lumice as a black-box oracle is unchanged.
+
+To be verified later (not in this chore, flagged only): whether Lumice's
+Analyze workspace design's one-to-one correspondence "level set on the
+sun-direction sphere = fiber" still holds on cone crystals and raypaths with
+an internal reflection — LI to check (source: Lumice
+`doc/raypath-analysis.md` §5.1.8, flagged there as an assistant inference).
 
 ## 6. Validation strategy
 
