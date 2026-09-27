@@ -1,4 +1,8 @@
-"""``spectrum`` is a leaf: its pure modules import no JAX, numpy or other ``lumice_integral`` module; only ``store`` reaches ``s2_store``."""
+"""``spectrum`` is a leaf: its pure modules import no JAX, numpy or other ``lumice_integral`` module.
+
+Two edge modules reach the rest of the package, neither imported by ``spectrum/__init__``: ``store``
+(``s2_store``) and ``xyz_band_sum`` (``band_sum``).
+"""
 
 from __future__ import annotations
 
@@ -17,7 +21,7 @@ def _spectrum_imports(relative: str) -> set[str]:
 
 def test_every_spectrum_module_is_classified() -> None:
     files = {str(p.relative_to(PACKAGE_ROOT / "spectrum")) for p in (PACKAGE_ROOT / "spectrum").rglob("*.py")}
-    assert files == {*PURE, "store.py"}
+    assert files == {*PURE, "store.py", "xyz_band_sum.py"}
 
 
 def test_pure_modules_import_nothing_outside_spectrum() -> None:
@@ -37,6 +41,10 @@ def test_pure_modules_import_nothing_outside_spectrum() -> None:
 def test_store_is_the_edge_to_s2_store() -> None:
     """Positive control for the resolver: ``store``'s relative import of ``s2_store`` is seen."""
     assert "lumice_integral.s2_store.build_or_load" in _spectrum_imports("store.py")
+
+
+def test_xyz_band_sum_is_the_edge_to_band_sum() -> None:
+    assert "lumice_integral.band_sum.render_band_sum_window" in _spectrum_imports("xyz_band_sum.py")
 
 
 def test_importing_the_package_loads_no_jax_or_numpy() -> None:

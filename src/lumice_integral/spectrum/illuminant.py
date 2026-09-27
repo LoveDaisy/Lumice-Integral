@@ -12,6 +12,11 @@ module evaluates the same formulas in float64.
 - ``A``: Planck at 2856 K, ``100 (560/lambda)^5 (e^{c2/(T 560)} - 1) / (e^{c2/(T lambda)} - 1)``
   with ``c2 = 1.4388e7`` nm K, restricted to ``[300, 830]`` nm.
 - ``E``: ``1`` on ``[300, 830]`` nm, zero outside.
+
+:func:`band_mean_spd` is Lumice's ``MeanIlluminantWeight``: the SPD averaged
+over the band ``[380, 780]`` nm the pool slices (and the per-batch sampler)
+cover.  Lumice charges it, not the weight of any drawn wavelength, to the
+``emitted_energy`` normalisation denominator (``src/core/simulator.cpp``).
 """
 
 from __future__ import annotations
@@ -99,3 +104,27 @@ def spd(illuminant: IlluminantType, wavelength_nm: float) -> float:
     if illuminant is IlluminantType.E:
         return 1.0
     raise ValueError(f"unknown illuminant {illuminant!r}")
+
+
+BAND_MEAN_MIN_NM = 380.0
+BAND_MEAN_WIDTH_NM = 400.0
+BAND_MEAN_SIMPSON_INTERVALS = 8000
+"""0.05 nm steps: the 5 nm daylight grid points are Simpson panel edges, so the piecewise-linear SPDs integrate exactly."""
+
+
+def band_mean_spd(illuminant: IlluminantType) -> float:
+    """``(1 / 400) int_380^780 spd(lambda) d lambda``: Lumice's ``MeanIlluminantWeight`` (``illuminant.cpp::ComputeMeanSpd``).
+
+    Lumice averages ``GetIlluminantSpd`` in C++ ``float`` on 4000001 equally
+    spaced points of the band, endpoints included; this is the integral it
+    approximates, by composite Simpson (exact for the daylight SPDs and ``E``,
+    ``~1e-15`` relative for ``A``).  The two differ by the endpoint weight of
+    the discrete average and Lumice's ``float``, ``O(1e-7)`` relative.
+    """
+    count = BAND_MEAN_SIMPSON_INTERVALS
+    step = BAND_MEAN_WIDTH_NM / count
+    total = 0.0
+    for i in range(count + 1):
+        coefficient = 1.0 if i in (0, count) else (4.0 if i % 2 else 2.0)
+        total += coefficient * spd(illuminant, BAND_MEAN_MIN_NM + i * step)
+    return total * step / 3.0 / BAND_MEAN_WIDTH_NM

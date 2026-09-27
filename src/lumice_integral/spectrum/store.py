@@ -3,8 +3,9 @@
 The refractive index is already a store parameter (it enters
 :meth:`..s2_store.S2StoreSpec.cache_key`), so several wavelengths are several
 calls with different ``n(lambda)``: no second cache, no schema change.  This
-is the only module of :mod:`lumice_integral.spectrum` that depends on
-:mod:`..s2_store` (checked by ``tests/test_spectrum_dependency_direction.py``).
+and :mod:`.xyz_band_sum` are the modules of :mod:`lumice_integral.spectrum`
+that depend on the rest of the package (checked by
+``tests/test_spectrum_dependency_direction.py``).
 """
 
 from __future__ import annotations

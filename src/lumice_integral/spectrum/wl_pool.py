@@ -13,6 +13,14 @@ ybar, zbar)``:
 
 Lumice computes the pool in C++ ``float`` and stores ``float`` entries; this
 module stays in float64 (``docs/conventions.md``, spectral row).
+
+:func:`emitted_weight` is the other half of the normalisation: every ray
+carries its slot's ``spd_weight``, while Lumice's ``emitted_energy`` charges
+each emitted ray with one fixed weight, the illuminant's band mean
+(:func:`.illuminant.band_mean_spd`) or the discrete ``weight``.  An image in
+units of ``raw / emitted_energy`` is therefore ``(1 / M) sum_i spd_i CMF_i V_i
+/ emitted_weight`` (the slot is drawn uniformly), in which a discrete pool's
+``M`` and ``weight`` cancel.
 """
 
 from __future__ import annotations
@@ -21,7 +29,7 @@ import dataclasses
 
 from .cmf import lookup
 from .dispersion import refractive_index
-from .illuminant import IlluminantType, spd
+from .illuminant import IlluminantType, band_mean_spd, spd
 
 POOL_BAND_MIN_NM = 380.0
 POOL_BAND_WIDTH_NM = 400.0
@@ -81,3 +89,15 @@ def wavelength_pool(
     if m < 1:
         raise ValueError(f"the pool needs M >= 1 slots, got {m}")
     return (_entry(float(discrete_wavelength_nm), float(discrete_weight)),) * m
+
+
+def emitted_weight(*, illuminant: IlluminantType | None = None, discrete_weight: float | None = None) -> float:
+    """The weight Lumice charges ``emitted_energy`` per emitted ray; exactly one of the two must be given.
+
+    ``illuminant``: :func:`.illuminant.band_mean_spd` (``MeanIlluminantWeight``,
+    ``src/core/simulator.cpp``); discrete: the wavelength's own ``weight``
+    (``wl_param.weight_``).  The arguments mirror :func:`wavelength_pool`'s.
+    """
+    if (illuminant is None) == (discrete_weight is None):
+        raise ValueError("give exactly one of illuminant= and discrete_weight=")
+    return band_mean_spd(illuminant) if illuminant is not None else float(discrete_weight)

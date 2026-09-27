@@ -14,11 +14,15 @@ imports JAX, numpy or another :mod:`lumice_integral` module (checked by
 - ``store``: one S^2 event store per pool wavelength through
   :func:`lumice_integral.s2_store.build_or_load` (the only edge to ``s2_store``);
   not imported here, so ``import lumice_integral.spectrum`` stays light.
+- ``xyz_band_sum``: colour band sums, one monochrome
+  :func:`lumice_integral.band_sum.render_band_sum_window` per distinct
+  ``n(lambda)`` summed to CIE XYZ, and their output directory; the edge to
+  ``band_sum``, likewise not imported here.
 """
 
 from . import cmf, dispersion, illuminant, wl_pool
 from .illuminant import IlluminantType
-from .wl_pool import WAVELENGTH_COUNT_PRESETS, WlPoolEntry, wavelength_pool
+from .wl_pool import WAVELENGTH_COUNT_PRESETS, WlPoolEntry, emitted_weight, wavelength_pool
 
 __all__ = [
     "WAVELENGTH_COUNT_PRESETS",
@@ -26,6 +30,7 @@ __all__ = [
     "WlPoolEntry",
     "cmf",
     "dispersion",
+    "emitted_weight",
     "illuminant",
     "wavelength_pool",
     "wl_pool",
