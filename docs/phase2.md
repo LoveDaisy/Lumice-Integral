@@ -1069,6 +1069,19 @@ needs street-lamp halos (backlog).
   `dp-field-partial-reflection-boundaries`). Across the parhelic circle of `1-3-2`
   under plates, halving $\sigma$ doubles the peak at a fixed cross integral:
   dimension collapse. Tests: `tests/test_focusing.py`.
+- **Wavelength-critical onsets** (task `wavelength-critical-api`, 2026-09-27).
+  `focusing.wavelength_critical_table` runs `classify` once per refractive
+  index (label $\to n(\lambda)$, from `spectrum.dispersion.refractive_index`
+  at the caller) and pairs the onsets by rank; every rank must carry the same
+  (location, source, profile) at every index, otherwise `ValueError`: an
+  onset that appears at one wavelength only (an exit reaching TIR for blue
+  but not for red) is refused, not followed. Each row gives the critical
+  values per label and their spread $\max - \min$. `3-5` on a 0.2 plate
+  under a $1°$ plate density, 450 / 550 / 650 nm with Lumice's $n(\lambda)$:
+  the inner edge moves $0.581°$ (22.272 / 21.916 / 21.691), the three
+  boundary onsets $0.631°$, $0.604°$, $0.748°$ (explore
+  `spectral-conventions` #4; the shifts scale with $\Delta n$, checked on
+  this one scene only). Tests: `tests/test_focusing.py`.
 - **Non-uniform $\rho$.** $\psi(\mathbf u,\alpha)$ is single-valued, so $\rho$
   is evaluated pointwise; only the "convolution on the sky" reading of
   chapter 11 needs a uniform $\rho$.
