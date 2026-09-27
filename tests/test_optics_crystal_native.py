@@ -21,6 +21,7 @@ from lumice_integral.geometry import HexPrism, Polyhedron, Pyramid
 from lumice_integral.pose_density import build_pose_density
 from lumice_integral.s2_store import fibonacci_sphere
 from lumice_integral.symmetry.crystal_group import true_symmetry_group
+from lumice_integral.symmetry.reflection_group import key as rg_key
 
 from _geometry_oracles import NORMALS, reflect, refract
 
@@ -358,11 +359,16 @@ def test_pyramid_offfamily_focusing_mechanism_regression(faces, mechanism, inter
         assert [np.degrees(o.value) for o in outer] == [pytest.approx(v, abs=1e-4) for _, v in boundary]
 
 
-# ---- reduced cluster fail-fast ------------------------------------------------------------------------
+# ---- reduced cluster on G_true --------------------------------------------------------------------------
 
-# design.md 4: on HexPrism(1, 1, (2, 1, 1, 2, 1, 1)), |G_true| = 8, the D6h orbit of 3-5 has 12 members but
-# only the G_true images are the same physics; the reduced cluster must not run there.
+# design.md 4: on HexPrism(1, 1, (2, 1, 1, 2, 1, 1)), |G_true| = 8, the D6h orbit of a path has more members than
+# its G_true orbit, and only the G_true images are the same physics; the reduced cluster uses G_true by default.
+# face_distance 2 cuts faces 3 and 6 off that prism, so its fixture path is 4-8.
 LOW_SYMMETRY = [HexPrism(1.0, 1.0, (2, 1, 1, 2, 1, 1)), HexPrism(1.0, 1.0, (1.0, 1.3, 0.7, 1.9, 1.1, 0.4))]
+LOW_SYMMETRY_ORBITS = [
+    ((4, 8), {(4, 8), (5, 7), (7, 5), (8, 4)}),
+    ((3, 5), {(3, 5)}),
+]
 
 
 def test_the_d6h_orbit_is_not_the_crystal_orbit_on_a_low_symmetry_prism():
@@ -375,18 +381,25 @@ def test_the_d6h_orbit_is_not_the_crystal_orbit_on_a_low_symmetry_prism():
     assert own_orbit == {(3, 5)}
 
 
-@pytest.mark.parametrize("crystal", LOW_SYMMETRY)
-def test_reduced_cluster_fails_fast_below_d6h(crystal):
-    with pytest.raises(ValueError, match="G_true"):
-        path_class.pbd_orbit_hexprism((3, 5), crystal)
-    with pytest.raises(ValueError, match="G_true"):
-        path_class.phi_key(crystal, (3, 5))
-    with pytest.raises(ValueError, match="G_true"):
-        path_class.build_path_class(crystal, (3, 5))
+@pytest.mark.parametrize("crystal, orbit", list(zip(LOW_SYMMETRY, LOW_SYMMETRY_ORBITS)))
+def test_reduced_cluster_uses_g_true_by_default_below_d6h(crystal, orbit):
+    """The explore H4 counterexample turned into agreement: the default orbit is the ``G_true`` orbit (the
+    ``|G| = 2`` prism's ``3-5`` class has one member, not the 12 of ``D6h``), and the class transports stay in it."""
+    faces, members = orbit
+    assert path_class.pbd_orbit_hexprism(faces, crystal) == frozenset(members)
+    key = path_class.phi_key(crystal, faces)
+    assert isinstance(key, tuple) and len(key) == 3 and all(isinstance(k, int) for k in key)
+    built = path_class.build_path_class(crystal, faces)
+    assert set(built.members) == members
+    own_keys = {rg_key(g) for g in true_symmetry_group(crystal)}
+    transports = path_class.path_class_symmetry(built, crystal)
+    assert set(transports) == members
+    assert all(rg_key(g) in own_keys for g in transports.values())
+    # a class built on the regular prism is not one G_true orbit of this crystal
     ideal_class = path_class.build_path_class(HexPrism(), (4, 8))
-    with pytest.raises(ValueError, match="G_true"):
+    with pytest.raises(RuntimeError, match="not a D6h image"):
         path_class.path_class_symmetry(ideal_class, crystal)
-    # restricted to the crystal's own group the gate lets it through (only members that group reaches are found)
+    # explicit candidates must lie in the crystal's own group
     own = true_symmetry_group(crystal)
     representative_only = path_class.PathClass(
         ideal_class.representative, (ideal_class.representative,), ideal_class.wedge_deg, ideal_class.halo_map_rank
@@ -397,10 +410,10 @@ def test_reduced_cluster_fails_fast_below_d6h(crystal):
         path_class.path_class_symmetry(representative_only, crystal, symmetry_elements=foreign[:1])
 
 
-@pytest.mark.parametrize("crystal", LOW_SYMMETRY)
-def test_the_store_does_not_build_below_d6h(crystal):
-    """Downstream of the gate: the S^2 store refuses the crystal (``crystal_description`` rejects it first)."""
-    from lumice_integral.s2_store import build_event_store
-
-    with pytest.raises(ValueError):
-        build_event_store(crystal, N, [(4, 8)], 1000, run_checks=False)
+def test_the_reduced_cluster_rejects_a_face_the_crystal_does_not_have():
+    crystal = LOW_SYMMETRY[0]
+    assert 3 not in {f.number for f in crystal.faces}
+    with pytest.raises(ValueError, match="do not exist"):
+        path_class.pbd_orbit_hexprism((3, 5), crystal)
+    with pytest.raises(ValueError, match="do not exist"):
+        path_class.phi_key(crystal, (3, 5))
