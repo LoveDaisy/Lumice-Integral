@@ -27,7 +27,8 @@ Queue (tasks in `scratchpad/tasks.md`; dispatched 20 ∥ 21, then 22 ∥ 24, 23 
 | 25 | scrum `internal-partial-reflection`: `optics-partial-reflection` → `phase1-partial-reflection-domain` → `dp-field-partial-reflection-boundaries` → `contour-fallback-seed-scaling` → `ch10-liljequist-unblock-and-docs` — `optics-partial-reflection` **done 2026-09-25** (internal reflections split by Fresnel $R$, store schema 4, A60-10 against Lumice, §9); `phase1-partial-reflection-domain` **done 2026-09-25** (continuation event margins without internal TIR, Snell event tolerance; `3-5-6-7` / `3-5-6-7-3` against the band sum, [phase1.md](phase1.md) §5, §9); `contour-fallback-seed-scaling` **done 2026-09-25** (boundary seeds on a square coincident margin, 801 deviations per call certified, §9); `ch10-liljequist-unblock-and-docs` **done 2026-09-25** (A60-10 saddle 141.839300° on the production chain, the Liljequist peak a TIR onset corner, four verdicts rerun, ch8 strip against Lumice, §9) | 24 |
 | 26 | `phase1-quadrature-start-and-speed`: analytic `ν′` in the arc-length speed, panel-wise Simpson error estimate ([phase1.md](phase1.md)) — **done 2026-09-25** | — |
 | 29 | scrum `crystal-native-geometry` (design: explore `crystal-geometry-design`, owner rulings 2026-09-27): `crystal-closed-form` → `optics-reads-crystal` → explore `ch9-offfamily-focusing` — `crystal-closed-form` **done 2026-09-27** (closed-form prism with Lumice `face_distance`, `face_present`, fail-fast rejection, `G_true`; [overview.md](overview.md) §4.1, conventions #19, §9); `optics-reads-crystal` **done 2026-09-27** (normals from the crystal through `optics.face_normals`, `D_P` kernels take them as an argument, `G_true ≠ D6h` fail-fast in the reduction cluster; [overview.md](overview.md) §4.1, §9); explore `ch9-offfamily-focusing` next | — |
-| — | explore `panel-inverse-probe` (opened 2026-09-27): LI-side cost probe for the Ice Halo raypath-analysis panel's three post-selection functions ([overview.md](overview.md) §5.3, §9) — single-path $S^2$ field, whole-sky map and pick-a-fiber cost at panel precision; preset-point prototypes (brightest / $D_P$ critical / $U_P$ boundary / wavelength critical); its conclusions gate the compute-landing-point decision | — |
+| — | explore `panel-inverse-probe` (opened 2026-09-27): LI-side cost probe for the Ice Halo raypath-analysis panel's three post-selection functions ([overview.md](overview.md) §5.3, §9) — single-path $S^2$ field, whole-sky map and pick-a-fiber cost at panel precision; preset-point prototypes (brightest / $D_P$ critical / $U_P$ boundary / wavelength critical) — **done 2026-09-27** (feeds the compute-landing-point ruling, §9) | — |
+| — | explore `ad-port-probe` (opened 2026-09-27): whether function 3's AD reduces to a portable C++ core against JAX — **done 2026-09-27** (forward hyper-dual `Jet2<3>` matches JAX to $\le 10^{-11}$ relative error on three paths, feeds the compute-landing-point ruling, §9) | — |
 
 Deferred: the chapter-11 table (path classes × pose families) after 22 and
 M2; divergent light ([phase2.md](phase2.md) §9, backlog); finite solar disk;
@@ -663,13 +664,35 @@ Moved to [overview.md](overview.md) §3.
   `scratchpad/explore-crystal-geometry-design/design.md`'s "owner ruling" §7
   and `scratchpad/backlog.md`'s two crystal-geometry mid-term entries, which
   had read the panel as requiring stage 2 **and** 3 undifferentiated; see
-  those files' own 2026-09-27 addenda. The compute landing point ((a) rewrite
-  inside Lumice, (b) LI as a sidecar, (c) a shared portable C++ core Lumice
-  links and LI calls through a binding) is undecided, gated on explore
-  `panel-inverse-probe` (opened the same day). Multi-scattering composition
+  those files' own 2026-09-27 addenda. The compute landing point was left
+  gated on explore `panel-inverse-probe` (opened the same day); it is now
+  decided, see the following entry. Multi-scattering composition
   at the consumption layer (via an intermediate direction as the second
   bounce's light source) is a requirement LI has been asked to consider, not
   a change to the multi-scattering-scene non-goal (§8 / [overview.md](overview.md)
   §3). To be verified later: whether the panel's symmetry-reduced rows
   (Lumice `doc/raypath-symmetry.md` P/B/D) and LI's `G_true` orbit share one
   convention.
+- **2026-09-27**: the panel's compute landing point is decided, closing
+  explore `panel-inverse-probe` and `ad-port-probe`
+  ([overview.md](overview.md) §5.3 has the full ruling and the measured
+  numbers; local records
+  `scratchpad/explore-panel-inverse-probe/SUMMARY.md`,
+  `scratchpad/explore-ad-port-probe/SUMMARY.md`). It is not a one-shot
+  "single vs. dual implementation" architecture choice but a per-module
+  decision timed by module maturity: port nothing now (everything stays in
+  LI's JAX implementation); the port trigger is the panel function being
+  actually scheduled **and** the module holding still for a while (stage 2,
+  the asymmetric cone, multiple wavelengths and multi-scattering composition
+  all landed is the reference point); once a module is ported, JAX stays
+  authoritative and C++ becomes a derived implementation locked by a parity
+  fixture (path topology × point class, modelled on `ad-port-probe`'s
+  `compare_*.py`) run in CI, with changes flowing JAX-first; the C++ side
+  uses a forward hyper-dual template for scalar derivatives, not an AD
+  framework; functions 1/2 (`band_sum`, `s2_store`, ...) are ported on the
+  same maturity-gated basis as function 3, not held to a different bar. This
+  supersedes the "main session leans toward (c)" wording recorded in the
+  previous entry and in the earlier §5.3 draft. In the meantime, the
+  panel-relevant modules (`optics`, `weights`, `geometry`, `s2_store`,
+  `band_sum`, `dp_field`, `contour`, `focusing`) are not frozen for the
+  panel's sake.
