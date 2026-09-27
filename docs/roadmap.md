@@ -27,6 +27,7 @@ Queue (tasks in `scratchpad/tasks.md`; dispatched 20 ∥ 21, then 22 ∥ 24, 23 
 | 25 | scrum `internal-partial-reflection`: `optics-partial-reflection` → `phase1-partial-reflection-domain` → `dp-field-partial-reflection-boundaries` → `contour-fallback-seed-scaling` → `ch10-liljequist-unblock-and-docs` — `optics-partial-reflection` **done 2026-09-25** (internal reflections split by Fresnel $R$, store schema 4, A60-10 against Lumice, §9); `phase1-partial-reflection-domain` **done 2026-09-25** (continuation event margins without internal TIR, Snell event tolerance; `3-5-6-7` / `3-5-6-7-3` against the band sum, [phase1.md](phase1.md) §5, §9); `contour-fallback-seed-scaling` **done 2026-09-25** (boundary seeds on a square coincident margin, 801 deviations per call certified, §9); `ch10-liljequist-unblock-and-docs` **done 2026-09-25** (A60-10 saddle 141.839300° on the production chain, the Liljequist peak a TIR onset corner, four verdicts rerun, ch8 strip against Lumice, §9) | 24 |
 | 26 | `phase1-quadrature-start-and-speed`: analytic `ν′` in the arc-length speed, panel-wise Simpson error estimate ([phase1.md](phase1.md)) — **done 2026-09-25** | — |
 | 29 | scrum `crystal-native-geometry` (design: explore `crystal-geometry-design`, owner rulings 2026-09-27): `crystal-closed-form` → `optics-reads-crystal` → explore `ch9-offfamily-focusing` — `crystal-closed-form` **done 2026-09-27** (closed-form prism with Lumice `face_distance`, `face_present`, fail-fast rejection, `G_true`; [overview.md](overview.md) §4.1, conventions #19, §9); `optics-reads-crystal` **done 2026-09-27** (normals from the crystal through `optics.face_normals`, `D_P` kernels take them as an argument, `G_true ≠ D6h` fail-fast in the reduction cluster; [overview.md](overview.md) §4.1, §9); explore `ch9-offfamily-focusing` next | — |
+| — | explore `panel-inverse-probe` (opened 2026-09-27): LI-side cost probe for the Ice Halo raypath-analysis panel's three post-selection functions ([overview.md](overview.md) §5.3, §9) — single-path $S^2$ field, whole-sky map and pick-a-fiber cost at panel precision; preset-point prototypes (brightest / $D_P$ critical / $U_P$ boundary / wavelength critical); its conclusions gate the compute-landing-point decision | — |
 
 Deferred: the chapter-11 table (path classes × pose families) after 22 and
 M2; divergent light ([phase2.md](phase2.md) §9, backlog); finite solar disk;
@@ -646,3 +647,29 @@ Moved to [overview.md](overview.md) §3.
   generalise to `G_true` in stage 2). The pyramid's paths `13-15-26-28`,
   `13-5-26-28`, `13-24-26` reach `focusing.classify` (their reading is the
   explore `ch9-offfamily-focusing`).
+- **2026-09-27**: the Ice Halo raypath-analysis panel's post-selection
+  functions enter as a requirement source ([overview.md](overview.md) §5.3;
+  authority: Ice Halo `doc/raypath-analysis.md` §5.1, rewritten the same day
+  by that repository's chore `raypath-analysis-lumice-integral-plan`).
+  Function 1 (path detail) and function 3 (preset points) only need the
+  single-path layer (stage 0+1, already done) plus an asymmetric upper/lower
+  cone; function 2 (whole-sky map for one path, aligned to the panel's own
+  symmetry-reduced rows) needs the band sum and class-level aggregation, so
+  it is the reason stage 2 (`design.md` §⑤) must be done, not merely a
+  restatement of the owner's 2026-09-27 final-goal ruling recorded there.
+  Stage 3 (full-image rendering: `strip_driver` / `contour_quadrature` /
+  `ch10_verdicts`) is **not** supported by the panel; it still needs its own
+  reason from the writing project (chapter 12.1 aside). This corrects
+  `scratchpad/explore-crystal-geometry-design/design.md`'s "owner ruling" §7
+  and `scratchpad/backlog.md`'s two crystal-geometry mid-term entries, which
+  had read the panel as requiring stage 2 **and** 3 undifferentiated; see
+  those files' own 2026-09-27 addenda. The compute landing point ((a) rewrite
+  inside Lumice, (b) LI as a sidecar, (c) a shared portable C++ core Lumice
+  links and LI calls through a binding) is undecided, gated on explore
+  `panel-inverse-probe` (opened the same day). Multi-scattering composition
+  at the consumption layer (via an intermediate direction as the second
+  bounce's light source) is a requirement LI has been asked to consider, not
+  a change to the multi-scattering-scene non-goal (§8 / [overview.md](overview.md)
+  §3). To be verified later: whether the panel's symmetry-reduced rows
+  (Lumice `doc/raypath-symmetry.md` P/B/D) and LI's `G_true` orbit share one
+  convention.

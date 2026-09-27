@@ -108,6 +108,45 @@ Lumice 只能跨越显式的验证边界使用：
 
 写作项目有两层代码现在住在这里并以此为权威：晶体几何（`lumice_integral.geometry`，2026-09-16）与对称性和分类层（`lumice_integral.symmetry`，2026-09-24，从 `halo_notes.math` 迁来，公开名称 1:1 保留）。用本包重算的第 8、9 章 signature 表与已发表的 CSV 逐字节一致（`tests/test_symmetry_signature_table_regression.py`，只读写作仓的数据文件）。
 
+### 5.3 Ice Halo 光路分析面板
+
+Owner 需求（权威记录在 Ice Halo 仓
+[`doc/raypath-analysis.md`](https://github.com/LoveDaisy/ice_halo_sim) §5.1，
+由该仓 chore `raypath-analysis-lumice-integral-plan` 同日（2026-09-27）改写）：
+用户在面板中选定一条光路之后，跟进三个功能：
+
+1. **光路详情**：一维姿态族（fiber）上的晶体姿态、晶体内光路轨迹（可视化 / 动画）、
+   逐段衰减的能量分配（beam tube 是它的一种可视化形式）；
+2. **单光路全天亮度图**：单独这条光路在全天的亮度分布，并可在图上重新选点回到功能 1
+   （功能 2 的产品形态 owner 暂 hold）；
+3. **预设点**：最亮点、临界点 / 线（$D_P$ 极值 / 鞍点、$U_P$ 边界，如切弧边缘）、
+   波长相关临界点（例如蓝光已过 TIR 而红光仍透过的位置）。
+
+多次散射链需要支持。
+
+三个功能是同一个 $S^2$ 对象的三种读法（这是应当写进 LI 自己文档的部分，不是复述面板的
+产品设计）：功能 2 = 带求和；功能 1 = 该像素对应的水平集
+$\{D_P(\mathbf u) = \delta\}$（带求和里落进该像素偏折角带内的事件即这条 fiber 的离散化，
+`band_sum.band_poses` 已能取出这些姿态）；功能 3 = $D_P$ 的临界结构加 $U_P$ 边界
+（`dp_field`、`focusing.classify`），波长临界即 $U_P$ 边界随 $n(\lambda)$ 移动。三者
+共享同一张按「晶体 × 光路 × 波长」预计算、与光源无关的 $S^2$ 场。「为什么冰晕长在这里」
+这一产品形态 = 功能 3 的预设点加机制标签——这是 Lumice 的 Monte Carlo 形态给不出的、
+LI 独有的价值。
+
+多次散射**场景渲染**仍在 LI 范围之外（§3 的非目标条目不改）；但两层散射链可以在消费层
+经中间方向 $\mathbf m$ 把单层结果组合起来：$S^2$ 仓库与光源无关，所以第二层可以把
+$\mathbf m$ 当作光源复用同一个仓库。这一组合层是否由 LI 自己承担尚待定；本段只记录
+需求来源，不构成范围变更。
+
+计算落点待定，取决于 explore `panel-inverse-probe`（同日建）的成本实测与预设点原型结论：
+(a) 在 Lumice 内用 C++ 重写；(b) LI 作为 sidecar；(c) 把 Phase II 的内核抽成可移植的
+C++ 核心，LI 的 Python 经 binding 调用，Lumice 直接链接（一份权威实现；依赖方向与「LI
+不依赖 Lumice」相反，二者并不冲突——与 Lumice 自身 Monte Carlo 的交叉验证仍然独立）。
+主 session 倾向 (c)；裁定留待该探针的结论（roadmap §9）。
+
+待后续核实（本 chore 不做，只标记）：面板的对称约化行语义（Lumice
+`doc/raypath-symmetry.md` 的 P/B/D）与 LI 的 `G_true` 轨道是否同一口径。
+
 ## 6. 验证策略
 
 验证必须组合几类相互独立的证据：
