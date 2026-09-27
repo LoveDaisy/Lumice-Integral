@@ -87,7 +87,7 @@ $$
 
 代表光路在整个 $S^2$ 上的场，与全部成员在基本域 $F = S^2/G$ 上的场信息等价：代表的场在 $hF$ 这一块上，就是成员 $h^{-1}Ph$ 在 $F$ 上的场。「把一个事件搬运成 $|G|$ 个像」与「只算 $1/|G|$ 个球面」是同一件事。对称性省的是重复计算，不产生新样本；带求和的精度由落在带内、权重非零的*不同*预计算事件数决定（$K_{\mathrm{eff}}$ 数的是事件，不是搬运出来的像）。
 
-镜面在 $S^2$ 上和旋转一样搬运：$w_{gPg^{-1}}(g\mathbf u) = w_P(\mathbf u)$，$\Phi_{gPg^{-1}}(g\mathbf u) = g\,\Phi_P(\mathbf u)$，有效域相同（对全部 24 个元素**实测**到 `1e-12`）。被搬运事件的姿态由 $(g\mathbf u, g\Phi, D)$ 通过两个正交标架重建，无论 $\det g$ 为何都是旋转；作用在代表姿态 $R$ 上就是 $L_g R g^{\mathsf T}$，其中 $L_g = I - (1-\det g)\,\mathbf m\mathbf m^{\mathsf T}$，$\mathbf m$ 是 $\hat{\mathbf s}$ 与像素所在平面的法向。「镜面成员需要自己的仓库」是 Phase I 的限制（$R g^{-1}$ 必须是 $\mathrm{SO}(3)$ 中的旋转），在 $S^2$ 上不存在；一个仓库服务整个类。
+镜面在 $S^2$ 上和旋转一样搬运：$w_{gPg^{-1}}(g\mathbf u) = w_P(\mathbf u)$，$\Phi_{gPg^{-1}}(g\mathbf u) = g\,\Phi_P(\mathbf u)$，有效域相同（对全部 24 个元素**实测**到 `1e-12`）。这个群是晶体自身的 $G_{\mathrm{true}}$（`symmetry.crystal_group`）：正六棱柱上是整个 $D_{6h}$，Lumice `face_distance` 下是它的子群（任务 `reduction-cluster-g-true`）；轨道、`phi_key` 分组与搬运都不取更大的候选群。在 $D_{3h}$、$D_{2h}$ 与 $|G| = 2$ 的棱柱上，每个成员自建的仓库与搬运结果相差不超过 `1e-12`，而 $G_{\mathrm{true}}$ 之外的 $D_{6h}$ 元素会破坏场的恒等式（`tests/test_s2_store_symmetry.py`）。被搬运事件的姿态由 $(g\mathbf u, g\Phi, D)$ 通过两个正交标架重建，无论 $\det g$ 为何都是旋转；作用在代表姿态 $R$ 上就是 $L_g R g^{\mathsf T}$，其中 $L_g = I - (1-\det g)\,\mathbf m\mathbf m^{\mathsf T}$，$\mathbf m$ 是 $\hat{\mathbf s}$ 与像素所在平面的法向。「镜面成员需要自己的仓库」是 Phase I 的限制（$R g^{-1}$ 必须是 $\mathrm{SO}(3)$ 中的旋转），在 $S^2$ 上不存在；一个仓库服务整个类。
 
 ## 4. 求积 A：追踪等值线（M2）
 
@@ -201,7 +201,7 @@ Phase I 也做过预计算。2026-09-25 之前，它的 `prescan.PrescanTable` �
 
 1. **带求和**（§5）：事件就是求积节点。
 2. **等值线追踪**（§4）：带内事件离 $\{D_P = \delta\}$ 不超过半个带宽，作为 Newton 细化到等值线的 seed。
-3. **Phase I seed**（M2 子任务 `phase1-seeds-from-store`，**2026-09-25 完成**）：带内姿态取代了预扫候选（`s2_store.StoreSeeds`，`N = 1e6`，带半宽 `0.2 deg`），`PrescanTable` 已删除；32 像素探针上，从 `N = 1e5` / `0.02 deg` 到 `N = 1e8` / `2 deg` 的每个仓库配置都找到了预扫表的全部分量（[phase1.md](phase1.md) 附录）。同一批事件给 Phase I 提供完整性交叉检查（`discovery.check_band_coverage`）：每个带内事件校正后都应落在某条已追纤维上，可行却离所有纤维都远的事件标记出一个漏掉的分量。这个检查是统计性的，但漏检概率有界：$N$ 个独立均匀点整体错过一块带内测度为 $\mu$ 的区域的概率是 $e^{-N\mu/4\pi}$，用 $e^{-k_{\min}}$ 估计（$k_{\min}$ 为已找到分量中带内事件最少者的事件数）——预扫表的密度调查给不出这个界。一个路径类的所有成员经 `path_class.store_plan` 的 `D6h` 搬运共用一个仓库；由于仓库不依赖光源，Phase I 也不再为每个太阳高度重建。
+3. **Phase I seed**（M2 子任务 `phase1-seeds-from-store`，**2026-09-25 完成**）：带内姿态取代了预扫候选（`s2_store.StoreSeeds`，`N = 1e6`，带半宽 `0.2 deg`），`PrescanTable` 已删除；32 像素探针上，从 `N = 1e5` / `0.02 deg` 到 `N = 1e8` / `2 deg` 的每个仓库配置都找到了预扫表的全部分量（[phase1.md](phase1.md) 附录）。同一批事件给 Phase I 提供完整性交叉检查（`discovery.check_band_coverage`）：每个带内事件校正后都应落在某条已追纤维上，可行却离所有纤维都远的事件标记出一个漏掉的分量。这个检查是统计性的，但漏检概率有界：$N$ 个独立均匀点整体错过一块带内测度为 $\mu$ 的区域的概率是 $e^{-N\mu/4\pi}$，用 $e^{-k_{\min}}$ 估计（$k_{\min}$ 为已找到分量中带内事件最少者的事件数）——预扫表的密度调查给不出这个界。一个路径类的所有成员经 `path_class.store_plan` 的 `G_true` 搬运共用一个仓库；由于仓库不依赖光源，Phase I 也不再为每个太阳高度重建。
 
 ## 7. 环不变性与各路线的成本
 

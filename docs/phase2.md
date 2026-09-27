@@ -295,7 +295,14 @@ precomputed events in the band with non-zero weight
 Mirrors transport on $S^2$ exactly like rotations:
 $w_{gPg^{-1}}(g\mathbf u) = w_P(\mathbf u)$,
 $\Phi_{gPg^{-1}}(g\mathbf u) = g\,\Phi_P(\mathbf u)$, the valid domain is the
-same (**measured** for all 24 elements to `1e-12`). The pose of a
+same (**measured** for all 24 elements to `1e-12`). The group is the
+crystal's own $G_{\mathrm{true}}$ (`symmetry.crystal_group`), all of
+$D_{6h}$ on the regular prism and a subgroup under Lumice `face_distance`
+(task `reduction-cluster-g-true`): orbits, `phi_key` groups and transports
+take no larger candidate group, and each member's own store equals the
+transported one to `1e-12` on the $D_{3h}$, $D_{2h}$ and $|G| = 2$ prisms,
+while a $D_{6h}$ element outside $G_{\mathrm{true}}$ breaks the field
+identity (`tests/test_s2_store_symmetry.py`). The pose of a
 transported event is rebuilt from $(g\mathbf u, g\Phi, D)$ by two
 orthonormal frames, a rotation whatever $\det g$; on the representative's
 pose $R$ this is $L_g R g^{\mathsf T}$ with
@@ -790,7 +797,7 @@ pixel and seeds closer to the fibre. It has three consumers:
    $e^{-N\mu/4\pi}$, estimated by $e^{-k_{\min}}$ with $k_{\min}$ the
    fewest band events on a component found, which the prescan's density
    survey did not give. A class seeds every member from its one store
-   through the `D6h` transports of `path_class.store_plan`, and because the
+   through the `G_true` transports of `path_class.store_plan`, and because the
    store does not depend on the source, Phase I no longer rebuilds per sun.
 
 ## 7. Ring invariance and the cost of each route

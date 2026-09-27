@@ -696,3 +696,19 @@ Moved to [overview.md](overview.md) §3.
   panel-relevant modules (`optics`, `weights`, `geometry`, `s2_store`,
   `band_sum`, `dp_field`, `contour`, `focusing`) are not frozen for the
   panel's sake.
+- **2026-09-27**: the reduction cluster runs on the crystal's own `G_true`
+  (task `reduction-cluster-g-true`, scrum `crystal-reduction-generalize`,
+  the stage-2 half of the fail-fast ruling above). `path_class` orbits,
+  `path_class_symmetry` and hence `store_plan` / `band_sum` / `strip_pixel`
+  take `symmetry.crystal_group.true_symmetry_group` as the candidate group;
+  the 24-element fold table and the six-direction star stay as lookup
+  tables (`phi_key` numbers an unfolded normal by direction, the crystal
+  need not have a face there), and a path on a face the crystal lacks is a
+  `ValueError`. `s2_store` schema 4 → 5 records `face_distance`; the pyramid
+  store stays refused until task `pyramid-lumice-semantics`. The explore H4
+  counterexample (`3-5`: 12 `D6h` images, one `G_true` image on a `|G| = 2`
+  prism) is a regression test, the store oracle (own store vs transport) runs
+  on `D3h`, `D2h` and `|G| = 2` prisms, and a class band sum equals its groups'
+  own stores to `1e-12` on `D3h` / `D2h`. The regular prism is unchanged
+  (band-sum renders bit for bit against the pre-change code, only the cache
+  key moves).
