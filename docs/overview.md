@@ -161,9 +161,15 @@ conventions #19).
   and six `face_distance` ratios of the regular apothem `a·√3/2`, negative
   values allowed; `HexPrism(a, h, face_distance)`, with
   `HexPrism.from_lumice(height, face_distance, a)` for Lumice's
-  `height = h / (2a)`. `Pyramid` covers the symmetric subset (regular cross
-  section, `upper_h = lower_h` truncated cones); asymmetric and one-sided
-  cones are a later stage and the construction does not preclude them.
+  `height = h / (2a)`. A pyramid follows all of Lumice's `pyramid` shape
+  through `Pyramid.from_lumice(prism_h, upper_h, lower_h, upper_indices,
+  lower_indices, face_distance, a)`: independent heights (0 = no cone and
+  a basal cap, `(0, 1)` = truncated, `>= 1` = full apex, negative values
+  fold), independent Miller indices or wedge angles, and the six
+  `face_distance` acting on every cross-section of the prism band and both
+  cones (task `pyramid-lumice-semantics`). `Pyramid(a, h, c_over_a,
+  tip_ratio)` stays the symmetric regular subset, and `from_lumice`
+  delegates to it on that subset.
 - **Closed form, no topology discovery** (the route Lumice abandoned in
   PR #214, `doc/crystal-geometry-representation.md` §1, §4): the six side
   planes are a fixed star, so for each side face the other five half-planes
@@ -174,18 +180,29 @@ conventions #19).
   is the historical one bit for bit. Faces are the present subset of the
   constant numbers 1/2, 3–8 (13–18, 23–28 on the pyramid); an absent face
   number is a `KeyError`, not a silently wrong normal.
+- **A cone is the same star, eroded** (Lumice's model,
+  `src/core/geo3d_closedform.hpp`): at inset `m` above the shoulder the
+  cross-section is the star with ratios `face_distance − m`, at height
+  `h/2 + a·c_over_a·m`. Every edge shrinks at a closed-form rate, so the
+  combinatorics change only where an edge reaches zero length (a
+  corner-death event, three side lines concurrent) up to the natural apex,
+  a point or a ridge (`closed_form.cone_sweep`, checked against an LP).
+  A truncation at `upper_h` sits at `m = upper_h·m_apex`; the vertices are
+  the shoulder ring, one per event, and the truncation ring or the apex.
 - **Rejection is fail-fast**: fewer than three present side faces means the
   cross-section has no area and the constructor raises `ValueError` where
   Lumice drops the crystal. (Positive width of each opposite pair is not
   enough: `[1, 1, -0.5, -0.9, -0.9, 1]` has three positive-width slabs that
   do not meet.)
 - **`G_true`** (`symmetry.crystal_group.true_symmetry_group`): every normal
-  lies in the six-direction star or on `±c`, so the crystal's own symmetry
-  group is the subset of `signature.D6H` that maps the present faces'
-  (normal, offset from the vertex centroid) onto themselves, verified to be
-  a group. Regular prism and symmetric pyramid 24, `[1, d, 1, d, 1, d]` 12,
-  `[1.9, 1, 1, 1.9, 1, 1]` and `[2, 1, 1, 2, 1, 1]` 8, a generic shape 2
-  (`{E, σh}`).
+  lies in the six-direction star, on `±c`, or on a cone over the star, all
+  permuted by `D6h` only, so the crystal's own symmetry group is the subset
+  of `signature.D6H` that maps the present faces' (normal, offset from the
+  vertex centroid) onto themselves, verified to be a group. Regular prism
+  and symmetric pyramid 24, `[1, d, 1, d, 1, d]` 12,
+  `[1.9, 1, 1, 1.9, 1, 1]` and `[2, 1, 1, 2, 1, 1]` 8, a generic prism 2
+  (`{E, σh}`); a pyramid with different upper and lower cones (heights or
+  indices) or one cone 12 (`C6v`), and with the cross-sections above 6, 4, 1.
 - **Normals come from the crystal** (task `optics-reads-crystal`,
   2026-09-27): every single-path function of `optics` (`path_direction`,
   `path_domain[_batch]`, `fresnel_transmission_path[_batch]`, `path_problem`
