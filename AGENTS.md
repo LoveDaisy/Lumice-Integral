@@ -73,6 +73,16 @@ uv run python scripts/render_band_sum.py --store-n 10000000 --path 3 5 --path-cl
 uv run python scripts/render_band_sum.py --store-n 10000000 --path 3 5 --path-class --face-distance 1 1.2 1 1.2 1 1.2 \
   --refractive-index 1.3110129 --pose-density-family random --width 401 --height 401 --fov-deg 100 --view-elevation 15 \
   --workers 4 --output-dir /tmp/band-sum-d3h
+# ... colour (lumice_integral.spectrum.xyz_band_sum): linear CIE XYZ (H, W, 3), one monochrome band sum per distinct
+# n(lambda) of Lumice's M-slot pool (--wavelength-count: an integer or panel_wide_fov / panel_narrow_fov /
+# writing_canonical_strip), or --discrete-wavelength-nm 550; cost ~ M monochrome renders (M stores)
+uv run python scripts/render_band_sum.py --store-n 10000000 --path 3 5 --path-class --illuminant D65 --wavelength-count 5 \
+  --pose-density-family random --width 201 --height 201 --fov-deg 100 --view-elevation 15 --workers 4 --output-dir /tmp/band-sum-d65
+# ... against Lumice channel by channel (compare_lumice_family.py reads the format from provenance.json); Lumice with
+# the same pool: `LUMICE_WL_POOL_SIZE=5 Lumice render ... --format npy --backend metal --seed 7|11` (the Metal pool; a
+# seeded run under the default --backend auto goes to the CPU backend, which samples lambda per batch instead, and
+# unseeded Metal runs repeat one random stream, so they give no noise floor; 1e9 rays ~30 s on an M2 Max)
+uv run python scripts/compare_lumice_family.py --li-dir /tmp/band-sum-d65 --lumice-run <run1> --lumice-run <run2> --output /tmp/d65.json
 # ... and its regressions (against strip-full; against task 14's profiles) and log-scale figures
 uv run python scripts/regress_band_sum.py --stage full --band-dir artifacts/band-sum-full --output /tmp/regression_full.json
 # ... the K_eff ruler: two i.i.d. stores of class [3,5] on task 14's profiles (z of their difference, ~1 min)
@@ -175,7 +185,8 @@ The design is `docs/overview.md` (entry), `docs/phase1.md` and `docs/phase2.md`
 │   │                      # (pure numpy, depends on geometry only)
 │   ├── spectrum/          # Lumice's spectral conventions reproduced: n(lambda), CIE 1931 CMF,
 │   │                      # illuminant SPDs, the M-slot wavelength pool; store.py: one S^2 store
-│   │                      # per n(lambda) via s2_store.build_or_load (pure Python otherwise)
+│   │                      # per n(lambda) via s2_store.build_or_load; xyz_band_sum.py: colour band
+│   │                      # sums to CIE XYZ (the other modules pure Python)
 │   ├── dp_field/          # Phase II D_P field layer: evaluation, critical points, dU_P walk,
 │   │                      # delta-interval partition (public: DPField)
 │   ├── contour.py         # level sets {D_P = delta} in U_P, certified against the partition

@@ -56,7 +56,10 @@ both sides in ``chromaticity``.  The monochrome form is the same expression
 with ``XYZ[p, Y] = ybar(550) V``: a discrete 550 nm colour render gives the
 monochrome ``Y`` metrics bit for bit.  Lumice's pool has ``M = 64`` slots
 unless ``LUMICE_WL_POOL_SIZE`` says otherwise (it is not in ``config.json``);
-set it to the render's ``--wavelength-count`` for a like-for-like pool.
+set it to the render's ``--wavelength-count`` for a like-for-like pool, and
+run the Metal backend (``--backend metal --seed N``: the CPU backend samples
+the wavelength per batch instead of the pool, and unseeded Metal runs repeat
+one random stream, which leaves no noise floor).
 
 The band-sum value is a deviation-band average and Lumice's a pixel-area
 average: next to sharp edges they differ by the averaging itself, which the
