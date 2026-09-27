@@ -14,3 +14,6 @@ scratchpad/
 
 # Rendered strip products (pulled back from home-wsl; tens of MB, never committed)
 artifacts/
+
+# JAX persistent compilation cache of the test suite (tests/conftest.py)
+.jax-cache/

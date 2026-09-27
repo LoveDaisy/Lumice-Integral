@@ -98,6 +98,8 @@ def long_path() -> tuple[DPField, object]:
     return DPField.build(crystal, (3, 5, 6, 7, 3), INDEX), V.seed_store(crystal, INDEX, (3, 5, 6, 7, 3))
 
 
+# slow: ~34 s on an M2 Max in the call itself; its long_path fixture also serves a fast test
+@pytest.mark.slow
 def test_liljequist_peak_is_a_corner_at_the_internal_tir_onset(long_path) -> None:
     """153.07 deg is no critical value of ``D_P`` any more but the largest ``D_P`` on the TIR onsets of ``R_k``:
     the value is continuous there and the slope jumps from rising to falling (a corner maximum)."""

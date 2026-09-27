@@ -261,6 +261,13 @@ def test_fiber_crosses_the_internal_critical_angle_at_full_step():
     pinned every step past the critical angle at ``minimum_step`` and the
     trace ran out of steps (A60-10 pixels came out 0, task
     phase1-partial-reflection-domain).
+
+    An arc is traced in both seed orientations, as ``discovery`` does: the
+    seed tangent's sign is not intrinsic (contract section 5.4), it is
+    whatever sign LAPACK's SVD returns, and Accelerate (macOS) and OpenBLAS
+    (Linux) return opposite signs at Haar pose 53 from Jacobians that agree
+    to 1e-15.  A one-sided trace there covers the crossing half of the arc on
+    one platform and the other half on the other (task ci-linux-platform-diffs).
     """
     faces = (3, 5, 6, 7, 3)
     names = [f"internal_{k}_tir_discriminant" for k in range(1, len(faces) - 1)]
@@ -271,13 +278,18 @@ def test_fiber_crosses_the_internal_critical_angle_at_full_step():
     crossed = 0
     for index in np.flatnonzero(near)[:3]:
         problem = path_problem(jnp.asarray(rotations[index]), faces, jnp.asarray(INCIDENT), refractive_index=jnp.asarray(INDEX))
-        result = trace_fiber(problem, options)
-        assert result.reason in ARC_EVENTS or result.reason == TerminationReason.CLOSED_LOOP
-        assert all(tuple(margins) == validity_margin_names(faces) for margins in result.branch_diagnostics.accepted_margins)
-        margins = path_domain_batch(np.asarray(result.poses), faces, INCIDENT, INDEX).margins
+        results = [trace_fiber(problem, options)]
+        if results[0].reason in ARC_EVENTS:
+            results.append(trace_fiber(problem, replace(options, initial_tangent_sign=-1)))
+        poses = []
+        for result in results:
+            assert result.reason in ARC_EVENTS or result.reason == TerminationReason.CLOSED_LOOP
+            assert all(tuple(margins) == validity_margin_names(faces) for margins in result.branch_diagnostics.accepted_margins)
+            pinned = sum(d.accepted and d.proposed_step <= options.minimum_step for d in result.step_diagnostics)
+            assert pinned <= 2, pinned
+            poses.append(np.asarray(result.poses))
+        margins = path_domain_batch(np.concatenate(poses), faces, INCIDENT, INDEX).margins
         crossed += any(margins[name].min() < 0.0 < margins[name].max() for name in names)
-        pinned = sum(d.accepted and d.proposed_step <= options.minimum_step for d in result.step_diagnostics)
-        assert pinned <= 2, pinned
     assert crossed >= 2
 
 

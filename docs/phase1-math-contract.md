@@ -567,7 +567,7 @@ the root, regularity, path-validity, or closure definitions above.
 | Regularity | `singular_value_tolerance=1e-8`, `condition_limit=1e8` |
 | Step controller | `initial_step=0.04`, `minimum_step=1e-5`, `maximum_step=0.12`, `shrink_factor=0.5`, `growth_factor=1.25`, `maximum_retries=8` |
 | Corrector and trust gates | `corrector_maximum_iterations=10`, phase/update tolerances `1e-12`, `maximum_correction=0.2`, `maximum_advance=0.2`, `minimum_tangent_dot=0.8` |
-| Seed orientation | `initial_tangent_sign=+1` (section 5.4 explicit choice; `-1` reverses the deterministic SVD sign of the seed tangent and hence the sample order) |
+| Seed orientation | `initial_tangent_sign=+1` (section 5.4 explicit choice; `-1` reverses the SVD sign of the seed tangent and hence the sample order; that sign is deterministic per LAPACK build, not across builds, so an open arc is traced in both orientations) |
 | Work bounds | `maximum_accepted_steps=4000`, `maximum_evaluations=100000`, `maximum_arclength=20` |
 | Event approach | `event_slowdown_margin=0.02`; a shrinking margin below it bounds the next step by `_EVENT_APPROACH_STEP_FRACTION` (code constant, `0.5`) of the linear arclength to zero; a stable or receding margin imposes no bound |
 | Closure | minimum `closure_minimum_steps=3` accepted steps and arclength `max(closure_minimum_arclength=0, _CLOSURE_ARCLENGTH_STEP_MULTIPLIER * initial_step)` with the code constant `_CLOSURE_ARCLENGTH_STEP_MULTIPLIER = 2.0` (the constant in `lumice_integral.continuation` is the single source of that value), distance `0.08`, tangent dot `0.8`, section tolerance `1e-11`, at most 10 final-corrector iterations |

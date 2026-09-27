@@ -197,7 +197,9 @@ class ContinuationOptions:
     closure_section_tolerance: float = 1e-11
     closure_maximum_iterations: int = 10
     # Explicit seed orientation (contract section 5.4): ``-1`` reverses the
-    # deterministic SVD sign of the seed tangent, hence the sample order.
+    # SVD sign of the seed tangent, hence the sample order.  That sign is
+    # deterministic for one LAPACK build, not across builds (Accelerate and
+    # OpenBLAS can disagree), so an open arc needs both orientations.
     initial_tangent_sign: int = 1
     diagnostic_level: str = "full"
     sample_retention: str = "all"

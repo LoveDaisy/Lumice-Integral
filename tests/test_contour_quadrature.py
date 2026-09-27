@@ -92,11 +92,19 @@ def test_max_residual_is_surfaced_on_the_pixel_result(canonical) -> None:
     Nothing downstream of :meth:`LevelSetGeometry.build` used to read its
     ``max_residual``; a non-canonical render had no way to notice a
     non-converged Newton panel short of a one-off probe script.
+
+    The pixel's value is the max over stage one's points and the points its
+    own stage-two splits add (268 splits here), so it is ``>=`` stage one's,
+    not equal to it: those new points' worst residual is 3.9e-16 on macOS
+    (Accelerate) and 5.0e-16 on Linux (OpenBLAS) against stage one's 4.4e-16
+    on both, i.e. 2 ulp either way (task ci-linux-platform-diffs).  That
+    stage-two points reach the value at all is locked by the spike in
+    ``test_stage_two_split_residual_reaches_max_residual``.
     """
     sun, centre, _, geometry = canonical
     (result,) = geometry.integrate(sun, [centre], canonical_pose_density())
-    assert result.max_residual == geometry.residual_by_unit[0] == geometry.max_residual
-    assert result.max_residual < 1e-12
+    assert geometry.residual_by_unit[0] == geometry.max_residual
+    assert geometry.max_residual <= result.max_residual < 1e-12
     pixel = cq._combine(150, 150, result.delta, 0.0, np.ones(1), [result], 1.0)
     assert pixel.max_residual == result.max_residual
     assert "max_residual" in cq.PIXEL_CSV_COLUMNS
