@@ -173,6 +173,9 @@ The design is `docs/overview.md` (entry), `docs/phase1.md` and `docs/phase2.md`
 │   ├── symmetry/          # D6h / G tables, signature and Phi classes, ch3 ground truth,
 │   │                      # attitude construction, the crystal's own group G_true
 │   │                      # (pure numpy, depends on geometry only)
+│   ├── spectrum/          # Lumice's spectral conventions reproduced: n(lambda), CIE 1931 CMF,
+│   │                      # illuminant SPDs, the M-slot wavelength pool; store.py: one S^2 store
+│   │                      # per n(lambda) via s2_store.build_or_load (pure Python otherwise)
 │   ├── dp_field/          # Phase II D_P field layer: evaluation, critical points, dU_P walk,
 │   │                      # delta-interval partition (public: DPField)
 │   ├── contour.py         # level sets {D_P = delta} in U_P, certified against the partition
