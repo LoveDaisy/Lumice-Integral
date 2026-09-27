@@ -750,3 +750,22 @@ Moved to [overview.md](overview.md) §3.
   `1.41×` the correct six-member class), recorded in Lumice's own backlog;
   `compare_lumice_family.py` now rejects `PBD` filters when `|G_true| < 24`
   and requires an exact per-member filter set instead.
+- **2026-09-28**: repository roles redrawn by role instead of forward/inverse
+  method (owner ruling; chore `repo-roles-and-lumice-shared-lib-docs`; mirrored
+  the same day in Lumice's `doc/raypath-analysis.md` §5.1.6 and
+  `doc/api-layering-and-product-lines.md`). Lumice = product (every
+  user-facing computation, C++, including the inverse capabilities the
+  raypath-analysis runtime needs); LI = research and reference. Shared
+  criterion: "stable, and not each other's cross-check object" — the
+  primitive/convention layer keeps two permanently independent
+  implementations as each other's cross-check (evidence: Lumice's
+  `fn_period_` hardcode bug, caught by LI's divergent implementation, PR
+  #429); the algorithmic layer (single-path inversion and fiber walk, the
+  $S^2$ event store, band sum, `dp_field`/`focusing` critical classification)
+  converges to one Lumice C++ implementation behind a new narrow shared
+  library once a module matures and LI stops researching it, consumed by LI
+  through a Python binding — first candidate: single-path inversion + fiber
+  walk. This retires the superseded "does not consume Lumice ... permanent
+  design boundary" wording and answers §5.3's "Compute landing point" ruling
+  point 5 (yes for the algorithmic layer, no for the primitive layer). Full
+  statement: [overview.md](overview.md) §5.1, §5.3 ("Repository roles").

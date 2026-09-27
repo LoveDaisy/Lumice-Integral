@@ -6,11 +6,14 @@ corresponding one-dimensional pose fibers in SO(3) and evaluates their weighted
 integrals without Monte Carlo sampling.
 
 The project is a sibling of [Lumice](https://github.com/LoveDaisy/ice_halo_sim),
-not a replacement for it. Lumice performs forward Monte Carlo ray tracing;
-Lumice Integral studies and evaluates the inverse-image integral behind a
-specified image direction. Lumice Integral owns an independent differentiable
-optics implementation and does not use Lumice as a library or runtime engine;
-Lumice serves only as an external validation oracle and analysis-data source.
+not a replacement for it: Lumice is the product (forward Monte Carlo ray
+tracing), Lumice Integral is research and reference (the inverse-image
+integral behind a specified image direction). Lumice Integral's primitive and
+convention layer (crystal geometry, symmetry, optics) is permanently
+independent and does not use Lumice as a library or runtime engine; a mature
+algorithmic module may later be consumed through a narrow shared library
+Lumice publishes (`docs/overview.md` §5.1, §5.3). Lumice otherwise serves as
+an external validation oracle and analysis-data source.
 
 Status: Phase I (SO(3) fibre continuation) is closed and agrees with Lumice
 in shape and absolute scale; Phase II's band-sum renderer over precomputed
