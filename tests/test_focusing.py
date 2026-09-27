@@ -148,3 +148,44 @@ def test_boundary_records_are_merged(labels) -> None:
         assert len(keys) == len(set(keys))
     (peak,) = [o for o in labels[(3, 5, 6, 7, 3)].onsets if o.source == "boundary_extremum"]
     assert np.degrees(peak.value) == pytest.approx(98.1607, abs=1e-4) and peak.multiplicity == 2
+
+
+def test_wavelength_critical_table_regresses_the_explore_authority() -> None:
+    """3-5 on a 0.2 plate under a 1 deg plate density: blue-red shifts of explore-spectral-conventions #4 (H4)."""
+    from lumice_integral.geometry import HexPrism
+    from lumice_integral.spectrum.dispersion import refractive_index
+
+    indices = {f"{nm}nm": refractive_index(float(nm)) for nm in (450, 550, 650)}
+    table = focusing.wavelength_critical_table(
+        HexPrism.from_ratio(0.2), (3, 5), build_pose_density("plate", zenith_std_deg=1.0), indices)
+    assert table.path == "3-5" and table.labels == ("450nm", "550nm", "650nm")
+    assert [row.location for row in table.onsets] == ["interior", "boundary", "boundary", "boundary"]
+    shifts = [row.displacement_deg for row in table.onsets]
+    assert shifts == pytest.approx([0.581, 0.631, 0.604, 0.748], abs=2e-3)
+    assert all(0.58 <= s <= 0.75 for s in shifts)
+    for row in table.onsets:
+        # higher n, larger deviation: the shift is blue minus red
+        assert row.values_deg["450nm"] > row.values_deg["550nm"] > row.values_deg["650nm"]
+        assert row.displacement_deg == pytest.approx(row.values_deg["450nm"] - row.values_deg["650nm"], abs=1e-12)
+    assert table.as_json()["onsets"][0]["values_deg"] == table.onsets[0].values_deg
+
+
+def _classification(*onsets: focusing.CriticalOnset) -> focusing.FocusingClassification:
+    return focusing.FocusingClassification("x", 2, onsets, (0.0, 1.0), 0, ())
+
+
+def test_wavelength_critical_table_raises_on_onset_count_mismatch() -> None:
+    jump = focusing.interior_onset(0.38, "minimum", np.array([1.0, 1.0]), 0.0)
+    edge = focusing.CriticalOnset(0.5, "boundary", "corner", "boundary_onset", 1.0)
+    with pytest.raises(ValueError, match="onset counts differ.*'blue': 2.*'red': 1"):
+        focusing._align_onsets({"blue": _classification(jump, edge), "red": _classification(jump)})
+
+
+def test_wavelength_critical_table_raises_on_shape_mismatch() -> None:
+    jump = focusing.interior_onset(0.38, "minimum", np.array([1.0, 1.0]), 0.0)
+    corner = focusing.CriticalOnset(0.5, "boundary", "corner", "boundary_onset", 1.0)
+    extremum = focusing.CriticalOnset(0.51, "boundary", "boundary_extremum", "boundary_onset", 1.0)
+    with pytest.raises(ValueError, match="onset 1 differs.*'blue'.*'corner'.*'red'.*'boundary_extremum'"):
+        focusing._align_onsets({"blue": _classification(jump, corner), "red": _classification(jump, extremum)})
+    rows = focusing._align_onsets({"blue": _classification(jump, corner), "red": _classification(jump, corner)})
+    assert [row.displacement_deg for row in rows] == [0.0, 0.0]
