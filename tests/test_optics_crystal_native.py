@@ -295,6 +295,26 @@ def test_pyramid_paths_classify(faces):
     assert label.path == "-".join(map(str, faces))
 
 
+ASYMMETRIC_PYRAMID = Pyramid.from_lumice(0.5, 0.25, 0.6, (1, 0, 1), (2, 0, 3), face_distance=(1, 1.1, 0.9, 1, 1.2, 0.95))
+
+
+def test_asymmetric_pyramid_cone_normals_are_read_from_the_crystal():
+    """Faces 13-28 of an up/down-asymmetric, irregular-section cone: ``optics.face_normals`` is the crystal's own normal."""
+    faces = tuple(n for n in (*range(13, 19), *range(23, 29)) if n in {f.number for f in ASYMMETRIC_PYRAMID.faces})
+    assert len(faces) == 12
+    for face, normal in zip(faces, optics.face_normals(ASYMMETRIC_PYRAMID, faces)):
+        np.testing.assert_allclose(normal, ASYMMETRIC_PYRAMID.normal(ASYMMETRIC_PYRAMID.face(face)), rtol=0.0, atol=1e-15)
+    upper, lower = optics.face_normals(ASYMMETRIC_PYRAMID, (13, 23))
+    assert upper[2] > 0 > lower[2] and not np.isclose(upper[2], -lower[2])   # the two cones really differ
+
+
+def test_an_offfamily_path_classifies_on_an_asymmetric_pyramid():
+    """Runs through and returns finite values; the physical reading is not asserted here."""
+    label = focusing.classify(ASYMMETRIC_PYRAMID, (13, 15, 26, 28), build_pose_density("random"), N)
+    assert isinstance(label, focusing.FocusingClassification) and label.path == "13-15-26-28"
+    assert all(np.isfinite(o.value) for o in label.onsets)
+
+
 # explore-ch9-offfamily-focusing (29.3): the three off-family paths classified and checked against the writing
 # series' own MC renders (each onset within 1 deg); probes/classify_output.json there, recomputed bit for bit
 # at 6a82024. Values in degrees at abs=1e-4, measure_limit at abs=1e-3: 4-6 orders above the Newton / bisection

@@ -21,6 +21,18 @@ from lumice_integral.symmetry.signature import D6H
     (HexPrism(1.0, 1.0, (1.0, 1.3, 0.7, 1.9, 1.1, 0.4)), 2), # {E, sigma_h}
     (Pyramid(), 24),
     (Pyramid(0.5, 3.0, 1.1, 0.2), 24),
+    # Lumice pyramid semantics (Pyramid.from_lumice, task pyramid-lumice-semantics): the cone faces' (normal, offset)
+    # enter the test like any other face, so sigma_h goes with the up/down asymmetry and the cross-section's own
+    # group is what remains of D6
+    (Pyramid.from_lumice(1.0, 0.5, 0.5), 24),                                               # D6h
+    (Pyramid.from_lumice(1.0, 0.5, 0.3), 12),                                               # heights differ: C6v
+    (Pyramid.from_lumice(1.0, 0.5, 0.5, lower_indices=(2, 0, 3)), 12),                      # indices differ: C6v
+    (Pyramid.from_lumice(1.0, 1.0, 0.0), 12),                                               # one-sided: C6v
+    (Pyramid.from_lumice(0.0, 1.0, 1.0), 24),                                               # bipyramid: D6h
+    (Pyramid.from_lumice(1.0, 1.0, 1.0, face_distance=(1, 1.2, 1, 1.2, 1, 1.2)), 12),      # symmetric: D3h
+    (Pyramid.from_lumice(1.0, 0.5, 0.3, face_distance=(1, 1.2, 1, 1.2, 1, 1.2)), 6),       # C3v
+    (Pyramid.from_lumice(1.0, 0.5, 0.3, face_distance=(1.9, 1, 1, 1.9, 1, 1)), 4),         # C2v
+    (Pyramid.from_lumice(1.0, 0.5, 0.3, face_distance=(1.0, 1.3, 0.7, 1.9, 1.1, 0.4)), 1), # C1
 ])
 def test_group_order(crystal, order):
     group = true_symmetry_group(crystal)
@@ -53,3 +65,11 @@ def test_check_group_rejects_a_non_group():
         check_group((rg.Rz(60),))
     with pytest.raises(AssertionError, match="product|inverse"):
         check_group((np.eye(3), rg.Rz(60)))
+
+
+def test_an_asymmetric_cone_keeps_the_vertical_mirrors_and_loses_sigma_h():
+    """C6v: the six rotations about c and the six vertical mirrors; no sigma_h, no 2-fold axis in the plane."""
+    group = {rg.key(g) for g in true_symmetry_group(Pyramid.from_lumice(1.0, 0.5, 0.3))}
+    assert rg.key(np.diag([1.0, 1.0, -1.0])) not in group
+    assert all(rg.key(rg.Rz(60 * k)) in group for k in range(6))
+    assert all(abs(g[2, 2] - 1.0) < 1e-12 for g in true_symmetry_group(Pyramid.from_lumice(1.0, 0.5, 0.3)))

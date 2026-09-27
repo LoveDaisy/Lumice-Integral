@@ -196,3 +196,75 @@ def test_transformed_and_mirrored_keep_the_face_set_and_distances():
         assert type(copy) is HexPrism
         assert copy.face_distance_ratios == crystal.face_distance_ratios
         assert [f.number for f in copy.faces] == [f.number for f in crystal.faces]
+
+
+# ---- the eroded cross-section of a cone (cone_sweep) ---------------------------------------------------------
+
+from scipy.optimize import linprog  # noqa: E402
+
+from lumice_integral.geometry.closed_form import SIDE_NORMALS_2D, cone_sweep, inset_corner  # noqa: E402
+
+
+def _lp_apex(fd, a=1.0) -> float:
+    """Independent oracle for the natural apex: max m with n_i·u / apothem + m <= fd_i (scipy's LP, not an enumeration)."""
+    constraints = np.column_stack([SIDE_NORMALS_2D / (a * np.sqrt(3.0) / 2.0), np.ones(6)])
+    result = linprog([0.0, 0.0, -1.0], A_ub=constraints, b_ub=fd, bounds=[(None, None)] * 3)
+    return -result.fun
+
+
+def test_inset_corner_at_zero_is_the_ring_bit_for_bit():
+    for fd in [(1,) * 6, (1.0, 1.3, 0.7, 1.9, 1.1, 0.4), (1, 1, -0.2, 1, 1, 1)]:
+        section = hex_cross_section(0.7, fd)
+        p = section.present
+        ring = np.stack([inset_corner(0.7, fd, p[k - 1], p[k], 0.0) for k in range(len(p))])
+        np.testing.assert_array_equal(ring, section.ring)
+
+
+def test_regular_cone_has_no_events_and_a_point_apex_at_one():
+    sweep = cone_sweep(1.0)
+    assert sweep.events == () and sweep.apex_present == tuple(range(6))
+    assert sweep.m_apex == pytest.approx(1.0, abs=1e-15)
+    assert len(sweep.apex_points) == 1 and sweep.apex_corner == (0,) * 6
+    np.testing.assert_allclose(sweep.apex_points[0], 0.0, atol=1e-15)
+
+
+def test_alternating_hexagon_loses_its_long_faces_then_closes_as_a_triangle():
+    """``[1, 1.2]`` alternating: the faces at 1.2 shrink to zero at m = 0.8 (analytic: the triangle of the faces at 1
+    has corner radius 2·apothem, the long faces sit 0.2 further out and move in at the triangle's rate), the
+    triangle closes at m = 1."""
+    sweep = cone_sweep(1.0, (1, 1.2, 1, 1.2, 1, 1.2))
+    assert [event.dying for event in sweep.events] == [(1,), (3,), (5,)]
+    assert all(event.m == pytest.approx(0.8, abs=1e-12) for event in sweep.events)
+    assert sweep.m_apex == pytest.approx(1.0, abs=1e-12) and sweep.apex_present == (0, 2, 4)
+    assert len(sweep.apex_points) == 1
+
+
+def test_a_thin_cross_section_closes_on_a_ridge():
+    """Faces 0 and 3 at 0.5: the width closes at m = 0.5 while the hexagon is still long, a ridge of two points."""
+    sweep = cone_sweep(1.0, (0.5, 1, 1, 0.5, 1, 1))
+    assert sweep.m_apex == pytest.approx(0.5, abs=1e-12)
+    assert len(sweep.apex_points) == 2
+    np.testing.assert_allclose(sweep.apex_points[:, 0], 0.0, atol=1e-12)   # on the y axis, between faces 0 and 3
+
+
+@pytest.mark.parametrize("seed", range(4))
+def test_sweep_agrees_with_an_lp_and_with_the_cross_section_at_every_height(seed):
+    rng = np.random.default_rng(seed)
+    checked = 0
+    while checked < 60:
+        fd = rng.uniform(-0.6, 2.4, 6)
+        try:
+            sweep = cone_sweep(1.0, fd)
+        except ValueError:
+            continue
+        checked += 1
+        assert sweep.m_apex == pytest.approx(_lp_apex(fd), abs=1e-9)
+        for fraction in (0.1, 0.45, 0.8, 0.99):
+            m = fraction * sweep.m_apex
+            if any(abs(event.m - m) < 1e-6 for event in sweep.events):
+                continue
+            assert hex_cross_section(1.0, fd - m).present == sweep.present_at(m)
+        for event in sweep.events:   # a real corner death: the dying run's lines pass through the new corner
+            offsets = np.sqrt(3.0) / 2.0 * (fd - event.m)
+            for i in (event.before, *event.dying, event.after):
+                assert SIDE_NORMALS_2D[i] @ event.xy == pytest.approx(offsets[i], abs=1e-9)
