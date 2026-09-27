@@ -1,0 +1,26 @@
+# Fast test tier on a clean Linux runner: an independent check of the tier the
+# implementation phase runs locally.  The command is the bare `uv run pytest`;
+# which tests that is ("not slow") is defined once, by addopts in pyproject.toml.
+#
+# The slow tier (`uv run pytest -m slow`) is not run here: several of its tests
+# read local artifacts (task 13/14 stores, the writing series' CSVs) and it
+# takes tens of minutes.  The full run stays a local closeout step (AGENTS.md).
+name: tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  fast-tier:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --dev
+      - run: uv run pytest
