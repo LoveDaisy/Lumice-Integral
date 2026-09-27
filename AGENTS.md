@@ -20,6 +20,9 @@ uv sync --dev
 uv run pytest -q
 # the same fast tier in parallel (pytest-xdist; loadscope keeps a module's fixtures on one worker)
 uv run pytest -n auto --dist=loadscope
+# slow tier alone (serial; several of its tests spawn their own worker pools) and the full suite
+uv run pytest -m slow
+uv run pytest -m "slow or not slow"
 uv run python scripts/inspect_path_3_5.py
 uv run python benchmarks/benchmark_batch.py --dtype float64
 uv run python benchmarks/benchmark_fiber_trace.py
@@ -113,6 +116,40 @@ uv run python scripts/render_ch06_strip.py --rows 300:302 --columns 126:127 --ou
 uv sync --extra cuda13 --dev
 XLA_PYTHON_CLIENT_PREALLOCATE=false uv run python benchmarks/benchmark_batch.py
 ```
+
+### Test tiers
+
+`pytest.ini_options.addopts` in `pyproject.toml` is the one definition of the
+default tier: `-m 'not slow'`. `tests/conftest.py` pins one BLAS/OpenMP/Eigen
+thread per process, `JAX_PLATFORMS=cpu`, and JAX's persistent compilation
+cache in `.jax-cache/` (git-ignored; `rm -rf .jax-cache` after a JAX upgrade
+to drop stale entries). Every one of these is a `setdefault`, so an explicit
+environment variable wins. Wall clock on an M2 Max (12 cores), 2026-09-27:
+
+| Command | Tests | Cold cache | Warm cache |
+|---|---|---|---|
+| `uv run pytest -q` | 995 fast | 5.6 min | 4.6 min |
+| `uv run pytest -n auto --dist=loadscope` | 995 fast | 74 s | 53 s |
+| `uv run pytest -m slow` | 33 slow | 22 min | - |
+
+The full suite took 30 min before the split (1028 tests, one serial run).
+
+A test belongs in `slow` (`@pytest.mark.slow`, or a module-level `pytestmark`
+when a module fixture carries the cost) if its call or its non-shared setup
+takes over about 20 s, or if it reads local artifacts outside the repository
+(task 13/14 stores, the writing series' CSVs). Put a one-line
+`# slow: <reason>` next to a new mark.
+
+Which tier each phase runs:
+
+- Implementation: the fast tier (parallel is fine) plus the test files the
+  change touches, including their `slow` tests (`uv run pytest -m "slow or not slow" tests/test_x.py`).
+- Closeout: the full suite, `uv run pytest -m slow` and the fast tier, with
+  the commit the full result belongs to written into the task summary.
+- CI (`.github/workflows/tests.yml`, `ubuntu-latest`, pull requests and pushes
+  to `main`): `uv sync --dev` then the bare `uv run pytest`, i.e. the serial
+  fast tier on a clean Linux machine, as an independent check. The slow tier
+  is not run there (local artifacts, tens of minutes).
 
 ## Architecture and Design
 
