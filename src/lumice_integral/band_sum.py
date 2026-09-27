@@ -751,7 +751,7 @@ def write_band_sum_strip(
     # not "zero effective samples, high noise" — excluded here so it does not pollute the noise diagnostic.
     is_rank0 = scene.path_class.halo_map_rank == 0
     k_eff = np.array([]) if is_rank0 else np.array([r.K_eff for r in results if r.value > 0.0])
-    scene_json = scene_block(pose_density_block)
+    scene_json = scene_block(pose_density_block, crystal=scene.crystal, refractive_index=scene.refractive_index)
     scene_json["path"] = {"value": list(scene.path_class.representative), "provenance": "run-option"}
     scene_json["camera"] = {"value": {"lens": "linear", **dict(scene.render)}, "provenance": "run-option"}
     scene_json["image_shape"] = {"value": [height, width], "provenance": "run-option"}

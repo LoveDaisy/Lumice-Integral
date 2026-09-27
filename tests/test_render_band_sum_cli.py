@@ -8,7 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from lumice_integral.strip_io import read_strip
+from lumice_integral.canonical_scene import CANONICAL_HEIGHT_RATIO, CANONICAL_REFRACTIVE_INDEX, canonical_crystal
+from lumice_integral.geometry import HexPrism
+from lumice_integral.strip_io import read_strip, scene_block, scene_crystal
 
 SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 
@@ -89,6 +91,9 @@ def test_defaults_match_render_ch06_strip(cli):
         (["--pose-density-family", "plate"], "requires zenith_std_deg"),
         (["--pose-density-family", "column", "--pose-density-roll-std-deg", "1"], "takes no roll_std_deg"),
         (["--store-n", "0"], "--store-n must be positive"),
+        (["--face-distance", "-1", "-1", "-1", "-1", "-1", "-1"], "the cross-section has no area"),
+        (["--face-distance", "1", "1.3", "0.7", "1.9", "1.1", "0.4", "--path", "3", "5", "6", "7"], "faces [6] do not exist"),
+        (["--refractive-index", "0.9"], "--refractive-index must exceed 1"),
     ],
 )
 def test_invalid_arguments_are_rejected(cli, capsys, monkeypatch, tmp_path, extra, message):
@@ -138,3 +143,55 @@ def test_small_end_to_end_run(cli, tmp_path):
     assert int(arrays.rendered.sum()) == 15 and arrays.values.max() > 0.0
     assert provenance["options"]["N"] == 100_000 and provenance["execution"]["workers"] == 1
     assert provenance["scene"]["pose_density"]["value"]["family"] == "column"
+    assert provenance["scene"]["crystal"] == {
+        "value": {"type": "hexagonal_column", "height_ratio": CANONICAL_HEIGHT_RATIO},
+        "provenance": "canonical-new",
+    }
+    assert provenance["scene"]["refractive_index"] == {"value": CANONICAL_REFRACTIVE_INDEX, "provenance": "canonical-new"}
+
+
+D3H = [1.0, 1.2, 1.0, 1.2, 1.0, 1.2]
+
+
+def test_face_distance_and_refractive_index_reach_the_scene(cli, monkeypatch, tmp_path):
+    calls = _no_render(monkeypatch, cli)
+    with pytest.raises(RuntimeError):
+        cli.main(
+            [
+                "--output-dir", str(tmp_path / "out"), "--store-n", "1000", "--path-class",
+                "--face-distance", *map(str, D3H), "--refractive-index", "1.3110129",
+            ]
+        )  # fmt: skip
+    scene = calls[0][0]
+    assert scene.crystal.face_distance_ratios == tuple(D3H) and scene.crystal.h / scene.crystal.a == CANONICAL_HEIGHT_RATIO
+    assert scene.refractive_index == 1.3110129
+    assert scene.path_class.size == 6  # D3h: |G_true| = 12, the [3, 5] orbit halves
+
+
+def test_scene_block_records_a_non_canonical_crystal_and_index():
+    assert scene_block() == scene_block(crystal=canonical_crystal(), refractive_index=CANONICAL_REFRACTIVE_INDEX)
+    assert scene_crystal(scene_block()).vertices.tolist() == canonical_crystal().vertices.tolist()
+    crystal = HexPrism.from_lumice(1.0, [1.0, 1.3, 0.7, 1.9, 1.1, 0.4])
+    block = scene_block(crystal=crystal, refractive_index=1.3110129)
+    assert block["crystal"]["provenance"] == "run-option" and block["crystal"]["value"]["face_distance"] == [1.0, 1.3, 0.7, 1.9, 1.1, 0.4]
+    assert block["refractive_index"] == {"value": 1.3110129, "provenance": "run-option"}
+    assert scene_crystal(block).vertices.tolist() == crystal.vertices.tolist()
+    # a render written before scene_block recorded the crystal: height_ratio only, the regular prism
+    assert scene_crystal({"crystal": {"value": {"type": "hexagonal_column", "height_ratio": 0.2}}}).h == pytest.approx(0.2)
+
+
+def test_small_end_to_end_run_low_symmetry(cli, tmp_path):
+    out = tmp_path / "out"
+    cli.main(
+        [
+            "--output-dir", str(out), "--store-n", "100000", "--path-class", "--face-distance", *map(str, D3H),
+            "--refractive-index", "1.3110129", "--pose-density-family", "random", "--width", "41", "--height", "41", "--fov-deg", "60",
+            "--view-elevation", "15", "--rows", "18:23", "--columns", "0:41",
+            "--store-cache-dir", str(tmp_path / "stores"), "--skip-store-self-checks", "--quiet",
+        ]
+    )  # fmt: skip
+    arrays, provenance = read_strip(out)
+    assert arrays.values.max() > 0.0
+    assert scene_crystal(provenance["scene"]).face_distance_ratios == tuple(D3H)
+    assert provenance["scene"]["refractive_index"]["value"] == 1.3110129
+    assert provenance["options"]["path_class"]["size"] == 6

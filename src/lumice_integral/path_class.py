@@ -397,6 +397,7 @@ class StoreGroup:
 def single_path_class(crystal: HexPrism, faces: Sequence[int]) -> PathClass:
     """A one-member :class:`.path_class.PathClass` of ``faces`` (the single-path renderer's unit)."""
     faces = normalize_faces(faces)
+    _require_faces_of(crystal, faces)
     return PathClass(faces, (faces,), wedge_angle_deg(crystal, faces), halo_map_rank(crystal, faces))
 
 
