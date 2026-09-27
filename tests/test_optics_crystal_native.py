@@ -295,6 +295,49 @@ def test_pyramid_paths_classify(faces):
     assert label.path == "-".join(map(str, faces))
 
 
+# explore-ch9-offfamily-focusing (29.3): the three off-family paths classified and checked against the writing
+# series' own MC renders (each onset within 1 deg); probes/classify_output.json there, recomputed bit for bit
+# at 6a82024. Values in degrees at abs=1e-4, measure_limit at abs=1e-3: 4-6 orders above the Newton / bisection
+# tolerances inside dp_field (~1e-10 / ~1e-12 rad), so a platform's float64 tail cannot trip them, a moved
+# critical point can. Per path: mechanism, the interior onset (source, profile, value, measure_limit) or None,
+# the number of boundary onsets, and the boundary onsets themselves where they are the whole story (13-24-26).
+PYRAMID_OFFFAMILY = [
+    pytest.param((13, 15, 26, 28), "none", ("interior_maximum", "finite_jump", 177.29401194396095,
+                                            0.6828958423685803), 2, None, id="13-15-26-28"),
+    pytest.param((13, 5, 26, 28), "jacobian", ("interior_saddle", "log_divergence", 136.35814215526733, None),
+                 9, None, id="13-5-26-28"),
+    pytest.param((13, 24, 26), "none", None, 2,
+                 [("corner", 6.99592141362214e-07), ("boundary_extremum", 131.30216743582776)], id="13-24-26"),
+]
+
+
+@pytest.mark.parametrize("faces, mechanism, interior, boundary_count, boundary", PYRAMID_OFFFAMILY)
+def test_pyramid_offfamily_focusing_mechanism_regression(faces, mechanism, interior, boundary_count, boundary):
+    """Interior maximum -> finite_jump edge, interior saddle -> log_divergence, no interior point -> diffuse."""
+    label = focusing.classify(Pyramid(a=1, h=1, tip_ratio=0.5), faces, build_pose_density("random"), N)
+    assert label.mechanism == mechanism
+    assert label.jacobian_focusing is (mechanism == "jacobian")
+    inner = [o for o in label.onsets if o.location == "interior"]
+    outer = [o for o in label.onsets if o.location == "boundary"]
+    if interior is None:
+        assert inner == []
+    else:
+        source, profile, value_deg, measure_limit = interior
+        (onset,) = inner
+        assert (onset.source, onset.profile) == (source, profile)
+        assert onset.jacobian_focusing is (profile == "log_divergence")
+        assert np.degrees(onset.value) == pytest.approx(value_deg, abs=1e-4)
+        if measure_limit is None:
+            assert onset.measure_limit is None
+        else:
+            assert onset.measure_limit == pytest.approx(measure_limit, abs=1e-3)
+    assert len(outer) == boundary_count
+    assert all(o.profile == "boundary_onset" and not o.jacobian_focusing for o in outer)
+    if boundary is not None:
+        assert [o.source for o in outer] == [source for source, _ in boundary]
+        assert [np.degrees(o.value) for o in outer] == [pytest.approx(v, abs=1e-4) for _, v in boundary]
+
+
 # ---- reduced cluster fail-fast ------------------------------------------------------------------------
 
 # design.md 4: on HexPrism(1, 1, (2, 1, 1, 2, 1, 1)), |G_true| = 8, the D6h orbit of 3-5 has 12 members but
