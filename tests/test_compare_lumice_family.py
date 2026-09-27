@@ -9,7 +9,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from lumice_integral.canonical_scene import CANONICAL_RENDER
+from lumice_integral.canonical_scene import CANONICAL_RENDER, canonical_crystal
+from lumice_integral.geometry import HexPrism
+from lumice_integral.path_class import build_path_class
 
 SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 
@@ -96,3 +98,68 @@ def test_profile_rms_raises_when_a_profile_is_all_zero(family):
         family.profile_rms(zero, nonzero, floor=0.05)
     with pytest.raises(ValueError):
         family.profile_rms(nonzero, zero, floor=0.05)
+
+
+D3H = HexPrism.from_lumice(1.0, (1.0, 1.2, 1.0, 1.2, 1.0, 1.2))
+G2 = HexPrism.from_lumice(1.0, (1.0, 1.3, 0.7, 1.9, 1.1, 0.4))
+
+
+def _config(filters: list[dict], top: int) -> dict:
+    return {"filter": filters, "scene": {"scattering": [{"prob": 0, "entries": [{"crystal": 1, "proportion": 100, "filter": top}]}]}}
+
+
+def _exact(members) -> list[dict]:
+    return [{"id": k + 1, "type": "raypath", "raypath": list(m), "action": "filter_in"} for k, m in enumerate(members)]
+
+
+def _complex(members) -> dict:
+    parts = _exact(members)
+    return _config([*parts, {"id": 99, "type": "complex", "composition": [p["id"] for p in parts]}], 99)
+
+
+def _members(crystal, path):
+    return [list(m) for m in build_path_class(crystal, path).members]
+
+
+def test_check_filter_accepts_pbd_only_on_the_regular_prism(family):
+    pbd = _config([{"id": 1, "type": "raypath", "raypath": [3, 5], "symmetry": "PBD", "action": "filter_in"}], 1)
+    assert family.check_filter(pbd, [3, 5], _members(canonical_crystal(), [3, 5]), canonical_crystal()) == "PBD"
+    with pytest.raises(SystemExit, match="smaller than D6h"):
+        family.check_filter(pbd, [3, 5], _members(D3H, [3, 5]), D3H)
+    with pytest.raises(SystemExit, match="Lumice PBD admits"):  # a single-path render is not the PBD class
+        family.check_filter(pbd, [3, 5], [[3, 5]], canonical_crystal())
+
+
+@pytest.mark.parametrize(("crystal", "path"), [(D3H, [3, 5]), (D3H, [3, 5, 6, 7]), (G2, [3, 5]), (canonical_crystal(), [3, 5])])
+def test_check_filter_accepts_exact_members_alone_or_ored(family, crystal, path):
+    members = _members(crystal, path)
+    assert family.check_filter(_complex(members[::-1]), path, members, crystal) == "complex"
+    if len(members) == 1:
+        assert family.check_filter(_config(_exact(members), 1), path, members, crystal) == "exact"
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda m: m[:-1],  # a member missing
+        lambda m: [*m, [4, 6, 7, 8]],  # an extra path (a PBD image that is not a G_true image on D3h)
+        lambda m: [m[0][::-1], *m[1:]],  # a member's faces in the wrong order
+        lambda m: [*m, m[0]],  # a member twice
+    ],
+)
+def test_check_filter_rejects_a_different_member_set(family, change):
+    members = _members(D3H, [3, 5, 6, 7])
+    with pytest.raises(SystemExit, match="admits"):
+        family.check_filter(_complex(change(members)), [3, 5, 6, 7], members, D3H)
+
+
+def test_check_filter_rejects_folded_or_non_raypath_parts(family):
+    members = _members(D3H, [3, 5])
+    config = _complex(members)
+    config["filter"][0]["symmetry"] = "P"
+    with pytest.raises(SystemExit, match="without symmetry"):
+        family.check_filter(config, [3, 5], members, D3H)
+    nested = _complex(members)
+    nested["filter"][-1]["composition"][0] = [1, 2]
+    with pytest.raises(SystemExit, match="without symmetry"):
+        family.check_filter(nested, [3, 5], members, D3H)

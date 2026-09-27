@@ -1,11 +1,22 @@
 """Pose-density family check: a band-sum path-class render against a Lumice float export, absolute and shape.
 
 The band-sum renderer (``scripts/render_band_sum.py --path-class``) writes the
-class value ``V(w)`` of every pixel (the sum over the PBD class members,
-crystal length^2 per steradian, hexagon edge ``a = 1``).  Lumice's raypath
-filter with ``symmetry: PBD`` admits the same 12 raypaths, so the conversion of
-``scripts/probe_absolute_scale.py`` holds with the class fold already inside
-``V``:
+class value ``V(w)`` of every pixel (the sum over the class members under the
+crystal's own group ``G_true``, crystal length^2 per steradian, hexagon edge
+``a = 1``).  The Lumice run must admit exactly the same raypaths, checked
+against the render's ``options.path_class.members`` (:func:`check_filter`):
+
+- on the regular prism (``G_true = D6h``) a raypath filter with ``symmetry:
+  PBD`` on the class representative (Lumice's fold is the ``D6h`` orbit there);
+- on any prism, exact raypath filters (no ``symmetry``) for the members, one
+  alone or ORed by a flat ``complex`` composition.  Lumice's P/B/D fold
+  permutes face numbers as on the regular hexagon whatever the
+  ``face_distance``, so below ``D6h`` it merges inequivalent paths and is
+  refused (explore ``panel-row-symmetry-convention``).
+
+The conversion of ``scripts/probe_absolute_scale.py`` then holds with the class
+fold already inside ``V``, ``S`` the surface area of the crystal the render's
+provenance records (``strip_io.scene_crystal``):
 
     raw[p] / E = K_p * V(w_p),  K_p = ybar(550) * Omega_p / (S / 2)
 
@@ -50,8 +61,10 @@ from typing import Any
 
 import numpy as np
 
-from lumice_integral.canonical_scene import canonical_crystal
-from lumice_integral.strip_io import read_strip
+from lumice_integral.geometry import Polyhedron
+from lumice_integral.path_class import pbd_orbit_hexprism
+from lumice_integral.strip_io import read_strip, scene_crystal
+from lumice_integral.symmetry.crystal_group import true_symmetry_group
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from probe_absolute_scale import YBAR_550, load_run, merged_relative_noise, pixel_solid_angles, total_surface_area  # noqa: E402
@@ -63,6 +76,42 @@ def check_camera(render: dict[str, Any], config: dict[str, Any]) -> None:
     actual = (lumice["lens"]["type"], list(lumice["resolution"]), float(lumice["lens"]["fov"]), [float(lumice["view"]["azimuth"]), float(lumice["view"]["elevation"])])
     if actual != expected:
         raise SystemExit(f"Lumice camera {actual} != band-sum camera {expected}")
+
+
+def check_filter(config: dict[str, Any], representative: list[int], members: list[list[int]], crystal: Polyhedron) -> str:
+    """``SystemExit`` unless the Lumice run admits exactly the raypaths ``members``; returns the form used.
+
+    The scattering entry's filter is either a ``PBD`` raypath filter on ``representative`` (accepted only when
+    ``G_true`` is all of ``D6h``: the candidate group is ``D6h``, so order 24 is ``D6h`` itself), or exact
+    raypath filters (no ``symmetry``, ``filter_in``) whose sequences, as a set, are ``members``: one filter,
+    or a ``complex`` filter whose ``composition`` is a flat list of their ids (an OR).
+    """
+    entries = [e for layer in config["scene"]["scattering"] for e in layer["entries"]]
+    if len(entries) != 1 or "filter" not in entries[0]:
+        raise SystemExit(f"Lumice config: need one scattering entry with a filter, got {entries}")
+    filters = {f["id"]: f for f in config["filter"]}
+    top = filters[entries[0]["filter"]]
+    if top.get("symmetry"):
+        if top["symmetry"] != "PBD" or top["type"] != "raypath" or top["raypath"] != representative:
+            raise SystemExit(f"Lumice filter {top}: a folded filter must be a PBD raypath filter on {representative}")
+        if len(true_symmetry_group(crystal)) != 24:
+            raise SystemExit("Lumice filter uses PBD, but the crystal's G_true is smaller than D6h: its fold merges inequivalent paths")
+        if sorted(map(tuple, members)) != sorted(pbd_orbit_hexprism(representative)):
+            raise SystemExit(f"Lumice PBD admits {sorted(pbd_orbit_hexprism(representative))}, the band-sum class has {sorted(map(tuple, members))}")
+        return "PBD"
+    if top["type"] == "raypath":
+        parts = [top]
+    elif top["type"] == "complex" and top.get("composition"):
+        parts = [filters.get(i) if isinstance(i, int) else None for i in top["composition"]]  # a nested list is an AND clause
+    else:
+        raise SystemExit(f"Lumice filter {top}: need a raypath or a complex filter")
+    for part in parts:
+        if part is None or part["type"] != "raypath" or part.get("symmetry") or part.get("action", "filter_in") != "filter_in":
+            raise SystemExit(f"Lumice filter {top}: every part must be an exact filter_in raypath filter without symmetry, got {part}")
+    admitted = sorted(tuple(part["raypath"]) for part in parts)
+    if top.get("action", "filter_in") != "filter_in" or len(set(admitted)) != len(admitted) or admitted != sorted(map(tuple, members)):
+        raise SystemExit(f"Lumice filter admits {admitted}, the band-sum class has {sorted(map(tuple, members))}")
+    return "exact" if top["type"] == "raypath" else "complex"
 
 
 def read_k_eff(li_dir: Path, shape: tuple[int, int]) -> np.ndarray:
@@ -98,16 +147,18 @@ def main(argv: list[str] | None = None) -> None:
     value = np.nan_to_num(arrays.values, nan=0.0)
     render = dict(provenance["scene"]["camera"]["value"])
     path = provenance["scene"]["path"]["value"]
+    members = provenance["options"]["path_class"]["members"]
+    crystal = scene_crystal(provenance["scene"])
     runs = [load_run(d) for d in args.lumice_run]
-    for d, (y, _, symmetry) in zip(args.lumice_run, runs):
-        if symmetry != "PBD" or y.shape != value.shape:
-            raise SystemExit(f"{d}: symmetry {symmetry} / shape {y.shape} (need PBD, {value.shape})")
+    filter_forms = set()
+    for d, (y, _, _) in zip(args.lumice_run, runs):
+        if y.shape != value.shape:
+            raise SystemExit(f"{d}: shape {y.shape} (need {value.shape})")
         config = json.loads((d / "config.json").read_text())
-        if config["filter"][0]["raypath"] != path:
-            raise SystemExit(f"{d}: raypath {config['filter'][0]['raypath']} != band-sum class representative {path}")
+        filter_forms.add(check_filter(config, path, members, crystal))
         check_camera(render, config)
 
-    surface_area = total_surface_area(canonical_crystal())
+    surface_area = total_surface_area(crystal)
     omega = pixel_solid_angles(render)
     k_pixel = YBAR_550 * omega / (0.5 * surface_area)
     predicted = k_pixel * value
@@ -125,11 +176,14 @@ def main(argv: list[str] | None = None) -> None:
         "lumice_runs": [str(d) for d in args.lumice_run],
         "pose_density": provenance["scene"].get("pose_density", {}).get("value"),
         "path_class_representative": path,
+        "path_class_members": members,
+        "crystal": provenance["scene"]["crystal"]["value"],
+        "lumice_filter": sorted(filter_forms),
         "camera": render,
         "emitted_energy": [m["emitted_energy"] for _, m, _ in runs],
         "surface_area": surface_area,
         "entry_area": 0.5 * surface_area,
-        "convention": "raw[p] / emitted_energy = K_p * V(p), K_p = ybar(550) * Omega_p / (S / 2); V = band-sum PBD class value",
+        "convention": "raw[p] / emitted_energy = K_p * V(p), K_p = ybar(550) * Omega_p / (S / 2); V = band-sum class value (G_true class)",
         "total": {
             "lit_pixels": int(lit.sum()),
             "measured_over_predicted": flux_ratio(measured, predicted, lit),
