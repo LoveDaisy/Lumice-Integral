@@ -275,6 +275,61 @@ reproduce the published CSV files byte for byte
 (`tests/test_symmetry_signature_table_regression.py`, reading the writing
 repository's data files only).
 
+### 5.3 The Ice Halo raypath-analysis panel
+
+Owner requirement (recorded authoritatively in Ice Halo's
+[`doc/raypath-analysis.md`](https://github.com/LoveDaisy/ice_halo_sim) §5.1,
+rewritten the same day by that repository's chore
+`raypath-analysis-lumice-integral-plan`, 2026-09-27): after a user selects one
+ray path in the panel, three functions follow:
+
+1. **path detail**: the one-dimensional pose fiber, the crystal pose and
+   in-crystal ray trajectory (visualization / animation), and the per-segment
+   energy allocation (a beam tube is one visual form of it);
+2. **whole-sky brightness map for that single path**, with re-selection on it
+   returning to function 1 (function 2's product form is on owner hold);
+3. **preset points**: the brightest point, critical points/lines ($D_P$
+   extrema/saddles, $U_P$ boundaries such as a tangent-arc edge), and
+   wavelength-dependent critical points (e.g. where blue is already past TIR
+   but red still transmits).
+
+Multi-scattering chains need to be supported.
+
+The three functions are three readings of one $S^2$ object (this is what
+belongs in LI's own docs, not a repetition of the panel's product design):
+function 2 is the band sum; function 1 is the pixel's level set
+$\{D_P(\mathbf u) = \delta\}$ (the events the band sum lands in that pixel's
+band are the fiber's discretisation; `band_sum.band_poses` already extracts
+those poses); function 3 is $D_P$'s critical structure plus the $U_P$
+boundary (`dp_field`, `focusing.classify`), with wavelength criticality being
+the $U_P$ boundary moving with $n(\lambda)$. All three share one field
+precomputed by crystal × path × wavelength, independent of the light source.
+"Why the halo is here" as a product form is function 3's preset points plus
+its mechanism label — this is LI's value add that Lumice's Monte Carlo form
+cannot give.
+
+Multi-scattering scenes stay outside LI's scope (section 3's non-goal is
+unchanged), but a two-bounce chain can be composed at the consumption layer
+from single-bounce results through an intermediate direction $\mathbf m$: the
+$S^2$ store is independent of the light source, so the second bounce reuses
+it with $\mathbf m$ as its source. Whether LI itself owns this composition
+layer is undecided; this paragraph only records the requirement's source, it
+is not a scope change.
+
+The compute landing point is undecided, gated on explore
+`panel-inverse-probe`'s (opened the same day) cost measurements and
+preset-point prototypes: (a) rewrite inside Lumice in C++; (b) LI as a
+sidecar; (c) extract Phase II's kernel into a portable C++ core that LI's
+Python calls through a binding and that Lumice links directly (one
+authoritative implementation; the dependency direction is the reverse of "LI
+does not depend on Lumice" and does not conflict with it — cross-validation
+against Lumice's own Monte Carlo stays independent). The main session leans
+toward (c); the decision is deferred to the probe's conclusion (roadmap §9).
+
+To be verified later (not in this chore, flagged only): whether the panel's
+symmetry-reduced row semantics (Lumice `doc/raypath-symmetry.md`'s P/B/D) and
+LI's `G_true` orbit are the same convention.
+
 ## 6. Validation strategy
 
 Validation must combine several independent kinds of evidence:
