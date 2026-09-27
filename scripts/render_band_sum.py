@@ -38,6 +38,23 @@ Fibonacci points, cached under ``--store-cache-dir`` by parameter hash,
 loaded, never rebuilt.  A rank-0 class is the task 9 point mass on the sun
 pixel.
 
+Colour (``lumice_integral.spectrum.xyz_band_sum``): ``--illuminant NAME``
+with ``--wavelength-count M`` (an integer or a preset of
+``spectrum.WAVELENGTH_COUNT_PRESETS``: panel_wide_fov 5, panel_narrow_fov 9,
+writing_canonical_strip 33), or ``--discrete-wavelength-nm L`` (one
+wavelength; its weight and Lumice's slot count cancel), renders one
+monochrome band sum per distinct ``n(lambda)`` of Lumice's M-slot pool and
+writes linear CIE XYZ, ``(H, W, 3)`` in ``xyz_float64.bin``, normalised as
+Lumice's ``raw / emitted_energy`` over ``Omega_p / (S / 2)``
+(``scripts/compare_lumice_family.py`` compares it channel by channel).  The
+index then comes from the pool, so ``--refractive-index`` is refused.  The
+cost is one monochrome render per slot (``M`` stores)::
+
+    uv run python scripts/render_band_sum.py --store-n 1000000 --path 3 5 --path-class \\
+        --illuminant D65 --wavelength-count panel_wide_fov --pose-density-family plate \\
+        --pose-density-zenith-std-deg 1 --width 321 --height 161 --fov-deg 32 --view-elevation 15 \\
+        --workers 4 --output-dir /tmp/band-sum-xyz-plate
+
 ``--workers``: the default 1 is for smokes; a full image wants 4 (the macOS
 cap, :data:`MAC_MAX_WORKERS`).  The workers compute the pixels' bands, then
 each renders one deviation segment (``band_sum.render_band_sum_window``,
@@ -53,6 +70,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import math
 import os
 import platform
 import sys
@@ -76,6 +94,8 @@ from lumice_integral.path_class import build_path_class
 from lumice_integral.pose_density import POSE_DENSITY_FAMILIES, build_pose_density
 from lumice_integral.pose_density_provenance import pose_density_provenance
 from lumice_integral.s2_store import DEFAULT_CACHE_DIR
+from lumice_integral.spectrum import WAVELENGTH_COUNT_PRESETS, IlluminantType, emitted_weight, wavelength_pool
+from lumice_integral.spectrum.xyz_band_sum import render_xyz_band_sum_window, write_xyz_band_sum_strip
 from lumice_integral.strip_io import Window
 
 MAC_MAX_WORKERS = 4
@@ -88,6 +108,19 @@ def parse_range(text: str, upper: int) -> tuple[int, int]:
     if not (0 <= lower_bound < upper_bound <= upper):
         raise argparse.ArgumentTypeError(f"range {text!r} must satisfy 0 <= a < b <= {upper}")
     return lower_bound, upper_bound
+
+
+def parse_wavelength_count(text: str) -> int:
+    """An integer ``M >= 1`` or a key of ``WAVELENGTH_COUNT_PRESETS``."""
+    if text in WAVELENGTH_COUNT_PRESETS:
+        return WAVELENGTH_COUNT_PRESETS[text]
+    try:
+        count = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} is neither an integer nor one of {sorted(WAVELENGTH_COUNT_PRESETS)}") from None
+    if count < 1:
+        raise argparse.ArgumentTypeError(f"the wavelength count must be >= 1, got {count}")
+    return count
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -113,8 +146,25 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--refractive-index",
         type=float,
-        default=CANONICAL_REFRACTIVE_INDEX,
-        help=f"refractive index (default {CANONICAL_REFRACTIVE_INDEX}, canonical; Lumice's own n(550) is 1.3110129)",
+        default=None,
+        help=f"refractive index (default {CANONICAL_REFRACTIVE_INDEX}, canonical; Lumice's own n(550) is 1.3110129); not with a colour render",
+    )
+    colour = parser.add_mutually_exclusive_group()
+    colour.add_argument(
+        "--illuminant",
+        choices=[t.value for t in IlluminantType],
+        default=None,
+        help="colour render: Lumice's M-slot pool of this illuminant (needs --wavelength-count)",
+    )
+    colour.add_argument(
+        "--discrete-wavelength-nm", type=float, default=None, help="colour render of one wavelength (its CMF times its monochrome value)"
+    )
+    parser.add_argument(
+        "--wavelength-count",
+        type=parse_wavelength_count,
+        default=None,
+        metavar="M",
+        help=f"slots of the illuminant pool: an integer or one of {', '.join(f'{k} ({v})' for k, v in WAVELENGTH_COUNT_PRESETS.items())}",
     )
     parser.add_argument("--store-cache-dir", type=Path, default=DEFAULT_CACHE_DIR)
     parser.add_argument("--skip-store-self-checks", action="store_true", help="build new stores without the section 4.1(a) checks")
@@ -188,7 +238,18 @@ def main(argv: list[str] | None = None) -> None:
         crystal = canonical_crystal() if args.face_distance is None else HexPrism.from_lumice(LUMICE_HEIGHT_OVER_DIAMETER, args.face_distance)
     except ValueError as exc:
         parser.error(f"--face-distance {' '.join(map(str, args.face_distance))}: {exc}")
-    if not args.refractive_index > 1.0:
+    coloured = args.illuminant is not None or args.discrete_wavelength_nm is not None
+    if coloured and args.refractive_index is not None:
+        parser.error("--refractive-index: a colour render takes n(lambda) from the wavelength pool")
+    if args.illuminant is not None and args.wavelength_count is None:
+        parser.error("--illuminant needs --wavelength-count")
+    if args.illuminant is None and args.wavelength_count is not None:
+        parser.error("--wavelength-count needs --illuminant (a discrete wavelength's slot count cancels)")
+    if args.discrete_wavelength_nm is not None and not 360.0 <= args.discrete_wavelength_nm <= 830.0:
+        parser.error("--discrete-wavelength-nm must lie in [360, 830], the colour-matching table")
+    if args.refractive_index is None:
+        args.refractive_index = math.nan if coloured else CANONICAL_REFRACTIVE_INDEX
+    if not coloured and not args.refractive_index > 1.0:
         parser.error("--refractive-index must exceed 1")
     try:
         path_class = build_path_class(crystal, args.path) if args.path_class else single_path_class(crystal, args.path)
@@ -220,6 +281,51 @@ def main(argv: list[str] | None = None) -> None:
 
     started = dt.datetime.now().astimezone()
     what = f"class of {path_id_of(path_class.representative)} ({path_class.size} members)" if args.path_class else path_id_of(path_class.representative)
+    run = {
+        "command": [sys.argv[0], *(argv if argv is not None else sys.argv[1:])],
+        "cwd": os.getcwd(),
+        "hostname": platform.node(),
+        "label": args.label,
+    }
+    if coloured:
+        if args.illuminant is not None:
+            illuminant = IlluminantType(args.illuminant)
+            pool = wavelength_pool(args.wavelength_count, illuminant=illuminant)
+            weight = emitted_weight(illuminant=illuminant)
+            spectrum = {"illuminant": args.illuminant, "wavelength_count": args.wavelength_count}
+        else:
+            pool = wavelength_pool(1, discrete_wavelength_nm=args.discrete_wavelength_nm)
+            weight = emitted_weight(discrete_weight=1.0)
+            spectrum = {"discrete_wavelength_nm": args.discrete_wavelength_nm}
+        log(f"colour band sum of {what} ({spectrum}), N = {args.store_n}: {window.pixel_count} pixels with {args.workers} worker(s)")
+        colour_results, execution = render_xyz_band_sum_window(
+            scene,
+            pool,
+            weight,
+            window,
+            args.store_n,
+            workers=args.workers,
+            base_dir=args.store_cache_dir,
+            run_checks=not args.skip_store_self_checks,
+            log=None if args.quiet else log,
+        )
+        execution.update({"started": started.isoformat(), "finished": dt.datetime.now().astimezone().isoformat(), **run})
+        files = write_xyz_band_sum_strip(
+            output_dir,
+            colour_results,
+            scene=scene,
+            pool=pool,
+            spectrum=spectrum,
+            emitted_weight=weight,
+            store_n=args.store_n,
+            window=window,
+            pose_density_block=pose_density_block,
+            execution=execution,
+            repo=Path(__file__).resolve().parent.parent,
+        )
+        lit = int(np.count_nonzero([any(r.xyz) for r in colour_results]))
+        log(f"done: {len(colour_results)} pixels ({lit} lit) in {execution['wall_clock_s']:.1f} s wall clock; provenance {files['provenance']}")
+        return
     log(f"band sum of {what}, N = {args.store_n}: {window.pixel_count} pixels with {args.workers} worker(s)")
     results, execution = render_band_sum_window(
         scene,
@@ -235,10 +341,7 @@ def main(argv: list[str] | None = None) -> None:
         {
             "started": started.isoformat(),
             "finished": finished.isoformat(),
-            "command": [sys.argv[0], *(argv if argv is not None else sys.argv[1:])],
-            "cwd": os.getcwd(),
-            "hostname": platform.node(),
-            "label": args.label,
+            **run,
         }
     )
     files = write_band_sum_strip(

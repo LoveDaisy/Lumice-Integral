@@ -195,3 +195,82 @@ def test_small_end_to_end_run_low_symmetry(cli, tmp_path):
     assert scene_crystal(provenance["scene"]).face_distance_ratios == tuple(D3H)
     assert provenance["scene"]["refractive_index"]["value"] == 1.3110129
     assert provenance["options"]["path_class"]["size"] == 6
+
+
+# ------------------------------------------------------------------ colour
+def _no_colour_render(monkeypatch, cli) -> list:
+    calls = []
+
+    def fake(scene, pool, weight, window, n, **kwargs):
+        calls.append((scene, pool, weight, window, n, kwargs))
+        raise RuntimeError("stop after validation")
+
+    monkeypatch.setattr(cli, "render_xyz_band_sum_window", fake)
+    return calls
+
+
+@pytest.mark.parametrize(
+    ("extra", "message"),
+    [
+        (["--illuminant", "D65"], "--illuminant needs --wavelength-count"),
+        (["--wavelength-count", "5"], "--wavelength-count needs --illuminant"),
+        (["--discrete-wavelength-nm", "550", "--wavelength-count", "5"], "--wavelength-count needs --illuminant"),
+        (["--illuminant", "D65", "--discrete-wavelength-nm", "550"], "not allowed with argument"),
+        (["--illuminant", "D65", "--wavelength-count", "0"], "must be >= 1"),
+        (["--illuminant", "D65", "--wavelength-count", "panel"], "neither an integer nor one of"),
+        (["--illuminant", "D66", "--wavelength-count", "5"], "invalid choice"),
+        (["--discrete-wavelength-nm", "900"], "must lie in [360, 830]"),
+        # an explicit index is refused even when it equals the default
+        (["--illuminant", "D65", "--wavelength-count", "5", "--refractive-index", str(CANONICAL_REFRACTIVE_INDEX)], "takes n(lambda) from the wavelength pool"),
+        (["--discrete-wavelength-nm", "550", "--refractive-index", "1.3110129"], "takes n(lambda) from the wavelength pool"),
+    ],
+)
+def test_invalid_colour_arguments_are_rejected(cli, capsys, monkeypatch, tmp_path, extra, message):
+    calls = _no_render(monkeypatch, cli)
+    colour_calls = _no_colour_render(monkeypatch, cli)
+    argv = ["--output-dir", str(tmp_path / "out"), "--store-n", "1000", *extra]
+    assert message in _error(cli, capsys, argv)
+    assert calls == [] and colour_calls == []
+
+
+@pytest.mark.parametrize(
+    ("extra", "slots", "weight"),
+    [
+        (["--illuminant", "D65", "--wavelength-count", "panel_wide_fov"], 5, "D65"),
+        (["--illuminant", "A", "--wavelength-count", "7"], 7, "A"),
+        (["--discrete-wavelength-nm", "550"], 1, None),
+    ],
+)
+def test_colour_arguments_reach_the_pool(cli, monkeypatch, tmp_path, extra, slots, weight):
+    from lumice_integral.spectrum import IlluminantType, emitted_weight, wavelength_pool
+
+    calls = _no_render(monkeypatch, cli)
+    colour_calls = _no_colour_render(monkeypatch, cli)
+    with pytest.raises(RuntimeError, match="stop after validation"):
+        cli.main(["--output-dir", str(tmp_path / "out"), "--store-n", "1000", "--path-class", *extra])
+    assert calls == []
+    scene, pool, emitted, window, n, kwargs = colour_calls[0]
+    assert scene.refractive_index != scene.refractive_index and scene.path_class.size == 12 and n == 1000
+    if weight is None:
+        assert pool == wavelength_pool(1, discrete_wavelength_nm=550.0) and emitted == 1.0
+    else:
+        assert pool == wavelength_pool(slots, illuminant=IlluminantType(weight))
+        assert emitted == emitted_weight(illuminant=IlluminantType(weight))
+
+
+def test_small_end_to_end_colour_run_is_ybar_times_the_monochrome_run(cli, tmp_path):
+    """One discrete 550 nm wavelength through the CLI: Y = ybar(550) times the monochrome render at n(550), bit for bit."""
+    import numpy as np
+
+    from lumice_integral.spectrum import cmf, dispersion
+    from lumice_integral.spectrum.xyz_band_sum import FORMAT_VERSION, read_xyz_band_sum_strip
+
+    common = ["--store-n", "100000", "--rows", "395:400", "--columns", "124:127", "--store-cache-dir", str(tmp_path / "stores"), "--skip-store-self-checks", "--quiet"]
+    cli.main(["--output-dir", str(tmp_path / "colour"), "--discrete-wavelength-nm", "550", *common])
+    cli.main(["--output-dir", str(tmp_path / "mono"), "--refractive-index", repr(dispersion.refractive_index(550.0)), *common])
+    xyz, status, provenance = read_xyz_band_sum_strip(tmp_path / "colour")
+    arrays, _ = read_strip(tmp_path / "mono")
+    assert provenance["format"] == FORMAT_VERSION and provenance["options"]["spectrum"] == {"discrete_wavelength_nm": 550.0}
+    assert int((status != 0).sum()) == 15 and arrays.values.max() > 0.0
+    for channel, bar in enumerate(cmf.lookup(550.0)):
+        np.testing.assert_array_equal(xyz[..., channel], bar * arrays.values)
