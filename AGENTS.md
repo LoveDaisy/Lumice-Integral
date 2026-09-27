@@ -16,7 +16,10 @@ the Linux/NVIDIA reference machine.
 
 ```bash
 uv sync --dev
+# fast tier (addopts in pyproject.toml deselects `slow`); serial, so -k / --pdb work as usual
 uv run pytest -q
+# the same fast tier in parallel (pytest-xdist; loadscope keeps a module's fixtures on one worker)
+uv run pytest -n auto --dist=loadscope
 uv run python scripts/inspect_path_3_5.py
 uv run python benchmarks/benchmark_batch.py --dtype float64
 uv run python benchmarks/benchmark_fiber_trace.py

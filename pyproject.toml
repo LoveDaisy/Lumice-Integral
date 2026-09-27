@@ -18,6 +18,7 @@ cuda13 = [
 [dependency-groups]
 dev = [
     "pytest>=8,<10",
+    "pytest-xdist>=3.8,<4",
 ]
 
 [build-system]
