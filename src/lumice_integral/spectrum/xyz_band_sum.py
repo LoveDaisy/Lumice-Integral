@@ -158,6 +158,14 @@ def render_xyz_band_sum_window(
     :func:`.wl_pool.emitted_weight` of the spectrum ``pool`` was built from.
     Returns the pixel results (in the window's order) and an execution record
     with one monochrome execution record per index group.
+
+    ``delta`` and ``band_width_rad`` come from ``pixel_band(row, column, sun,
+    render)`` (``band_sum.py``): camera and sun geometry only, independent of
+    ``n`` (a rank-0 path class instead gives the fixed NaN placeholder of
+    :func:`.band_sum.render_band_sum_window`).  Either way they must be
+    identical across index groups; this is asserted rather than assumed, so a
+    future change coupling them to ``n`` fails loudly here instead of
+    silently keeping only the last group's value.
     """
     if not math.isnan(scene.refractive_index):
         raise ValueError("a colour render takes n from the pool: build the scene with refractive_index=nan")
@@ -173,8 +181,6 @@ def render_xyz_band_sum_window(
     k_min = np.full(len(pixels), np.iinfo(np.int64).max)
     k_pos_min = np.full(len(pixels), np.iinfo(np.int64).max)
     k_eff_min = np.full(len(pixels), np.inf)
-    delta = np.full(len(pixels), np.nan)
-    width = np.full(len(pixels), np.nan)
     records = []
     for index, group in enumerate(groups):
         if log is not None:
@@ -196,7 +202,17 @@ def render_xyz_band_sum_window(
         k_min[lit] = np.minimum(k_min[lit], [r.K for r, on in zip(results, lit) if on])
         k_pos_min[lit] = np.minimum(k_pos_min[lit], [r.K_rho_pos for r, on in zip(results, lit) if on])
         k_eff_min[lit] = np.minimum(k_eff_min[lit], [r.K_eff for r, on in zip(results, lit) if on])
-        delta, width = np.array([r.delta for r in results]), np.array([r.band_width_rad for r in results])
+        group_delta = np.array([r.delta for r in results])
+        group_width = np.array([r.band_width_rad for r in results])
+        if index == 0:
+            delta, width = group_delta, group_width
+        elif not (
+            np.array_equal(delta, group_delta, equal_nan=True) and np.array_equal(width, group_width, equal_nan=True)
+        ):
+            raise RuntimeError(
+                "delta/band_width_rad differ across wavelength index groups; they are camera/sun-only "
+                "geometry (band_sum.pixel_band), or the rank-0 NaN placeholder, and must not depend on n(lambda)"
+            )
         records.append({**group.as_json(), "execution": execution})
     xyz *= scale
     unlit = ~np.isfinite(k_eff_min)

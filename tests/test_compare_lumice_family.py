@@ -297,3 +297,9 @@ def test_an_unknown_or_missing_format_is_refused_not_read_as_monochrome(family, 
         family.load_li(other)
     with pytest.raises(SystemExit, match="no readable provenance.json"):
         family.load_li(tmp_path / "missing")
+
+
+def test_chromaticity_refuses_a_window_with_no_light_instead_of_dividing_by_zero(family):
+    dark = {c: np.zeros((4, 4)) for c in "XYZ"}
+    with pytest.raises(SystemExit, match="no positive flux"):
+        family.chromaticity(dark, dark)

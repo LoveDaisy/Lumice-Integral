@@ -271,7 +271,10 @@ def chromaticity(measured: dict[str, np.ndarray], predicted: dict[str, np.ndarra
 
     def xy(images: dict[str, np.ndarray]) -> list[float]:
         flux = [float(images[c][lit].sum()) for c in CHANNELS]
-        return [flux[0] / sum(flux), flux[1] / sum(flux)]
+        total = sum(flux)
+        if total == 0.0:
+            raise SystemExit("chromaticity: no positive flux in either image over the lit mask (window has no light)")
+        return [flux[0] / total, flux[1] / total]
 
     m, p = xy(measured), xy(predicted)
     return {"measured_xy": m, "predicted_xy": p, "difference_xy": [m[0] - p[0], m[1] - p[1]]}

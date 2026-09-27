@@ -123,6 +123,56 @@ def parse_wavelength_count(text: str) -> int:
     return count
 
 
+def _run_colour(
+    args: argparse.Namespace,
+    scene: BandSumScene,
+    window: Window,
+    pose_density_block: dict,
+    run: dict,
+    started: dt.datetime,
+    log,
+    output_dir: Path,
+    what: str,
+) -> None:
+    if args.illuminant is not None:
+        illuminant = IlluminantType(args.illuminant)
+        pool = wavelength_pool(args.wavelength_count, illuminant=illuminant)
+        weight = emitted_weight(illuminant=illuminant)
+        spectrum = {"illuminant": args.illuminant, "wavelength_count": args.wavelength_count}
+    else:
+        pool = wavelength_pool(1, discrete_wavelength_nm=args.discrete_wavelength_nm)
+        weight = emitted_weight(discrete_weight=1.0)
+        spectrum = {"discrete_wavelength_nm": args.discrete_wavelength_nm}
+    log(f"colour band sum of {what} ({spectrum}), N = {args.store_n}: {window.pixel_count} pixels with {args.workers} worker(s)")
+    colour_results, execution = render_xyz_band_sum_window(
+        scene,
+        pool,
+        weight,
+        window,
+        args.store_n,
+        workers=args.workers,
+        base_dir=args.store_cache_dir,
+        run_checks=not args.skip_store_self_checks,
+        log=None if args.quiet else log,
+    )
+    execution.update({"started": started.isoformat(), "finished": dt.datetime.now().astimezone().isoformat(), **run})
+    files = write_xyz_band_sum_strip(
+        output_dir,
+        colour_results,
+        scene=scene,
+        pool=pool,
+        spectrum=spectrum,
+        emitted_weight=weight,
+        store_n=args.store_n,
+        window=window,
+        pose_density_block=pose_density_block,
+        execution=execution,
+        repo=Path(__file__).resolve().parent.parent,
+    )
+    lit = int(np.count_nonzero([any(r.xyz) for r in colour_results]))
+    log(f"done: {len(colour_results)} pixels ({lit} lit) in {execution['wall_clock_s']:.1f} s wall clock; provenance {files['provenance']}")
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -288,43 +338,7 @@ def main(argv: list[str] | None = None) -> None:
         "label": args.label,
     }
     if coloured:
-        if args.illuminant is not None:
-            illuminant = IlluminantType(args.illuminant)
-            pool = wavelength_pool(args.wavelength_count, illuminant=illuminant)
-            weight = emitted_weight(illuminant=illuminant)
-            spectrum = {"illuminant": args.illuminant, "wavelength_count": args.wavelength_count}
-        else:
-            pool = wavelength_pool(1, discrete_wavelength_nm=args.discrete_wavelength_nm)
-            weight = emitted_weight(discrete_weight=1.0)
-            spectrum = {"discrete_wavelength_nm": args.discrete_wavelength_nm}
-        log(f"colour band sum of {what} ({spectrum}), N = {args.store_n}: {window.pixel_count} pixels with {args.workers} worker(s)")
-        colour_results, execution = render_xyz_band_sum_window(
-            scene,
-            pool,
-            weight,
-            window,
-            args.store_n,
-            workers=args.workers,
-            base_dir=args.store_cache_dir,
-            run_checks=not args.skip_store_self_checks,
-            log=None if args.quiet else log,
-        )
-        execution.update({"started": started.isoformat(), "finished": dt.datetime.now().astimezone().isoformat(), **run})
-        files = write_xyz_band_sum_strip(
-            output_dir,
-            colour_results,
-            scene=scene,
-            pool=pool,
-            spectrum=spectrum,
-            emitted_weight=weight,
-            store_n=args.store_n,
-            window=window,
-            pose_density_block=pose_density_block,
-            execution=execution,
-            repo=Path(__file__).resolve().parent.parent,
-        )
-        lit = int(np.count_nonzero([any(r.xyz) for r in colour_results]))
-        log(f"done: {len(colour_results)} pixels ({lit} lit) in {execution['wall_clock_s']:.1f} s wall clock; provenance {files['provenance']}")
+        _run_colour(args, scene, window, pose_density_block, run, started, log, output_dir, what)
         return
     log(f"band sum of {what}, N = {args.store_n}: {window.pixel_count} pixels with {args.workers} worker(s)")
     results, execution = render_band_sum_window(
