@@ -138,11 +138,41 @@ LI 独有的价值。
 $\mathbf m$ 当作光源复用同一个仓库。这一组合层是否由 LI 自己承担尚待定；本段只记录
 需求来源，不构成范围变更。
 
-计算落点待定，取决于 explore `panel-inverse-probe`（同日建）的成本实测与预设点原型结论：
-(a) 在 Lumice 内用 C++ 重写；(b) LI 作为 sidecar；(c) 把 Phase II 的内核抽成可移植的
-C++ 核心，LI 的 Python 经 binding 调用，Lumice 直接链接（一份权威实现；依赖方向与「LI
-不依赖 Lumice」相反，二者并不冲突——与 Lumice 自身 Monte Carlo 的交叉验证仍然独立）。
-主 session 倾向 (c)；裁定留待该探针的结论（roadmap §9）。
+**计算落点裁定（2026-09-27 owner 裁定，收敛 explore `panel-inverse-probe` 与
+`ad-port-probe`；本地记录
+`scratchpad/explore-panel-inverse-probe/SUMMARY.md`、
+`scratchpad/explore-ad-port-probe/SUMMARY.md`）：** 这不是一次性的「单实现 vs
+双实现」架构选择，而是按模块成熟度决定何时移植。
+
+实测：面板精度下算力充裕（$161\times81$ 窗口、$N=10^6$、全链路 $3.4\,\mathrm{s}$；
+单像素取 fiber $1$–$2\,\mathrm{ms}$；对比：Python 渲染约
+$74\,\mu\mathrm{s}/\mathrm{px}$，$512^2$ 全天图约 $20\,\mathrm{s}$）。功能 1/2
+核心（`band_sum`、`s2_store`、`weights`、`geometry`）零 JAX 依赖。功能 3 的 AD
+可精确规约为 C++ 前向 hyper-dual 模板（`Jet2<3>`，约 $150$ 行零依赖）：3 条路径
+（含一条内反射、一条锥晶族 `13-15-26-28`）与 JAX 的值 / 梯度 / Hessian 相对误差
+$\le 10^{-11}$；单点 C++ $193\,\mathrm{ns}$ vs JAX $104\,\mu\mathrm{s}$。功能 3
+的 C++ 估 $2800$–$3600$ 行，大头是边界 / 水平集 walk 状态机而非 AD 本身。
+
+裁定：
+
+1. **现在不移植。** 全部留在 LI 的 JAX 实现里，研究与写作自由改动。
+2. **移植触发** = 两个条件同时满足：面板功能真正排期；该模块一段时间无语义改动
+   （参考：阶段 2、非对称锥、多波长、多次散射组合都已落地之后）。
+3. **移植后：JAX 是权威、C++ 是派生实现**，由 parity fixture 锁定（路径拓扑：
+   无内反射 / 含内反射 / 锥晶族外，交叉点类别：随机 / 临界点 / 近边界；模板 =
+   explore `ad-port-probe` 的 `compare_*.py`），CI 运行；改动单向流动——先改
+   JAX → parity 红 → 再改 C++。这不是两份对等实现静默分叉：分叉被自动检出，
+   不存在「哪边是对的」之问。
+4. 功能 1/2 与功能 3 同样处理（`band_sum` / `s2_store` 一样年轻）；C++ 侧同样
+   采用前向 hyper-dual 模板做标量求导，不引入 AD 框架。
+5. 某模块长期稳定后，是否让 LI 也改调 C++ 并退役 JAX 版，留给后续再议。
+6. 取代此前「主 session 倾向 (c)、抽可移植 C++ 核心」的表述：(c) 的形态保留为
+   移植后的终态候选，但时机由第 2 点的触发条件决定，而非预先定死。
+
+**对 LI 现阶段的约束：** 面板相关模块（`optics`、`weights`、`geometry`、
+`s2_store`、`band_sum`、`dp_field`、`contour`、`focusing`）现阶段照常演进，
+不因面板而冻结；某模块移植后，其改动须先落在 JAX 侧并经 parity fixture 同步
+校验，再触碰 C++。
 
 待后续核实（本 chore 不做，只标记）：面板的对称约化行语义（Lumice
 `doc/raypath-symmetry.md` 的 P/B/D）与 LI 的 `G_true` 轨道是否同一口径。

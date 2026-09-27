@@ -316,15 +316,59 @@ it with $\mathbf m$ as its source. Whether LI itself owns this composition
 layer is undecided; this paragraph only records the requirement's source, it
 is not a scope change.
 
-The compute landing point is undecided, gated on explore
-`panel-inverse-probe`'s (opened the same day) cost measurements and
-preset-point prototypes: (a) rewrite inside Lumice in C++; (b) LI as a
-sidecar; (c) extract Phase II's kernel into a portable C++ core that LI's
-Python calls through a binding and that Lumice links directly (one
-authoritative implementation; the dependency direction is the reverse of "LI
-does not depend on Lumice" and does not conflict with it — cross-validation
-against Lumice's own Monte Carlo stays independent). The main session leans
-toward (c); the decision is deferred to the probe's conclusion (roadmap §9).
+**Compute landing point (owner ruling 2026-09-27, closing explore
+`panel-inverse-probe` and `ad-port-probe`; local records
+`scratchpad/explore-panel-inverse-probe/SUMMARY.md`,
+`scratchpad/explore-ad-port-probe/SUMMARY.md`):** this is not a one-shot
+"single implementation vs. dual implementation" architecture choice; it is a
+per-module decision timed by module maturity.
+
+Measurements: at panel precision, compute is ample (a $161\times81$ window,
+$N=10^6$, full chain $3.4\,\mathrm{s}$; a single pixel's fiber pick
+$1$–$2\,\mathrm{ms}$; for scale, the Python renderer runs
+$\approx 74\,\mu\mathrm{s}/\mathrm{px}$, so a $512^2$ whole-sky image is
+$\approx 20\,\mathrm{s}$). Functions 1/2's core (`band_sum`, `s2_store`,
+`weights`, `geometry`) has zero JAX dependency. Function 3's AD reduces
+exactly to a forward hyper-dual template in C++ (`Jet2<3>`, $\approx 150$
+dependency-free lines): three paths, including one with an internal
+reflection and one on the pyramid family (`13-15-26-28`), match JAX's value,
+gradient and Hessian to a relative error $\le 10^{-11}$; a single point is
+$193\,\mathrm{ns}$ in C++ versus $104\,\mu\mathrm{s}$ in JAX. Function 3's C++
+port is estimated at $2800$–$3600$ lines, dominated by the boundary /
+level-set walk state machine, not by the AD itself.
+
+The ruling:
+
+1. **Port nothing now.** Everything stays in LI's JAX implementation, free to
+   change under research and writing.
+2. **Port trigger** = both hold at once: the panel function is actually
+   scheduled, and the module has gone without a semantic change for a while
+   (reference point: after stage 2, the asymmetric cone, multiple wavelengths
+   and multi-scattering composition have all landed).
+3. **After porting: JAX is authoritative, C++ is derived**, locked by a
+   parity fixture (path topology: no internal reflection / with internal
+   reflection / outside the pyramid family, crossed with point class: random
+   / critical / near-boundary; template = explore `ad-port-probe`'s
+   `compare_*.py`), run in CI; changes flow one way — JAX first, parity red,
+   then C++. This is not two implementations of the same semantics silently
+   diverging: the divergence is caught automatically, with no "which side is
+   right" question.
+4. Functions 1/2 are treated the same as function 3 (`band_sum` / `s2_store`
+   are equally young); the C++ side uses the same forward hyper-dual template
+   for scalar derivatives, not an AD framework.
+5. Whether a module that has been stable for a long time should also move LI
+   itself onto the C++ path (retiring the JAX version) is left for a later
+   decision.
+6. This supersedes the earlier "main session leans toward (c), extract a
+   portable C++ core" wording: (c)'s shape is kept as the eventual post-port
+   form, but its timing is governed by the trigger in point 2, not decided up
+   front.
+
+**Constraint on LI in the meantime:** the panel-relevant modules (`optics`,
+`weights`, `geometry`, `s2_store`, `band_sum`, `dp_field`, `contour`,
+`focusing`) keep evolving as usual and are not frozen for the panel's sake.
+Once a module is ported, its changes must land in JAX first and be
+synchronized against the parity fixture before touching C++.
 
 To be verified later (not in this chore, flagged only): whether the panel's
 symmetry-reduced row semantics (Lumice `doc/raypath-symmetry.md`'s P/B/D) and
