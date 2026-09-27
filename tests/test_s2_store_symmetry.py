@@ -1,6 +1,6 @@
-"""Symmetry transport of the S^2 event store (roadmap section 4.1(d)): one store serves a ``D6h`` orbit.
+"""Symmetry transport of the S^2 event store (roadmap section 4.1(d)): one store serves a ``G_true`` orbit.
 
-For a class member reached from the representative by a ``D6h`` element
+For a class member reached from the representative by a ``G_true`` element
 ``g``, proper or improper (:func:`.path_class.path_class_symmetry`), the
 member's events are the representative's with ``u' = g u``, ``phi' = g phi``
 and ``D``, ``w`` and the valid domain unchanged.  The Fibonacci lattice is not closed under ``g``,
@@ -38,8 +38,11 @@ from lumice_integral.path_class import (
     build_path_class,
     hexprism_symmetry_matrices,
     path_class_symmetry,
+    store_plan,
 )
 from lumice_integral.pose_density import build_pose_density
+from lumice_integral.symmetry.crystal_group import true_symmetry_group
+from lumice_integral.symmetry.reflection_group import key as rg_key
 from lumice_integral.s2_store import (
     S2Events,
     S2EventStore,
@@ -115,6 +118,78 @@ def test_transported_events_equal_each_members_own_store(class_3_5, representati
         worst = {k: max(worst.get(k, 0.0), v) for k, v in difference.items()}
         assert max(difference.values()) <= 1e-12, (member, difference)
     assert set(worst) == {"u", "phi", "D", "w"}
+
+
+# Below D6h (task reduction-cluster-g-true): the candidate group is the crystal's own G_true.  Each case is
+# (face_distance, representative, expected class members); the |G_true| = 2 prism's 3-5 class is one member
+# served by the identity (no transport), its 1-3 class two members related by the basal mirror.
+D3H_FACE_DISTANCE = (1, 1.2, 1, 1.2, 1, 1.2)
+D2H_FACE_DISTANCE = (1.9, 1, 1, 1.9, 1, 1)
+GENERIC_FACE_DISTANCE = (1.0, 1.3, 0.7, 1.9, 1.1, 0.4)
+LOW_SYMMETRY_CLASSES = [
+    (D3H_FACE_DISTANCE, 12, (3, 5), {(3, 5), (3, 7), (5, 3), (5, 7), (7, 3), (7, 5)}),
+    (D2H_FACE_DISTANCE, 8, (3, 5), {(3, 5), (3, 7), (6, 4), (6, 8)}),
+    (GENERIC_FACE_DISTANCE, 2, (3, 5), {(3, 5)}),
+    (GENERIC_FACE_DISTANCE, 2, (1, 3), {(1, 3), (2, 3)}),
+]
+N_LOW_SYMMETRY = 100_000
+
+
+@pytest.mark.parametrize("face_distance, order, faces, members", LOW_SYMMETRY_CLASSES)
+def test_transported_events_equal_each_members_own_store_below_d6h(face_distance, order, faces, members) -> None:
+    """The independent oracle on ``G_true`` smaller than ``D6h``: each member's own store (the production
+    builder on the member's faces) equals the representative's store transported by the member's ``G_true``
+    element, sorted ``u / Phi / D / w`` within ``1e-12``; one store serves the class (``store_plan``)."""
+    crystal = HexPrism(1.0, 1.0, face_distance)
+    assert len(true_symmetry_group(crystal)) == order
+    path_class = build_path_class(crystal, faces)
+    assert set(path_class.members) == members
+    symmetry = path_class_symmetry(path_class, crystal)
+    own_keys = {rg_key(g) for g in true_symmetry_group(crystal)}
+    assert set(symmetry) == members and all(rg_key(g) in own_keys for g in symmetry.values())
+    (plan,) = store_plan(path_class, crystal)
+    assert plan.members == (faces,) and set(plan.served_members) == members
+    representative = build([faces], N_LOW_SYMMETRY, crystal=crystal)
+    for member, g in symmetry.items():
+        if member == faces:
+            np.testing.assert_array_equal(g, np.eye(3))
+            continue
+        own = build([member], N_LOW_SYMMETRY, crystal=crystal, g=g)
+        difference = max_event_difference(transport_events(representative.events, g), own.events)
+        assert max(difference.values()) <= 1e-12, (member, difference)
+
+
+@pytest.mark.parametrize("face_distance", [D3H_FACE_DISTANCE, D2H_FACE_DISTANCE, GENERIC_FACE_DISTANCE])
+def test_fields_are_equivariant_under_g_true_and_only_under_g_true(face_distance) -> None:
+    """``w_{gPg^-1}(g u) = w_P(u)`` and ``Phi_{gPg^-1}(g u) = g Phi_P(u)`` for every ``G_true`` element; a
+    ``D6h`` element outside ``G_true`` breaks it on ``3-5``, or maps it onto a face the crystal lacks (the oracle
+    above can tell the two apart)."""
+    crystal = HexPrism(1.0, 1.0, face_distance)
+    own_keys = {rg_key(g) for g in true_symmetry_group(crystal)}
+    sun = canonical_sun_direction()
+    star = _hexprism_normals(HexPrism())  # image faces numbered by direction; the crystal may lack one
+    faces_present = {face.number for face in crystal.faces}
+    u = np.random.default_rng(5).normal(size=(20_000, 3))
+    u /= np.linalg.norm(u, axis=1, keepdims=True)
+    base = evaluate_fields(align_rotations(u, sun), sun, crystal, CANONICAL_REFRACTIVE_INDEX, [(3, 5)])
+    assert 0 < np.count_nonzero(base["valid"])
+    broken = 0
+    for g in hexprism_symmetry_matrices():
+        image = _symmetry_image_of_faces(g, (3, 5), star)
+        if not set(image) <= faces_present:
+            assert rg_key(g) not in own_keys, image
+            broken += 1
+            continue
+        moved = evaluate_fields(align_rotations(u @ g.T, sun), sun, crystal, CANONICAL_REFRACTIVE_INDEX, [image])
+        equal = np.array_equal(moved["valid"], base["valid"]) and np.max(np.abs(moved["w"] - base["w"])) <= 1e-12
+        if rg_key(g) in own_keys:
+            assert equal, (face_distance, image)
+            valid = base["valid"]
+            assert np.max(np.abs(moved["phi"][valid] - base["phi"][valid] @ g.T)) <= 1e-12, image
+            assert np.max(np.abs(moved["D"][valid] - base["D"][valid])) <= 1e-12, image
+        else:
+            broken += not equal
+    assert broken == 24 - len(own_keys)
 
 
 def test_transported_rotations_rebuild_the_transported_events_for_all_24_elements(class_3_5, representative) -> None:
