@@ -92,7 +92,25 @@ def d_p(u: jax.Array, faces: Faces, index: jax.Array, normals: jax.Array | None 
     point (``3-5-6-7-3``).  ``normals`` is :func:`body_normals` (``None``:
     the canonical prism), likewise for every kernel below.
     """
-    phi = _evaluation(u, faces, index, normals).direction
+    return _deviation(_evaluation(u, faces, index, normals).direction, u)
+
+
+def d_p_grazing(u: jax.Array, faces: Faces, index: jax.Array, normals: jax.Array | None = None) -> jax.Array:
+    """:func:`d_p` with the exit refraction's ``sqrt(discriminant)`` set to 0: ``D_P`` on the exit TIR curve.
+
+    The exit direction is ``n d + (n c - sqrt(disc)) (-N)`` (:func:`.optics.refract_smooth`, ``N`` the exit face
+    normal), so dropping the root is adding ``-sqrt(disc) N``.  At a point left by a corrector on the ``U_P`` side
+    of that curve (``0 <= disc ~ 1e-16``) :func:`d_p` is off the curve's value by ``~ sqrt(disc) ~ 1e-8``, rounding
+    noise that differs by BLAS kernel; this is the value there to ``~1e-14``.  Only meaningful where ``disc ~ 0``.
+    """
+    if normals is None:
+        normals = body_normals(None, faces)
+    evaluation = _evaluation(u, faces, index, normals)
+    root = jnp.sqrt(jnp.maximum(evaluation.exit.discriminant, 0.0))
+    return _deviation(evaluation.direction - root * jnp.asarray(normals)[-1], u)
+
+
+def _deviation(phi: jax.Array, u: jax.Array) -> jax.Array:
     return jnp.arctan2(jnp.linalg.norm(jnp.cross(phi, -u)), jnp.dot(phi, -u))
 
 

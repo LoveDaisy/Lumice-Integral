@@ -127,7 +127,9 @@ def test_fold_screen_on_the_fixtures() -> None:
     assert dots[(3, 5)] == pytest.approx(-0.5, abs=1e-15)
     assert dots[(1, 3)] == pytest.approx(0.0, abs=1e-15)
     for faces in ((3, 1, 6), (1, 3, 2), (3, 5, 6, 7, 3)):
-        assert dots[faces] == -1.0
+        # rounding of M's reflection products, not exact: 3-5-6-7-3 is -1 - 1 ulp under OpenBLAS's AVX-512 kernel
+        # (Zen5), exactly -1 under its Haswell kernel and Accelerate; same bound as the two fixtures above
+        assert dots[faces] == pytest.approx(-1.0, abs=1e-15)
         assert F.fold_screen(crystal, faces).degenerate
     assert not F.fold_screen(crystal, (3, 5)).degenerate and not F.fold_screen(crystal, (1, 3)).degenerate
 

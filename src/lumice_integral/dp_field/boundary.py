@@ -60,10 +60,14 @@ extrema are refined by golden-section search on the piece (derivative-free:
 ``grad D_P`` diverges on the exit-TIR curve, where ``D_P`` itself is finite)
 and corner values are kept as they are.  On the exit TIR curve the corrector
 leaves points on the ``U_P`` side (margin ``>= 0``) so the exit refraction's
-square root is real; ``D_P`` is Hoelder-1/2 across that curve, so the value
-error there is ``~ sqrt(1e-16) = 1e-8`` rad, and the *position* of a loop
-extremum on such a piece (where ``D_P`` is flat along the loop) only
-``~1e-4`` rad; corners (two-margin Newton) are exact.
+square root is real; ``D_P`` is Hoelder-1/2 across that curve, so a sample
+value there is off by ``~ sqrt(1e-16) = 1e-8`` rad.  The golden section on
+such a piece therefore searches and reports :func:`.field.d_p_grazing`, the
+curve's own value with that root dropped (``~1e-14``): searched on ``D_P``,
+the ``1e-8`` noise on a flat loop extremum (``3-5``: curvature ``0.043`` per
+rad^2) moved its position by up to ``sqrt(2e-8 / 0.043) ~ 7e-4`` rad, and
+by a different amount under each BLAS kernel (task ``home-wsl-dp-field-diffs``).
+Corners (two-margin Newton) are exact.
 Slab paths are evaluated in closed form (:func:`.field.d_value`).
 """
 
@@ -80,7 +84,7 @@ from scipy.spatial import cKDTree
 from .. import optics
 from ..geometry import HexPrism, Polyhedron, fold_matrix
 from ..s2_store import fibonacci_sphere
-from .field import Faces, body_normals, d_value, margin_vector, valid_batch
+from .field import Faces, body_normals, d_p_grazing, d_value, margin_vector, valid_batch
 
 # March step along a boundary piece (rad).
 WALK_STEP_RAD = np.radians(0.25)
@@ -124,6 +128,11 @@ def _margins(u: jax.Array, faces: Faces, index: jax.Array, normals: jax.Array) -
 @partial(jax.jit, static_argnums=1)
 def _d(u: jax.Array, faces: Faces, index: jax.Array, slab: jax.Array | None, normals: jax.Array) -> jax.Array:
     return d_value(u, faces, index, slab, normals)
+
+
+@partial(jax.jit, static_argnums=1)
+def _d_grazing(u: jax.Array, faces: Faces, index: jax.Array, normals: jax.Array) -> jax.Array:
+    return d_p_grazing(u, faces, index, normals)
 
 
 def _unit(v: np.ndarray) -> np.ndarray:
@@ -331,6 +340,10 @@ class _Walker:
         if not np.isfinite(value):
             raise RuntimeError(f"D_P is not finite at {u} on {self.path_id}")
         return value
+
+    def d_on_exit_tir(self, u: np.ndarray) -> float:
+        """``D_P`` at a point of the exit TIR curve, the exit root dropped (:func:`.field.d_p_grazing`)."""
+        return float(_d_grazing(jnp.asarray(u), self.faces, self._index, self._normals))
 
     @property
     def path_id(self) -> str:
@@ -547,16 +560,21 @@ def _corner_record(walker: _Walker, u: np.ndarray, incoming: str, outgoing: str,
 
 
 def _golden_extremum(walker: _Walker, piece: BoundaryPiece, i: int, kind: str) -> tuple[np.ndarray, float]:
-    """Refine the sample extremum ``piece.points[i]`` on the piece between its neighbours (golden section)."""
+    """Refine the sample extremum ``piece.points[i]`` on the piece between its neighbours (golden section).
+
+    On the exit TIR curve of a non-slab path the search and the returned value are
+    :meth:`_Walker.d_on_exit_tir` (module docstring); elsewhere ``D_P`` itself.
+    """
     # i == 0 only on a loop without corners, whose single piece ends where it starts
     a, b = (piece.points[-2] if i == 0 else piece.points[i - 1]), piece.points[i + 1]
     sign = 1.0 if kind == "minimum" else -1.0
+    d = walker.d_on_exit_tir if piece.margin == "exit_snell_discriminant" and walker._slab is None else walker.d
 
     def point(lam: float) -> np.ndarray:
         return walker.correct(_unit((1.0 - lam) * a + lam * b), piece.margin)
 
     def f(lam: float) -> float:
-        return sign * walker.d(point(lam))
+        return sign * d(point(lam))
 
     ratio = (np.sqrt(5.0) - 1.0) / 2.0
     lo, hi = 0.0, 1.0
@@ -574,7 +592,7 @@ def _golden_extremum(walker: _Walker, piece: BoundaryPiece, i: int, kind: str) -
         if hi - lo < 1e-12:
             break
     best = point(0.5 * (lo + hi))
-    return best, walker.d(best)
+    return best, d(best)
 
 
 def _plateau_extrema(values: np.ndarray, atol: float = EXTREMUM_ATOL) -> list[tuple[int, str]]:
