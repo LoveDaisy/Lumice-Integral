@@ -29,6 +29,8 @@ Queue (tasks in `scratchpad/tasks.md`; dispatched 20 ∥ 21, then 22 ∥ 24, 23 
 | 29 | scrum `crystal-native-geometry` (design: explore `crystal-geometry-design`, owner rulings 2026-09-27): `crystal-closed-form` → `optics-reads-crystal` → explore `ch9-offfamily-focusing` — `crystal-closed-form` **done 2026-09-27** (closed-form prism with Lumice `face_distance`, `face_present`, fail-fast rejection, `G_true`; [overview.md](overview.md) §4.1, conventions #19, §9); `optics-reads-crystal` **done 2026-09-27** (normals from the crystal through `optics.face_normals`, `D_P` kernels take them as an argument, `G_true ≠ D6h` fail-fast in the reduction cluster; [overview.md](overview.md) §4.1, §9); explore `ch9-offfamily-focusing` next | — |
 | — | explore `panel-inverse-probe` (opened 2026-09-27): LI-side cost probe for the Ice Halo raypath-analysis panel's three post-selection functions ([overview.md](overview.md) §5.3, §9) — single-path $S^2$ field, whole-sky map and pick-a-fiber cost at panel precision; preset-point prototypes (brightest / $D_P$ critical / $U_P$ boundary / wavelength critical) — **done 2026-09-27** (feeds the compute-landing-point ruling, §9) | — |
 | — | explore `ad-port-probe` (opened 2026-09-27): whether function 3's AD reduces to a portable C++ core against JAX — **done 2026-09-27** (forward hyper-dual `Jet2<3>` matches JAX to $\le 10^{-11}$ relative error on three paths, feeds the compute-landing-point ruling, §9) | — |
+| 37 | scrum `crystal-reduction-generalize` (stage 2 of scrum 29's fail-fast ruling; requirement source [overview.md](overview.md) §5.3): `reduction-cluster-g-true` → `pose-density-reference-face` → `low-symmetry-lumice-validation` → `stage2-docs` — `reduction-cluster-g-true` **done 2026-09-27** (reduced cluster's candidate group is the crystal's own `G_true`; [overview.md](overview.md) §4.1, §9); `pose-density-reference-face` **done 2026-09-27** (Parry/Lowitz roll reference is body `+x`, independent of whether the crystal has face 3; [conventions.md](conventions.md) #3, §9); `low-symmetry-lumice-validation` **done 2026-09-27** (two low-symmetry prisms validated against Lumice Monte Carlo at absolute scale, `4e-4`; surfaced a Lumice-side `P`/`B`/`D` over-merge defect below `D6h`, §9); `stage2-docs` **done 2026-09-27** (this row and the §9 entries below, [overview.md](overview.md) §4.1, backlog) | 29 |
+| — | explore `panel-inverse-probe` (opened 2026-09-27): LI-side cost probe for the Ice Halo raypath-analysis panel's three post-selection functions ([overview.md](overview.md) §5.3, §9) — single-path $S^2$ field, whole-sky map and pick-a-fiber cost at panel precision; preset-point prototypes (brightest / $D_P$ critical / $U_P$ boundary / wavelength critical); its conclusions gate the compute-landing-point decision | — |
 
 Deferred: the chapter-11 table (path classes × pose families) after 22 and
 M2; divergent light ([phase2.md](phase2.md) §9, backlog); finite solar disk;
@@ -712,3 +714,40 @@ Moved to [overview.md](overview.md) §3.
   own stores to `1e-12` on `D3h` / `D2h`. The regular prism is unchanged
   (band-sum renders bit for bit against the pre-change code, only the cache
   key moves).
+- **2026-09-27**: the Parry/Lowitz roll reference is confirmed to be the
+  body `+x` azimuth, not a face lookup (task `pose-density-reference-face`,
+  scrum `crystal-reduction-generalize`; [conventions.md](conventions.md) #3).
+  White-box check of Lumice (`src/core/simulator.cpp`'s
+  `BuildCrystalRotation` and `InitRay_rot`, `src/core/math.cpp`'s
+  `SampleSphericalPointsSph`, `src/gui/axis_presets.hpp`'s
+  `kRollLockedGauss`) confirms roll is pure-angle composition with no face or
+  mesh query; `pose_density.c_axis_roll` and `ZenithRollGaussianPoseDensity`
+  already take no crystal/face argument, so no computational change was
+  needed. A new regression
+  (`test_roll_reference_is_body_plus_x_whether_or_not_face_3_exists`) pins
+  the reference on both a crystal with face 3 and one where it is absent
+  (`face_distance = [2, 1, 1, 2, 1, 1]`): no fail-fast, no orbit-choice
+  parameter, roll = 0 always puts body `+x` on the upper side of the
+  vertical plane through the c axis. Only `pose_density.py`'s docstring and
+  `docs/conventions.md` #3 wording changed.
+- **2026-09-27**: the `G_true` generalisation and the Parry/Lowitz roll
+  reference are validated against Lumice Monte Carlo at absolute scale, a
+  chain that shares no failure mode with LI's own internal oracle (task
+  `low-symmetry-lumice-validation`, scrum `crystal-reduction-generalize`;
+  [overview.md](overview.md) §4.1). Two low-symmetry prisms (`D3h`,
+  `face_distance = (1, 1.2, 1, 1.2, 1, 1.2)`, `|G_true| = 12`; a generic
+  prism `(1.0, 1.3, 0.7, 1.9, 1.1, 0.4)`, `|G_true| = 2`) × random/Parry pose
+  families × path class `[3, 5]` (and, on the `D3h` prism, `[3, 5, 6, 7]`) —
+  six combinations rendered with `render_band_sum.py`'s new
+  `--face-distance`/`--refractive-index` overrides (default path unchanged
+  bit for bit) against Lumice float exports (`5e8` rays × 2 seeds, one exact
+  per-member `type: raypath` filter per member folded into a single
+  `type: complex` run, no `P`/`B`/`D` reduction). Total-flux ratio agrees to
+  `4e-4` (the weakest combination, `D3h` `[3,5,6,7]` under Parry, to its own
+  `±5%` noise floor), the implied entrance area matches the crystal's actual
+  `S/2`, nothing fitted; no LI-side defect found. The run also measured a
+  Lumice-side defect: its `P`/`B`/`D` reduction accepts `symmetry` filters
+  below `D6h` and over-merges inequivalent paths (`D3h` `[3,5]` measured
+  `1.41×` the correct six-member class), recorded in Lumice's own backlog;
+  `compare_lumice_family.py` now rejects `PBD` filters when `|G_true| < 24`
+  and requires an exact per-member filter set instead.

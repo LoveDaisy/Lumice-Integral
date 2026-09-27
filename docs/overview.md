@@ -224,15 +224,31 @@ conventions #19).
   the pyramid's faces 13–28 run through `focusing.classify`. The boundary
   walk's margin identity (`identical_margins`) is confirmed on the crystal's
   normals rather than assumed from face numbers.
-- **The reduced cluster fails fast below `D6h`**: `path_class`'s
+- **The reduced cluster runs on the crystal's own `G_true`** (task
+  `reduction-cluster-g-true`, scrum `crystal-reduction-generalize`,
+  2026-09-27; stage 2 of the fail-fast ruling above): `path_class`'s
   `pbd_orbit_hexprism`, `phi_key` and `path_class_symmetry` (and `s2_store`,
   `strip_pixel`, `band_sum`, which reach the crystal's symmetry only through
-  them) raise `ValueError` unless `|G_true| = 24`; explicit
-  `symmetry_elements` must lie in `G_true`. The `D6h` orbit of a path is not
-  the crystal's orbit on a lower-symmetry shape (`3-5` has 12 `D6h` images;
-  `[2, 1, 1, 2, 1, 1]` has 8 symmetries), so these would silently merge
-  paths that are not images of each other. Generalising orbits, stores and
-  transports to `G_true` is the next stage.
+  them) take `true_symmetry_group` as the candidate group instead of
+  requiring `|G_true| = 24`; explicit `symmetry_elements` must still lie in
+  `G_true`. The `D6h` fold table and the six-direction star (`phi_key`'s
+  direction numbering) stay as crystal-independent lookup tables — a path on
+  a face the crystal lacks is a `ValueError` (`_require_faces_of`), not a
+  silent merge. An independent oracle (a member's own store construction
+  against symmetry transport of another member) agrees to `1e-12` on `D3h`
+  (order 12), `D2h` (order 8) and a generic order-2 prism (the `3-5`
+  counterexample: 12 `D6h` images collapse to the crystal's true 1-member
+  orbit); the regular prism renders bit for bit unchanged, only the store's
+  cache key moves (schema 4 → 5, adding `face_distance`). Validated at
+  absolute scale against Lumice Monte Carlo on two low-symmetry prisms (task
+  `low-symmetry-lumice-validation`): the total-flux ratio agrees to `4e-4`
+  across six crystal × pose-family × path-class combinations (random and
+  Parry poses, class `[3,5]` and, on the `D3h` prism, `[3,5,6,7]`), within
+  the two-seed noise floor and with nothing fitted; this run also found that
+  Lumice's own `P`/`B`/`D` reduction over-merges inequivalent paths below
+  `D6h` (measured `1.41×` on `D3h` `[3,5]`) — a Lumice-side defect, recorded
+  in its own backlog, not an LI one. The pyramid's store path stays fail-fast
+  (task `pyramid-lumice-semantics`).
 - **Checked against Lumice at the validation boundary**:
   `scripts/verify_crystal_closed_form.py` calls Lumice's
   `LUMICE_GetCrystalMesh` through `ctypes` and compares present faces,
