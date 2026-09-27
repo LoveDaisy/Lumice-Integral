@@ -77,8 +77,9 @@ uv run python scripts/regress_band_sum.py --stage k-eff --random-n 10000000 --ou
 uv run python scripts/regress_band_sum.py --stage scatter --band-dir artifacts/band-sum-full-new --baseline-dir artifacts/band-sum-full --output /tmp/regression_scatter.json
 uv run python scripts/regress_band_sum.py --stage scatter --random-n 10000000 --workers 4 --output /tmp/regression_scatter_windows.json
 
-# closed-form crystals (geometry.closed_form, symmetry.crystal_group) against Lumice's LUMICE_GetCrystalMesh via ctypes
-# (validation boundary; --lumice-lib or $LUMICE_LIB, falls back to the independent geometry check alone; ~5 s)
+# closed-form crystals (geometry.closed_form, Pyramid.from_lumice, symmetry.crystal_group) against Lumice's
+# LUMICE_GetCrystalMesh via ctypes: --random N prisms and N pyramids (validation boundary; --lumice-lib or $LUMICE_LIB,
+# falls back to the independent geometry check alone; ~6 s; disagreements on sub-3e-4 edges are listed as the ruler band)
 uv run python scripts/verify_crystal_closed_form.py --random 3000
 # D_P field layer (lumice_integral.dp_field): interval partition of the five fixtures against an
 # independent dense grid through evaluate_fields (~45 s standalone; the slow test in test_dp_field_certificate.py adds the

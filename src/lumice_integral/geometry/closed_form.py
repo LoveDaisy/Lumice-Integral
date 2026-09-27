@@ -150,3 +150,147 @@ def hex_cross_section(a: float = 1.0, face_distance: Sequence[float] = REGULAR_F
             "the cross-section has no area (Lumice's closed-manifold check rejects it)")
     ring = np.stack([_corner(a, present[k - 1], present[k], excess) for k in range(len(present))])
     return HexCrossSection(a, fd, offsets, tuple(face_present), present, ring)
+
+
+# ---- the eroded cross-section of a cone -------------------------------------------------------------------------
+#
+# Lumice's pyramid model (``src/core/geo3d_closedform.hpp`` header, ``doc/crystal-geometry-representation.md`` §4):
+# at inset ``m`` (a scalar in face_distance ratio units, 0 at the prism shoulder) a cone's horizontal cross-section
+# is the same six-direction problem with every ratio lowered by ``m``, ``face_distance[i] - m``.  Every side line
+# moves inward at the same speed, so an edge only ever shrinks: between two neighbours ``p`` and ``q`` (angular
+# gaps ``g1``, ``g2`` of 60° or 120°) the edge of line ``i`` loses ``apothem·(tan(30°·g1) + tan(30°·g2))`` of
+# length per unit ``m``.  The cross-section's combinatorics therefore change only when an edge reaches length
+# zero (Lumice's "corner-death event": lines ``p``, ``i``, ``q`` concurrent), and the whole cone is described by
+# the ordered list of those events up to the inset where the polygon has no area left (the natural apex, where it
+# is a point or a ridge segment).  Each event's inset is a closed-form ratio of the edge's length at ``m = 0`` to
+# its shrink rate for the neighbours it has at that moment; no vertex search, no hull.
+
+_TAN_30G = (0.0, 1.0 / np.sqrt(3.0), float(np.sqrt(3.0)))   # tan(30°·g) for the gap g = 1, 2 (index 0 unused)
+
+
+def inset_corner(a: float, face_distance: Sequence[float], p: int, q: int, m: float) -> np.ndarray:
+    """Corner of side lines ``p`` and ``q`` (``q`` 60° or 120° counter-clockwise of ``p``) at inset ``m``.
+
+    The same reference-corner-plus-correction form as :func:`hex_cross_section`'s ring, with the offsets of
+    ``face_distance - m``; at ``m = 0`` it is the ring's corner bit for bit.
+    """
+    apothem = float(a) * HALF_SQRT_3
+    excess = apothem * (np.asarray(face_distance, dtype=float) - m - 1.0)
+    return _corner(float(a), p, q, excess)
+
+
+def _edge_length0(a: float, fd: np.ndarray, p: int, i: int, q: int) -> float:
+    """Length at ``m = 0`` of line ``i``'s segment between the lines ``p`` (before) and ``q`` (after); may be negative."""
+    offsets = float(a) * HALF_SQRT_3 * fd
+    g1, g2 = (i - p) % 6, (q - i) % 6
+    t_lo = (offsets[i] * _COS_60K[g1] - offsets[p]) / _SIN_60K[g1]
+    t_hi = (offsets[q] - offsets[i] * _COS_60K[g2]) / _SIN_60K[g2]
+    return t_hi - t_lo
+
+
+def _shrink_rate(a: float, p: int, i: int, q: int) -> float:
+    return float(a) * HALF_SQRT_3 * (_TAN_30G[(i - p) % 6] + _TAN_30G[(q - i) % 6])
+
+
+def _is_polygon(present: Sequence[int]) -> bool:
+    """At least three lines and no two cyclic neighbours antiparallel (a bounded polygon of positive area)."""
+    n = len(present)
+    return n >= 3 and all((present[(k + 1) % n] - present[k]) % 6 in (1, 2) for k in range(n))
+
+
+@dataclass(frozen=True)
+class ConeDeath:
+    """One corner-death event: at inset ``m`` the consecutive lines ``dying`` reach zero length together, and the
+    surviving lines ``before`` and ``after`` (their neighbours) become adjacent at the corner ``xy``."""
+
+    m: float
+    dying: tuple[int, ...]
+    before: int
+    after: int
+    xy: np.ndarray
+
+
+@dataclass(frozen=True)
+class ConeSweep:
+    """The eroded cross-sections of a cone from the shoulder (``m = 0``) to its natural apex ``m_apex``.
+
+    ``events`` are the corner deaths with ``0 < m < m_apex`` in increasing ``m``; ``apex_present`` the lines that
+    still carry an edge just below the apex, in azimuth order; ``apex_points`` the distinct points the
+    cross-section collapses to (one for a point apex, two for a ridge), and ``apex_corner[k]`` the index into
+    ``apex_points`` of the corner where ``apex_present[k-1]`` ends and ``apex_present[k]`` begins.
+    """
+
+    a: float
+    face_distance: tuple[float, ...]
+    present: tuple[int, ...]
+    events: tuple[ConeDeath, ...]
+    m_apex: float
+    apex_present: tuple[int, ...]
+    apex_points: np.ndarray
+    apex_corner: tuple[int, ...]
+
+    def present_at(self, m: float) -> tuple[int, ...]:
+        """The lines carrying an edge at inset ``m < m_apex`` (after every event at or below ``m``)."""
+        alive = list(self.present)
+        for event in self.events:
+            if event.m > m:
+                break
+            alive = [i for i in alive if i not in event.dying]
+        return tuple(alive)
+
+
+def cone_sweep(a: float = 1.0, face_distance: Sequence[float] = REGULAR_FACE_DISTANCE) -> ConeSweep:
+    """The corner-death events and the natural apex of the cross-section eroded from ``face_distance`` (see above).
+
+    Events closer than ``PRESENT_REL_TOL`` times the largest ``|face_distance|`` in ``m`` are one event (a run of
+    consecutive lines dying together is a single vertex, a four- or more-plane concurrence); the first event that
+    would leave no polygon is the apex.  Raises ``ValueError`` like :func:`hex_cross_section` when the ``m = 0``
+    cross-section has no area.
+    """
+    section = hex_cross_section(a, face_distance)
+    a, fd = section.a, np.asarray(section.face_distance)
+    tol = PRESENT_REL_TOL * float(np.max(np.abs(fd)))
+    alive = list(section.present)
+    events: list[ConeDeath] = []
+    while True:
+        n = len(alive)
+        death = {}
+        for k, i in enumerate(alive):
+            p, q = alive[k - 1], alive[(k + 1) % n]
+            death[i] = _edge_length0(a, fd, p, i, q) / _shrink_rate(a, p, i, q)
+        m_star = min(death.values())
+        dying = {i for i in alive if death[i] <= m_star + tol}
+        remaining = [i for i in alive if i not in dying]
+        if not _is_polygon(remaining):
+            break
+        # split the dying lines into runs of cyclic neighbours; each run is one vertex between its survivors
+        start = next(k for k in range(n) if alive[k] not in dying)
+        order = alive[start:] + alive[:start]
+        k = 0
+        while k < n:
+            if order[k] not in dying:
+                k += 1
+                continue
+            run_start = k
+            while k < n and order[k] in dying:
+                k += 1
+            before, after = order[run_start - 1], order[k % n]
+            run = tuple(order[run_start:k])
+            events.append(ConeDeath(float(m_star), run, before, after, inset_corner(a, fd, before, after, m_star)))
+        alive = remaining
+    m_apex = m_star
+    corners = [inset_corner(a, fd, alive[k - 1], alive[k], m_apex) for k in range(len(alive))]
+    merge = PRESENT_REL_TOL * a * max(1.0, float(np.max(np.abs(fd))))
+    points: list[np.ndarray] = []
+    index = []
+    for c in corners:
+        for j, point in enumerate(points):
+            if np.linalg.norm(c - point) <= merge:
+                index.append(j)
+                break
+        else:
+            index.append(len(points))
+            points.append(c)
+    events.sort(key=lambda e: e.m)
+    return ConeSweep(a, section.face_distance, section.present, tuple(events), float(m_apex), tuple(alive),
+                     np.array(points), tuple(index))
