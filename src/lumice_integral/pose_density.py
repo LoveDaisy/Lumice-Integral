@@ -60,7 +60,8 @@ contract's ``1 / (8 pi^2)`` conversion from Haar probability to ``dVol_g``
 an explicit separate convention entry in ``FiberResult.conventions``.
 
 Roll-locked families (Parry, Lowitz) multiply the same zenith factor by a spin
-factor: with ``psi = c_axis_roll(R)`` the model is ``dP = p(n) dA(n) . q(psi)
+factor: with ``psi = c_axis_roll(R)`` (zero at body ``+x``, whether or not the
+crystal has a face there) the model is ``dP = p(n) dA(n) . q(psi)
 d psi``, ``q = h / Q``, ``h(psi) = exp(-(psi - roll_mean)^2 / (2 roll_std^2))``
 on the single period ``[roll_mean - pi, roll_mean + pi]`` and ``Q = int h d
 psi`` over that period, so ``rho_H(R) = (2 g(theta) / I) . (2 pi h(psi) / Q)``.
@@ -108,13 +109,19 @@ def c_axis_roll(rotation: np.ndarray) -> float:
     evidence only): the third row of ``Ry(-zenith) . Rz(roll)`` is
     ``(sin(zenith) cos(roll), -sin(zenith) sin(roll), cos(zenith))`` and the
     outer ``Rz`` leaves it unchanged, so ``roll = atan2(-R[2, 1], R[2, 0])``
-    whenever ``sin(zenith) > 0``.  ``roll = 0`` puts the body ``e1`` (the face-3
-    outward normal of ``geometry.core.HexPrism``) in the vertical plane through
-    the c axis, on the upper side; for a horizontal c axis face 3 is then the
-    horizontal top face.  Lumice numbers the faces the same way (face 3 = body
-    ``+x``, ``src/core/geo3d_closedform.hpp`` ``kHexFaceCos/Sin``), so this is
-    Lumice's roll too; the writing series' ``column_attitude`` uses
-    ``theta = roll - 180 deg`` (``docs/conventions.md``).
+    whenever ``sin(zenith) > 0``.  ``roll = 0`` puts the body ``e1`` (``+x``) in
+    the vertical plane through the c axis, on the upper side.  Body ``+x`` is
+    the azimuth of face 3 (its outward normal on any crystal that has face 3,
+    ``geometry.core.HexPrism``; for a horizontal c axis face 3 is then the
+    horizontal top face), but the reference is a body-frame fact and not a
+    face lookup: on a closed-form crystal where face 3 is degenerate or absent
+    (``face_distance = [2, 1, 1, 2, 1, 1]``) roll zero is still body ``+x``.
+    Nothing here takes a crystal.  Lumice numbers the faces the same way
+    (face 3 = body ``+x``, ``src/core/geo3d_closedform.hpp``
+    ``kHexFaceCos/Sin``) and its chain and ``kRollLockedGauss`` sampling are
+    pure angles, so this is Lumice's roll too; the writing series'
+    ``column_attitude`` uses ``theta = roll - 180 deg`` (``docs/conventions.md``
+    row 3).
 
     At the gimbal-lock poles (``zenith = 0`` or ``pi``) only ``az +- roll`` is
     defined and the value returned is arbitrary; callers must not rely on it
