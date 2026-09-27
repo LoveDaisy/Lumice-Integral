@@ -37,6 +37,10 @@ from lumice_integral.path_class import ClassPixelResult, canonical_class_scene, 
 from lumice_integral.pose_density import build_pose_density
 from lumice_integral.strip_pixel import PixelOptions
 
+# slow: ~80 s for the module on an M2 Max; the column tests share a 21 s module fixture,
+# so marking single functions would not take that setup out of the fast tier
+pytestmark = pytest.mark.slow
+
 # The recorded values below (twelve-fold identity, tilted-Parry separation) were
 # taken on 2026-09-20 on the ``h/a = 1`` crystal; task defect2-crystal-height-convention
 # then moved the canonical scene to ``h/a = 2`` (``entry_measure`` changes with h),

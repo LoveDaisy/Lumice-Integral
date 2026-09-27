@@ -45,6 +45,8 @@ def test_partition_matches_independent_oracle(keys) -> None:
     assert {frozenset(g) for g in ours.values()} == {frozenset(g) for g in oracle.values()}
 
 
+# slow: ~26 s on an M2 Max in the call itself; the shared keys fixture is paid by the fast tests anyway
+@pytest.mark.slow
 def test_equal_key_means_equal_direction(keys) -> None:
     """Every 2/3/4-face sequence against the first member of its key group, 200 Haar poses.
 
