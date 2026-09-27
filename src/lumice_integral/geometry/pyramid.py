@@ -33,6 +33,7 @@ from typing import Iterable
 
 import numpy as np
 
+from .closed_form import hex_cross_section
 from .core import BASAL_BOTTOM, BASAL_TOP, Face, Polyhedron
 
 C_OVER_A_ICE = 1.6288          # 冰的 c/a 轴比
@@ -63,12 +64,11 @@ class Pyramid(Polyhedron):
         self.tip_ratio = float(tip_ratio)
         cone_h = self.a * self.c_over_a * self.tip_ratio      # 锥台高（棱柱环到截顶面）
         tip_a = self.a * (1.0 - self.tip_ratio)               # 截顶小六边形边长（相似三角形）
-        # 六边形顶点 k 位于方位角 -30° + 60°k，使面 3+i（及锥面 13+i / 23+i）的外法向落在 i·60°
-        ang = np.deg2rad(-30.0 + 60.0 * np.arange(6))
-        cs = np.stack([np.cos(ang), np.sin(ang)], axis=1)
+        # 棱柱环与截顶小环都是正六边形横截面，与 HexPrism 同一闭式构造（closed_form.hex_cross_section）：
+        # 顶点 k 位于方位角 -30° + 60°k，使面 3+i（及锥面 13+i / 23+i）的外法向落在 i·60°
 
-        def ring(radius: float, z: float) -> np.ndarray:
-            return np.column_stack([radius * cs, np.full(6, z)])
+        def ring(edge: float, z: float) -> np.ndarray:
+            return np.column_stack([hex_cross_section(edge).ring, np.full(6, z)])
 
         vertices = np.vstack([
             ring(self.a, self.h / 2),                      # 0–5   棱柱顶环

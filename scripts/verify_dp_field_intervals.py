@@ -66,7 +66,7 @@ def _evaluate(u: np.ndarray, faces: tuple[int, ...], index: float) -> tuple[np.n
 
 def grid_field(faces: tuple[int, ...], index: float, grid: int) -> Grid:
     """The ``grid x grid`` orthographic chart of the entry hemisphere (module docstring)."""
-    n_a = np.asarray(optics.HEXPRISM_BODY_NORMALS[faces[0]])
+    n_a = optics.face_normals(canonical_crystal(), faces)[0]
     e1 = np.cross(n_a, np.eye(3)[int(np.argmin(np.abs(n_a)))])
     e1 /= np.linalg.norm(e1)
     e2 = np.cross(n_a, e1)

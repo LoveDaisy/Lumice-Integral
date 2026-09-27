@@ -22,6 +22,10 @@ migrates by rewriting ``halo_notes.math`` to ``lumice_integral.symmetry``:
   classes (34 = 6 + 12 + 16 on the prism).
 - ``ground_truth``: parser of the packaged ch3 ground-truth list
   (``data/raypath_ground_truth.txt``).
+- ``crystal_group``: ``true_symmetry_group`` -- the crystal's own group
+  ``G_true``, the elements of ``D6H`` that map the present faces (normal,
+  offset from the vertex centroid) onto themselves, verified to be a group
+  (original to this repository, task crystal-closed-form).
 - ``attitude``: column attitude ``R_z(psi) R_y(90) R_z(theta)`` and the sky
   direction ``R M R^T s_hat`` (the writing series' ``sun_vector`` is
   :func:`lumice_integral.camera.sun_direction` here).
@@ -31,6 +35,6 @@ The submodules are not flattened into one namespace: ``group`` and
 versus elements of ``G``), so names are reached through their module.
 """
 
-from . import attitude, ground_truth, group, reflection_group, signature
+from . import attitude, crystal_group, ground_truth, group, reflection_group, signature
 
-__all__ = ["attitude", "ground_truth", "group", "reflection_group", "signature"]
+__all__ = ["attitude", "crystal_group", "ground_truth", "group", "reflection_group", "signature"]

@@ -344,8 +344,8 @@ def evaluate_fields(
     s = incident_direction_from_sun(sun)
     valid, areas, transmissions = [], [], []
     for index_m, faces in enumerate(members):
-        check = optics.path_domain_batch(rotations, faces, s, index)
-        transmissions.append(optics.fresnel_transmission_path_batch(rotations, faces, s, index))
+        check = optics.path_domain_batch(rotations, faces, s, index, crystal=crystal)
+        transmissions.append(optics.fresnel_transmission_path_batch(rotations, faces, s, index, crystal=crystal))
         areas.append(geometry.entry_measure_batch(rotations, faces, s, crystal, n_ice=index))
         valid.append(check.valid)
         if index_m == 0:

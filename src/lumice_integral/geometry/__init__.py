@@ -23,11 +23,16 @@ code migrates by rewriting ``halo_notes.geometry`` to
 
 Original to this repository (not in the blueprint):
 
+- ``closed_form``: ``hex_cross_section`` / ``HexCrossSection``, the closed-form
+  cross-section of the six side planes under Lumice's ``face_distance``
+  (presence mask, corner ring, fail-fast rejection); ``HexPrism`` and
+  ``Pyramid`` build their rings on it.
 - ``entry_measure`` / ``EntryMeasureResult``: effective entry cross-section of
   a fixed face sequence at one pose, measured perpendicular to the world-frame
   incident direction (see ``entry_measure.py`` for the normalisation contract).
 """
 
+from .closed_form import PRESENT_REL_TOL, REGULAR_FACE_DISTANCE, HexCrossSection, hex_cross_section
 from .core import (
     BASAL_BOTTOM,
     BASAL_TOP,
@@ -94,13 +99,16 @@ __all__ = [
     "EntryMeasureResult",
     "EnumerationStats",
     "Face",
+    "HexCrossSection",
     "HexPrism",
     "LOWER_PYRAMID_FACES",
     "LatLonGrid",
     "N_ICE",
+    "PRESENT_REL_TOL",
     "PRISM_FACES",
     "Polyhedron",
     "Pyramid",
+    "REGULAR_FACE_DISTANCE",
     "RaypathRecord",
     "SymmetryOrbit",
     "UPPER_PYRAMID_FACES",
@@ -122,6 +130,7 @@ __all__ = [
     "fold_matrix",
     "geometric_ok",
     "halo_map_rank",
+    "hex_cross_section",
     "incidence_objective_deg",
     "is_feasible",
     "min_edge_length",

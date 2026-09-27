@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from functools import cached_property
 from typing import Sequence
 
+import jax
 import numpy as np
 
 from .. import optics
@@ -42,6 +43,7 @@ from .field import (
     DegenerateFoldSet,
     FoldScreen,
     InteriorCriticalPoint,
+    body_normals,
     d_p_batch,
     fold_screen,
     gradient_batch,
@@ -74,13 +76,18 @@ class DPField:
         cls, crystal: Polyhedron, faces: Sequence[int], index: float = float(optics.ICE_REFRACTIVE_INDEX), *, lattice_n: int = 20000
     ) -> "DPField":
         """The field of ``faces``; ``ValueError`` for a rank-0 path (its image is a point mass, not a field)."""
-        faces = optics.normalize_faces(faces)
+        faces = optics.normalize_faces(faces, crystal)
         if halo_map_rank(crystal, faces) == 0:
             raise ValueError(
-                f"{optics.path_id_of(faces)} has halo-map rank 0 (fold matrix I, wedge 0): its image is a point mass "
+                f"{optics.path_id_of(faces, crystal)} has halo-map rank 0 (fold matrix I, wedge 0): its image is a point mass "
                 "at the sun (path_class.estimate_rank0_contribution), not a D_P field"
             )
         return cls(crystal, faces, float(index), fold_screen(crystal, faces), lattice_n)
+
+    @cached_property
+    def normals(self) -> jax.Array:
+        """``crystal``'s body normals of ``faces`` in path order: the ``normals`` argument of the :mod:`.field` kernels."""
+        return body_normals(self.crystal, self.faces)
 
     @property
     def slab(self) -> np.ndarray | None:
@@ -89,30 +96,30 @@ class DPField:
 
     # -- evaluation (not cached)
     def d_p_batch(self, u: np.ndarray) -> np.ndarray:
-        return d_p_batch(u, self.faces, self.index, self.slab)
+        return d_p_batch(u, self.faces, self.index, self.slab, crystal=self.crystal)
 
     def gradient_batch(self, u: np.ndarray) -> np.ndarray:
-        return gradient_batch(u, self.faces, self.index, self.slab)
+        return gradient_batch(u, self.faces, self.index, self.slab, crystal=self.crystal)
 
     def hessian_tangent_batch(self, u: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        return hessian_tangent_batch(u, self.faces, self.index, self.slab)
+        return hessian_tangent_batch(u, self.faces, self.index, self.slab, crystal=self.crystal)
 
     def margins_batch(self, u: np.ndarray) -> np.ndarray:
         """Every margin of :func:`.optics.domain_margin_names` at each row of ``u`` (the gates: :meth:`validity_margins_batch`)."""
-        return margins_batch(u, self.faces, self.index)
+        return margins_batch(u, self.faces, self.index, crystal=self.crystal)
 
     def validity_margins_batch(self, u: np.ndarray) -> np.ndarray:
         """The gates of ``U_P`` (:func:`.optics.validity_margin_names`) at each row of ``u``, all positive inside ``U_P``."""
-        return validity_margins_batch(u, self.faces, self.index)
+        return validity_margins_batch(u, self.faces, self.index, crystal=self.crystal)
 
     def valid_batch(self, u: np.ndarray) -> np.ndarray:
         """``u in U_P`` for each row (:func:`.optics.path_domain_batch`, the single authority of the gates)."""
-        return valid_batch(u, self.faces, self.index)
+        return valid_batch(u, self.faces, self.index, crystal=self.crystal)
 
     # -- layers (cached)
     @cached_property
     def _interior(self) -> tuple[tuple[InteriorCriticalPoint, ...], DegenerateFoldSet | None]:
-        return interior_critical_points(self.fold, self.faces, self.index, lattice_n=self.lattice_n)
+        return interior_critical_points(self.fold, self.faces, self.index, lattice_n=self.lattice_n, crystal=self.crystal)
 
     @property
     def interior_critical_points(self) -> tuple[InteriorCriticalPoint, ...]:
@@ -141,7 +148,7 @@ class DPField:
 
     @cached_property
     def domain_topology(self) -> DomainTopology:
-        return domain_topology(self.faces, self.index, lattice_n=self.lattice_n)
+        return domain_topology(self.faces, self.index, lattice_n=self.lattice_n, crystal=self.crystal)
 
     @property
     def critical_set(self) -> CriticalSet:
@@ -154,6 +161,13 @@ class DPField:
     def interval_partition(self) -> tuple[DeviationInterval, ...]:
         """``[(delta_a, delta_b, n_components, n_closed, n_open)]``; :class:`TopologyEscape` outside the disk reasoning."""
         return interval_partition(
-            self.faces, self.index, self.interior_critical_points, self.degenerate_fold, self.boundary, self.domain_topology, self.slab
+            self.faces,
+            self.index,
+            self.interior_critical_points,
+            self.degenerate_fold,
+            self.boundary,
+            self.domain_topology,
+            self.slab,
+            crystal=self.crystal,
         )
 

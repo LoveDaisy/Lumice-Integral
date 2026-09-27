@@ -16,6 +16,8 @@ from typing import Iterable, Sequence
 
 import numpy as np
 
+from .closed_form import REGULAR_FACE_DISTANCE, hex_cross_section
+
 Vec3 = np.ndarray
 
 BASAL_TOP = 1
@@ -249,30 +251,40 @@ class Polyhedron:
 
 
 class HexPrism(Polyhedron):
-    """六方柱冰晶。``a`` 为六边形边长（= 外接圆半径），``h`` 为柱高。
+    """六方柱冰晶。``a`` 为参考正六边形边长（= 外接圆半径），``h`` 为柱高。
 
     片晶 ``h/a`` 小，柱晶 ``h/a`` 大。生成时 c 轴沿 +z、面 3 法向沿 +x，
     体心在原点；其他姿态用 :meth:`transformed` 得到。
+
+    ``face_distance``：6 个侧面到 c 轴的距离，以参考正六边形边心距 ``a·√3/2`` 为单位（Lumice
+    ``doc/configuration.md`` §prism 的同名字段；全 1 = 正六边形，可为负）。横截面由
+    :func:`.closed_form.hex_cross_section` 闭式给出：只有"存在"的侧面进入 ``faces``（缺席面号
+    查 :meth:`face` 直接 ``KeyError``），截面无面积的组合抛 ``ValueError``。
+    Lumice 的 ``height`` 是 ``h / (2a)``（高比外接圆直径），换算见 :meth:`from_lumice`。
     """
 
-    def __init__(self, a: float = 1.0, h: float = 1.0):
-        self.a = float(a)
+    def __init__(self, a: float = 1.0, h: float = 1.0,
+                 face_distance: Sequence[float] = REGULAR_FACE_DISTANCE):
+        if not (np.isfinite(h) and h > 0.0):
+            raise ValueError(f"h must be a positive finite height, got {h!r}")
+        section = hex_cross_section(a, face_distance)
+        self.a = section.a
         self.h = float(h)
-        # 六边形顶点 k 位于方位角 -30° + 60°k，使面 3+i 的外法向落在 i·60°
-        ang = np.deg2rad(-30.0 + 60.0 * np.arange(6))
-        ring = np.stack([self.a * np.cos(ang), self.a * np.sin(ang)], axis=1)
-        top = np.column_stack([ring, np.full(6, self.h / 2)])
-        bottom = np.column_stack([ring, np.full(6, -self.h / 2)])
-        vertices = np.vstack([top, bottom])  # 0–5 顶环，6–11 底环
+        self.face_distance_ratios = section.face_distance
+        ring = section.ring  # 正六边形时顶点 k 位于方位角 -30° + 60°k，使面 3+i 的外法向落在 i·60°
+        m = len(ring)
+        top = np.column_stack([ring, np.full(m, self.h / 2)])
+        bottom = np.column_stack([ring, np.full(m, -self.h / 2)])
+        vertices = np.vstack([top, bottom])  # 0..m-1 顶环，m..2m-1 底环
 
         faces = [
-            Face(BASAL_TOP, tuple(range(6))),
-            Face(BASAL_BOTTOM, tuple(6 + k for k in range(5, -1, -1))),
+            Face(BASAL_TOP, tuple(range(m))),
+            Face(BASAL_BOTTOM, tuple(m + k for k in range(m - 1, -1, -1))),
         ]
-        for i in range(6):
-            j = (i + 1) % 6
+        for k, i in enumerate(section.present):
+            j = (k + 1) % m
             # 从外侧看逆时针：底-左、底-右、顶-右、顶-左
-            faces.append(Face(3 + i, (6 + i, 6 + j, j, i)))
+            faces.append(Face(3 + i, (m + k, m + j, j, k)))
         super().__init__(vertices, faces)
 
     @classmethod
@@ -280,12 +292,19 @@ class HexPrism(Polyhedron):
         """按高径比 ``h/a`` 构造。"""
         return cls(a=a, h=ratio * a)
 
+    @classmethod
+    def from_lumice(cls, height: float = 1.0, face_distance: Sequence[float] = REGULAR_FACE_DISTANCE,
+                    a: float = 1.0) -> "HexPrism":
+        """按 Lumice prism 的 ``shape``（``height`` = 柱高 / 参考外接圆直径，``face_distance``）构造，
+        参考六边形边长取 ``a``：``h = 2a·height``（``docs/phase1.md`` 的高度约定）。"""
+        return cls(a=a, h=2.0 * a * height, face_distance=face_distance)
+
     def _copy_with(self, vertices: np.ndarray,
                    faces: Iterable[Face] | None = None) -> "HexPrism":
-        # 手动搬运字段以绕开 __init__（它会按 a/h 重新生成顶点，覆盖掉变换后的 vertices）；
+        # 手动搬运字段以绕开 __init__（它会按 a/h/face_distance 重新生成顶点，覆盖掉变换后的 vertices）；
         # HexPrism.__init__ 新增构造参数时必须同步在这里搬运，否则变换后的实例会悄悄丢字段。
         # ``faces`` 须透传：mirrored() 用它传入顶点环已反转的面。
         obj = HexPrism.__new__(HexPrism)
-        obj.a, obj.h = self.a, self.h
+        obj.a, obj.h, obj.face_distance_ratios = self.a, self.h, self.face_distance_ratios
         Polyhedron.__init__(obj, vertices, self.faces if faces is None else faces)
         return obj

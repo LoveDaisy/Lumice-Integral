@@ -150,6 +150,80 @@ that each must become a package immediately:
 The boundaries should emerge from the first working slice. They are not a
 request to build six frameworks before tracing one loop.
 
+### 4.1 Crystal construction (closed form) and the crystal's own group
+
+Both phases take the crystal from `lumice_integral.geometry`, so its
+construction is described here rather than in a phase document (task
+`crystal-closed-form`, scrum `crystal-native-geometry`, 2026-09-27;
+conventions #19).
+
+- **Semantics are Lumice's** (`doc/configuration.md`): a prism has a height
+  and six `face_distance` ratios of the regular apothem `a·√3/2`, negative
+  values allowed; `HexPrism(a, h, face_distance)`, with
+  `HexPrism.from_lumice(height, face_distance, a)` for Lumice's
+  `height = h / (2a)`. `Pyramid` covers the symmetric subset (regular cross
+  section, `upper_h = lower_h` truncated cones); asymmetric and one-sided
+  cones are a later stage and the construction does not preclude them.
+- **Closed form, no topology discovery** (the route Lumice abandoned in
+  PR #214, `doc/crystal-geometry-representation.md` §1, §4): the six side
+  planes are a fixed star, so for each side face the other five half-planes
+  cut its line to one analytic interval; the face is *present* iff the
+  interval has positive length (scale-relative `1e-9`). Corners are the
+  intersections of consecutive present faces, written as the regular
+  hexagon's corner plus the exact linear correction, so the regular prism
+  is the historical one bit for bit. Faces are the present subset of the
+  constant numbers 1/2, 3–8 (13–18, 23–28 on the pyramid); an absent face
+  number is a `KeyError`, not a silently wrong normal.
+- **Rejection is fail-fast**: fewer than three present side faces means the
+  cross-section has no area and the constructor raises `ValueError` where
+  Lumice drops the crystal. (Positive width of each opposite pair is not
+  enough: `[1, 1, -0.5, -0.9, -0.9, 1]` has three positive-width slabs that
+  do not meet.)
+- **`G_true`** (`symmetry.crystal_group.true_symmetry_group`): every normal
+  lies in the six-direction star or on `±c`, so the crystal's own symmetry
+  group is the subset of `signature.D6H` that maps the present faces'
+  (normal, offset from the vertex centroid) onto themselves, verified to be
+  a group. Regular prism and symmetric pyramid 24, `[1, d, 1, d, 1, d]` 12,
+  `[1.9, 1, 1, 1.9, 1, 1]` and `[2, 1, 1, 2, 1, 1]` 8, a generic shape 2
+  (`{E, σh}`).
+- **Normals come from the crystal** (task `optics-reads-crystal`,
+  2026-09-27): every single-path function of `optics` (`path_direction`,
+  `path_domain[_batch]`, `fresnel_transmission_path[_batch]`, `path_problem`
+  and the `path_3_5*` wrappers) takes `crystal` (default: the regular
+  `HexPrism()`) and reads the normal of face `f` as
+  `crystal.normal(crystal.face(f))` through `optics.face_normals`, the one
+  lookup. A face 1–8 whose normal lies on its closed-form star direction
+  (`±c`, azimuth `i·60°`) to `1e-12` reads the exact direction (Newell's
+  formula lands ~1e-16 off it), so the regular prism evaluates bit for bit
+  as on the historical constant table the ch06 fixtures, the strip pipeline
+  and the $S^2$ store are pinned to; a face off the star keeps its own
+  normal. `HEXPRISM_BODY_NORMALS` is that lookup on the regular prism, kept
+  for callers that index a table. The `D_P` kernels (`dp_field`, `contour`,
+  `contour_quadrature`, `ch10_verdicts`) take the normals as a traced array
+  (`DPField.normals`), so one compilation per face sequence serves every
+  crystal. Every consumer that holds a crystal passes it down (`DPField`,
+  `focusing.classify`, `weights`, `s2_store.evaluate_fields`, discovery,
+  the strip scene); a face the crystal does not have is a `ValueError`, and
+  the pyramid's faces 13–28 run through `focusing.classify`. The boundary
+  walk's margin identity (`identical_margins`) is confirmed on the crystal's
+  normals rather than assumed from face numbers.
+- **The reduced cluster fails fast below `D6h`**: `path_class`'s
+  `pbd_orbit_hexprism`, `phi_key` and `path_class_symmetry` (and `s2_store`,
+  `strip_pixel`, `band_sum`, which reach the crystal's symmetry only through
+  them) raise `ValueError` unless `|G_true| = 24`; explicit
+  `symmetry_elements` must lie in `G_true`. The `D6h` orbit of a path is not
+  the crystal's orbit on a lower-symmetry shape (`3-5` has 12 `D6h` images;
+  `[2, 1, 1, 2, 1, 1]` has 8 symmetries), so these would silently merge
+  paths that are not images of each other. Generalising orbits, stores and
+  transports to `G_true` is the next stage.
+- **Checked against Lumice at the validation boundary**:
+  `scripts/verify_crystal_closed_form.py` calls Lumice's
+  `LUMICE_GetCrystalMesh` through `ctypes` and compares present faces,
+  normals and corners on the critical shapes (far faces exactly touching a
+  corner) and 3000 random `face_distance` sets (all agree, rejections
+  included), next to an independent check (half-space containment,
+  `V − E + F = 2`).
+
 ## 5. Relationship to other projects
 
 ### 5.1 Lumice

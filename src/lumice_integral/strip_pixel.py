@@ -125,7 +125,7 @@ class StripScene:
             raise ValueError("seeds refractive index does not match the scene")
         if seeds.store.spec.crystal != crystal_description(self.crystal):
             raise ValueError(f"seed store crystal {seeds.store.spec.crystal} is not the scene's {crystal_description(self.crystal)}")
-        expected = problem_path_label(seeds.faces, self.refractive_index)
+        expected = problem_path_label(seeds.faces, self.refractive_index, self.crystal)
         for name in ("discovery_template", "production_template"):
             if getattr(self, name).path != expected:
                 raise ValueError(f"{name} path {getattr(self, name).path!r} does not match the seeds' {expected!r}")
@@ -170,7 +170,7 @@ def build_strip_scene(
     :func:`.optics.path_problem` of ``faces`` (weightless for discovery, with
     :func:`.weights.build_path_weight_evaluators` for production).
     """
-    faces = normalize_faces(faces)
+    faces = normalize_faces(faces, crystal)
     sun = np.asarray(sun_direction, dtype=np.float64)
     incident = incident_direction_from_sun(sun)
     index = float(refractive_index)
@@ -178,13 +178,14 @@ def build_strip_scene(
         store = seed_store(crystal, index, (faces,), seed_store_n, cache_dir=seed_store_cache_dir)
         seeds = StoreSeeds(store, faces, sun)
     elif seeds.faces != faces:
-        raise ValueError(f"seeds are of path {seeds.path_id!r}, not {path_id_of(faces)!r}")
+        raise ValueError(f"seeds are of path {seeds.path_id!r}, not {path_id_of(faces, crystal)!r}")
     template = path_problem(
         jnp.asarray(np.eye(3)),
         faces,
         jnp.asarray(incident),
         target_direction=jnp.asarray(pixel_target(render, 0, 0)),
         refractive_index=jnp.asarray(index, dtype=jnp.float64),
+        crystal=crystal,
     )
     evaluators = build_path_weight_evaluators(
         faces=faces,
