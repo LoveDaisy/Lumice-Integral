@@ -41,6 +41,26 @@ fitted.  Reported, per family render:
   side above ``--profile-floor``) and the same RMS between the two Lumice
   seeds (the noise floor of the profile, ``sqrt(2)`` times the merged one).
 
+Colour (the render's ``provenance.json`` ``format`` decides; anything else is
+refused): a ``render_band_sum.py --illuminant`` / ``--discrete-wavelength-nm``
+render (``spectrum.xyz_band_sum``) is compared channel by channel in linear
+XYZ against all three channels of ``img_01.npy`` (never the tone-mapped 8-bit
+PNG), with the Lumice light source's spectrum checked against the render's:
+
+    raw[p, c] / E = XYZ[p, c] * Omega_p / (S / 2),  c in X, Y, Z
+
+where ``XYZ`` already carries the CMF and Lumice's slot and emitted-weight
+normalisation (no ``ybar(550)`` here).  The four blocks above are reported per
+channel under ``channels``, with the flux-weighted chromaticity ``(x, y)`` of
+both sides in ``chromaticity``.  The monochrome form is the same expression
+with ``XYZ[p, Y] = ybar(550) V``: a discrete 550 nm colour render gives the
+monochrome ``Y`` metrics bit for bit.  Lumice's pool has ``M = 64`` slots
+unless ``LUMICE_WL_POOL_SIZE`` says otherwise (it is not in ``config.json``);
+set it to the render's ``--wavelength-count`` for a like-for-like pool, and
+run the Metal backend (``--backend metal --seed N``: the CPU backend samples
+the wavelength per batch instead of the pool, and unseeded Metal runs repeat
+one random stream, which leaves no noise floor).
+
 The band-sum value is a deviation-band average and Lumice's a pixel-area
 average: next to sharp edges they differ by the averaging itself, which the
 flux ratio does not see.  Nothing here imports or calls Lumice.  Usage::
@@ -61,13 +81,16 @@ from typing import Any
 
 import numpy as np
 
+from lumice_integral.band_sum import FORMAT_VERSION as MONOCHROME_FORMAT
 from lumice_integral.geometry import Polyhedron
 from lumice_integral.path_class import pbd_orbit_hexprism
+from lumice_integral.spectrum.xyz_band_sum import CHANNELS, read_xyz_band_sum_strip
+from lumice_integral.spectrum.xyz_band_sum import FORMAT_VERSION as XYZ_FORMAT
 from lumice_integral.strip_io import read_strip, scene_crystal
 from lumice_integral.symmetry.crystal_group import true_symmetry_group
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from probe_absolute_scale import YBAR_550, load_run, merged_relative_noise, pixel_solid_angles, total_surface_area  # noqa: E402
+from probe_absolute_scale import YBAR_550, load_run_xyz, merged_relative_noise, pixel_solid_angles, total_surface_area  # noqa: E402
 
 
 def check_camera(render: dict[str, Any], config: dict[str, Any]) -> None:
@@ -114,11 +137,11 @@ def check_filter(config: dict[str, Any], representative: list[int], members: lis
     return "exact" if top["type"] == "raypath" else "complex"
 
 
-def read_k_eff(li_dir: Path, shape: tuple[int, int]) -> np.ndarray:
+def read_k_eff(li_dir: Path, shape: tuple[int, int], column: str = "K_eff") -> np.ndarray:
     k_eff = np.zeros(shape)
     with (li_dir / "pixels.csv").open() as fh:
         for rec in csv.DictReader(fh):
-            k_eff[int(rec["row"]), int(rec["column"])] = float(rec["K_eff"])
+            k_eff[int(rec["row"]), int(rec["column"])] = float(rec[column])
     return k_eff
 
 
@@ -134,56 +157,62 @@ def profile_rms(a: np.ndarray, b: np.ndarray, floor: float) -> tuple[float, int]
     return float(np.sqrt(np.mean((na[lit] - nb[lit]) ** 2))), int(lit.sum())
 
 
-def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--li-dir", type=Path, required=True, help="render_band_sum.py --path-class output directory")
-    parser.add_argument("--lumice-run", type=Path, action="append", required=True, help="Lumice run directory (img_01.npy, img_01.json, config.json); two for the noise floor")
-    parser.add_argument("--bright-floor", type=float, default=0.1)
-    parser.add_argument("--profile-floor", type=float, default=0.05)
-    parser.add_argument("--output", type=Path, required=True, help="metrics JSON")
-    args = parser.parse_args(argv)
+def load_li(li_dir: Path) -> tuple[dict[str, np.ndarray], np.ndarray, dict[str, Any]]:
+    """``({channel: image}, K_eff image, provenance)`` of a band-sum render, monochrome or colour (by ``format``).
 
-    arrays, provenance = read_strip(args.li_dir)
-    value = np.nan_to_num(arrays.values, nan=0.0)
-    render = dict(provenance["scene"]["camera"]["value"])
-    path = provenance["scene"]["path"]["value"]
-    members = provenance["options"]["path_class"]["members"]
-    crystal = scene_crystal(provenance["scene"])
-    runs = [load_run(d) for d in args.lumice_run]
-    filter_forms = set()
-    for d, (y, _, _) in zip(args.lumice_run, runs):
-        if y.shape != value.shape:
-            raise SystemExit(f"{d}: shape {y.shape} (need {value.shape})")
-        config = json.loads((d / "config.json").read_text())
-        filter_forms.add(check_filter(config, path, members, crystal))
-        check_camera(render, config)
+    Monochrome (``band_sum.FORMAT_VERSION``): one channel ``Y = ybar(550) V``.  Colour
+    (``xyz_band_sum.FORMAT_VERSION``): ``X``, ``Y``, ``Z`` as written, which already carry the CMF and
+    Lumice's slot / emitted-weight normalisation, and ``K_eff_min`` as the noise.  Either way the
+    prediction is ``raw[p, c] / E = channel[p] Omega_p / (S / 2)``, the same expression, so a
+    discrete 550 nm colour render and the monochrome render at ``n(550)`` give bit-identical ``Y``
+    metrics.  Any other or missing ``format`` is refused, never read as monochrome.
+    """
+    try:
+        provenance = json.loads((li_dir / "provenance.json").read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"{li_dir}: no readable provenance.json ({exc})") from None
+    kind = provenance.get("format")
+    if kind == MONOCHROME_FORMAT:
+        arrays, provenance = read_strip(li_dir)
+        channels = {"Y": YBAR_550 * np.nan_to_num(arrays.values, nan=0.0)}
+        k_eff = read_k_eff(li_dir, arrays.values.shape)
+    elif kind == XYZ_FORMAT:
+        xyz, _, provenance = read_xyz_band_sum_strip(li_dir)
+        channels = {c: xyz[:, :, i] for i, c in enumerate(CHANNELS)}
+        k_eff = read_k_eff(li_dir, xyz.shape[:2], column="K_eff_min")
+    else:
+        raise SystemExit(f"{li_dir}: provenance format {kind!r} is neither {MONOCHROME_FORMAT!r} nor {XYZ_FORMAT!r}")
+    return channels, k_eff, provenance
 
-    surface_area = total_surface_area(crystal)
-    omega = pixel_solid_angles(render)
-    k_pixel = YBAR_550 * omega / (0.5 * surface_area)
-    predicted = k_pixel * value
-    per_run = [y / m["emitted_energy"] for y, m, _ in runs]
-    measured = np.sum([y for y, _, _ in runs], axis=0) / sum(m["emitted_energy"] for _, m, _ in runs)
-    k_eff = read_k_eff(args.li_dir, value.shape)
 
+def check_spectrum(config: dict[str, Any], spectrum: dict[str, Any]) -> None:
+    """``SystemExit`` unless the Lumice light source has the colour render's spectrum (illuminant name, or the one wavelength)."""
+    lumice = config["scene"]["light_source"].get("spectrum")
+    if "illuminant" in spectrum:
+        if lumice != spectrum["illuminant"]:
+            raise SystemExit(f"Lumice spectrum {lumice!r} != band-sum illuminant {spectrum['illuminant']!r}")
+    elif not (isinstance(lumice, list) and len(lumice) == 1 and float(lumice[0]["wavelength"]) == spectrum["discrete_wavelength_nm"]):
+        raise SystemExit(f"Lumice spectrum {lumice!r} != band-sum wavelength {spectrum['discrete_wavelength_nm']} nm")
+
+
+def channel_metrics(
+    measured: np.ndarray,
+    predicted: np.ndarray,
+    per_run: list[np.ndarray],
+    k_eff: np.ndarray,
+    surface_area: float,
+    omega: np.ndarray,
+    *,
+    bright_floor: float,
+    profile_floor: float,
+) -> dict[str, Any]:
+    """``total`` / ``bright`` / ``regions`` / ``profiles`` of one channel (module docstring)."""
+    k_pixel = omega / (0.5 * surface_area)
     lit = (measured > 0) | (predicted > 0)
-    bright = (measured >= args.bright_floor * measured.max()) & (predicted > 0)
+    bright = (measured >= bright_floor * measured.max()) & (predicted > 0)
     ratio = measured[bright] / predicted[bright]
-    implied = YBAR_550 * omega[bright] * value[bright] / measured[bright]
+    implied = predicted[bright] * (0.5 * surface_area) / measured[bright]
     out: dict[str, Any] = {
-        "generated": dt.datetime.now().astimezone().isoformat(),
-        "li_dir": str(args.li_dir),
-        "lumice_runs": [str(d) for d in args.lumice_run],
-        "pose_density": provenance["scene"].get("pose_density", {}).get("value"),
-        "path_class_representative": path,
-        "path_class_members": members,
-        "crystal": provenance["scene"]["crystal"]["value"],
-        "lumice_filter": sorted(filter_forms),
-        "camera": render,
-        "emitted_energy": [m["emitted_energy"] for _, m, _ in runs],
-        "surface_area": surface_area,
-        "entry_area": 0.5 * surface_area,
-        "convention": "raw[p] / emitted_energy = K_p * V(p), K_p = ybar(550) * Omega_p / (S / 2); V = band-sum class value (G_true class)",
         "total": {
             "lit_pixels": int(lit.sum()),
             "measured_over_predicted": flux_ratio(measured, predicted, lit),
@@ -192,7 +221,7 @@ def main(argv: list[str] | None = None) -> None:
             "measured_flux_share_outside_li_lit": float(measured[lit & (predicted == 0)].sum() / measured[lit].sum()),
         },
         "bright": {
-            "floor": args.bright_floor,
+            "floor": bright_floor,
             "pixels": int(bright.sum()),
             "measured_over_predicted_median": float(np.median(ratio)),
             "measured_over_predicted_mean": float(np.mean(ratio)),
@@ -210,7 +239,7 @@ def main(argv: list[str] | None = None) -> None:
         x1, x2 = per_run[0][bright], per_run[1][bright]
         out["bright"]["lumice_merged_relative_noise_rms"] = merged_relative_noise(x1, x2)
         out["bright"]["expected_ratio_relative_std"] = float(np.sqrt(out["bright"]["lumice_merged_relative_noise_rms"] ** 2 + out["bright"]["li_relative_noise_rms"] ** 2))
-    h, w = value.shape
+    h, w = measured.shape
     halves = {
         "top": (slice(0, h // 2), slice(None)),
         "bottom": (slice(h // 2, None), slice(None)),
@@ -228,25 +257,117 @@ def main(argv: list[str] | None = None) -> None:
             }
     peak_row, peak_column = np.unravel_index(np.argmax(measured), measured.shape)
     for name, index in (("row", (int(peak_row), slice(None))), ("column", (slice(None), int(peak_column)))):
-        rms, count = profile_rms(measured[index], predicted[index], args.profile_floor)
+        rms, count = profile_rms(measured[index], predicted[index], profile_floor)
         entry: dict[str, Any] = {"index": int(peak_row if name == "row" else peak_column), "lit": count, "rms_max_normalised": rms}
         if len(per_run) >= 2:
-            entry["rms_lumice_run1_vs_run2"] = profile_rms(per_run[0][index], per_run[1][index], args.profile_floor)[0]
+            entry["rms_lumice_run1_vs_run2"] = profile_rms(per_run[0][index], per_run[1][index], profile_floor)[0]
         out["profiles"][name] = entry
+    return out
+
+
+def chromaticity(measured: dict[str, np.ndarray], predicted: dict[str, np.ndarray]) -> dict[str, Any]:
+    """Flux-weighted CIE ``(x, y)`` of the whole image on either side (lit in any channel) and their difference."""
+    lit = np.any([(measured[c] > 0) | (predicted[c] > 0) for c in CHANNELS], axis=0)
+
+    def xy(images: dict[str, np.ndarray]) -> list[float]:
+        flux = [float(images[c][lit].sum()) for c in CHANNELS]
+        total = sum(flux)
+        if total == 0.0:
+            raise SystemExit("chromaticity: no positive flux in either image over the lit mask (window has no light)")
+        return [flux[0] / total, flux[1] / total]
+
+    m, p = xy(measured), xy(predicted)
+    return {"measured_xy": m, "predicted_xy": p, "difference_xy": [m[0] - p[0], m[1] - p[1]]}
+
+
+def print_channel(label: str, metrics: dict[str, Any], entry_area: float) -> None:
+    t, b = metrics["total"], metrics["bright"]
+    print(f"{label}total flux measured/predicted {t['measured_over_predicted']:.4f} (runs {', '.join(f'{r:.4f}' for r in t['per_run'])})")
+    print(
+        f"{label}bright ({b['pixels']} px): ratio median {b['measured_over_predicted_median']:.4f}, mean {b['measured_over_predicted_mean']:.4f} "
+        f"+- {b['measured_over_predicted_standard_error']:.4f}, rel std {b['measured_over_predicted_relative_std']:.4f} "
+        f"(expected {b.get('expected_ratio_relative_std', float('nan')):.4f}); implied area {b['implied_entry_area_median']:.3f} (S/2 {entry_area:.3f})"
+    )
+    for name, r in metrics["regions"].items():
+        print(f"{label}region {name}: {r['measured_over_predicted']:.4f} (flux share {r['predicted_flux_share']:.3f})")
+    for name, p in metrics["profiles"].items():
+        print(f"{label}profile {name} {p['index']}: rms {p['rms_max_normalised']:.4f} (lumice seeds {p.get('rms_lumice_run1_vs_run2', float('nan')):.4f}, n={p['lit']})")
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--li-dir", type=Path, required=True, help="render_band_sum.py --path-class output directory (monochrome or colour)")
+    parser.add_argument("--lumice-run", type=Path, action="append", required=True, help="Lumice run directory (img_01.npy, img_01.json, config.json); two for the noise floor")
+    parser.add_argument("--bright-floor", type=float, default=0.1)
+    parser.add_argument("--profile-floor", type=float, default=0.05)
+    parser.add_argument("--output", type=Path, required=True, help="metrics JSON")
+    args = parser.parse_args(argv)
+
+    channels, k_eff, provenance = load_li(args.li_dir)
+    colour = provenance["format"] == XYZ_FORMAT
+    shape = k_eff.shape
+    render = dict(provenance["scene"]["camera"]["value"])
+    path = provenance["scene"]["path"]["value"]
+    members = provenance["options"]["path_class"]["members"]
+    crystal = scene_crystal(provenance["scene"])
+    runs = [load_run_xyz(d) for d in args.lumice_run]
+    filter_forms = set()
+    for d, (xyz, _, _) in zip(args.lumice_run, runs):
+        if xyz.shape[:2] != shape:
+            raise SystemExit(f"{d}: shape {xyz.shape[:2]} (need {shape})")
+        config = json.loads((d / "config.json").read_text())
+        filter_forms.add(check_filter(config, path, members, crystal))
+        check_camera(render, config)
+        if colour:
+            check_spectrum(config, provenance["options"]["spectrum"])
+
+    surface_area = total_surface_area(crystal)
+    omega = pixel_solid_angles(render)
+    energy = [m["emitted_energy"] for _, m, _ in runs]
+    metrics, measured_all, predicted_all = {}, {}, {}
+    for name, image in channels.items():
+        c = CHANNELS.index(name)
+        predicted = omega / (0.5 * surface_area) * image
+        per_run = [xyz[:, :, c] / e for (xyz, _, _), e in zip(runs, energy)]
+        measured = np.sum([xyz[:, :, c] for xyz, _, _ in runs], axis=0) / sum(energy)
+        metrics[name] = channel_metrics(
+            measured, predicted, per_run, k_eff, surface_area, omega, bright_floor=args.bright_floor, profile_floor=args.profile_floor
+        )
+        measured_all[name], predicted_all[name] = measured, predicted
+    out: dict[str, Any] = {
+        "generated": dt.datetime.now().astimezone().isoformat(),
+        "li_dir": str(args.li_dir),
+        "li_format": provenance["format"],
+        "lumice_runs": [str(d) for d in args.lumice_run],
+        "pose_density": provenance["scene"].get("pose_density", {}).get("value"),
+        "path_class_representative": path,
+        "path_class_members": members,
+        "crystal": provenance["scene"]["crystal"]["value"],
+        "lumice_filter": sorted(filter_forms),
+        "camera": render,
+        "emitted_energy": energy,
+        "surface_area": surface_area,
+        "entry_area": 0.5 * surface_area,
+    }
+    if colour:
+        out["spectrum"] = provenance["options"]["spectrum"]
+        out["convention"] = (
+            "raw[p, c] / emitted_energy = XYZ[p, c] Omega_p / (S / 2), c in X, Y, Z; XYZ = the colour band-sum render "
+            "(xyz_band_sum: (1/M) sum_i spd_i CMF_i V_{n_i} / emitted_weight), linear, no tone mapping"
+        )
+        out["channels"] = metrics
+        out["chromaticity"] = chromaticity(measured_all, predicted_all)
+    else:
+        out["convention"] = "raw[p] / emitted_energy = K_p * V(p), K_p = ybar(550) * Omega_p / (S / 2); V = band-sum class value (G_true class)"
+        out.update(metrics["Y"])
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(out, indent=2) + "\n")
-    t, b = out["total"], out["bright"]
-    print(f"total flux measured/predicted {t['measured_over_predicted']:.4f} (runs {', '.join(f'{r:.4f}' for r in t['per_run'])})")
-    print(
-        f"bright ({b['pixels']} px): ratio median {b['measured_over_predicted_median']:.4f}, mean {b['measured_over_predicted_mean']:.4f} "
-        f"+- {b['measured_over_predicted_standard_error']:.4f}, rel std {b['measured_over_predicted_relative_std']:.4f} "
-        f"(expected {b.get('expected_ratio_relative_std', float('nan')):.4f}); implied area {b['implied_entry_area_median']:.3f} (S/2 {0.5 * surface_area:.3f})"
-    )
-    for name, r in out["regions"].items():
-        print(f"region {name}: {r['measured_over_predicted']:.4f} (flux share {r['predicted_flux_share']:.3f})")
-    for name, p in out["profiles"].items():
-        print(f"profile {name} {p['index']}: rms {p['rms_max_normalised']:.4f} (lumice seeds {p.get('rms_lumice_run1_vs_run2', float('nan')):.4f}, n={p['lit']})")
+    for name, m in metrics.items():
+        print_channel(f"[{name}] " if colour else "", m, 0.5 * surface_area)
+    if colour:
+        ch = out["chromaticity"]
+        print(f"chromaticity xy measured {ch['measured_xy'][0]:.5f}, {ch['measured_xy'][1]:.5f}; predicted {ch['predicted_xy'][0]:.5f}, {ch['predicted_xy'][1]:.5f}")
     print(f"wrote {args.output}")
 
 

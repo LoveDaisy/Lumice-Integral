@@ -53,13 +53,18 @@ labelled ``point_mass`` here and nothing else.
 Nothing here changes a value the quadratures compute; the labels are read
 from the same critical data (:class:`.dp_field.DPField`) and density
 (:mod:`.pose_density`) the renderers use.
+
+:func:`wavelength_critical_table` runs :func:`classify` once per refractive
+index ``n(lambda)`` and lines the onsets up across wavelengths: how far each
+critical value moves with ``n`` (the panel's wavelength-critical preset).
+It adds no mathematics of its own.
 """
 
 from __future__ import annotations
 
 import dataclasses
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 import numpy as np
 
@@ -327,15 +332,114 @@ def classify(
     return FocusingClassification(path, rank, field_onsets(field), gradient_norm_range(field), dims, widths)
 
 
+@dataclass(frozen=True)
+class WavelengthOnsetShift:
+    """One onset of :func:`classify` followed across refractive indices (:func:`wavelength_critical_table`).
+
+    ``values_deg`` maps each index label to the onset's critical value (deg,
+    as :meth:`CriticalOnset.as_json`); ``displacement_deg`` is
+    ``max - min`` of those values, independent of the label order.
+    """
+
+    location: str
+    source: str
+    profile: str
+    jacobian_focusing: bool
+    values_deg: dict[str, float]
+    displacement_deg: float
+
+    def as_json(self) -> dict[str, Any]:
+        return {
+            "location": self.location,
+            "source": self.source,
+            "profile": self.profile,
+            "jacobian_focusing": self.jacobian_focusing,
+            "values_deg": dict(self.values_deg),
+            "displacement_deg": self.displacement_deg,
+        }
+
+
+@dataclass(frozen=True)
+class WavelengthCriticalTable:
+    """The onsets of one path under one density at several refractive indices, aligned by rank."""
+
+    path: str
+    labels: tuple[str, ...]
+    indices: dict[str, float]
+    onsets: tuple[WavelengthOnsetShift, ...]
+
+    def as_json(self) -> dict[str, Any]:
+        return {
+            "path": self.path,
+            "labels": list(self.labels),
+            "indices": dict(self.indices),
+            "onsets": [onset.as_json() for onset in self.onsets],
+        }
+
+
+def _align_onsets(classifications: Mapping[str, FocusingClassification]) -> tuple[WavelengthOnsetShift, ...]:
+    """Pair the onsets of several classifications by rank; refuse when the topology differs.
+
+    ``FocusingClassification.onsets`` are sorted by value, so rank pairs the
+    same critical datum as long as ``n`` does not reorder them.  Rank alone
+    would pair silently across a reordering or an onset that appears at one
+    index only, so every rank must carry one ``(location, source, profile)``
+    at every label, otherwise ``ValueError``.
+    """
+    counts = {label: len(c.onsets) for label, c in classifications.items()}
+    if len(set(counts.values())) > 1:
+        raise ValueError(f"onset counts differ across refractive indices: {counts}")
+    rows = []
+    for rank, entries in enumerate(zip(*(c.onsets for c in classifications.values()))):
+        by_label = dict(zip(classifications, entries))
+        shapes = {label: (o.location, o.source, o.profile) for label, o in by_label.items()}
+        if len(set(shapes.values())) > 1:
+            raise ValueError(f"onset {rank} differs across refractive indices: {shapes}")
+        values = {label: float(np.degrees(o.value)) for label, o in by_label.items()}
+        first = entries[0]
+        rows.append(WavelengthOnsetShift(first.location, first.source, first.profile, first.jacobian_focusing,
+                                         values, max(values.values()) - min(values.values())))
+    return tuple(rows)
+
+
+def wavelength_critical_table(
+    crystal: Polyhedron,
+    faces: Sequence[int],
+    density: PoseDensity,
+    indices: Mapping[str, float],
+) -> WavelengthCriticalTable:
+    """The critical values of ``faces`` at each refractive index of ``indices`` (label -> ``n``), aligned.
+
+    One :func:`classify` per index (one :class:`.dp_field.DPField` each: the
+    field depends on ``n``); the onsets are paired by rank with the topology
+    check of :func:`_align_onsets`.  A topology that changes between indices
+    (an onset appearing, e.g. an exit reaching TIR at one wavelength only)
+    raises ``ValueError`` instead of pairing unrelated onsets; following such
+    a change is not handled here.  ``n(lambda)`` itself is the caller's
+    (:func:`.spectrum.dispersion.refractive_index`).
+    """
+    if not indices:
+        raise ValueError("indices is empty")
+    classifications = {label: classify(crystal, faces, density, float(index)) for label, index in indices.items()}
+    paths = {c.path for c in classifications.values()}
+    if len(paths) != 1:
+        raise ValueError(f"classifications disagree on the path: {sorted(paths)}")
+    return WavelengthCriticalTable(paths.pop(), tuple(indices), {label: float(n) for label, n in indices.items()},
+                                   _align_onsets(classifications))
+
+
 __all__ = [
     "BOUNDARY_GRADIENT_ATOL",
     "CriticalOnset",
     "FocusingClassification",
     "JACOBIAN_FOCUSING_PROFILES",
     "PROFILES",
+    "WavelengthCriticalTable",
+    "WavelengthOnsetShift",
     "classify",
     "confined_dimensions",
     "field_onsets",
     "gradient_norm_range",
     "interior_onset",
+    "wavelength_critical_table",
 ]

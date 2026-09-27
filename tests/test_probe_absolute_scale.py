@@ -75,3 +75,31 @@ def test_merged_relative_noise_matches_its_own_formula(probe):
     assert probe.merged_relative_noise(a, b) == pytest.approx(expected, rel=1e-12)
     assert probe.merged_relative_noise(a, b) == pytest.approx(probe.merged_relative_noise(b, a), rel=1e-12)
     assert probe.merged_relative_noise(a, a) == pytest.approx(0.0, abs=1e-12)
+
+
+def write_fake_run(run_dir: Path, image: np.ndarray, emitted_energy: float = 1e6, symmetry: str = "PBD") -> Path:
+    """A Lumice run directory as the probe reads it: ``img_01.npy`` (float32 XYZ), ``img_01.json``, ``config.json``."""
+    import json
+
+    run_dir.mkdir(parents=True, exist_ok=True)
+    np.save(run_dir / "img_01.npy", image.astype(np.float32))
+    (run_dir / "img_01.json").write_text(json.dumps({"emitted_energy": emitted_energy}))
+    (run_dir / "config.json").write_text(json.dumps({"filter": [{"id": 1, "type": "raypath", "raypath": [3, 5], "symmetry": symmetry}]}))
+    return run_dir
+
+
+def test_load_run_xyz_is_load_run_with_every_channel(probe, tmp_path):
+    image = np.random.default_rng(1).random((4, 5, 3))
+    run = write_fake_run(tmp_path / "run", image)
+    xyz, meta, symmetry = probe.load_run_xyz(run)
+    y, meta_y, symmetry_y = probe.load_run(run)
+    assert xyz.shape == (4, 5, 3) and xyz.dtype == np.float64
+    np.testing.assert_array_equal(xyz[:, :, 1], y)
+    np.testing.assert_array_equal(xyz, image.astype(np.float32).astype(np.float64))
+    assert meta == meta_y == {"emitted_energy": 1e6} and symmetry == symmetry_y == "PBD"
+
+
+def test_ybar_constant_is_the_spectrum_cmf_at_550(probe):
+    from lumice_integral.spectrum import cmf
+
+    assert probe.YBAR_550 == cmf.lookup(550.0)[1]

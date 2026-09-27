@@ -140,11 +140,23 @@ def merged_relative_noise(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.std(rel) / 2.0)
 
 
-def load_run(run_dir: Path) -> tuple[np.ndarray, dict[str, Any], str]:
+def _load_run_files(run_dir: Path) -> tuple[np.ndarray, dict[str, Any], str]:
+    """``(img_01.npy (H, W, 3) linear XYZ, img_01.json, the first filter's symmetry)`` of one Lumice run."""
     arr = np.load(run_dir / "img_01.npy")
     meta = json.loads((run_dir / "img_01.json").read_text())
     symmetry = json.loads((run_dir / "config.json").read_text())["filter"][0].get("symmetry", "")  # absent = no fold
+    return arr, meta, symmetry
+
+
+def load_run(run_dir: Path) -> tuple[np.ndarray, dict[str, Any], str]:
+    arr, meta, symmetry = _load_run_files(run_dir)
     return np.asarray(arr[:, :, 1], dtype=np.float64), meta, symmetry
+
+
+def load_run_xyz(run_dir: Path) -> tuple[np.ndarray, dict[str, Any], str]:
+    """:func:`load_run` with all three channels: ``(H, W, 3)`` X, Y, Z in float64."""
+    arr, meta, symmetry = _load_run_files(run_dir)
+    return np.asarray(arr, dtype=np.float64), meta, symmetry
 
 
 def integrate(scene: StripScene, target: np.ndarray, component: Any, options: PixelOptions) -> float:
