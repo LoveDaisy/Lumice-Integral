@@ -215,8 +215,9 @@ def _export(output: Path) -> subprocess.CompletedProcess:
     )
 
 
-# Two full-matrix exports in separate interpreters plus a read-back: 16 s with a cold JAX cache on an M2 Max
-# (2026-09-28), under the ~20 s slow-tier threshold of AGENTS.md, so CI checks the determinism on Linux too.
+# Two full-matrix exports in separate interpreters plus a read-back: 18 s with a cold JAX cache on an M2 Max
+# (2026-09-29, with the pyramid's seed search), under the ~20 s slow-tier threshold of AGENTS.md, so CI checks
+# the determinism on Linux too.
 def test_full_matrix_export_is_byte_deterministic_and_reads_back(tmp_path: Path) -> None:
     first, second = tmp_path / "first", tmp_path / "second"
     _export(first)
@@ -230,7 +231,16 @@ def test_full_matrix_export_is_byte_deterministic_and_reads_back(tmp_path: Path)
     assert len(cells) == 9
     assert [item["fixture"] for item in cells["3-5-6-7__critical"]["skipped"]] == ["all"]
     for category in pe.CATEGORIES:
-        assert [item["fixture"] for item in cells[f"13-15-26-28__{category}"]["skipped"]] == ["seed_search"]
+        assert cells[f"13-15-26-28__{category}"]["skipped"] == []
+    # The pyramid's seed search: components at the random and critical targets; the near-boundary point sits
+    # next to a Snell gate where the finite crystal's entry measure is already zero (corridor_empty), so its
+    # target lies outside the store's lit D range and the band is empty (docs/analytic-parity-fixtures.md 6).
+    pyramid = {
+        category: pe.read_json(first / f"13-15-26-28__{category}__seed_search.json")["expected"] for category in pe.CATEGORIES
+    }
+    assert all(pyramid[category]["completeness"] == "complete" for category in pe.CATEGORIES)
+    assert len(pyramid["random"]["components"]) > 0 and len(pyramid["critical"]["components"]) > 0
+    assert pyramid["near_boundary"]["pool_count"] == 0 and pyramid["near_boundary"]["components"] == []
     checks = pe.verify_directory(first)
     assert len(checks) == len(names) - 1
     assert all(not check.failures for check in checks), [(check.fixture, check.failures) for check in checks if check.failures]
