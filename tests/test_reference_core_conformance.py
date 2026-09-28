@@ -720,9 +720,14 @@ def test_analytic_circle_closes_on_the_first_traversal_with_a_large_step():
     np.testing.assert_allclose(
         result.closure_diagnostics.accumulated_arclength, 2.0 * np.pi, rtol=0.0, atol=1e-12
     )
-    # One crossing only: the seed-relative transverse coordinate (the axis
-    # component of ``seed^T pose`` along the seed tangent) changes sign exactly
-    # once along the sampled loop, at the closing edge.
+    _assert_one_traversal_crossings(result)
+
+
+def _assert_one_traversal_crossings(result) -> None:
+    # The seed-relative transverse coordinate (the axis component of
+    # ``seed^T pose`` along the seed tangent) is ``sin`` of the loop angle on
+    # this circle: over the open loop it changes sign once, at the antipode,
+    # where the seed distance is ``pi``; the closing pose sits on the section.
     seed = np.asarray(result.poses[0])
     tangent = np.asarray(result.tangents[0])
     sections = []
@@ -736,10 +741,39 @@ def test_analytic_circle_closes_on_the_first_traversal_with_a_large_step():
             ]
         ) / 2.0
         sections.append(float(np.dot(tangent, skew)))
-    sign_changes = sum(
-        1 for left, right in zip(sections[:-1], sections[1:]) if left * right < 0.0
+    interior = sections[:-1]
+    sign_changes = [
+        index
+        for index, (left, right) in enumerate(zip(interior[:-1], interior[1:]))
+        if left * right < 0.0
+    ]
+    assert len(sign_changes) == 1
+    antipode = np.asarray(result.poses[sign_changes[0] + 2])
+    relative = seed.T @ antipode
+    angle = np.arccos(np.clip((np.trace(relative) - 1.0) / 2.0, -1.0, 1.0))
+    assert angle >= np.pi - 0.2
+    assert abs(sections[-1]) <= 1e-12
+
+
+def test_analytic_circle_with_a_growing_step_closes_on_the_first_traversal():
+    """Contract section 12 counterexample: growth to ``maximum_step=0.2``.
+
+    The accepted end of the closing edge lies outside ``closure_distance``;
+    measured at the edge's bisected section zero the seed is found on the
+    first traversal (before the step-aware trigger: the third).
+    """
+    result = trace_fiber(_analytic_problem(), ContinuationOptions(maximum_step=0.2))
+    assert result.status == FiberStatus.CLOSED
+    assert result.reason == TerminationReason.CLOSED_LOOP
+    assert result.residual_norms.max() <= 1e-11
+    diagnostic = result.closure_diagnostics
+    assert diagnostic.final_correction_accepted
+    assert len(diagnostic.attempts) == 1
+    assert diagnostic.seed_distance <= 1e-15
+    np.testing.assert_allclose(
+        diagnostic.accumulated_arclength, 2.0 * np.pi, rtol=0.0, atol=1e-12
     )
-    assert sign_changes == 1
+    _assert_one_traversal_crossings(result)
 
 
 def test_synthetic_3_5_is_invariant_under_orthogonal_target_basis(

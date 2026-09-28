@@ -83,7 +83,7 @@ import numpy as np
 
 from lumice_integral.band_sum import FORMAT_VERSION as MONOCHROME_FORMAT
 from lumice_integral.geometry import Polyhedron
-from lumice_integral.path_class import pbd_orbit_hexprism
+from lumice_integral.path_class import g_true_orbit
 from lumice_integral.spectrum.xyz_band_sum import CHANNELS, read_xyz_band_sum_strip
 from lumice_integral.spectrum.xyz_band_sum import FORMAT_VERSION as XYZ_FORMAT
 from lumice_integral.strip_io import read_strip, scene_crystal
@@ -121,8 +121,8 @@ def check_filter(config: dict[str, Any], representative: list[int], members: lis
             raise SystemExit(f"Lumice filter {top}: a folded filter must be a PBD raypath filter on {representative}")
         if len(true_symmetry_group(crystal)) != 24:
             raise SystemExit("Lumice filter uses PBD, but the crystal's G_true is smaller than D6h: its fold merges inequivalent paths")
-        if sorted(map(tuple, members)) != sorted(pbd_orbit_hexprism(representative)):
-            raise SystemExit(f"Lumice PBD admits {sorted(pbd_orbit_hexprism(representative))}, the band-sum class has {sorted(map(tuple, members))}")
+        if sorted(map(tuple, members)) != sorted(g_true_orbit(representative)):
+            raise SystemExit(f"Lumice PBD admits {sorted(g_true_orbit(representative))}, the band-sum class has {sorted(map(tuple, members))}")
         return "PBD"
     if top["type"] == "raypath":
         parts = [top]

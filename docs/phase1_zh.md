@@ -2,7 +2,7 @@
 
 English version: [phase1.md](phase1.md)。两份正文同步维护；若有出入，以英文版为准。实测记录只在英文版附录中保留，不翻译，以免两份数字各自改动后对不上。
 
-Phase I 是对作者原始直接积分原型的重建：对每个像素，找出把入射光送到该像素的那一维晶体姿态集合，并沿它积分物理权重。它于 2026-09-23 收口，是项目的逐点参考；生产渲染器现在是 Phase II 的带求和（[phase2_zh.md](phase2_zh.md)）。规范性定义（坐标、测度、事件、接口、conformance C01-C14）在 [phase1-math-contract.md](phase1-math-contract.md)；第 6 章 fixture 及其验收阶段在 [ch06-reference-fixture.md](ch06-reference-fixture.md)。本文讲设计与来龙去脉。
+Phase I 是对作者原始直接积分原型的重建：对每个像素，找出把入射光送到该像素的那一维晶体姿态集合，并沿它积分物理权重。它于 2026-09-23 收口，是项目的逐点参考；生产渲染器现在是 Phase II 的带求和（[phase2_zh.md](phase2_zh.md)）。规范性定义（坐标、测度、事件、接口、discovery、conformance C01-C21）在 [phase1-math-contract.md](phase1-math-contract.md)；第 6 章 fixture 及其验收阶段在 [ch06-reference-fixture.md](ch06-reference-fixture.md)。本文讲设计与来龙去脉。
 
 ## 1. 表述
 

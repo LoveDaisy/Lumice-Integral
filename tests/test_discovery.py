@@ -60,6 +60,8 @@ from lumice_integral.discovery import (
     miss_probability,
     retarget_problem,
 )
+from lumice_integral.geometry import HexPrism, Pyramid
+from lumice_integral.geometry.pyramid import C_OVER_A_ICE, pyramid_face_angle
 from lumice_integral.optics import path_domain
 from lumice_integral.resample import OpenArc
 from lumice_integral.s2_store import StoreSeeds, build_event_store
@@ -617,3 +619,343 @@ def test_miss_probability_is_the_poisson_void_probability() -> None:
     assert miss_probability(0.0, STORE_N) == 1.0
     assert miss_probability(4.0 * np.pi / STORE_N, STORE_N) == pytest.approx(np.exp(-1.0))
     assert miss_probability(4.0 * np.pi * 3.0 / STORE_N, STORE_N) == pytest.approx(np.exp(-3.0))
+
+
+# --- discovery contract fixtures (docs/phase1-math-contract.md section 9.5, task discovery-contract) ---------------
+#
+# Only the deviation ``delta`` of the target from ``s`` shapes the fiber: turning ``d`` about ``s`` moves the
+# whole fiber by the same world rotation.  These fixtures therefore name a path, a crystal and ``delta``; the
+# target lies in the vertical plane through ``s``.  The paths and deviations were found by a bounded scan of
+# the store's deviation range (task discovery-contract, progress.md; the scan script is a one-off in scratchpad).
+
+CONTRACT_STORE_N = 100_000
+LOW_SYMMETRY_FACE_DISTANCE = (1.0, 1.2, 1.0, 1.2, 1.0, 1.2)  # D3h: docs/conventions.md #21's counterexample prism
+
+
+def target_at_deviation(delta_deg: float) -> np.ndarray:
+    s = canonical_incident_direction()
+    across = np.cross(s, np.array([0.0, 0.0, 1.0]))
+    up = np.cross(across / np.linalg.norm(across), s)
+    delta = np.radians(delta_deg)
+    return np.cos(delta) * s + np.sin(delta) * up
+
+
+def _contract_seeds(faces, n: int = CONTRACT_STORE_N, crystal=None, random: bool = False) -> StoreSeeds:
+    from lumice_integral.s2_store import RandomSphereSampler
+
+    sampling = dict(sampler=RandomSphereSampler(), sampling=RandomSphereSampler.description) if random else {}
+    store = build_event_store(
+        crystal or canonical_crystal(), CANONICAL_REFRACTIVE_INDEX, [faces], n, run_checks=False, **sampling
+    )
+    return StoreSeeds(store, faces, canonical_sun_direction())
+
+
+def test_target_at_deviation_has_that_deviation() -> None:
+    for delta in (22.0, 60.0, 64.7434):
+        target = target_at_deviation(delta)
+        assert np.linalg.norm(target) == pytest.approx(1.0, abs=1e-15)
+        assert np.degrees(np.arccos(target @ canonical_incident_direction())) == pytest.approx(delta, abs=1e-9)
+
+
+@pytest.fixture(scope="module")
+def path_1_3_seeds() -> StoreSeeds:
+    return _contract_seeds((1, 3))
+
+
+@pytest.fixture(scope="module")
+def path_1_3_two_arcs(path_1_3_seeds: StoreSeeds) -> ComponentDiscoveryResult:
+    return discover_components(target_at_deviation(60.0), path_1_3_seeds, **DISCOVERY_KWARGS)
+
+
+def test_path_1_3_at_60_deg_is_two_distinct_components(
+    path_1_3_seeds: StoreSeeds, path_1_3_two_arcs: ComponentDiscoveryResult
+) -> None:
+    """Multi-component fixture: basal face 1 in, prism face 3 out, on the canonical column, 60 deg from ``s``.
+
+    The fiber has two mirror-image pieces, each an arc; three admissible clusters give two traces and one
+    fold.  The two components are far apart in SO(3) (their curves never come within the dedup distance),
+    and the band cross-check finds no event off them."""
+    result = path_1_3_two_arcs
+    assert result.pool_count == 29 and result.raw_cluster_count == 3 and result.admissible_count == 3
+    assert result.completeness == "complete" and result.incomplete_count == 0
+    assert result.component_count == 2 and result.arc_count == 2
+    assert result.events == {**{name: 0 for name in DISCOVERY_EVENT_NAMES}, "dedup_merged": 1, "arc_stitched": 2}
+    first, second = result.components
+    separation = min(distance_to_curve(pose, np.asarray(second.result.poses)) for pose in np.asarray(first.result.poses))
+    assert separation > 0.8  # 0.821: far above the 0.08 dedup distance and the 0.3 rad cluster radius
+    # Mirror images: equal lengths up to the seed-dependent end truncation.
+    assert first.arclength == pytest.approx(0.6146, rel=ARCLENGTH_RTOL)
+    assert second.arclength == pytest.approx(0.6145, rel=ARCLENGTH_RTOL)
+    coverage = check_band_coverage(target_at_deviation(60.0), path_1_3_seeds, result)
+    assert coverage.suspect_count == 0 and len(coverage.component_event_counts) == 2
+    assert min(coverage.component_event_counts) >= 10
+
+
+def test_path_1_3_components_are_arcs_cut_by_tir_and_path_infeasibility(
+    path_1_3_seeds: StoreSeeds, path_1_3_two_arcs: ComponentDiscoveryResult
+) -> None:
+    """TIR-truncated open arc fixture on a real path, through the whole discover_components pipeline.
+
+    Each arc ends on exit TIR at one end and on the entry ray leaving face 1 (``path_infeasible``) at the
+    other, which end is which depending only on the seed's tangent sign.  Both traces accepted steps, the
+    TIR end lands on the discriminant within the Snell event tolerance, and every accepted pose is valid."""
+    for component in path_1_3_two_arcs.components:
+        arc = component.result
+        assert isinstance(arc, OpenArc) and component.status == FiberStatus.EVENT_TERMINATED
+        assert {component.reason, component.start_reason} == {
+            TerminationReason.TIR_BOUNDARY,
+            TerminationReason.PATH_INFEASIBLE,
+        }
+        assert arc.forward.terminal_payload.accepted_steps > 0 and arc.backward.terminal_payload.accepted_steps > 0
+        tir = arc.forward if arc.forward.reason == TerminationReason.TIR_BOUNDARY else arc.backward
+        assert abs(tir.terminal_payload.event.margin) < 1e-6
+        assert np.allclose(arc.poses[arc.seed_index], component.seed, atol=1e-12)
+        assert len(arc.poses) == len(arc.forward.poses) + len(arc.backward.poses) - 1
+        for pose in arc.poses[:: max(1, len(arc.poses) // 8)]:
+            assert path_domain(
+                pose, path_1_3_seeds.faces, path_1_3_seeds.incident_direction, path_1_3_seeds.refractive_index
+            ).valid
+
+
+def test_a_seed_within_one_initial_step_of_two_events_is_a_single_pose_arc() -> None:
+    """Known limitation pinned (contract section 9.5, open items): path 3-1 at 64.7434 deg, N = 1e5.
+
+    The fiber has two mirror arcs of about 0.27 rad.  The only admissible candidate of the second one lies
+    within ``initial_step`` of exit TIR in both directions, so the forward and the backward trace each end
+    on ``tir_boundary`` without an accepted step: the component is returned as an arc of one pose and zero
+    length.  It is counted (it is a distinct piece of the fiber) and the band cross-check reports the
+    events of its untraced extent as suspects; at N = 1e6 the same arc is found with its full length."""
+    seeds = _contract_seeds((3, 1))
+    target = target_at_deviation(64.7434)
+    result = discover_components(target, seeds, **DISCOVERY_KWARGS)
+    assert result.completeness == "complete" and result.component_count == 2 and result.arc_count == 2
+    long, short = sorted(result.components, key=lambda component: -component.arclength)
+    assert long.arclength == pytest.approx(0.2703, rel=ARCLENGTH_RTOL)
+    assert short.arclength == 0.0 and len(short.result.poses) == 1
+    assert short.reason == short.start_reason == TerminationReason.TIR_BOUNDARY
+    assert short.result.forward.terminal_payload.accepted_steps == 0
+    assert short.result.backward.terminal_payload.accepted_steps == 0
+    assert distance_to_curve(short.seed, np.asarray(long.result.poses)) > 1.0
+    coverage = check_band_coverage(target, seeds, result)
+    assert coverage.suspect_count > 0
+
+
+def test_discovery_on_a_low_symmetry_prism() -> None:
+    """Prism-face path on a crystal that is not the regular prism: the D3h prism (alternate face distances
+    1 / 1.2, ``G_true`` of order 12), path 3-5 at 32.4379 deg.  The crystal reaches discovery only through
+    the store (its ``w > 0`` events) and the entry-measure gate; the direction map and the path domain
+    depend on the face normals, which the D3h prism shares with the regular one, and on this fixture the
+    positive-entry-measure set is the same too, so the fiber, the pool and the component are the regular
+    prism's while the entry measure at the seed is the D3h crystal's.  Pyramids: the section below."""
+    from lumice_integral.geometry import entry_measure
+    from lumice_integral.symmetry.crystal_group import true_symmetry_group
+
+    base = canonical_crystal()
+    crystal = HexPrism(base.a, base.h, LOW_SYMMETRY_FACE_DISTANCE)
+    assert len(true_symmetry_group(crystal)) == 12
+    seeds = _contract_seeds((3, 5), crystal=crystal)
+    assert seeds.crystal.face_distance_ratios == LOW_SYMMETRY_FACE_DISTANCE
+    target = target_at_deviation(32.4379)
+    result = discover_components(target, seeds, **DISCOVERY_KWARGS)
+    assert result.completeness == "complete" and result.component_count == 1
+    component = result.components[0]
+    assert component.kind == "closed" and component.arclength == pytest.approx(4.7119, rel=ARCLENGTH_RTOL)
+    assert path_domain(
+        component.seed, (3, 5), seeds.incident_direction, seeds.refractive_index, crystal=crystal
+    ).valid
+    regular = discover_components(target, _contract_seeds((3, 5)), **DISCOVERY_KWARGS)
+    assert regular.pool_count == result.pool_count and regular.component_count == 1
+    assert regular.components[0].arclength == pytest.approx(component.arclength, rel=1e-12)
+    d3h_measure = entry_measure(component.seed, (3, 5), seeds.incident_direction, crystal, n_ice=seeds.refractive_index)
+    d6h_measure = entry_measure(component.seed, (3, 5), seeds.incident_direction, base, n_ice=seeds.refractive_index)
+    assert d3h_measure.value > 0.0 and d6h_measure.value > 0.0
+    assert abs(d3h_measure.value - d6h_measure.value) > 1e-3 * d6h_measure.value
+
+
+# --- pyramid (contract section 9.5.10) -------------------------------------------------------------------------
+# The three off-family pyramid paths of tests/test_optics_crystal_native.py::PYRAMID_OFFFAMILY on the same crystal,
+# built through Pyramid.from_lumice (the store describes a pyramid by its Lumice shape): wedge 90 deg minus the
+# ice face angle gives c_over_a = C_OVER_A_ICE and the vertices of Pyramid(a=1, h=1, tip_ratio=0.5) exactly.
+# Deviations from a bounded scan of each store's D range at N = 1e5 and 1e6 (task s2-store-pyramid-seeds,
+# progress.md; the scan script is a one-off in scratchpad). The arcs end on path_infeasible, which continuation
+# does not bisect (within one step of the boundary, section 9.5.5), so their lengths are pinned at N = 1e5 only.
+
+REFERENCE_PYRAMID = Pyramid.from_lumice(
+    0.5, 0.5, 0.5, upper_wedge_deg=90.0 - pyramid_face_angle(), lower_wedge_deg=90.0 - pyramid_face_angle()
+)
+
+
+@pytest.fixture(scope="module")
+def pyramid_seeds() -> dict[tuple[int, ...], StoreSeeds]:
+    return {faces: _contract_seeds(faces, crystal=REFERENCE_PYRAMID) for faces in PYRAMID_PATHS}
+
+
+PYRAMID_PATHS = ((13, 15, 26, 28), (13, 5, 26, 28), (13, 24, 26))
+
+
+def _pyramid_discovery(seeds: StoreSeeds, delta_deg: float) -> ComponentDiscoveryResult:
+    target = target_at_deviation(delta_deg)
+    result = discover_components(target, seeds, **DISCOVERY_KWARGS)
+    assert result.completeness == "complete" and result.incomplete_count == 0
+    assert check_band_coverage(target, seeds, result).suspect_count == 0
+    return result
+
+
+def test_reference_pyramid_is_the_focusing_fixture_crystal() -> None:
+    assert np.array_equal(REFERENCE_PYRAMID.vertices, Pyramid(a=1, h=1, tip_ratio=0.5).vertices)
+    assert REFERENCE_PYRAMID.shape.upper_c_over_a == pytest.approx(C_OVER_A_ICE, rel=1e-15)
+
+
+def test_pyramid_store_deviation_ranges_match_the_focusing_onsets(pyramid_seeds) -> None:
+    """Each store's D range ends where focusing.classify puts the path's extreme onset (PYRAMID_OFFFAMILY):
+    13-15-26-28 at its interior maximum 177.2940 deg, 13-24-26 at its boundary extremum 131.3022 deg (sampled
+    from below at N = 1e5), and the interior saddle of 13-5-26-28 at 136.3581 deg lies inside that range."""
+    top = {faces: float(np.degrees(np.max(seeds.store.events.D))) for faces, seeds in pyramid_seeds.items()}
+    bottom = float(np.degrees(np.min(pyramid_seeds[(13, 5, 26, 28)].store.events.D)))
+    assert 177.28 < top[(13, 15, 26, 28)] <= 177.2940 + 1e-4
+    assert 131.0 < top[(13, 24, 26)] <= 131.3022 + 1e-4
+    assert bottom < 136.3581 < top[(13, 5, 26, 28)]
+
+
+@pytest.mark.parametrize("delta_deg, arclength", [(170.0, 5.7793), (176.5, 2.9192)])
+def test_pyramid_interior_maximum_path_is_one_closed_loop_up_to_the_maximum(
+    pyramid_seeds, delta_deg: float, arclength: float
+) -> None:
+    """13-15-26-28 (interior maximum, finite_jump edge at 177.2940 deg): below the maximum the fiber is one
+    closed loop around it, shrinking toward it; above it the store has no admissible candidate."""
+    seeds = pyramid_seeds[(13, 15, 26, 28)]
+    result = _pyramid_discovery(seeds, delta_deg)
+    assert result.component_count == 1 and result.components[0].kind == "closed"
+    assert result.components[0].arclength == pytest.approx(arclength, rel=ARCLENGTH_RTOL)
+    above = _pyramid_discovery(seeds, 177.4)
+    assert above.admissible_count == 0 and above.component_count == 0
+
+
+def test_pyramid_saddle_path_changes_its_arc_ends_across_the_saddle(pyramid_seeds) -> None:
+    """13-5-26-28 (interior saddle, log_divergence at 136.3581 deg): one arc on either side of the saddle
+    level, but its ends change there: path_infeasible at both ends below the saddle (also at 136.2 deg), path
+    infeasible and exit TIR above it (also at 136.5 deg); the same at N = 1e6."""
+    seeds = pyramid_seeds[(13, 5, 26, 28)]
+    ends = {}
+    for delta_deg, arclength in ((136.0, 2.1012), (136.7, 2.5247)):
+        result = _pyramid_discovery(seeds, delta_deg)
+        assert result.component_count == 1 and result.arc_count == 1
+        (component,) = result.components
+        assert component.arclength == pytest.approx(arclength, rel=ARCLENGTH_RTOL)
+        ends[delta_deg] = {component.start_reason, component.reason}
+    assert ends[136.0] == {TerminationReason.PATH_INFEASIBLE}
+    assert ends[136.7] == {TerminationReason.PATH_INFEASIBLE, TerminationReason.TIR_BOUNDARY}
+
+
+@pytest.mark.parametrize("delta_deg, arclength", [(90.0, 2.1205), (130.5, 0.3686)])
+def test_pyramid_boundary_only_path_is_one_arc_up_to_its_boundary_extremum(
+    pyramid_seeds, delta_deg: float, arclength: float
+) -> None:
+    """13-24-26 (no interior critical point, boundary extremum at 131.3022 deg): every level is one arc cut by
+    the path domain at both ends, shrinking toward the boundary extremum; beyond it the band is empty."""
+    seeds = pyramid_seeds[(13, 24, 26)]
+    result = _pyramid_discovery(seeds, delta_deg)
+    assert result.component_count == 1 and result.arc_count == 1
+    (component,) = result.components
+    assert component.start_reason == component.reason == TerminationReason.PATH_INFEASIBLE
+    assert component.arclength == pytest.approx(arclength, rel=ARCLENGTH_RTOL)
+    beyond = _pyramid_discovery(seeds, 131.5)
+    assert beyond.pool_count == 0 and beyond.component_count == 0
+
+
+# --- densification (contract section 9.5: measured, not guaranteed) ---------------------------------------------
+
+
+def _kept(component: DiscoveredComponent, later: ComponentDiscoveryResult, threshold: float = 0.08) -> bool:
+    """``component`` has a pose within the dedup distance of some curve of ``later``."""
+    return any(
+        min(distance_to_curve(pose, np.asarray(other.result.poses)) for pose in np.asarray(component.result.poses))
+        < threshold
+        for other in later.components
+    )
+
+
+def test_random_sampler_stores_are_nested_prefixes() -> None:
+    from lumice_integral.s2_store import RandomSphereSampler
+
+    small, _ = RandomSphereSampler()(0, 10_000)
+    large, _ = RandomSphereSampler()(0, 100_000)
+    assert np.array_equal(small, large[:10_000])
+
+
+@pytest.mark.parametrize("delta_deg", [60.0, 63.5, 65.0])
+def test_nested_densification_keeps_every_traced_component(delta_deg: float) -> None:
+    """Path 1-3, nested random stores N = 1e4 < 3e4 < 1e5 (each the prefix of the next): every component
+    found at a lower N is found again (a pose within the dedup distance of a curve) at the next one, and the
+    component count never drops.  Bounded evidence for the Analyze low-then-dense pattern, not a guarantee
+    (see the counterexample below)."""
+    target = target_at_deviation(delta_deg)
+    results = [
+        discover_components(target, _contract_seeds((1, 3), n, random=True), **DISCOVERY_KWARGS)
+        for n in (10_000, 30_000, 100_000)
+    ]
+    for earlier, later in zip(results, results[1:]):
+        assert later.component_count >= earlier.component_count
+        assert all(_kept(component, later) for component in earlier.components)
+    assert results[-1].component_count == 2
+
+
+def test_nested_densification_can_lose_a_single_pose_arc() -> None:
+    """The counterexample to monotonicity: the D3h prism, path 5-3 at 43.0347 deg, nested random stores
+    3e5 -> 1e6.  The three long arcs (1.44, 1.16, 1.15 rad) are kept, but a single-pose arc found at 3e5
+    is at 1e6 not within the dedup distance of any returned curve (the 1e6 band cross-check reports
+    suspects).  Densification is therefore not monotone for components shorter than about one initial
+    step; every component with an accepted step was kept."""
+    base = canonical_crystal()
+    crystal = HexPrism(base.a, base.h, LOW_SYMMETRY_FACE_DISTANCE)
+    target = target_at_deviation(43.0347)
+    earlier = discover_components(target, _contract_seeds((5, 3), 300_000, crystal, random=True), **DISCOVERY_KWARGS)
+    later_seeds = _contract_seeds((5, 3), 1_000_000, crystal, random=True)
+    later = discover_components(target, later_seeds, **DISCOVERY_KWARGS)
+    long_arcs = [component for component in earlier.components if component.arclength > 0.0]
+    assert len(long_arcs) == 3 and all(_kept(component, later) for component in long_arcs)
+    lost = [component for component in earlier.components if not _kept(component, later)]
+    assert len(lost) == 1 and lost[0].arclength == 0.0 and len(lost[0].result.poses) == 1
+    assert check_band_coverage(target, later_seeds, later).suspect_count > 0
+
+
+def test_geodesic_cluster_centres_are_the_lowest_unassigned_index_and_membership_is_not_transitive() -> None:
+    """Contract section 9.5 clustering rule: the centre is the lowest-index unassigned pool member and a
+    member is any unassigned pose strictly within the radius of the centre (not of another member)."""
+    axis = np.array([0.0, 0.0, 1.0])
+    line = np.stack([np.asarray(exp(jnp.asarray(theta * axis))) for theta in (0.0, 0.2, 0.4, 0.6)])
+    assert _geodesic_cluster(line, radius=0.3) == [[0, 1], [2, 3]]
+    assert _geodesic_cluster(line[::-1], radius=0.3) == [[0, 1], [2, 3]]
+    assert _geodesic_cluster(line[[1, 0, 2, 3]], radius=0.3) == [[0, 1, 2], [3]]
+    assert _geodesic_cluster(line[:2], radius=0.2) == [[0], [1]]  # strictly within
+
+
+def _assert_funnel_identities(result: ComponentDiscoveryResult) -> None:
+    events = result.events
+    assert set(events) == set(DISCOVERY_EVENT_NAMES)
+    assert result.admissible_count == events["dedup_merged"] + result.component_count + result.incomplete_count
+    assert result.arc_count == events["arc_stitched"]
+    assert result.incomplete_count == sum(
+        events[name]
+        for name in (
+            "arc_backward_failed",
+            "arc_backward_closed_anomaly",
+            "incomplete_unnamed_event",
+            "incomplete_not_converged",
+        )
+    )
+    assert result.raw_cluster_count >= result.admissible_count
+    assert result.raw_cluster_count <= result.pool_count + result.extra_seed_count
+    assert result.completeness == ("complete" if result.incomplete_count == 0 else "unknown")
+
+
+def test_discovery_funnel_identities_hold_on_closed_arc_starved_and_warm_results(
+    canonical_discovery: ComponentDiscoveryResult, path_1_3_two_arcs: ComponentDiscoveryResult
+) -> None:
+    """Contract section 9.5.6: admissible = folded + components + incomplete, arcs = arc_stitched,
+    incomplete = the four incomplete counters, and completeness is exactly 'incomplete is empty'."""
+    starved = discover_pixel(150, 150, continuation=ContinuationOptions(maximum_accepted_steps=50))
+    warm = discover_pixel(150, 150, extra_seeds=[np.eye(3)])
+    assert starved.incomplete_count > 0 and warm.extra_seed_count == 1
+    for result in (canonical_discovery, path_1_3_two_arcs, starved, warm):
+        _assert_funnel_identities(result)

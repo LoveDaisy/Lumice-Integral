@@ -457,6 +457,12 @@ def discover_components(
         if seed is None:
             continue
         admissible_count += 1
+        # No one-pose-arc diagnostic here (explore ``discovery-one-pose-arc-dedup-heuristic``): the arc that
+        # hides the fourth component of path 3-5 at 43.22801 deg is merged by this very check and never traced,
+        # so a classification field would never fire; and the merge distances there (1.208e-3 rad for that arc,
+        # 3.3e-3 / 1.08e-2 / 1.50e-2 rad for redundant samples of one curve) do not separate the two. Only
+        # tracing every merged candidate does, which undoes the dedup. The post-hoc check of
+        # docs/phase1-math-contract.md section 9.5.6a costs one DPField per (path, delta) instead.
         if any(distance_to_curve(seed, component.result.poses) < distance_threshold for component in components):
             events["dedup_merged"] += 1
             continue

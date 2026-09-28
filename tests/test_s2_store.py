@@ -526,9 +526,75 @@ def test_crystal_must_be_an_untransformed_hexprism(crystal) -> None:
         s2_store.crystal_description(moved)
 
 
-def test_pyramid_is_refused_with_a_forward_pointer_to_its_own_task() -> None:
-    with pytest.raises(TypeError, match="pyramid-lumice-semantics"):
+def test_hexprism_description_and_cache_key_are_unchanged_by_the_pyramid_branch() -> None:
+    """The pyramid branch is additive: a prism's description (hence every cached prism store) keeps its key.
+
+    The key was computed on the commit before the pyramid branch (``df7b8ba``), schema 5.
+    """
+    spec = S2StoreSpec(
+        members=((3, 5),),
+        crystal=s2_store.crystal_description(canonical_crystal()),
+        refractive_index=CANONICAL_REFRACTIVE_INDEX,
+        n=100_000_000,
+    )
+    assert spec.crystal == {"type": "HexPrism", "a": 1.0, "h": 2.0, "face_distance": [1.0] * 6}
+    assert spec.cache_key() == "3-5_N100000000_883210565b10"
+
+
+PYRAMIDS = [
+    geometry.Pyramid.from_lumice(0.5, 0.5, 0.5),  # symmetric: Pyramid(a, h, c_over_a, tip_ratio)
+    geometry.Pyramid.from_lumice(0.3, 0.6, 0.4, (1, 0, 1), (1, 0, 1), (1.0, 1.2, 1.0, 1.2, 1.0, 1.2)),
+    geometry.Pyramid.from_lumice(0.3, 0.6, 0.0, (1, 0, 1), (1, 0, 1), (1.0, 1.2, 1.0, 1.2, 1.0, 1.2)),  # no lower cone
+    geometry.Pyramid.from_lumice(0.4, 1.0, 0.3, upper_wedge_deg=40.0, lower_wedge_deg=65.0, a=1.3),
+]
+
+
+@pytest.mark.parametrize("crystal", PYRAMIDS)
+def test_pyramid_description_round_trips_bit_for_bit(crystal) -> None:
+    """A ``from_lumice`` pyramid round-trips through its ``PyramidShape`` (``c_over_a``, no wedge trigonometry)."""
+    description = s2_store.crystal_description(crystal)
+    assert description["type"] == "Pyramid"
+    assert json.loads(json.dumps(description)) == description  # JSON-safe, None as null
+    restored = s2_store.crystal_from_description(json.loads(json.dumps(description)))
+    assert isinstance(restored, geometry.Pyramid)
+    assert restored.shape == crystal.shape and restored.a == crystal.a
+    assert [f.number for f in restored.faces] == [f.number for f in crystal.faces]
+    assert np.array_equal(restored.vertices, crystal.vertices)
+    moved = crystal.transformed(np.eye(3), np.array([0.1, 0.0, 0.0]))
+    with pytest.raises(ValueError, match="untransformed"):
+        s2_store.crystal_description(moved)
+
+
+def test_pyramid_without_a_lumice_shape_is_refused() -> None:
+    """``Pyramid(...)`` records no Lumice shape, so the store has nothing to describe it by."""
+    with pytest.raises(TypeError, match="Pyramid.from_lumice"):
         s2_store.crystal_description(geometry.Pyramid())
+
+
+def test_single_member_pyramid_store_builds_and_multi_member_is_not_implemented() -> None:
+    """One member needs no ``phi_key`` (one class); a multi-member pyramid store is refused, not left unchecked."""
+    crystal = PYRAMIDS[1]
+    store = _build(members=((13, 15, 26, 28),), n=5_000, crystal=crystal)
+    assert store.spec.crystal["type"] == "Pyramid"
+    assert np.array_equal(s2_store.crystal_from_description(store.spec.crystal).vertices, crystal.vertices)
+    assert len(store.events) > 0
+    with pytest.raises(NotImplementedError, match="phi_key"):
+        _build(members=((13, 15, 26, 28), (14, 16, 27, 23)), n=5_000, crystal=crystal)
+
+
+def test_missing_cone_pyramid_store_agrees_with_store_seeds_face_numbering() -> None:
+    """PYRAMIDS[2] has no lower cone (faces 23-28 absent): the spec side normalises members against the fixed
+    20-face template (:func:`S2StoreSpec._face_numbering`) while :class:`StoreSeeds` normalises against the real,
+    partial crystal; ``StoreSeeds`` refuses a member absent from ``store.spec.members`` (code review round 1,
+    s2-store-pyramid-seeds), so building it here is the end-to-end check that the two agree on this partial crystal,
+    not only on the full 20-face pyramid ``test_single_member_pyramid_store_builds_and_multi_member_is_not_implemented``
+    covers.
+    """
+    crystal = PYRAMIDS[2]
+    store = _build(members=((3, 5),), n=5_000, crystal=crystal)
+    assert len(store.events) > 0
+    seeds = s2_store.StoreSeeds(store, (3, 5), canonical_sun_direction())
+    assert seeds.faces == (3, 5)
 
 
 # ------------------------------------------------------- task 13 regression

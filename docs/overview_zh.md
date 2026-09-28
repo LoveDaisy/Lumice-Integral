@@ -82,7 +82,7 @@ $$
 - **拒绝即异常**：存在的侧面少于 3 个意味着横截面没有面积，构造函数抛 `ValueError`（Lumice 是丢弃晶体）。只看每对对置面宽度为正是不够的：`[1, 1, -0.5, -0.9, -0.9, 1]` 三条板带宽度都为正，却没有公共部分。
 - **`G_true`**（`symmetry.crystal_group.true_symmetry_group`）：所有法向都在六方向星、`±c` 或方向星上方的锥面上，只被 `D6h` 置换，所以晶体自身对称群就是 `signature.D6H` 中把存在面的（法向，相对顶点质心的偏移）集合映到自身的那些元素，并核验为群。正六棱柱与对称双锥 24，`[1, d, 1, d, 1, d]` 12，`[1.9, 1, 1, 1.9, 1, 1]` 与 `[2, 1, 1, 2, 1, 1]` 8，一般棱柱 2（`{E, σh}`）；上下锥不同（高度或指数）或单侧锥的锥晶 12（`C6v`），再配上述截面分别为 6、4、1。
 - **法向从晶体读**（任务 `optics-reads-crystal`，2026-09-27）：`optics` 的全部单光路函数（`path_direction`、`path_domain[_batch]`、`fresnel_transmission_path[_batch]`、`path_problem` 及 `path_3_5*` 薄包装）接受 `crystal`（默认正六棱柱 `HexPrism()`），面 `f` 的法向经唯一查询 `optics.face_normals` 取 `crystal.normal(crystal.face(f))`；面 1–8 的法向若与其闭式星方向（`±c`、方位 `i·60°`）相差不超过 `1e-12` 则取精确星方向（Newell 公式与之差约 1e-16），所以正六棱柱与 ch06 fixture、strip 管线、$S^2$ store 所钉的历史常量表逐位一致，偏离星方向的面保留自身法向；`HEXPRISM_BODY_NORMALS` 是这一查询在正六棱柱上的结果，留给按面号查表的调用方。`D_P` 核函数（`dp_field`、`contour`、`contour_quadrature`、`ch10_verdicts`）把法向当作被追踪的数组参数（`DPField.normals`），同一面序列只编译一次、所有晶体复用。凡已持有晶体的消费者都把它传到底（`DPField`、`focusing.classify`、`weights`、`s2_store.evaluate_fields`、discovery、strip 场景）；引用晶体没有的面是 `ValueError`，锥晶面 13–28 能跑通 `focusing.classify`。边界行走的 margin 恒等（`identical_margins`）按晶体法向核实，不再只凭面号假定。
-- **约化簇改用晶体自身的 `G_true`**（任务 `reduction-cluster-g-true`，scrum `crystal-reduction-generalize`，2026-09-27；是上面 fail-fast 裁定的阶段 2）：`path_class` 的 `pbd_orbit_hexprism`、`phi_key`、`path_class_symmetry`（`s2_store`、`strip_pixel`、`band_sum` 只经由它们接触晶体对称性）不再要求 `|G_true| = 24`，改用 `true_symmetry_group` 作候选群；显式传入的 `symmetry_elements` 仍须属于 `G_true`。`D6h` 折叠表与六方向星（`phi_key` 的方向编号）保留为与晶体无关的查找表——光路引用晶体不存在的面是 `ValueError`（`_require_faces_of`），不是静默合并。独立 oracle（某成员自建 store 对照另一成员的对称搬运）在 `D3h`（阶 12）、`D2h`（阶 8）与一般阶 2 棱柱上一致到 `1e-12`（`3-5` 反例：12 条 `D6h` 像收敛为晶体真实的 1 成员轨道）；正六棱柱渲染逐位不变，只有 store 缓存 key 变化（schema 4→5，新增 `face_distance`）。对两种低对称棱柱做了对 Lumice Monte Carlo 的绝对尺度独立验证（任务 `low-symmetry-lumice-validation`）：6 组"晶体 × 姿态族 × 光路类"组合（random/Parry 姿态，类 `[3,5]`，`D3h` 棱柱另加 `[3,5,6,7]`）总通量比一致到 `4e-4`，均在两 seed 噪声底内，未拟合任何常数；该验证同时发现 Lumice 自身的 `P`/`B`/`D` 约化在 `D6h` 以下会把不等价光路错误合并（`D3h` 上 `[3,5]` 实测 `1.41` 倍），是 Lumice 侧缺陷，已记入其自身 backlog，不是 LI 的缺陷。锥晶的 store 路径仍保持 fail-fast（任务 `pyramid-lumice-semantics`）。
+- **约化簇改用晶体自身的 `G_true`**（任务 `reduction-cluster-g-true`，scrum `crystal-reduction-generalize`，2026-09-27；是上面 fail-fast 裁定的阶段 2）：`path_class` 的 `g_true_orbit`（原名 `pbd_orbit_hexprism`）、`phi_key`、`path_class_symmetry`（`s2_store`、`strip_pixel`、`band_sum` 只经由它们接触晶体对称性）不再要求 `|G_true| = 24`，改用 `true_symmetry_group` 作候选群；显式传入的 `symmetry_elements` 仍须属于 `G_true`。`D6h` 折叠表与六方向星（`phi_key` 的方向编号）保留为与晶体无关的查找表——光路引用晶体不存在的面是 `ValueError`（`_require_faces_of`），不是静默合并。独立 oracle（某成员自建 store 对照另一成员的对称搬运）在 `D3h`（阶 12）、`D2h`（阶 8）与一般阶 2 棱柱上一致到 `1e-12`（`3-5` 反例：12 条 `D6h` 像收敛为晶体真实的 1 成员轨道）；正六棱柱渲染逐位不变，只有 store 缓存 key 变化（schema 4→5，新增 `face_distance`）。对两种低对称棱柱做了对 Lumice Monte Carlo 的绝对尺度独立验证（任务 `low-symmetry-lumice-validation`）：6 组"晶体 × 姿态族 × 光路类"组合（random/Parry 姿态，类 `[3,5]`，`D3h` 棱柱另加 `[3,5,6,7]`）总通量比一致到 `4e-4`，均在两 seed 噪声底内，未拟合任何常数；该验证同时发现 Lumice 自身的 `P`/`B`/`D` 约化在 `D6h` 以下会把不等价光路错误合并（`D3h` 上 `[3,5]` 实测 `1.41` 倍），是 Lumice 侧缺陷，已记入其自身 backlog，不是 LI 的缺陷。锥晶的 store 路径仍保持 fail-fast（任务 `pyramid-lumice-semantics`）。
 - **在验证边界上对照 Lumice**：`scripts/verify_crystal_closed_form.py` 经 `ctypes` 调 Lumice 的 `LUMICE_GetCrystalMesh`，在临界形状（远面恰擦角点）和 3000 组随机 `face_distance` 上对照存在面、法向与角点（含拒绝判定，全部一致），并行跑独立几何校验（半空间包含、`V − E + F = 2`）。
 
 ## 5. 与其他项目的关系
@@ -210,6 +210,31 @@ $\le 10^{-11}$；单点 C++ $193\,\mathrm{ns}$ vs JAX $104\,\mu\mathrm{s}$。功
    parity）。LI 对 Lumice 的依赖因此是有界的：只针对已退役 JAX 版的成熟算法
    模块，经 binding；原语层与仍在研究中的模块，LI 的构建与运行不依赖 Lumice。
    验证工具调用 Lumice 做对照的既有规则不变。
+
+**波次推进（owner 裁定 2026-09-28，作者与 owner 跨仓讨论定下；权威记录本仓
+`scratchpad/scrum-analytic-lib-wave1-spec/scrum.md` §1）：** 上述共享库时序
+具体化为三个波次，每波 Lumice 先落地一个模块，LI 晚一波切换依赖：
+
+| 波次 | Lumice 共享库 | 服务的 Analyze 功能 | LI 侧 |
+|---|---|---|---|
+| 1 | 模块 A v0：`EvaluatePath` + **seed 搜索** + `TraceFiber[Batch]`，只返回点列 | 功能 1 光路详情 | 写 seed 搜索（discovery）契约（`docs/phase1-math-contract.md` §9.5）；导出 parity fixture；研究并稳定诊断/权重契约。**不切换** |
+| 2 | 模块 A v1：加诊断 + 权重（`struct_size` 兼容扩展）；模块 B：单光路 S² 仓库 + 带求和 | 功能 2 单光路全天图 | 按 `docs/phase1-math-contract.md` §11 conformance 认证 A v1 → 切换 fiber 求解、退役 JAX continuation；写作仓传递依赖按 `.lumice` release 拉取模式接入；B 只做 parity 不切换 |
+| 3 | 模块 C：`dp_field`/`contour`/`focusing`（C++ 用 `Jet2` 前向 hyper-dual） | 功能 3 预设点与机制标签 | ch12/12.1 用完、不再研究后，先切 B 再切 C |
+
+1. **v0 含 seed 搜索**（作者判断：合理）；不需要 Lumice MC 记录光线姿态——Analyze
+   全天图低分辨率，seed 密度可先低后渐进加密，交互上不构成 blocker。
+2. **诊断字段两步走**：v0 只返回点列；LI 同时把 `docs/phase1-math-contract.md`
+   §9.3 的诊断/权重契约研究稳定，波次 2 再进库。
+3. **parity fixture 改动方向 LI → Lumice**：LI 按固定 rev 导出，Lumice 拷入并在
+   CI 跑。
+4. **写作仓对 C++ 库的传递依赖**沿用 `halo_notes.sim` 的 `.lumice` 按版本拉
+   release 模式（波次 2 落地）。
+5. **LI 切换某模块的判据**（三条同时满足）：conformance 认证通过；LI tasks 中
+   无进行中的针对该模块的研究；无计划中的需求要对它做 AD（例如 ch14 可微渲染
+   若要对晶体形状参数求梯度，相关模块不得退役 JAX 版；只对姿态密度 ρ 求导不受
+   影响——前向模型对 ρ 线性）。
+
+波次 1 的落地任务见 scrum `analytic-lib-wave1-spec`（本仓 `scratchpad/`）。
 
 待后续核实（本 chore 不做，只标记）：Lumice 的 Analyze 工作区设计里「太阳方向球
 上的水平集 = fiber」的一一对应，在锥晶与含内反射光路上是否成立，由 LI 核对

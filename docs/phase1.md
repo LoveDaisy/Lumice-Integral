@@ -9,7 +9,7 @@ that send the incident ray to that pixel, and integrate the physical weight
 along it. It was closed on 2026-09-23. It is the project's pointwise
 reference; the production renderer is now Phase II's band sum
 ([phase2.md](phase2.md)). The normative definitions (coordinates, measures,
-events, interfaces, conformance C01-C14) are in
+events, interfaces, discovery, conformance C01-C21) are in
 [phase1-math-contract.md](phase1-math-contract.md); the chapter-6 fixture
 and its acceptance stages are in
 [ch06-reference-fixture.md](ch06-reference-fixture.md). This document is the

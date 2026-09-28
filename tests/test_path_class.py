@@ -2,7 +2,7 @@
 
 Structure (task-path-class-rendering-unit plan Steps 4-6):
 
-- orbit expansion of ``path_class.pbd_orbit_hexprism`` (group matrices acting
+- orbit expansion of ``path_class.g_true_orbit`` (group matrices acting
   on face normals) against ``_geometry_oracles.pbd_orbit`` (index arithmetic)
   on every face sequence up to three faces plus the issue's four-face member;
 - the canonical class ``[3, 5]`` is the 12 rotations of ``3-5`` and ``3-7``;
@@ -46,6 +46,7 @@ from lumice_integral.path_class import (
     canonical_class_scene,
     discover_class_components,
     estimate_rank0_contribution,
+    g_true_orbit,
     pbd_orbit_hexprism,
     pixel_solid_angle,
     render_class_pixel,
@@ -67,18 +68,25 @@ CRYSTAL = HexPrism(1.0, 0.8)
 
 @pytest.mark.parametrize("faces", [(3, 5), (3, 7), (1, 2), (3, 6), (1, 3), (3, 1, 2, 5), (1, 3, 2), (3, 1, 4), (1, 3, 5, 2)])
 def test_orbit_matches_the_oracle_on_named_paths(faces):
-    assert pbd_orbit_hexprism(faces) == frozenset(pbd_orbit(faces))
+    assert g_true_orbit(faces) == frozenset(pbd_orbit(faces))
 
 
 def test_orbit_matches_the_oracle_on_every_sequence_up_to_three_faces():
     """Exhaustive over 8 * 8 + 8 * 8 * 8 sequences (repeated faces included: the group action does not care)."""
     for length in (2, 3):
         for faces in itertools.product(range(1, 9), repeat=length):
-            assert pbd_orbit_hexprism(faces) == frozenset(pbd_orbit(faces)), faces
+            assert g_true_orbit(faces) == frozenset(pbd_orbit(faces)), faces
 
 
 def test_orbit_does_not_depend_on_the_aspect_ratio():
-    assert pbd_orbit_hexprism((3, 1, 2, 5), HexPrism(1.0, 0.2)) == pbd_orbit_hexprism((3, 1, 2, 5), HexPrism(1.0, 5.0))
+    assert g_true_orbit((3, 1, 2, 5), HexPrism(1.0, 0.2)) == g_true_orbit((3, 1, 2, 5), HexPrism(1.0, 5.0))
+
+
+def test_pbd_orbit_hexprism_is_a_deprecated_alias_for_g_true_orbit():
+    faces = (3, 1, 2, 5)
+    with pytest.warns(DeprecationWarning, match="g_true_orbit"):
+        aliased = pbd_orbit_hexprism(faces, CRYSTAL)
+    assert aliased == g_true_orbit(faces, CRYSTAL)
 
 
 def test_canonical_class_is_the_twelve_rotations_of_3_5_and_3_7():

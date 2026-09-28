@@ -31,6 +31,7 @@ Queue (tasks in `scratchpad/tasks.md`; dispatched 20 ∥ 21, then 22 ∥ 24, 23 
 | — | explore `ad-port-probe` (opened 2026-09-27): whether function 3's AD reduces to a portable C++ core against JAX — **done 2026-09-27** (forward hyper-dual `Jet2<3>` matches JAX to $\le 10^{-11}$ relative error on three paths, feeds the compute-landing-point ruling, §9) | — |
 | 37 | scrum `crystal-reduction-generalize` (stage 2 of scrum 29's fail-fast ruling; requirement source [overview.md](overview.md) §5.3): `reduction-cluster-g-true` → `pose-density-reference-face` → `low-symmetry-lumice-validation` → `stage2-docs` — `reduction-cluster-g-true` **done 2026-09-27** (reduced cluster's candidate group is the crystal's own `G_true`; [overview.md](overview.md) §4.1, §9); `pose-density-reference-face` **done 2026-09-27** (Parry/Lowitz roll reference is body `+x`, independent of whether the crystal has face 3; [conventions.md](conventions.md) #3, §9); `low-symmetry-lumice-validation` **done 2026-09-27** (two low-symmetry prisms validated against Lumice Monte Carlo at absolute scale, `4e-4`; surfaced a Lumice-side `P`/`B`/`D` over-merge defect below `D6h`, §9); `stage2-docs` **done 2026-09-27** (this row and the §9 entries below, [overview.md](overview.md) §4.1, backlog) | 29 |
 | 42 | scrum `multi-wavelength`: `spectral-conventions` → `spectrum-wl-pool-store` → `xyz-band-sum-render` / `wavelength-critical-api` — `spectral-conventions` **done 2026-09-27** (explore; Lumice Sellmeier n(λ), M-slot pool and CMF machinery white-boxed, [overview.md](overview.md) §5.3, backlog); `spectrum-wl-pool-store` **done 2026-09-27** (`lumice_integral.spectrum`: `dispersion`/`cmf`/`illuminant`/`wl_pool`/`store`, per-wavelength `S^2` stores reuse `s2_store`'s existing cache key with zero changes to `S2StoreSpec`; [conventions.md](conventions.md) #20; commit `7d03f02`); `xyz-band-sum-render` **done 2026-09-27** (`spectrum.xyz_band_sum`: one monochrome band sum per distinct n(λ) summed to linear XYZ with Lumice's slot-average / emitted-weight normalisation, `render_band_sum.py --illuminant` / `--discrete-wavelength-nm`, `compare_lumice_family.py` per channel; the `[3, 5]` class under D65, `M = 5`, against Lumice Metal at 1e9 rays: X / Y / Z flux ratios 1.0000–1.0002, chromaticity within 2e-5; [conventions.md](conventions.md) #20); `wavelength-critical-api` **done 2026-09-27** (`focusing.wavelength_critical_table`: `classify` per n(λ), onsets paired by rank with a topology check that refuses rather than mis-pairs; `3-5` plate at 450 / 550 / 650 nm shifts 0.581 / 0.631 / 0.604 / 0.748°, [phase2.md](phase2.md) §10; commit `7cfc9a2`) | 29 |
+| 45 | scrum `analytic-lib-wave1-spec` (wave 1 of the shared-library rollout, [overview.md](overview.md) §5.3 "Rollout in waves"; requirement source: 2026-09-28 owner+author cross-repo ruling): `chore-wave-plan-docs` / `chore-rename-pbd-orbit-hexprism` / `task-discovery-contract` / `explore-fiber-diagnostics-contract` run independently; `task-parity-fixture-export` depends on the rename and the discovery contract — `chore-wave-plan-docs` **done 2026-09-28** (this row and the §9 entry below, [overview.md](overview.md) §5.3); `task-parity-fixture-export` **done 2026-09-28** (`lumice_integral.parity_export`, `scripts/export_analytic_parity.py`: `evaluate_path` / `trace_fiber` / `seed_search` JSON fixtures over `3-5` / `3-5-6-7` / `13-15-26-28` × random / critical / near-boundary, 32 fixtures, byte-deterministic, read back by `--verify`; [analytic-parity-fixtures.md](analytic-parity-fixtures.md)) | — |
 
 Deferred: the chapter-11 table (path classes × pose families) after 22 and
 M2; divergent light ([phase2.md](phase2.md) §9, backlog); finite solar disk;
@@ -781,7 +782,7 @@ Moved to [overview.md](overview.md) §3.
   the raypath-analysis panel's folded rows — one row per actual physical
   equivalence class (shape §2a **and** pose §2b). New table row
   ([conventions.md](conventions.md) #21) maps both to LI: L1 is
-  `symmetry.reflection_group.pbd_orbit` and `path_class.pbd_orbit_hexprism`
+  `symmetry.reflection_group.pbd_orbit` and `path_class.g_true_orbit` (original name `pbd_orbit_hexprism`)
   at its default crystal (`G_true = D6h`, where L1 and L2 coincide); L2 is
   `symmetry.crystal_group.true_symmetry_group` (shape half; the pose half is
   the caller's `pose_density`). `scripts/compare_lumice_family.py` already
@@ -794,3 +795,20 @@ Moved to [overview.md](overview.md) §3.
   stands. Lumice's forthcoming `liblumice_analytic` accepts only explicit
   face sequences and performs no symmetry reduction of its own, so each
   project keeps its own reduction layer outside the shared boundary.
+- **2026-09-28**: shared-library rollout decided in three waves (owner
+  ruling, decided together with the author across repositories; this
+  repository's authority `scratchpad/scrum-analytic-lib-wave1-spec/scrum.md`
+  §1; chore `wave-plan-docs`). Wave 1 lands Lumice module A v0
+  (`EvaluatePath` + seed search + `TraceFiber[Batch]`, points only) for the
+  panel's function 1; LI does not switch, instead writing the seed-search
+  (discovery) contract (`docs/phase1-math-contract.md` §9.5), exporting parity fixtures LI → Lumice, and
+  stabilizing the diagnostics/weights contract. Wave 2 lands module A v1
+  (diagnostics + weights) and module B (single-path S² store + band sum) for
+  function 2; LI switches fiber solving after
+  `docs/phase1-math-contract.md` §11 conformance certification and retires
+  the JAX continuation path, while B stays parity-only. Wave 3 lands module C
+  (`dp_field`/`contour`/`focusing`) for function 3, switched after ch12/12.1.
+  LI's switch criterion for any module is all three of: conformance passes,
+  no LI task is actively researching it, and no planned requirement needs AD
+  through it. Full statement: [overview.md](overview.md) §5.3 "Rollout in
+  waves".

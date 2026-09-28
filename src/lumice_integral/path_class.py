@@ -6,7 +6,7 @@ Lumice's ``symmetry: PBD`` comparisons are class level).  This module turns
 one representative face sequence into its class and drives the single-path
 pipeline of :mod:`.strip_pixel` once per member:
 
-1. :func:`pbd_orbit_hexprism` expands the representative under the face
+1. :func:`g_true_orbit` (original name ``pbd_orbit_hexprism``) expands the representative under the face
    permutations induced by the crystal's own symmetry group ``G_true``
    (:func:`.symmetry.crystal_group.true_symmetry_group`, a subgroup of
    ``D6h``): the physical orbit, L2 (``docs/conventions.md`` #21, Lumice
@@ -79,6 +79,7 @@ Nothing here imports or calls Lumice.
 from __future__ import annotations
 
 import time
+import warnings
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -179,7 +180,7 @@ def _symmetry_image_of_faces(element: np.ndarray, faces: Faces, normals: Mapping
     return tuple(_face_of_normal(element @ normals[face], normals) for face in faces)
 
 
-def pbd_orbit_hexprism(faces: Sequence[int], crystal: HexPrism | None = None) -> frozenset[Faces]:
+def g_true_orbit(faces: Sequence[int], crystal: HexPrism | None = None) -> frozenset[Faces]:
     """Orbit of a face sequence under the crystal's ``G_true`` as a set of face sequences.
 
     Each element ``g`` of :func:`.symmetry.crystal_group.true_symmetry_group`
@@ -207,6 +208,25 @@ def pbd_orbit_hexprism(faces: Sequence[int], crystal: HexPrism | None = None) ->
     _require_faces_of(crystal, faces)
     normals = _hexprism_normals(crystal)
     return frozenset(_symmetry_image_of_faces(element, faces, normals) for element in true_symmetry_group(crystal))
+
+
+def pbd_orbit_hexprism(faces: Sequence[int], crystal: HexPrism | None = None) -> frozenset[Faces]:
+    """Deprecated alias for :func:`g_true_orbit`; do not use in new code.
+
+    Kept for callers who have not migrated yet.  The name suggests the L1
+    ``PBD`` label filter, but this function has always computed the L2
+    ``G_true`` physical orbit (``docs/conventions.md`` #21); use
+    :func:`g_true_orbit` for that, or
+    :func:`.symmetry.reflection_group.pbd_orbit` if L1 is actually wanted.
+    """
+    warnings.warn(
+        "pbd_orbit_hexprism is deprecated, use g_true_orbit instead "
+        "(L2 orbit under G_true; for the L1 label filter use "
+        "symmetry.reflection_group.pbd_orbit)",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return g_true_orbit(faces, crystal)
 
 
 def phi_key(crystal: Polyhedron, faces: Sequence[int]) -> tuple[int, int, int]:
@@ -259,7 +279,7 @@ def path_class_symmetry(
     """Per member, a ``G_true`` element ``g`` (proper or improper) mapping the representative's faces onto it.
 
     ``g`` maps face ``f`` to the face with normal ``g @ n_f`` (the action of
-    :func:`pbd_orbit_hexprism`), so the member's ``Phi``, weights and valid
+    :func:`g_true_orbit`, original name ``pbd_orbit_hexprism``), so the member's ``Phi``, weights and valid
     domain are the representative's transported by ``g`` (:mod:`.s2_store`,
     roadmap section 4.1(d)); on ``S^2`` a mirror transports like a rotation.
     The representative maps to the identity.  The candidates are the
@@ -351,7 +371,7 @@ def build_path_class(crystal: Polyhedron, representative: Sequence[int]) -> Path
     if not isinstance(crystal, HexPrism):
         raise TypeError("path classes are implemented for the hexagonal prism only")
     representative = normalize_faces(representative)
-    members = pbd_orbit_hexprism(representative, crystal)
+    members = g_true_orbit(representative, crystal)
     wedge = wedge_angle_deg(crystal, representative)
     rank = halo_map_rank(crystal, representative)
     for member in sorted(members):
@@ -993,6 +1013,7 @@ __all__ = [
     "canonical_class_scene",
     "discover_class_components",
     "estimate_rank0_contribution",
+    "g_true_orbit",
     "haar_domain_batches",
     "haar_domain_samples",
     "hexprism_symmetry_matrices",
