@@ -211,6 +211,31 @@ $\le 10^{-11}$；单点 C++ $193\,\mathrm{ns}$ vs JAX $104\,\mu\mathrm{s}$。功
    模块，经 binding；原语层与仍在研究中的模块，LI 的构建与运行不依赖 Lumice。
    验证工具调用 Lumice 做对照的既有规则不变。
 
+**波次推进（owner 裁定 2026-09-28，作者与 owner 跨仓讨论定下；权威记录本仓
+`scratchpad/scrum-analytic-lib-wave1-spec/scrum.md` §1）：** 上述共享库时序
+具体化为三个波次，每波 Lumice 先落地一个模块，LI 晚一波切换依赖：
+
+| 波次 | Lumice 共享库 | 服务的 Analyze 功能 | LI 侧 |
+|---|---|---|---|
+| 1 | 模块 A v0：`EvaluatePath` + **seed 搜索** + `TraceFiber[Batch]`，只返回点列 | 功能 1 光路详情 | 写 seed 搜索（discovery）契约；导出 parity fixture；研究并稳定诊断/权重契约。**不切换** |
+| 2 | 模块 A v1：加诊断 + 权重（`struct_size` 兼容扩展）；模块 B：单光路 S² 仓库 + 带求和 | 功能 2 单光路全天图 | 按 `docs/phase1-math-contract.md` §11 conformance 认证 A v1 → 切换 fiber 求解、退役 JAX continuation；写作仓传递依赖按 `.lumice` release 拉取模式接入；B 只做 parity 不切换 |
+| 3 | 模块 C：`dp_field`/`contour`/`focusing`（C++ 用 `Jet2` 前向 hyper-dual） | 功能 3 预设点与机制标签 | ch12/12.1 用完、不再研究后，先切 B 再切 C |
+
+1. **v0 含 seed 搜索**（作者判断：合理）；不需要 Lumice MC 记录光线姿态——Analyze
+   全天图低分辨率，seed 密度可先低后渐进加密，交互上不构成 blocker。
+2. **诊断字段两步走**：v0 只返回点列；LI 同时把 `docs/phase1-math-contract.md`
+   §9.3 的诊断/权重契约研究稳定，波次 2 再进库。
+3. **parity fixture 改动方向 LI → Lumice**：LI 按固定 rev 导出，Lumice 拷入并在
+   CI 跑。
+4. **写作仓对 C++ 库的传递依赖**沿用 `halo_notes.sim` 的 `.lumice` 按版本拉
+   release 模式（波次 2 落地）。
+5. **LI 切换某模块的判据**（三条同时满足）：conformance 认证通过；LI tasks 中
+   无进行中的针对该模块的研究；无计划中的需求要对它做 AD（例如 ch14 可微渲染
+   若要对晶体形状参数求梯度，相关模块不得退役 JAX 版；只对姿态密度 ρ 求导不受
+   影响——前向模型对 ρ 线性）。
+
+波次 1 的落地任务见 scrum `analytic-lib-wave1-spec`（本仓 `scratchpad/`）。
+
 待后续核实（本 chore 不做，只标记）：Lumice 的 Analyze 工作区设计里「太阳方向球
 上的水平集 = fiber」的一一对应，在锥晶与含内反射光路上是否成立，由 LI 核对
 （来源：Lumice `doc/raypath-analysis.md` §5.1.8，已标为 assistant 推断）。

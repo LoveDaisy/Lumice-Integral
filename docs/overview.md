@@ -491,6 +491,41 @@ number rather than asserting its content has merged.
    run independent of Lumice. The existing rule that validation tooling may
    invoke Lumice as a black-box oracle is unchanged.
 
+**Rollout in waves (owner ruling 2026-09-28, decided by the author and the
+owner across repositories; this repository's authority is
+`scratchpad/scrum-analytic-lib-wave1-spec/scrum.md` §1):** the shared-library
+timing above resolves into three waves, each landing one Lumice module a wave
+ahead of LI switching its dependency:
+
+| Wave | Lumice shared-library module | Analyze function served | LI side |
+|---|---|---|---|
+| 1 | Module A v0: `EvaluatePath` + **seed search** + `TraceFiber[Batch]`, points only | Function 1, path detail | Write the seed-search (discovery) contract; export parity fixtures; research and stabilize the diagnostics/weights contract. **No switch.** |
+| 2 | Module A v1: adds diagnostics + weights (`struct_size`-compatible extension); Module B: single-path S² store + band sum | Function 2, whole-sky map for one path | Certify A v1 against `docs/phase1-math-contract.md` §11 conformance → switch fiber solving, retire the JAX continuation path; the writing repository's transitive dependency moves to the `.lumice` release-pull pattern; B is parity-only, no switch |
+| 3 | Module C: `dp_field`/`contour`/`focusing` (C++ forward hyper-dual `Jet2`) | Function 3, preset points and mechanism labels | Once ch12/12.1 are done and no longer researched, switch B first, then C |
+
+1. **Wave 1 includes seed search** (author's judgment: sound); Lumice's Monte
+   Carlo need not record ray pose — the Analyze whole-sky map is low
+   resolution, seed density can start coarse and refine progressively, and
+   this is not an interaction blocker.
+2. **Diagnostic fields land in two steps:** v0 returns points only; LI
+   stabilizes the `docs/phase1-math-contract.md` §9.3 diagnostics/weights
+   contract in parallel, landing in the shared library at wave 2.
+3. **Parity fixtures change in one direction, LI → Lumice:** LI exports at a
+   fixed revision, Lumice imports them and runs them in CI.
+4. **The writing repository's transitive dependency** on the C++ library
+   follows `halo_notes.sim`'s existing `.lumice` versioned release-pull
+   pattern (lands at wave 2).
+5. **LI's criterion for switching a module** (all three must hold at once):
+   conformance certification passes; no LI task is actively researching that
+   module; no planned requirement needs AD through it (e.g. ch14
+   differentiable rendering, if it needs gradients through crystal shape
+   parameters, keeps the JAX version for the relevant module; gradients
+   w.r.t. pose density ρ alone are unaffected — the forward model is linear
+   in ρ).
+
+Wave 1's landing tasks are tracked in scrum `analytic-lib-wave1-spec` (this
+repository's `scratchpad/`).
+
 To be verified later (not in this chore, flagged only): whether Lumice's
 Analyze workspace design's one-to-one correspondence "level set on the
 sun-direction sphere = fiber" still holds on cone crystals and raypaths with
