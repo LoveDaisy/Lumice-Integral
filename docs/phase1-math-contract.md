@@ -508,7 +508,7 @@ Let `N` be the number of accepted pose samples. A result MUST contain:
 |---|---|
 | `status` | Exactly one of `closed`, `event_terminated`, `numerical_failure`, or `budget_exhausted`. |
 | `reason` | A reason code compatible with `status`; unknown extension codes retain their original string/payload. |
-| `component_scope` | States that this is one component reached from one seed; component completeness is `unknown` unless established externally. |
+| `component_scope` | States that this is one component reached from one seed; component completeness is `unknown` unless established externally (for example by the post-hoc check of section 9.5.6a). |
 | `poses` | `N` ordered `SO(3)` poses in the declared representation, with representation validity diagnostics. |
 | `arclength_increments` | `N - 1` nonnegative metric edge lengths, plus any separately represented closing edge if the storage convention omits a repeated seed. |
 | `residual_norms` | `(N)` norms and the norm definition/tolerances used. |
@@ -737,11 +737,34 @@ reference's `trace_seconds`, but they are not part of parity.
 `completeness` is **procedural, not a certificate**. `complete` means only that
 every admissible, non-folded candidate of this pool closed or stitched. A target
 with no admissible candidate is therefore `complete` with zero components. It
-does not mean every connected component of `X_(P,d)` was found: a component
-with no band event, or whose only candidates fell into a cluster represented
-by a pose of another component, is invisible to it. It MUST NOT be reported as
-component completeness. The single-component `component_scope` of section 9.3
-stays `unknown` and remains authoritative for quadrature (section 7).
+does not mean every connected component of `X_(P,d)` was found. Three
+mechanisms, at three stages of the pipeline, make a component invisible to it:
+
+1. **No band event** (sampling, before section 9.5.3). The component's region
+   of `u` receives no event of the pool, so it has no candidate at all.
+2. **Clustered into another component** (section 9.5.4, step 1, radius `r_c`).
+   Every one of its raw candidates lies within `r_c` of a cluster centre on
+   another component. Only the representative is corrected, so the component
+   is never corrected, gated or traced. The comparison is between raw
+   candidate poses, before any correction.
+3. **Deduplicated into a traced neighbour** (section 9.5.4, step 5, radius
+   `eta`). The component has its own cluster, its representative corrects and
+   passes the admissibility gate, but the corrected pose lies within `eta` of
+   the stored curve of a component that has already been accepted and traced.
+   It is folded as that component and counted `dedup_merged`, and it leaves no
+   `incomplete` record. The comparison is between a corrected, admissible pose
+   and a traced curve: the two true curves are closer than `eta`, although
+   events, clustering and correction are all sufficient. On path `3-5` inside
+   the certificate interval `(42.99086°, 43.46516°)` (`n_open = 4`), the
+   missing fourth component is a one-pose arc whose pose lies `1.224e-3 rad`
+   from a neighbour's curve, below the default `eta = closure_distance`, and
+   discovery returns 3 components at production gate radii (explore
+   `discovery-completeness-certificate`).
+
+`completeness` MUST NOT be reported as component completeness. The
+single-component `component_scope` of section 9.3 stays `unknown` and remains
+authoritative for quadrature (section 7). Section 9.5.6a gives the optional
+check that can establish the component count externally.
 
 The one quantitative statement available is probabilistic. For `N` i.i.d.
 uniform points, a region of `u` of area `mu` receives no event with probability
@@ -772,6 +795,63 @@ untraced extent as suspects. An arc's length is therefore not a parity
 quantity across samples or backends; its seed, kind and end events are. The
 quadrature's per-end truncation estimate (section 7) is the only account of
 an arc's untraced tail.
+
+#### 9.5.6a Post-hoc certification
+
+(The letter suffix is deliberate: it keeps the numbers of sections 9.5.7–9.5.10
+stable for documents that cite them.)
+
+**There is no unconditional completeness certificate for discovery**: no
+statement independent of the crystal and the path guarantees that a discovery
+call found every component of `X_(P,d)`. The counterexample is mechanism 3 of
+section 9.5.6 on path `3-5`: the `dp_field` certificate says 4 components on
+`(42.99086°, 43.46516°)`, discovery stably returns 3, and the missing one is
+a one-pose arc `1.224e-3 rad` from a traced neighbour.
+
+What the contract provides instead has three levels.
+
+1. **`completeness` keeps its meaning.** It stays procedural (section 9.5.6),
+   with the values `complete` and `unknown` only. The check below does not
+   add a value, does not rewrite `completeness`, and changes no return value
+   of `discover_components`.
+2. **An optional post-hoc check, run by the caller outside discovery.** For
+   the deviation `delta` of the target `(path, d)`, the caller builds
+   `dp_field.DPField.build(crystal, faces, index)` independently and reads the
+   interval of `DPField.interval_partition()` that contains `delta`. Its
+   structural preconditions are explicit, never a silent downgrade:
+   - the field exists only for `halo_map_rank != 0`; a rank-0 path is a point
+     mass at the sun and `DPField.build` raises `ValueError`;
+   - the partition exists only inside its disk reasoning: `U_P` a disk, at
+     most one interior critical point and that one an extremum, no slab crease
+     through `U_P`, alternating loop extrema, and an even number of boundary
+     crossings. Outside it `interval_partition` raises `TopologyEscape`, and
+     the check is unavailable (not failed);
+   - `delta` at a critical value lies on no open interval and has no count.
+
+   The rule is one-directional. If discovery's component count equals the
+   interval's `n_components`, that is **sufficient evidence** of component
+   completeness for this call (the topological truth matches the sample).
+   If they differ, the `dp_field` count is the **topological truth** and the
+   discovery result is **undersampled**: the caller reseeds or reruns with a
+   smaller `distance_threshold`, and does not accept
+   `completeness == "complete"` at face value. The counts are compared as a
+   whole; the check does not say which component is missing. The same
+   comparison is how the Phase II contour extraction certifies its level sets
+   (`docs/phase2.md`, `ContourCertificateError`).
+3. **Excluded: a constructive threshold rule.** No rule computes, from the
+   certificate's macroscopic data (the `CriticalSet`, the spacing of the
+   boundary crossings), a `distance_threshold` or `cluster_radius_rad` that
+   always avoids undersampling. On path `3-5` the eight boundary crossings are
+   at least `0.441 rad` apart, and the collapse that hides the fourth component
+   is `1.224e-3 rad`, nearly 400 times smaller: the macroscopic data do not
+   predict the local degeneracy. Tightening the threshold is not a monotone
+   fix either. From `0.02` to `0.08 rad` the count is a stable 3; a threshold
+   small enough to separate the one-pose arc also splits redundant candidates
+   of one curve (corrected `1e-7`–`1e-10 rad` apart) into new "components",
+   and the count jumps to 6, 7 or 24. The two scales do not overlap, so no
+   single threshold resolves both. The one-pose arc exists because its seed is
+   already within one predictor step of a boundary or a neighbour, a scale set
+   by the path's local geometry.
 
 #### 9.5.7 Densification (the low-then-dense calling pattern)
 
@@ -1024,9 +1104,17 @@ failure: the named prerequisite is outside the current reference core.
   rejection are covered without private monkeypatching.
 - Discovery (section 9.5) has a normative, procedural contract; its open
   parts are:
-  - no completeness certificate: `completeness` is procedural and the
-    band-coverage `exp(-k_min)` is a Monte Carlo reading, not a bound
-    (section 9.5.6);
+  - no completeness certificate, and none exists in unconditional form: the
+    path `3-5` counterexample (a one-pose arc deduplicated into a traced
+    neighbour `1.224e-3 rad` away) rules out a crystal- and path-independent
+    certificate and any threshold rule built from the certificate's
+    macroscopic data. `completeness` stays procedural and the band-coverage
+    `exp(-k_min)` is a Monte Carlo reading, not a bound (section 9.5.6). The
+    optional post-hoc check of section 9.5.6a compares the component count
+    with `DPField.interval_partition()`: a match is sufficient evidence, a
+    mismatch marks the discovery result undersampled with the `dp_field`
+    count as the topological truth, and it is unavailable outside that
+    partition's structural preconditions (`TopologyEscape`);
   - densification is not monotone: one-pose arcs can be lost between nested
     samples; components with an accepted step have been kept on every fiber
     measured (section 9.5.7);
