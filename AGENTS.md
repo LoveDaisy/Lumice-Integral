@@ -130,6 +130,9 @@ uv run python scripts/store_seed_density_survey.py --output-dir /tmp/store-seed-
 # a non-canonical pose-density family (recorded in provenance.json and the resume fingerprint)
 uv run python scripts/render_ch06_strip.py --rows 300:302 --columns 126:127 --output-dir /tmp/strip-parry \
   --pose-density-family parry --pose-density-zenith-std-deg 1 --pose-density-roll-std-deg 1
+# LI -> Lumice analytic parity fixtures (docs/analytic-parity-fixtures.md): EvaluatePath / TraceFiber / seed search
+# over the path x point-category matrix, byte-deterministic per rev; --verify reads every fixture back (~16 s, M2 Max)
+uv run python scripts/export_analytic_parity.py --output-dir artifacts/analytic-parity --verify
 # Linux/NVIDIA environment
 uv sync --extra cuda13 --dev
 XLA_PYTHON_CLIENT_PREALLOCATE=false uv run python benchmarks/benchmark_batch.py

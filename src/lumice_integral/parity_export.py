@@ -73,7 +73,7 @@ CONVENTIONS_PATH = REPO_ROOT / "docs" / "conventions.md"
 # propagation direction s, above it (the plane of test_discovery.target_at_deviation).
 AZIMUTH_REFERENCE = np.array([0.0, 0.0, 1.0])
 
-# Tolerances and their basis (docs/analytic-parity-fixtures.md section 4 is the table of the same values).
+# Tolerances and their basis (docs/analytic-parity-fixtures.md section 5 is the table of the same values).
 KINEMATIC_ATOL = 1e-12
 KINEMATIC_BASIS = (
     "float64 evaluation of the same closed-form refraction/reflection chain from bit-identical JSON inputs: a few "
