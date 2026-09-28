@@ -279,7 +279,7 @@ def path_class_symmetry(
     """Per member, a ``G_true`` element ``g`` (proper or improper) mapping the representative's faces onto it.
 
     ``g`` maps face ``f`` to the face with normal ``g @ n_f`` (the action of
-    :func:`g_true_orbit`), so the member's ``Phi``, weights and valid
+    :func:`g_true_orbit`, original name ``pbd_orbit_hexprism``), so the member's ``Phi``, weights and valid
     domain are the representative's transported by ``g`` (:mod:`.s2_store`,
     roadmap section 4.1(d)); on ``S^2`` a mirror transports like a rotation.
     The representative maps to the identity.  The candidates are the
