@@ -12,7 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
-from .so3 import exp, rotation_distance
+from .so3 import exp, log, rotation_distance
 from .weights import WeightEvaluator, WeightObservable, evaluate_weights
 
 
@@ -1622,6 +1622,48 @@ def _section_coordinate(initial: Array, rotation: Array, tangent: Array) -> Arra
     return jnp.dot(tangent, skew_vector)
 
 
+# Bisection steps for the section's zero on an accepted edge: 52 halvings take
+# the unit edge parameter to float64 resolution.  The closure corrector accepts
+# its start without an update once it is inside the closure tolerances, so a
+# coarser bracket (explore 45.7 used 40, ~1e-12) would become the closed pose.
+_CLOSURE_CROSSING_BISECTION_STEPS = 52
+
+
+@jax.jit
+def _edge_generator_kernel(previous: Array, current: Array) -> Array:
+    return log(previous.T @ current)
+
+
+def _closure_crossing_pose(
+    seed: Array,
+    tangent: Array,
+    previous_rotation: Array,
+    previous_value: float,
+    current_rotation: Array,
+) -> Array:
+    """Bisect the section's zero crossing on the accepted edge's own geodesic.
+
+    The edge is ``previous_rotation @ exp(t log(previous_rotation^T
+    current_rotation))`` for ``t`` in ``[0, 1]``; the section values at the
+    ``previous_value`` (nonzero) at the start and of the opposite sign or zero
+    at the end.  The returned pose is the bracket end on the end's side, so it satisfies the same crossing convention as
+    :func:`_crossing_direction`.  Assumes at most one sign change on the edge
+    (a known limitation of the step-aware closure trigger, contract section 12).
+    """
+    generator = _edge_generator_kernel(previous_rotation, current_rotation)
+    low_positive = previous_value > 0.0
+    low, high = 0.0, 1.0
+    for _ in range(_CLOSURE_CROSSING_BISECTION_STEPS):
+        middle = 0.5 * (low + high)
+        candidate = _apply_correction_kernel(previous_rotation, middle * generator)
+        value = float(_section_coordinate(seed, candidate, tangent))
+        if (value > 0.0) == low_positive and value != 0.0:
+            low = middle
+        else:
+            high = middle
+    return _apply_correction_kernel(previous_rotation, high * generator)
+
+
 def target_residual(problem: FiberProblem, rotation: Array) -> Array:
     """Evaluate the declared target-local residual on a smooth-domain pose."""
     direction = problem.direction_evaluator(rotation)
@@ -2106,7 +2148,21 @@ def trace_fiber(
             )
             crossing_direction = _crossing_direction(previous_section, section)
             crossed = previous_section != 0.0 and crossing_direction != 0
-            seed_distance = float(_rotation_distance_kernel(seed, outcome.state.rotation))
+            # A crossing edge is measured at its bisected section zero, not at its
+            # end: a long step can carry the end outside the closure distance
+            # although the edge passes through the seed (contract section 6.4).
+            crossing_pose = (
+                _closure_crossing_pose(
+                    seed,
+                    initial.tangent,
+                    states[-2].rotation,
+                    previous_section,
+                    outcome.state.rotation,
+                )
+                if crossed
+                else outcome.state.rotation
+            )
+            seed_distance = float(_rotation_distance_kernel(seed, crossing_pose))
             tangent_dot = float(
                 np.dot(np.asarray(initial.tangent), np.asarray(outcome.state.tangent))
             )
@@ -2135,7 +2191,7 @@ def trace_fiber(
                 closure = _correct_closure(
                     problem,
                     options,
-                    outcome.state.rotation,
+                    crossing_pose,
                     seed,
                     initial.tangent,
                     outcome.state.tangent,

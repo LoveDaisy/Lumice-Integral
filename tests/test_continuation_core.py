@@ -18,13 +18,15 @@ from lumice_integral.continuation import (
     TerminationReason,
     _correct_trial,
     _correct_closure,
+    _closure_crossing_pose,
+    _section_coordinate,
     _evaluate_regular_state,
     _adapt_accepted_step,
     _event_step_limit,
     retract_to_fiber,
     trace_fiber,
 )
-from lumice_integral.so3 import exp
+from lumice_integral.so3 import exp, rotation_distance
 
 
 def analytic_problem(
@@ -498,6 +500,80 @@ def test_adaptive_analytic_trace_closes_with_quadrature_ready_geometry():
         2.0 * np.pi,
         rtol=0.0,
         atol=1e-8,
+    )
+
+
+def _section_sign_changes(seed, tangent, previous, current, samples=64) -> int:
+    # The bisection assumes one sign change per edge; sample the edge to check it.
+    generator = np.asarray(continuation._edge_generator_kernel(previous, current))
+    signs = [
+        np.sign(
+            float(
+                _section_coordinate(seed, previous @ exp(jnp.asarray(t * generator)), tangent)
+            )
+        )
+        for t in np.linspace(0.0, 1.0, samples + 1)
+    ]
+    signs = [sign for sign in signs if sign != 0.0]
+    return sum(1 for left, right in zip(signs[:-1], signs[1:]) if left != right)
+
+
+@pytest.mark.parametrize(
+    ("start_angle", "end_angle", "expected_distance"),
+    [
+        # The closing edge of the contract section 12 counterexample shape: its
+        # end is 0.15 > closure_distance past the seed.
+        (2.0 * np.pi - 0.05, 2.0 * np.pi + 0.15, 0.0),
+        (-0.15, 0.17, 0.0),
+        # The antipode: the section changes sign there too, far from the seed.
+        (np.pi - 0.1, np.pi + 0.12, np.pi),
+    ],
+)
+def test_closure_crossing_pose_bisects_the_section_zero_on_the_edge(
+    start_angle, end_angle, expected_distance
+):
+    seed = jnp.eye(3, dtype=jnp.float64)
+    tangent = jnp.asarray(BODY_AXIS, dtype=jnp.float64)
+    previous = exp(start_angle * tangent)
+    current = exp(end_angle * tangent)
+    previous_value = float(_section_coordinate(seed, previous, tangent))
+    current_value = float(_section_coordinate(seed, current, tangent))
+    assert previous_value * current_value < 0.0
+    assert _section_sign_changes(seed, tangent, previous, current) == 1
+
+    crossing = _closure_crossing_pose(seed, tangent, previous, previous_value, current)
+    crossing_value = float(_section_coordinate(seed, crossing, tangent))
+
+    assert abs(crossing_value) <= 1e-15
+    # The returned bracket end is on the end's side, as in _crossing_direction.
+    assert crossing_value * current_value >= 0.0
+    np.testing.assert_allclose(
+        float(rotation_distance(seed, crossing)), expected_distance, rtol=0.0, atol=1e-15
+    )
+    if expected_distance == 0.0:
+        assert float(rotation_distance(seed, current)) > ContinuationOptions().closure_distance
+
+
+def test_closure_crossing_pose_stays_on_an_off_fiber_edge():
+    """A generic edge: the zero is on its geodesic, between its two ends."""
+    seed = exp(jnp.array([0.3, -0.2, 0.1], dtype=jnp.float64))
+    tangent = jnp.array([0.6, 0.0, 0.8], dtype=jnp.float64)
+    previous = seed @ exp(jnp.array([-0.07, 0.04, -0.09], dtype=jnp.float64))
+    current = seed @ exp(jnp.array([0.05, 0.03, 0.08], dtype=jnp.float64))
+    previous_value = float(_section_coordinate(seed, previous, tangent))
+    assert previous_value < 0.0 < float(_section_coordinate(seed, current, tangent))
+    assert _section_sign_changes(seed, tangent, previous, current) == 1
+
+    crossing = _closure_crossing_pose(seed, tangent, previous, previous_value, current)
+
+    assert abs(float(_section_coordinate(seed, crossing, tangent))) <= 1e-15
+    edge = float(rotation_distance(previous, current))
+    np.testing.assert_allclose(
+        float(rotation_distance(previous, crossing))
+        + float(rotation_distance(crossing, current)),
+        edge,
+        rtol=0.0,
+        atol=1e-14,
     )
 
 
