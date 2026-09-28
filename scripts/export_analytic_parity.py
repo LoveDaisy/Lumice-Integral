@@ -38,10 +38,6 @@ PRISM = prism_crystal(LUMICE_HEIGHT_OVER_DIAMETER)
 PYRAMID = pyramid_crystal(
     0.5, 0.25, 0.6, miller_wedge_deg((1, 0, 1)), miller_wedge_deg((2, 0, 3)), face_distance=(1, 1.1, 0.9, 1, 1.2, 0.95)
 )
-PYRAMID_SEED_SEARCH_SKIP = (
-    "the reference discovery refuses pyramids before discovery: its sample store has no pyramid "
-    "(docs/phase1-math-contract.md section 9.5.10, s2_store.crystal_description)"
-)
 
 TOPOLOGIES = {
     "3-5": (
@@ -59,7 +55,7 @@ TOPOLOGIES = {
         Scene(PYRAMID, (13, 15, 26, 28), CANONICAL_REFRACTIVE_INDEX, SUN),
         "pyramid faces off the prism family on the asymmetric pyramid of tests/test_optics_crystal_native.py "
         "(focusing.classify reaches it, roadmap 2026-09-27)",
-        PYRAMID_SEED_SEARCH_SKIP,
+        None,
     ),
 }
 
