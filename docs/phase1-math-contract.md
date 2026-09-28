@@ -853,6 +853,18 @@ What the contract provides instead has three levels.
    single threshold resolves both. The one-pose arc exists because its seed is
    already within one predictor step of a boundary or a neighbour, a scale set
    by the path's local geometry.
+4. **Excluded: a diagnostic inside the dedup step.** Flagging one-pose arcs
+   in `discover_components` was evaluated (explore
+   `discovery-one-pose-arc-dedup-heuristic`) and rejected; this is not an
+   open item. A classification field on the result never fires: on path
+   `3-5` at `43.22801°` the arc's seed is `1.208e-3 rad` from a traced curve
+   at the `distance_threshold` check, so it is merged (`dedup_merged`) and
+   never traced. The merge distances do not separate it either: the other
+   three merges of that call, redundant samples of one curve, are `3.3e-3`,
+   `1.08e-2` and `1.50e-2 rad`, and the dangerous one is the smallest. The one
+   clean discriminant, `n_poses == 1` after tracing each merged candidate,
+   costs a trace per candidate, which undoes the dedup. The check of item 2
+   costs one `DPField` per `(path, delta)` and answers the same question.
 
 #### 9.5.7 Densification (the low-then-dense calling pattern)
 
