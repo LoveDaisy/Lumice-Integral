@@ -60,7 +60,8 @@ from lumice_integral.discovery import (
     miss_probability,
     retarget_problem,
 )
-from lumice_integral.geometry import HexPrism
+from lumice_integral.geometry import HexPrism, Pyramid
+from lumice_integral.geometry.pyramid import C_OVER_A_ICE, pyramid_face_angle
 from lumice_integral.optics import path_domain
 from lumice_integral.resample import OpenArc
 from lumice_integral.s2_store import StoreSeeds, build_event_store
@@ -745,9 +746,7 @@ def test_discovery_on_a_low_symmetry_prism() -> None:
     the store (its ``w > 0`` events) and the entry-measure gate; the direction map and the path domain
     depend on the face normals, which the D3h prism shares with the regular one, and on this fixture the
     positive-entry-measure set is the same too, so the fiber, the pool and the component are the regular
-    prism's while the entry measure at the seed is the D3h crystal's.  Pyramids are refused before
-    discovery by the store
-    (``tests/test_s2_store.py::test_pyramid_is_refused_with_a_forward_pointer_to_its_own_task``)."""
+    prism's while the entry measure at the seed is the D3h crystal's.  Pyramids: the section below."""
     from lumice_integral.geometry import entry_measure
     from lumice_integral.symmetry.crystal_group import true_symmetry_group
 
@@ -771,6 +770,97 @@ def test_discovery_on_a_low_symmetry_prism() -> None:
     d6h_measure = entry_measure(component.seed, (3, 5), seeds.incident_direction, base, n_ice=seeds.refractive_index)
     assert d3h_measure.value > 0.0 and d6h_measure.value > 0.0
     assert abs(d3h_measure.value - d6h_measure.value) > 1e-3 * d6h_measure.value
+
+
+# --- pyramid (contract section 9.5.10) -------------------------------------------------------------------------
+# The three off-family pyramid paths of tests/test_optics_crystal_native.py::PYRAMID_OFFFAMILY on the same crystal,
+# built through Pyramid.from_lumice (the store describes a pyramid by its Lumice shape): wedge 90 deg minus the
+# ice face angle gives c_over_a = C_OVER_A_ICE and the vertices of Pyramid(a=1, h=1, tip_ratio=0.5) exactly.
+# Deviations from a bounded scan of each store's D range at N = 1e5 and 1e6 (task s2-store-pyramid-seeds,
+# progress.md; the scan script is a one-off in scratchpad). The arcs end on path_infeasible, which continuation
+# does not bisect (within one step of the boundary, section 9.5.5), so their lengths are pinned at N = 1e5 only.
+
+REFERENCE_PYRAMID = Pyramid.from_lumice(
+    0.5, 0.5, 0.5, upper_wedge_deg=90.0 - pyramid_face_angle(), lower_wedge_deg=90.0 - pyramid_face_angle()
+)
+
+
+@pytest.fixture(scope="module")
+def pyramid_seeds() -> dict[tuple[int, ...], StoreSeeds]:
+    return {faces: _contract_seeds(faces, crystal=REFERENCE_PYRAMID) for faces in PYRAMID_PATHS}
+
+
+PYRAMID_PATHS = ((13, 15, 26, 28), (13, 5, 26, 28), (13, 24, 26))
+
+
+def _pyramid_discovery(seeds: StoreSeeds, delta_deg: float) -> ComponentDiscoveryResult:
+    target = target_at_deviation(delta_deg)
+    result = discover_components(target, seeds, **DISCOVERY_KWARGS)
+    assert result.completeness == "complete" and result.incomplete_count == 0
+    assert check_band_coverage(target, seeds, result).suspect_count == 0
+    return result
+
+
+def test_reference_pyramid_is_the_focusing_fixture_crystal() -> None:
+    assert np.array_equal(REFERENCE_PYRAMID.vertices, Pyramid(a=1, h=1, tip_ratio=0.5).vertices)
+    assert REFERENCE_PYRAMID.shape.upper_c_over_a == pytest.approx(C_OVER_A_ICE, rel=1e-15)
+
+
+def test_pyramid_store_deviation_ranges_match_the_focusing_onsets(pyramid_seeds) -> None:
+    """Each store's D range ends where focusing.classify puts the path's extreme onset (PYRAMID_OFFFAMILY):
+    13-15-26-28 at its interior maximum 177.2940 deg, 13-24-26 at its boundary extremum 131.3022 deg (sampled
+    from below at N = 1e5), and the interior saddle of 13-5-26-28 at 136.3581 deg lies inside that range."""
+    top = {faces: float(np.degrees(np.max(seeds.store.events.D))) for faces, seeds in pyramid_seeds.items()}
+    bottom = float(np.degrees(np.min(pyramid_seeds[(13, 5, 26, 28)].store.events.D)))
+    assert 177.28 < top[(13, 15, 26, 28)] <= 177.2940 + 1e-4
+    assert 131.0 < top[(13, 24, 26)] <= 131.3022 + 1e-4
+    assert bottom < 136.3581 < top[(13, 5, 26, 28)]
+
+
+@pytest.mark.parametrize("delta_deg, arclength", [(170.0, 5.7793), (176.5, 2.9192)])
+def test_pyramid_interior_maximum_path_is_one_closed_loop_up_to_the_maximum(
+    pyramid_seeds, delta_deg: float, arclength: float
+) -> None:
+    """13-15-26-28 (interior maximum, finite_jump edge at 177.2940 deg): below the maximum the fiber is one
+    closed loop around it, shrinking toward it; above it the store has no admissible candidate."""
+    seeds = pyramid_seeds[(13, 15, 26, 28)]
+    result = _pyramid_discovery(seeds, delta_deg)
+    assert result.component_count == 1 and result.components[0].kind == "closed"
+    assert result.components[0].arclength == pytest.approx(arclength, rel=ARCLENGTH_RTOL)
+    above = _pyramid_discovery(seeds, 177.4)
+    assert above.admissible_count == 0 and above.component_count == 0
+
+
+def test_pyramid_saddle_path_changes_its_arc_ends_across_the_saddle(pyramid_seeds) -> None:
+    """13-5-26-28 (interior saddle, log_divergence at 136.3581 deg): one arc on either side of the saddle
+    level, but its ends change there: path_infeasible at both ends below the saddle (also at 136.2 deg), path
+    infeasible and exit TIR above it (also at 136.5 deg); the same at N = 1e6."""
+    seeds = pyramid_seeds[(13, 5, 26, 28)]
+    ends = {}
+    for delta_deg, arclength in ((136.0, 2.1012), (136.7, 2.5247)):
+        result = _pyramid_discovery(seeds, delta_deg)
+        assert result.component_count == 1 and result.arc_count == 1
+        (component,) = result.components
+        assert component.arclength == pytest.approx(arclength, rel=ARCLENGTH_RTOL)
+        ends[delta_deg] = {component.start_reason, component.reason}
+    assert ends[136.0] == {TerminationReason.PATH_INFEASIBLE}
+    assert ends[136.7] == {TerminationReason.PATH_INFEASIBLE, TerminationReason.TIR_BOUNDARY}
+
+
+@pytest.mark.parametrize("delta_deg, arclength", [(90.0, 2.1205), (130.5, 0.3686)])
+def test_pyramid_boundary_only_path_is_one_arc_up_to_its_boundary_extremum(
+    pyramid_seeds, delta_deg: float, arclength: float
+) -> None:
+    """13-24-26 (no interior critical point, boundary extremum at 131.3022 deg): every level is one arc cut by
+    the path domain at both ends, shrinking toward the boundary extremum; beyond it the band is empty."""
+    seeds = pyramid_seeds[(13, 24, 26)]
+    result = _pyramid_discovery(seeds, delta_deg)
+    assert result.component_count == 1 and result.arc_count == 1
+    (component,) = result.components
+    assert component.start_reason == component.reason == TerminationReason.PATH_INFEASIBLE
+    assert component.arclength == pytest.approx(arclength, rel=ARCLENGTH_RTOL)
+    beyond = _pyramid_discovery(seeds, 131.5)
+    assert beyond.pool_count == 0 and beyond.component_count == 0
 
 
 # --- densification (contract section 9.5: measured, not guaranteed) ---------------------------------------------
