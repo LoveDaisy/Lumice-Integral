@@ -211,10 +211,22 @@ class Pyramid(Polyhedron):
         upper_c = side_c_over_a(upper_indices, upper_wedge_deg)
         lower_c = side_c_over_a(lower_indices, lower_wedge_deg)
         fd = tuple(float(f) for f in face_distance)
-        shape = PyramidShape(prism_h, upper_h, lower_h, upper_c, lower_c, fd)
+        return cls._from_shape(a, PyramidShape(prism_h, upper_h, lower_h, upper_c, lower_c, fd))
+
+    @classmethod
+    def _from_shape(cls, a: float, shape: PyramidShape) -> "Pyramid":
+        """由已换算好的 :class:`PyramidShape`（高度已折叠、``c_over_a`` 已由 Miller / 楔角换算）构造，:meth:`from_lumice`
+        与 ``s2_store.crystal_from_description`` 共用的唯一构造入口（后者由此比特级重建，不经楔角三角函数往返）。
+
+        上下完全对称（同高、同 ``c_over_a``）、``face_distance`` 全为 1、有棱柱段且截顶比例落在 ``(0, 1)`` 未吸附时
+        走 ``Pyramid(a, h, c_over_a, tip_ratio)``；其余（任一侧无锥、两侧不同、非正六边形截面、无棱柱段、锥到顶）
+        走闭式侵蚀构造 :meth:`_from_cones`。零体积抛 ``ValueError``。
+        """
+        fd = shape.face_distance
+        upper_c, upper_h, lower_c, lower_h = shape.upper_c_over_a, shape.upper_h, shape.lower_c_over_a, shape.lower_h
         upper = None if upper_c is None or upper_h <= LUMICE_FLOAT_EPS else (upper_c, upper_h)
         lower = None if lower_c is None or lower_h <= LUMICE_FLOAT_EPS else (lower_c, lower_h)
-        h = 2.0 * float(a) * prism_h if prism_h > LUMICE_FLOAT_EPS else 0.0
+        h = 2.0 * float(a) * shape.prism_h if shape.prism_h > LUMICE_FLOAT_EPS else 0.0
         if upper is None and lower is None and h == 0.0:
             raise ValueError("a pyramid with no cone on either side and no prism band has zero volume "
                              "(Lumice doc/configuration.md §Pyramid Shape Legality)")

@@ -126,6 +126,7 @@ import numpy as np
 from . import geometry, optics
 from .camera import incident_direction_from_sun, sun_direction
 from .geometry import HexPrism, Polyhedron, Pyramid
+from .geometry.pyramid import PyramidShape
 from .optics import normalize_faces, path_id_of
 from .provenance import git_commit, sha256_of
 from .so3 import haar_rotations
@@ -441,30 +442,65 @@ def self_check_haar_mean(
 
 # ------------------------------------------------------------------ store
 def crystal_description(crystal: Polyhedron) -> dict[str, Any]:
-    """JSON description of an untransformed closed-form :class:`.geometry.HexPrism` (the only crystal supported).
+    """JSON description of an untransformed closed-form crystal: a :class:`.geometry.HexPrism` or a
+    :class:`.geometry.Pyramid` built by ``Pyramid.from_lumice``.
 
-    ``face_distance`` is the Lumice field of that name (``HexPrism.face_distance_ratios``); with ``a`` and
-    ``h`` it fixes the crystal, including one built by ``HexPrism.from_lumice``.
+    A prism's ``face_distance`` is the Lumice field of that name (``HexPrism.face_distance_ratios``); with ``a`` and
+    ``h`` it fixes the crystal, including one built by ``HexPrism.from_lumice``. A pyramid is described by its
+    :class:`.geometry.PyramidShape` (the Lumice shape with the heights folded and each side's Miller indices or
+    wedge angle already reduced to ``c_over_a``, ``None`` for a side without a cone) and ``a``; the ``c_over_a`` form
+    rebuilds the crystal bit for bit, which a wedge angle would not (``docs/analytic-parity-fixtures.md``).
     """
     # New crystal types extend this chain of branches, not a check elsewhere.
     if isinstance(crystal, Pyramid):
-        raise TypeError(
-            "the S^2 event store does not support the pyramid yet: its store waits for task "
-            "pyramid-lumice-semantics (the pyramid's Lumice semantics)"
-        )
+        shape = crystal.shape
+        if shape is None:
+            raise TypeError("the S^2 event store describes a pyramid by its Lumice shape: build it with "
+                            "Pyramid.from_lumice, not Pyramid(...)")
+        if not np.array_equal(crystal.vertices, Pyramid._from_shape(crystal.a, shape).vertices):
+            raise ValueError("the crystal must be an untransformed Pyramid (body frame, centred at the origin)")
+        return {
+            "type": "Pyramid",
+            "a": crystal.a,
+            "prism_h": shape.prism_h,
+            "upper_h": shape.upper_h,
+            "lower_h": shape.lower_h,
+            "upper_c_over_a": shape.upper_c_over_a,
+            "lower_c_over_a": shape.lower_c_over_a,
+            "face_distance": list(shape.face_distance),
+        }
     if not isinstance(crystal, HexPrism):
-        raise TypeError("the S^2 event store is implemented for the hexagonal prism only")
+        raise TypeError("the S^2 event store is implemented for the hexagonal prism and the pyramid only")
     face_distance = tuple(crystal.face_distance_ratios)
     if not np.array_equal(crystal.vertices, HexPrism(crystal.a, crystal.h, face_distance).vertices):
         raise ValueError("the crystal must be an untransformed HexPrism (body frame, centred at the origin)")
     return {"type": "HexPrism", "a": crystal.a, "h": crystal.h, "face_distance": list(face_distance)}
 
 
-def crystal_from_description(description: Mapping[str, Any]) -> HexPrism:
-    if description.get("type") != "HexPrism":
-        raise ValueError(f"unsupported crystal description {description!r}")
-    face_distance = tuple(float(x) for x in description["face_distance"])
-    return HexPrism(float(description["a"]), float(description["h"]), face_distance)
+def crystal_from_description(description: Mapping[str, Any]) -> Polyhedron:
+    kind = description.get("type")
+    face_distance = tuple(float(x) for x in description.get("face_distance", ()))
+    if kind == "HexPrism":
+        return HexPrism(float(description["a"]), float(description["h"]), face_distance)
+    if kind == "Pyramid":
+
+        def c_over_a(key: str) -> float | None:
+            return None if description[key] is None else float(description[key])
+
+        shape = PyramidShape(
+            float(description["prism_h"]),
+            float(description["upper_h"]),
+            float(description["lower_h"]),
+            c_over_a("upper_c_over_a"),
+            c_over_a("lower_c_over_a"),
+            face_distance,
+        )
+        return Pyramid._from_shape(float(description["a"]), shape)
+    raise ValueError(f"unsupported crystal description {description!r}")
+
+
+# Every pyramid face number (1-8, 13-18, 23-28) present: the numbering a pyramid store's members are checked against.
+_FULL_PYRAMID = Pyramid()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -480,7 +516,8 @@ class S2StoreSpec:
     dtype: str = "float64"
 
     def __post_init__(self) -> None:
-        members = tuple(normalize_faces(m) for m in self.members)
+        numbering = self._face_numbering()
+        members = tuple(normalize_faces(m, numbering) for m in self.members)
         if not members or len(set(members)) != len(members):
             raise ValueError("members must be a non-empty tuple of distinct face sequences")
         if self.n < 1:
@@ -494,10 +531,18 @@ class S2StoreSpec:
         object.__setattr__(self, "n", int(self.n))
         object.__setattr__(self, "deviation_window", None if window is None else (float(window[0]), float(window[1])))
 
+    def _face_numbering(self) -> Polyhedron | None:
+        """The crystal whose faces are every face number of the described crystal type (``None``: the prism's 1-8).
+
+        The members are checked against the type's numbering, not the described crystal's present faces: the
+        build checks those (``evaluate_fields`` on the crystal itself).
+        """
+        return _FULL_PYRAMID if self.crystal.get("type") == "Pyramid" else None
+
     @property
     def path_id(self) -> str:
         """``"3-5"`` for one member, ``"3-5+3-1-2-5"`` for a ``Phi`` group."""
-        return "+".join(path_id_of(m) for m in self.members)
+        return "+".join(path_id_of(m, self._face_numbering()) for m in self.members)
 
     def build_parameters(self) -> dict[str, Any]:
         return {
@@ -657,28 +702,28 @@ class StoreSeeds:
     g: np.ndarray | None = None
 
     def __post_init__(self) -> None:
-        faces = normalize_faces(self.faces)
+        faces = normalize_faces(self.faces, self.crystal)
         sun = np.asarray(self.sun_direction, dtype=np.float64)
         g = None if self.g is None else np.asarray(self.g, dtype=np.float64)
         if self.store.events.iw is not None:
             raise ValueError("a seed store must be a uniform point set (no inverse weights)")
         if g is None:
             if faces not in self.store.spec.members:
-                raise ValueError(f"{path_id_of(faces)} is not a member of the store {self.store.spec.path_id}")
+                raise ValueError(f"{path_id_of(faces, self.crystal)} is not a member of the store {self.store.spec.path_id}")
         else:
             from .path_class import _hexprism_normals, _symmetry_image_of_faces  # path_class imports this module
 
             normals = _hexprism_normals(self.crystal)
             images = {_symmetry_image_of_faces(g, member, normals) for member in self.store.spec.members}
             if faces not in images:
-                raise ValueError(f"{path_id_of(faces)} is not the image under g of a member of {self.store.spec.path_id}")
+                raise ValueError(f"{path_id_of(faces, self.crystal)} is not the image under g of a member of {self.store.spec.path_id}")
         object.__setattr__(self, "faces", faces)
         object.__setattr__(self, "sun_direction", sun)
         object.__setattr__(self, "g", g)
 
     @property
     def path_id(self) -> str:
-        return path_id_of(self.faces)
+        return path_id_of(self.faces, self.crystal)
 
     @property
     def incident_direction(self) -> np.ndarray:
@@ -690,7 +735,7 @@ class StoreSeeds:
         return self.store.spec.refractive_index
 
     @functools.cached_property
-    def crystal(self) -> HexPrism:
+    def crystal(self) -> Polyhedron:
         """The store's crystal (its ``w > 0`` filter), the problem's crystal."""
         return crystal_from_description(self.store.spec.crystal)
 
@@ -791,7 +836,7 @@ def _write_array_file(path: Path, dtype: str, shape: tuple[int, ...]):
 def _build_into(
     directory: Path,
     spec: S2StoreSpec,
-    crystal: HexPrism,
+    crystal: Polyhedron,
     sampler: PointSampler | None,
     bucket_count: int,
     run_checks: bool,
@@ -909,7 +954,7 @@ def _build_into(
 
 
 def _spec_of(
-    crystal: HexPrism,
+    crystal: Polyhedron,
     refractive_index: float,
     members: Sequence[Sequence[int]],
     n: int,
@@ -931,6 +976,12 @@ def _spec_of(
     )
     from .path_class import phi_key  # path_class -> strip_pixel -> this module: imported at call time
 
+    if len(spec.members) == 1:
+        return spec  # one member is one Phi class; phi_key covers the hexagonal prism only
+    if not isinstance(crystal, HexPrism):
+        raise NotImplementedError(
+            f"a multi-member store ({spec.path_id}) is checked by phi_key, which covers the hexagonal prism only"
+        )
     keys = {phi_key(crystal, m) for m in spec.members}
     if len(keys) != 1:
         raise ValueError(f"members {spec.path_id} do not share one phi_key: {sorted(keys)}")
@@ -938,7 +989,7 @@ def _spec_of(
 
 
 def build_event_store(
-    crystal: HexPrism,
+    crystal: Polyhedron,
     refractive_index: float,
     members: Sequence[Sequence[int]],
     n: int,
@@ -977,7 +1028,7 @@ def build_event_store(
 
 
 def build_or_load(
-    crystal: HexPrism,
+    crystal: Polyhedron,
     refractive_index: float,
     members: Sequence[Sequence[int]],
     n: int,
