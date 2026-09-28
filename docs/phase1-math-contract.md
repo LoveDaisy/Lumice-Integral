@@ -758,8 +758,7 @@ mechanisms, at three stages of the pipeline, make a component invisible to it:
    the certificate interval `(42.99086°, 43.46516°)` (`n_open = 4`), the
    missing fourth component is a one-pose arc whose pose lies `1.224e-3 rad`
    from a neighbour's curve, below the default `eta = closure_distance`, and
-   discovery returns 3 components at production gate radii (explore
-   `discovery-completeness-certificate`).
+   discovery returns 3 components at production gate radii.
 
 `completeness` MUST NOT be reported as component completeness. The
 single-component `component_scope` of section 9.3 stays `unknown` and remains
@@ -798,9 +797,6 @@ an arc's untraced tail.
 
 #### 9.5.6a Post-hoc certification
 
-(The letter suffix is deliberate: it keeps the numbers of sections 9.5.7–9.5.10
-stable for documents that cite them.)
-
 **There is no unconditional completeness certificate for discovery**: no
 statement independent of the crystal and the path guarantees that a discovery
 call found every component of `X_(P,d)`. The counterexample is mechanism 3 of
@@ -835,9 +831,7 @@ What the contract provides instead has three levels.
    discovery result is **undersampled**: the caller reseeds or reruns with a
    smaller `distance_threshold`, and does not accept
    `completeness == "complete"` at face value. The counts are compared as a
-   whole; the check does not say which component is missing. The same
-   comparison is how the Phase II contour extraction certifies its level sets
-   (`docs/phase2.md`, `ContourCertificateError`).
+   whole; the check does not say which component is missing.
 3. **Excluded: a constructive threshold rule.** No rule computes, from the
    certificate's macroscopic data (the `CriticalSet`, the spacing of the
    boundary crossings), a `distance_threshold` or `cluster_radius_rad` that
@@ -1113,8 +1107,9 @@ failure: the named prerequisite is outside the current reference core.
     optional post-hoc check of section 9.5.6a compares the component count
     with `DPField.interval_partition()`: a match is sufficient evidence, a
     mismatch marks the discovery result undersampled with the `dp_field`
-    count as the topological truth, and it is unavailable outside that
-    partition's structural preconditions (`TopologyEscape`);
+    count as the topological truth, and it is unavailable when
+    `halo_map_rank == 0` (`ValueError`) or outside the partition's structural
+    preconditions (`TopologyEscape`);
   - densification is not monotone: one-pose arcs can be lost between nested
     samples; components with an accepted step have been kept on every fiber
     measured (section 9.5.7);
