@@ -279,7 +279,18 @@ implementations here is deliberate, not temporary duplication awaiting a
 future shared engine: on 2026-09-27, Lumice's `fn_period_` hardcoded to 6
 (ignoring `face_distance`) was caught precisely because it diverged from LI's
 independent implementation (Lumice PR #429); a shared primitive
-implementation would let both sides be wrong together, invisibly.
+implementation would let both sides be wrong together, invisibly. This
+evidence is about the raypath-analysis panel's *physical* grouping (L2,
+`docs/conventions.md` #21) specifically: period 6 is exactly what Lumice's
+`symmetry: "PBD"` label filter (L1) means unconditionally, and PR #429/#430's
+change to the filter itself was reverted by Lumice PR #436, which restated
+the two meanings (`doc/raypath-symmetry.md` §1.1) and kept the filter at its
+original, context-free period 6. The empirical divergence still stands
+because the comparison it was measured against was the panel-row (L2)
+grouping. Symmetry reduction is not part of either side's shared boundary:
+Lumice's forthcoming `liblumice_analytic` accepts only explicit face
+sequences and performs no symmetry reduction of its own, so each project
+keeps its own reduction layer (L1 or L2, as its own consumers need).
 
 The **algorithmic layer** — single-path inversion and fiber walk, the S²
 event store, band sum, `dp_field`/`focusing` critical-point classification —
@@ -429,9 +440,15 @@ The ruling:
 Once a module is ported, its changes must land in JAX first and be
 synchronized against the parity fixture before touching C++.
 
-To be verified later (not in this chore, flagged only): whether the panel's
-symmetry-reduced row semantics (Lumice `doc/raypath-symmetry.md`'s P/B/D) and
-LI's `G_true` orbit are the same convention.
+Resolved 2026-09-28 (owner ruling, `doc/raypath-symmetry.md` §1.1, chore
+`symmetry-two-meanings-docs-and-comments`): they are not the same convention
+by default, and must not be conflated. The panel's symmetry-reduced rows are
+the *physical* meaning (L2); Lumice's `PBD` label filter is a separate,
+unconditional label rewrite (L1) that only coincides with L2 on a crystal
+whose `G_true` is the full `D6h`. LI's `G_true` orbit
+(`symmetry.crystal_group.true_symmetry_group`) is L2's shape half; LI's own
+L1 (`symmetry.reflection_group.pbd_orbit`) is a separate, context-free
+implementation. Full table: `docs/conventions.md` #21.
 
 **Repository roles (owner ruling 2026-09-28):** the mirror of this ruling on
 the Lumice side lives in that repository's

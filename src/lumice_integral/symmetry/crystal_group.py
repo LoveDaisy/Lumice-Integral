@@ -1,5 +1,15 @@
 """The crystal's own symmetry group ``G_true``: the elements of a candidate group that map the crystal to itself.
 
+``G_true`` is the *shape* half of the physical symmetry meaning, L2
+(``docs/conventions.md`` #21, Lumice ``doc/raypath-symmetry.md`` §1.1): a
+raypath-analysis panel row (Lumice's other meaning) also needs the pose
+ensemble (§2b there) to actually realize the symmetry, which this module
+does not decide -- that half is the caller's ``pose_density``.  L1, Lumice's
+``symmetry: "PBD"`` filter, is a different, unconditional label rewrite
+(:func:`.reflection_group.pbd_orbit`) that ignores both halves; the two
+meanings coincide only when ``G_true`` is all of ``D6h`` (the regular
+hexagonal prism).
+
 A crystal built by :mod:`lumice_integral.geometry` has every face normal in the six-direction star
 ``{i·60°}`` or on ``±c``; an orthogonal map that permutes that finite set is one of the 24 elements of
 :data:`.signature.D6H`, so ``D6H`` is an exhaustive candidate set (read from the one table in the repository,
@@ -70,6 +80,8 @@ def true_symmetry_group(crystal: Polyhedron,
     """``G_true``: the ``candidates`` (default :data:`.signature.D6H`, in its order) that map ``crystal`` onto itself.
 
     See the module docstring for the test and its frame.  The result is verified by :func:`check_group`.
+    This is L2's shape half only (module docstring, ``docs/conventions.md`` #21); combine with the caller's
+    pose ensemble for the full physical-equivalence meaning.
     """
     normals, offsets = face_planes(crystal)
     offset_tol = OFFSET_REL_TOL * float(np.max(np.abs(offsets)))

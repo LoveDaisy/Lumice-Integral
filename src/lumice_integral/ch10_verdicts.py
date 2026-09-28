@@ -22,7 +22,17 @@ repository; ``scripts/ch10_numerical_verdicts.py`` is the command line.
 ``liljequist`` (:func:`liljequist`)
     (i) the 142 deg edge of class A60-10 (``3-5-6-7``, ``3-4-5-7``, one
     partial internal reflection each): the ``D_P`` saddle
-    ``120 deg + D_min(3-5)`` on both members and every ``h / a``.  (ii)
+    ``120 deg + D_min(3-5)`` on both members and every ``h / a``.  Its
+    members (:data:`A60_10_MEMBERS`) are hand-picked, not derived through
+    :func:`.path_class.pbd_orbit_hexprism` or
+    :func:`.symmetry.crystal_group.true_symmetry_group`; every crystal here
+    is :func:`.canonical_scene.canonical_crystal` at varying ``h / a``, a
+    regular hexagonal prism whose ``G_true`` is always the full ``D6h``, so
+    Lumice's label orbit (L1) and the physical orbit (L2) coincide
+    (``docs/conventions.md`` #21) and this verdict does not need to choose
+    between them.  Generalising it to a genuinely lower-symmetry geometry
+    (e.g. a trigonal prism) would require re-deriving the class through L2,
+    not reusing the D6h combinatorics assumed here.  (ii)
     ``1-3-2`` and ``3-5-6-7-3`` share one mirror-slab field
     ``D = 2 arcsin |u . n_3|`` with ``|grad D| = 2``: no fold; their
     critical values do not depend on ``h / a``, their windows (profiles)

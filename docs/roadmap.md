@@ -769,3 +769,28 @@ Moved to [overview.md](overview.md) §3.
   design boundary" wording and answers §5.3's "Compute landing point" ruling
   point 5 (yes for the algorithmic layer, no for the primitive layer). Full
   statement: [overview.md](overview.md) §5.1, §5.3 ("Repository roles").
+- **2026-09-28**: the two meanings of one `P`/`B`/`D` bit set are named and
+  distinguished across LI's docs and comments (owner ruling; chore
+  `symmetry-two-meanings-docs-and-comments`; docs/comments only, no
+  computational change). Lumice's authority is `doc/raypath-symmetry.md` §1.1
+  "Two Meanings of One Bit Set" (Lumice PR #436), settling this repository's
+  own earlier "to be verified later" note ([overview.md](overview.md) §5.3):
+  **L1**, the `symmetry: "PBD"` filter — an unconditional label rewrite
+  independent of crystal shape or pose, merging physically inequivalent
+  paths on a crystal or pose ensemble lacking that symmetry element; **L2**,
+  the raypath-analysis panel's folded rows — one row per actual physical
+  equivalence class (shape §2a **and** pose §2b). New table row
+  ([conventions.md](conventions.md) #21) maps both to LI: L1 is
+  `symmetry.reflection_group.pbd_orbit` and `path_class.pbd_orbit_hexprism`
+  at its default crystal (`G_true = D6h`, where L1 and L2 coincide); L2 is
+  `symmetry.crystal_group.true_symmetry_group` (shape half; the pose half is
+  the caller's `pose_density`). `scripts/compare_lumice_family.py` already
+  enforced the coincidence condition (`|G_true| == 24`) before this chore; it
+  now cites the new row instead of re-deriving the rule inline. The
+  2026-09-27 `fn_period_` evidence (this section, above) is qualified: it is
+  about the L2 panel-row grouping specifically, not about the L1 filter,
+  whose PR #429/#430 change Lumice PR #436 reverted, restoring the filter's
+  originally-intended unconditional period 6; the empirical divergence still
+  stands. Lumice's forthcoming `liblumice_analytic` accepts only explicit
+  face sequences and performs no symmetry reduction of its own, so each
+  project keeps its own reduction layer outside the shared boundary.
