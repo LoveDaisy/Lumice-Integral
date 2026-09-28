@@ -313,6 +313,10 @@ def _bisect(predicate, inside: float, outside: float, iterations: int = 80) -> t
     return inside, outside
 
 
+class PointUnavailable(Exception):
+    """A matrix cell whose category has no real geometric point on this path (recorded, not faked)."""
+
+
 def random_u(scene: Scene, rng_seed: int, max_draws: int = 100_000) -> tuple[np.ndarray, int]:
     """The first admissible direction of ``numpy.random.default_rng(rng_seed)`` normals (uniform on ``S^2``)."""
     rng = np.random.default_rng(rng_seed)
@@ -320,11 +324,7 @@ def random_u(scene: Scene, rng_seed: int, max_draws: int = 100_000) -> tuple[np.
         u = _unit(rng.standard_normal(3))
         if admissible_u(scene, u):
             return u, draw
-    raise RuntimeError(f"no admissible u in {max_draws} draws for {scene.path_id}")
-
-
-class PointUnavailable(Exception):
-    """A matrix cell whose category has no real geometric point on this path (recorded, not faked)."""
+    raise PointUnavailable(f"no admissible u in {max_draws} draws for {scene.path_id}")
 
 
 def critical_u(scene: Scene, offset_deg: float, step_deg: float = 0.05, max_deg: float = 30.0) -> tuple[np.ndarray, dict]:
@@ -555,6 +555,12 @@ def build_evaluate_path_fixture(
 
 
 # ------------------------------------------------------------------ curves
+# Deliberately not ``jax.vmap(so3.log)``/``jax.vmap(so3.exp)``: curve lengths vary per
+# fixture cell, and a vmap over a new leading dimension recompiles per distinct shape
+# (the per-pixel XLA recompilation cost this codebase has already paid down elsewhere,
+# see AGENTS.md's render_ch06_strip.py history). This host-numpy pair is the same
+# closed-form Rodrigues map as ``so3.log``/``so3.exp``, restated batched and
+# shape-polymorphic for that reason.
 def _log_rotations(rotations: np.ndarray) -> np.ndarray:
     """Rotation vectors of ``(N, 3, 3)`` rotations below pi (host numpy; chords here are <= 0.12 rad)."""
     skew = 0.5 * np.stack(
