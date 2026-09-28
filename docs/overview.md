@@ -230,7 +230,7 @@ conventions #19).
 - **The reduced cluster runs on the crystal's own `G_true`** (task
   `reduction-cluster-g-true`, scrum `crystal-reduction-generalize`,
   2026-09-27; stage 2 of the fail-fast ruling above): `path_class`'s
-  `pbd_orbit_hexprism`, `phi_key` and `path_class_symmetry` (and `s2_store`,
+  `g_true_orbit` (original name `pbd_orbit_hexprism`), `phi_key` and `path_class_symmetry` (and `s2_store`,
   `strip_pixel`, `band_sum`, which reach the crystal's symmetry only through
   them) take `true_symmetry_group` as the candidate group instead of
   requiring `|G_true| = 24`; explicit `symmetry_elements` must still lie in

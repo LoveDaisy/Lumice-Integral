@@ -782,7 +782,7 @@ Moved to [overview.md](overview.md) §3.
   the raypath-analysis panel's folded rows — one row per actual physical
   equivalence class (shape §2a **and** pose §2b). New table row
   ([conventions.md](conventions.md) #21) maps both to LI: L1 is
-  `symmetry.reflection_group.pbd_orbit` and `path_class.pbd_orbit_hexprism`
+  `symmetry.reflection_group.pbd_orbit` and `path_class.g_true_orbit` (original name `pbd_orbit_hexprism`)
   at its default crystal (`G_true = D6h`, where L1 and L2 coincide); L2 is
   `symmetry.crystal_group.true_symmetry_group` (shape half; the pose half is
   the caller's `pose_density`). `scripts/compare_lumice_family.py` already

@@ -375,7 +375,7 @@ def test_the_d6h_orbit_is_not_the_crystal_orbit_on_a_low_symmetry_prism():
     """design.md 4 / explore H4: ``3-5`` has 12 ``D6h`` images but one ``G_true`` image on the ``|G| = 2`` prism."""
     assert [len(true_symmetry_group(c)) for c in LOW_SYMMETRY] == [8, 2]
     generic = LOW_SYMMETRY[1]
-    assert len(path_class.pbd_orbit_hexprism((3, 5))) == 12
+    assert len(path_class.g_true_orbit((3, 5))) == 12
     normals = {f.number: generic.normal(f) for f in generic.faces}
     own_orbit = {path_class._symmetry_image_of_faces(g, (3, 5), normals) for g in true_symmetry_group(generic)}
     assert own_orbit == {(3, 5)}
@@ -386,7 +386,7 @@ def test_reduced_cluster_uses_g_true_by_default_below_d6h(crystal, orbit):
     """The explore H4 counterexample turned into agreement: the default orbit is the ``G_true`` orbit (the
     ``|G| = 2`` prism's ``3-5`` class has one member, not the 12 of ``D6h``), and the class transports stay in it."""
     faces, members = orbit
-    assert path_class.pbd_orbit_hexprism(faces, crystal) == frozenset(members)
+    assert path_class.g_true_orbit(faces, crystal) == frozenset(members)
     key = path_class.phi_key(crystal, faces)
     assert isinstance(key, tuple) and len(key) == 3 and all(isinstance(k, int) for k in key)
     built = path_class.build_path_class(crystal, faces)
@@ -414,6 +414,6 @@ def test_the_reduced_cluster_rejects_a_face_the_crystal_does_not_have():
     crystal = LOW_SYMMETRY[0]
     assert 3 not in {f.number for f in crystal.faces}
     with pytest.raises(ValueError, match="do not exist"):
-        path_class.pbd_orbit_hexprism((3, 5), crystal)
+        path_class.g_true_orbit((3, 5), crystal)
     with pytest.raises(ValueError, match="do not exist"):
         path_class.phi_key(crystal, (3, 5))

@@ -24,7 +24,7 @@ repository; ``scripts/ch10_numerical_verdicts.py`` is the command line.
     partial internal reflection each): the ``D_P`` saddle
     ``120 deg + D_min(3-5)`` on both members and every ``h / a``.  Its
     members (:data:`A60_10_MEMBERS`) are hand-picked, not derived through
-    :func:`.path_class.pbd_orbit_hexprism` or
+    :func:`.path_class.g_true_orbit` or
     :func:`.symmetry.crystal_group.true_symmetry_group`; every crystal here
     is :func:`.canonical_scene.canonical_crystal` at varying ``h / a``, a
     regular hexagonal prism whose ``G_true`` is always the full ``D6h``, so
