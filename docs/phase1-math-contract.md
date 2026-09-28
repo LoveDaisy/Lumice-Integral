@@ -313,7 +313,14 @@ A trace is `closed` only when all of the following hold:
    arclength) and MUST NOT encode an absolute loop length, because a loop
    shorter than an absolute bound is otherwise traversed repeatedly until the
    bound is met and its length and integral are multiplied accordingly;
-2. stable `SO(3)` distance to the seed is within the closure tolerance;
+2. stable `SO(3)` distance to the seed is within the closure tolerance,
+   measured on the accepted edge that crosses the section (item 3) at the
+   section's zero on that edge, not at the edge's end: a step longer than the
+   closure tolerance otherwise carries the end outside it although the edge
+   passes through the seed. The reference bisects the edge's geodesic
+   `R_{k-1} exp(t log(R_{k-1}^T R_k))` to `float64` resolution in `t` and
+   starts the final closure corrector (item 5) from that pose. This assumes at
+   most one section sign change per accepted edge (section 12);
 3. the trace crosses a declared local transverse section through the seed,
    with crossing direction recorded;
 4. the terminal tangent agrees with the initial oriented tangent within the
@@ -1013,10 +1020,16 @@ Step-controller defaults explored on 2026-09-17 and not adopted:
 tangent threshold `0.98 -> 0.95` leave every optical trace above bit-identical,
 because the easy gate's `corrector iterations <= 2` condition never holds on
 them (three iterations are typical), so the step never grows past
-`initial_step`; on the analytic circle `maximum_step=0.2` closes only on the
-third traversal, because a step larger than `closure_distance` can land the
-post-crossing pose outside the closure distance and skip the closure attempt.
-Both observations are recorded as open items in section 12.
+`initial_step`. History: on the analytic circle `maximum_step=0.2` closed only
+on the third traversal (accumulated arclength `2.9999999999999973 x 2 pi`),
+because the closure trigger measured the seed distance at the end of the
+accepted edge and a step larger than `closure_distance` landed that end outside
+the closure distance. Since task step-aware-closure-implementation
+(2026-09-29) the distance is measured at the edge's section zero (section
+6.4), and the same configuration closes on the first traversal
+(`1.0000000000000002 x 2 pi`, seed distance `3e-17`,
+`test_analytic_circle_with_a_growing_step_closes_on_the_first_traversal`).
+The step-growth observation remains an open item in section 12.
 
 This is bounded configuration evidence, not a proof of global controller
 convergence. The accepted sample counts differ and are deliberately not a pass
@@ -1062,7 +1075,7 @@ failure: the named prerequisite is outside the current reference core.
 | C03 | Analytic and synthetic 3-5 roots with several `Q in O(2)` basis changes | Root poses, tangent line, rank, singular values, `J_perp`, and converged geometry agree; tangent order may reverse only with seed orientation. | Verified by `test_analytic_circle_is_invariant_under_orthogonal_target_basis` and `test_synthetic_3_5_is_invariant_under_orthogonal_target_basis`; basis changes are metamorphic evidence, not an independent optical oracle. |
 | C04 | Target antipode for the projected residual | Algebraic zero at `-d` is rejected by the target-neighborhood gate. | Verified by `test_antipode_algebraic_root_is_rejected_by_chart_gate` and the public termination conformance cases. |
 | C05 | Smooth synthetic 3-5 branch | Unit outgoing direction, positive branch margins, local rank two, and one seeded component closes under independently converged settings. Exact 145 steps is not asserted. | Verified by `test_synthetic_3_5_trace_matches_independent_direct_ray_oracle` and `test_synthetic_3_5_safe_step_sweep_converges_without_fixed_step_count`. The oracle independently derives incident direction, target, tangent basis, path gate, and per-pose ray constraints rather than reading them from `path_3_5_problem`; this is not historical ch06 validation. |
-| C06 | Initial step sizes and controller thresholds perturbed around reference defaults | Accepted traces converge to the same component geometry, length, quadrature-ready orientation, and terminal status within reported errors; integral comparison follows when C14 factors exist. | Partial: geometry is verified by the analytic/3-5 safe-step tests and `test_synthetic_3_5_controller_threshold_perturbation_converges_consistently` over the bounded configurations in section 10.1; first-traversal closure of loops shorter than `pi` and second-order length convergence on the analytic conjugation circle by `test_analytic_conjugation_loops_shorter_than_pi_close_on_the_first_traversal` and `test_analytic_circle_closes_on_the_first_traversal_with_a_large_step`, the strip short loops by `test_strip_short_loops_close_at_their_single_traversal_length`, and the retired absolute gate's repeated traversal as a counterexample by `test_legacy_absolute_closure_gate_traverses_the_analytic_short_loops_repeatedly` and `test_legacy_absolute_closure_gate_doubles_the_strip_short_loops`; the event-approach rule of section 6.3 by `test_strip_boundary_hugging_loops_no_longer_exhaust_the_step_budget` (rows 700/780) and the `_adapt_accepted_step` unit tests. An orientation-independent physical integral is now checked on the canonical pixel fiber (`tests/test_resample_quadrature.py`): `test_canonical_pixel_integral_is_invariant_under_initial_step` (`0.03`, `0.08` against `0.04`), `..._under_tolerance` (`1e-3`, `1e-5` against `1e-4`) and `..._under_reversed_orientation` (`initial_tangent_sign = -1`) agree within the sum of the reported error estimates without comparing sample counts; `test_reversed_seed_orientation_keeps_the_integral` covers the analytic circle. A global controller-convergence claim is still not made. |
+| C06 | Initial step sizes and controller thresholds perturbed around reference defaults | Accepted traces converge to the same component geometry, length, quadrature-ready orientation, and terminal status within reported errors; integral comparison follows when C14 factors exist. | Partial: geometry is verified by the analytic/3-5 safe-step tests and `test_synthetic_3_5_controller_threshold_perturbation_converges_consistently` over the bounded configurations in section 10.1; first-traversal closure of loops shorter than `pi` and second-order length convergence on the analytic conjugation circle by `test_analytic_conjugation_loops_shorter_than_pi_close_on_the_first_traversal`, `test_analytic_circle_closes_on_the_first_traversal_with_a_large_step` and `test_analytic_circle_with_a_growing_step_closes_on_the_first_traversal` (the step-aware closure trigger of section 6.4, with the edge bisection unit-tested by `test_closure_crossing_pose_bisects_the_section_zero_on_the_edge`), the strip short loops by `test_strip_short_loops_close_at_their_single_traversal_length`, and the retired absolute gate's repeated traversal as a counterexample by `test_legacy_absolute_closure_gate_traverses_the_analytic_short_loops_repeatedly` and `test_legacy_absolute_closure_gate_doubles_the_strip_short_loops`; the event-approach rule of section 6.3 by `test_strip_boundary_hugging_loops_no_longer_exhaust_the_step_budget` (rows 700/780) and the `_adapt_accepted_step` unit tests. An orientation-independent physical integral is now checked on the canonical pixel fiber (`tests/test_resample_quadrature.py`): `test_canonical_pixel_integral_is_invariant_under_initial_step` (`0.03`, `0.08` against `0.04`), `..._under_tolerance` (`1e-3`, `1e-5` against `1e-4`) and `..._under_reversed_orientation` (`initial_tangent_sign = -1`) agree within the sum of the reported error estimates without comparing sample counts; `test_reversed_seed_orientation_keeps_the_integral` covers the analytic circle. A global controller-convergence claim is still not made. |
 | C07 | Constructed rank-deficient map | Terminates as `event_terminated/rank_loss` with singular-value and `J_perp` diagnostics; no regular coarea value is emitted. | Verified by `test_rank_deficient_direction_map_has_typed_event_and_diagnostics` and the public termination conformance cases. |
 | C08 | TIR or explicit path-domain boundary | Terminates with the typed event and signed margin before unsafe evaluation; not merely NaN or corrector failure. | Verified by `test_known_event_precedes_unsafe_direction_evaluation`, `test_3_5_tir_is_reported_before_the_unsafe_exit_square_root`, and the public termination conformance cases. Event crossing/localization remains open. |
 | C09 | Corrector non-convergence and ill-conditioned linear solve without known physical event | Bounded retries end in the matching `numerical_failure` reason with trial history. | Partial: public conformance verifies bounded corrector non-convergence and rejected-trial history. Rank/conditioning rejection is covered by C07; a deterministic public `linear_solve_failure` fixture remains open. |
@@ -1087,12 +1100,26 @@ failure: the named prerequisite is outside the current reference core.
   or localizing them.
 - Step growth never triggers on the optical fixtures because the easy gate
   requires at most two corrector iterations; the controller runs them at
-  `initial_step`. Relaxing that gate is coupled to the closure attempt
-  trigger: a step larger than `closure_distance` can carry the post-crossing
-  pose outside the closure distance and skip the attempt (observed on the
-  analytic circle with `maximum_step=0.2`, which then closes on its third
-  traversal), so the closure trigger must be made step-aware before growth is
-  enabled on optical fibers.
+  `initial_step`, and the defaults (`maximum_step`, the easy gate) are
+  unchanged. The closure trigger is no longer what couples growth to closure:
+  it is step-aware since 2026-09-29 (section 6.4; before, a step larger than
+  `closure_distance` could carry the post-crossing pose outside the closure
+  distance and skip the attempt, and the analytic circle with
+  `maximum_step=0.2` closed on its third traversal). Enabling growth on
+  optical fibers still waits on two unmeasured points of that trigger and on
+  one of the domain:
+  - the bisection assumes at most one section sign change per accepted edge;
+    it holds for steps well below the loop's half period (`maximum_step=0.12`
+    and the analytic sweeps up to `0.8`) and MUST be re-checked if the step
+    bound approaches that scale;
+  - the edge geodesic is a chord of the fiber, exact on the analytic circle
+    (one-parameter subgroup); its deviation from the true trajectory at the
+    section has not been measured on optical fibers, where the final closure
+    corrector absorbs it;
+  - whether periodic or bounded narrow domain features narrower than a grown
+    step occur on optical fibers (they would be stepped over, unlike the
+    monotone TIR, branch and visibility half-spaces) is the open explore
+    thin-domain-feature-skip-risk-on-optical-fibers.
 - A deterministic consumer-level fixture for `linear_solve_failure` remains a
   conformance-infrastructure gap. Corrector non-convergence and rank/condition
   rejection are covered without private monkeypatching.
