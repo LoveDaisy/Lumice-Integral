@@ -19,9 +19,11 @@ The contract covers:
 - one regular, connected fiber component reached from one supplied seed;
 - local differentiation, continuation, closure, and diagnostic semantics;
 - the coarea measure and independently observable physical weight factors;
-- backend-independent problem, options, result, event, and termination data.
+- backend-independent problem, options, result, event, and termination data;
+- seed search and component discovery for one target direction (section 9.5),
+  under a weaker contract: procedural, not a completeness certificate.
 
-It does not provide seed search, prove that every component was found, cross a
+It does not prove that every component was found, cross a
 singular topology change, define a full renderer, calibrate absolute radiometry,
 or reconstruct historical ch06 data. Phase II's reduction to contours on `S2`
 is an independent cross-check and possible acceleration, not a replacement for
@@ -101,6 +103,7 @@ context, not competing specifications:
 | `src/lumice_integral/{analytic,so3,continuation,optics}.py` | Current analytic and synthetic probes. | Evidence/current strategy only. |
 | `tests/test_analytic_fiber.py`, `tests/test_optics.py` | Existing positive regression fixtures. | Evidence only; exact fixed-step counts are not contract terms. |
 | `tests/test_reference_core_conformance.py` | Consumer-facing schema, invariant, convergence, and termination checks mapped to C01–C14. | Durable conformance evidence for the currently supported reference core. |
+| `tests/test_discovery.py` | Discovery fixtures mapped to C15–C21. | Durable conformance evidence for section 9.5. |
 
 Downstream ownership is explicit:
 
@@ -109,7 +112,7 @@ Downstream ownership is explicit:
 | Structured adaptive single-component solver and event gate | `reference-continuation-core` | Semantics fixed here; implementation pending. |
 | Default tolerances and their convergence evidence | `reference-core-conformance` | Open numerical values. |
 | Basis-invariance, failure, event, and step-size perturbation tests | `reference-core-conformance` | Required matrix rows; evidence pending. |
-| Single-pixel seed/component discovery for the 3-5 path | `strip-component-discovery` (`lumice_integral.discovery`) | Implemented for one pixel's target direction (section 12); strip-level neighbour continuation and full-image completeness remain open (`strip-image-driver`). |
+| Seed/component discovery for one fixed path and one target direction | `lumice_integral.discovery` (`strip-component-discovery`, `phase1-seeds-from-store`; contract `discovery-contract`) | Semantics fixed in section 9.5 (`reference-discovery-v1`); strip-level neighbour continuation and full-image completeness are the strip driver's (`strip-image-driver`). |
 | Singular topology changes and branch continuation | Future exploration | Open; no support claim. |
 | Historical ch06 projection, normalization, and provenance | `ch06-reference-fixture` | Outside this contract. |
 
@@ -241,8 +244,8 @@ the configured root, finiteness, unit-direction, and rank gates.
 
 The solver traces only the component reachable from this seed. Neither a
 closed result nor multiple successful seeds proves that every component of
-`X_(P,d)` was found. Global component discovery and deduplication MUST be
-reported separately by a future caller.
+`X_(P,d)` was found. Component discovery and deduplication are reported
+separately by the discovery layer (section 9.5).
 
 ### 6.2 Predictor and corrector
 
@@ -423,8 +426,8 @@ branch identifiers, and whether localization was attempted.
 Crossing TIR, branch changes, rank loss, bifurcations, or singular component
 intersections is open. The reference solver MUST stop honestly at the supported
 boundary rather than extrapolate the smooth branch. Discovering other connected
-components, proving seed coverage, and deduplicating components are also open
-and external to a single `FiberResult`.
+components and deduplicating them are external to a single `FiberResult`
+(section 9.5); proving seed coverage is open.
 
 An event is only evidence of a boundary when it is met by a corrector iterate
 inside the acceptance trust region (`maximum_correction`, `maximum_advance`
@@ -537,6 +540,328 @@ a non-finite refraction result preceded by a negative Snell discriminant is
 `event_terminated/tir_boundary`, not `numerical_failure/non_finite`. Exhausting
 retries while localizing a known branch boundary retains the boundary event and
 records localization failure in its payload.
+
+### 9.5 Discovery interface semantics
+
+Sections 5–9.4 trace one component from one supplied seed. Discovery is the
+layer above them: for one fixed path `P`, crystal, refractive index, incident
+direction `s` and target `d`, it produces the seeds, traces each distinct
+component once, and classifies what it traced. Its contract is weaker than the
+single-component one in exactly one respect, stated first: **discovery does not
+prove that every connected component of `X_(P,d)` was found** (section 9.5.6).
+Everything else below (the sampling measure, the candidate construction, the
+clustering, gates and deduplication, the classification and the output) is
+normative, so that two conforming backends given the same sample return the
+same components and the same counters.
+
+The pipeline fixed here is the `reference-discovery-v1` strategy of
+`lumice_integral.discovery`. Its step order and gate semantics are normative
+because a parity fixture must be able to reproduce them from a shared sample;
+its numerical defaults (section 9.5.9) are strategy, as in section 10.1. A
+change of the pipeline itself (another clustering rule, another gate, another
+dedup test) is a change of this section and MUST be recorded here with a new
+strategy version, not only in code. As in the rest of section 9, the names
+below (`DiscoveryProblem`, `DiscoveryResult`, `Component`, ...) are schema
+names for reference in this document, not required class names; the Python
+reference spells them `discover_components(...)`, `ComponentDiscoveryResult`,
+`DiscoveredComponent` and `IncompleteCandidate`.
+
+#### 9.5.1 `DiscoveryProblem`
+
+| Field semantics | Requirement |
+|---|---|
+| `path` | One concrete ordered face sequence `P` (the numbering of `docs/conventions.md` #1), no symmetry parameter: a caller that wants a family of paths calls discovery once per member. |
+| `crystal` | The finite crystal of `P`'s geometry. It enters discovery twice: through the face normals (direction map and path domain, section 5.2) and through the finite-crystal `entry_measure` gate (section 7). |
+| `refractive_index` | The ice index at the wavelength of the call. |
+| `incident_direction` | `s`, as in section 9.1. The sun direction `ŝ = -s` is derived, never supplied independently. |
+| `target_direction` | `d`, as in section 9.1, with deviation `delta = angle(s, d)` in the open interval `(0, pi)` (section 9.5.3 needs a component of `d` normal to `s`). |
+| `sample` | A point set `u_1 ... u_N` on `S2`, uniform with respect to `dA(u)/(4 pi)` (section 9.5.2), or its band and fields for this `delta` (section 9.5.3). A backend MAY generate it inside the call. It MUST NOT be required in any persisted store format. |
+| `extra_seeds` | Optional poses (warm starts, typically the converged seeds of a neighbouring target). Used only as Gauss-Newton starts of their cluster (section 9.5.4). They are never traced on their own and never count toward completeness. |
+| `band_half_width` | Positive angle `b`: the sample events whose deviation lies within `b` of `delta` are the candidates. |
+| `cluster_radius` | Positive `SO(3)` geodesic radius `r_c` of the candidate clustering. |
+| `distance_threshold` | Positive `SO(3)` geodesic distance `eta` under which a corrected candidate lies on an already accepted component. A non-positive value MUST be rejected. |
+| `continuation` | One `ContinuationOptions` (section 9.2) used by every trace of the call. There is no separate discovery budget. |
+
+The problem is determined by `delta` up to a world rotation: rotating `d` about
+`s` by an angle `alpha` maps the fiber by left multiplication with that
+rotation. A backend MAY exploit this. A conformance fixture MUST still state
+`d` itself.
+
+#### 9.5.2 The sampling measure
+
+Discovery samples the path's fields on the sphere of `u = R^-1 ŝ`, the sun in
+the crystal frame (`docs/phase2.md` section 1). With the Haar decomposition of
+section 5.1,
+
+```text
+d mu_Haar(R) = dA(u)/(4 pi) · dpsi/(2 pi),
+```
+
+where `psi` is the twist of `R` about `ŝ`. The fields discovery uses (validity,
+entry measure `A`, Fresnel factor `T`, body-frame outgoing propagation
+direction `phi = Phi_P(-u)`, and the deviation `D(u) = angle(phi, -u)`) depend
+on `R` only through `u` (`docs/phase2.md` section 4.1(a)). So a uniform sample
+of `SO(3)` quotiented by `psi` is a uniform sample of `u` on `S2`, and that is
+the only input discovery needs.
+
+- The sample MUST be uniform in `dA(u)/(4 pi)`: either i.i.d. uniform points or
+  a deterministic quasi-uniform set with equal-area cells. A sampler with a
+  non-uniform density (inverse weights) MUST NOT be used as a discovery sample,
+  and the reference refuses one (`s2_store.StoreSeeds`).
+- An event `i` is kept only where `w_i = A(u_i) T(u_i) > 0`: the path is valid
+  at `u_i` and the finite crystal admits a positive entry measure. Only kept
+  events are candidates.
+- The reference sampler is the antipodal Fibonacci lattice,
+  `u_i = -(sqrt(1 - z_i^2) cos theta_i, sqrt(1 - z_i^2) sin theta_i, z_i)`
+  with `z_i = 1 - (2 i + 1)/N` and `theta_i = pi (1 + sqrt 5)(i + 1/2)`,
+  `i = 0 ... N-1` (`s2_store.store_lattice`). Its points are indexed by `i`, and
+  that index orders ties (section 9.5.3). The i.i.d. alternative
+  (`s2_store.RandomSphereSampler`) draws per chunk of points from a seeded
+  generator, so its first `N_1` points are the first `N_1` points of any larger
+  draw. Nested samples are what section 9.5.7 talks about.
+- The sample is independent of `ŝ` and of `d`. One sample serves every target
+  and every sun direction of a scene. For a member `P' = g P` of a symmetry
+  class, a backend MAY transport `P`'s sample by the crystal symmetry `g`
+  (`u' = g u`, `phi' = g phi`, the same `D` and `w`; `docs/phase2.md` section
+  4.1(d), `s2_store.transported_rotations`) instead of sampling `P'` again.
+
+#### 9.5.3 Band and candidate poses
+
+For the target `d` at deviation `delta`, the band is every kept event with
+`|D_i - delta| <= b`, inclusive at both ends, taken in increasing `D_i` and,
+for equal `D_i`, in increasing sample index. Its size is `pool_count`. The
+candidate pose of event `i` puts `u_i` on `ŝ` and `phi_i` in the azimuth of `d`:
+
+```text
+R_i = W F_i^T,
+W   = [ŝ, e, ŝ x e],      e = unit(d - (d·ŝ) ŝ),
+F_i = [u_i, f_i, u_i x f_i], f_i = unit(phi_i + cos(D_i) u_i),
+```
+
+with columns as listed (`s2_store.event_rotations`). Then `R_i u_i = ŝ` and
+`R_i phi_i` lies at deviation `D_i` in the half-plane of `d`, so the outgoing
+direction of candidate `i` is exactly `|D_i - delta|` from `d`. The candidate's
+residual is one-dimensional, and its *offset* is `|D_i - delta|`. `e` is
+undefined for `d = ±s`. That is why `delta` is required to lie in `(0, pi)`,
+and the reference does not guard this case (open item, section 12).
+
+The candidate pool is `extra_seeds` in the caller's order, followed by the band
+in the order above. Pool indices are positions in this concatenation.
+
+#### 9.5.4 Clustering, correction, gates, and deduplication
+
+1. **Clustering.** Greedy geodesic clustering of the whole pool. Repeatedly,
+   the unassigned member with the lowest pool index becomes a centre, and its
+   cluster is every unassigned member (the centre included) whose `SO(3)`
+   geodesic distance to the centre is strictly below `r_c`. Membership is
+   distance to the centre, not transitive. Clusters are processed in creation
+   order, and their number is `raw_cluster_count`. (The reference realises "lowest index" through the
+   iteration order of a Python `set` of small integers. The rule is pinned by
+   `test_geodesic_cluster_centres_are_the_lowest_unassigned_index_and_membership_is_not_transitive`.)
+2. **Representative.** If the cluster contains extra seeds, the one with the
+   lowest pool index represents it. Otherwise the band member with the smallest
+   offset does, with ties going to the lowest pool index. Only the
+   representative goes further. The cluster's other members are not corrected.
+3. **Gauss-Newton correction.** Starting from the representative, iterate at
+   most 30 times: evaluate the residual `r_d(R)` of section 5.3 and its `2 x 3`
+   right-trivialized Jacobian `A` (section 5.4). If `|r_d| <= tau / 100`, stop
+   at the current pose. Otherwise update
+   `R <- R exp([ -A^T (A A^T)^-1 r_d ]_x)` (the minimum-norm step). Here
+   `tau = residual_tolerance + relative_residual_tolerance` of the call's
+   continuation options (the reference adds the two; with the defaults of
+   section 10.1, `tau = 1e-11`).
+4. **Admissibility gate.** The corrected pose is *admissible* iff its residual
+   norm is at most `tau`, the path domain (section 5.2, entry and exit Snell
+   discriminants and every internal incidence) is valid there, and the
+   finite-crystal `entry_measure` there is positive. The sample passed through
+   `w > 0` before correction. The corrected pose is gated again. The number of
+   admissible representatives is `admissible_count`. An inadmissible
+   representative is dropped silently, and the other members of its cluster
+   are not tried in its place. The target-chart gate (the antipode exclusion,
+   section 5.3) is not part of admissibility. It is the seed precondition of
+   the trace (section 6.1).
+5. **Deduplication before tracing.** An admissible pose whose `SO(3)`
+   geodesic distance to some accepted pose of an *already accepted component*
+   is strictly below `eta` is that component. It is folded without a trace and
+   counted `dedup_merged`. The distance is taken to the stored poses of the
+   component's whole curve, both sides of an arc included. Incomplete
+   candidates (section 9.5.5) are not deduplication targets, so a later
+   candidate on an unresolved piece of the fiber is traced again.
+
+#### 9.5.5 Trace and classification
+
+Every admissible, non-folded pose is traced once with the call's
+`continuation`, and the outcome is classified:
+
+| Forward trace | Backward trace (same seed, `initial_tangent_sign` negated) | Outcome | Counter |
+|---|---|---|---|
+| `closed` | not run | component, `kind = closed` | none |
+| `event_terminated` by one of the five *arc events* `tir_boundary`, `branch_boundary`, `path_infeasible`, `visibility_boundary`, `chart_boundary` | `event_terminated` by an arc event | component, `kind = arc`, the two traces stitched (below) | `arc_stitched` |
+| same | `closed` | incomplete (the forward trace of the same one-dimensional fiber should have closed first) | `arc_backward_closed_anomaly` |
+| same | any other outcome | incomplete | `arc_backward_failed` |
+| `event_terminated` by another reason (`rank_loss`, `topology_ambiguity`, ...) | not run | incomplete | `incomplete_unnamed_event` |
+| `numerical_failure` or `budget_exhausted` | not run | incomplete | `incomplete_not_converged` |
+
+The stitched arc (section 8, `resample.stitch_open_arc`) runs from the backward
+end through the seed to the forward end. Its poses are the backward poses
+after the seed in reverse order, followed by all forward poses. The tangents
+are the reversed backward tangents after the seed, negated, followed by the
+forward tangents, so the seed carries the forward tangent. The increments are
+the reversed backward increments followed by the forward increments. The seed
+index is the number of backward poses after the seed. The arc's `reason` is
+the forward end's event and its `start_reason` the backward end's. Either
+trace MAY have no accepted step (its only pose is the seed). An arc whose two
+traces both stopped at the seed is a one-pose arc of length zero (section
+9.5.6).
+
+A component's `arclength` is the sum of its increments. A closed component's
+`status`/`reason` are those of its trace. An arc's status is
+`event_terminated` and its reason is the forward end's event.
+
+#### 9.5.6 `DiscoveryResult` and what `completeness` means
+
+| Field semantics | Requirement |
+|---|---|
+| `components` | The accepted components in trace order. Each has `kind` (`closed`/`arc`), the corrected seed, the curve (one closed trace, or the stitched arc with its two traces), `arclength`, `status`/`reason`, and for an arc `start_reason`. |
+| `incomplete` | The candidates that were traced but not classified: seed, `cause` (one of the four incomplete counters), the forward trace, and the backward trace when one was run. They are evidence of nothing conclusive: neither a component nor a duplicate of one. |
+| `completeness` | `complete` iff `incomplete` is empty, otherwise `unknown`. No other value. |
+| `pool_count`, `extra_seed_count`, `raw_cluster_count`, `admissible_count` | The funnel counts of sections 9.5.3–9.5.4. |
+| `events` | The six counters `dedup_merged`, `arc_stitched`, `arc_backward_failed`, `arc_backward_closed_anomaly`, `incomplete_unnamed_event`, `incomplete_not_converged` (`discovery.DISCOVERY_EVENT_NAMES`), every one present, zeros included. |
+
+A conforming result satisfies the funnel identities
+`admissible_count = dedup_merged + len(components) + len(incomplete)`,
+`arc_stitched = number of arc components`, and `len(incomplete)` equals the sum
+of the four incomplete counters. A backend MAY add diagnostics such as the
+reference's `trace_seconds`, but they are not part of parity.
+
+`completeness` is **procedural, not a certificate**. `complete` means only that
+every admissible, non-folded candidate of this pool closed or stitched. A target
+with no admissible candidate is therefore `complete` with zero components. It
+does not mean every connected component of `X_(P,d)` was found: a component
+with no band event, or whose only candidates fell into a cluster represented
+by a pose of another component, is invisible to it. It MUST NOT be reported as
+component completeness. The single-component `component_scope` of section 9.3
+stays `unknown` and remains authoritative for quadrature (section 7).
+
+The one quantitative statement available is probabilistic. For `N` i.i.d.
+uniform points, a region of `u` of area `mu` receives no event with probability
+`(1 - mu/(4 pi))^N <= exp(-N mu/(4 pi))` (`discovery.miss_probability`). The
+cross-check `discovery.check_band_coverage` revisits every band event, not one
+per cluster. An event posed within `near_radius` (default `closure_distance`,
+the default `eta`) of a traced curve is covered. Every
+other event is corrected and gated exactly as in section 9.5.4. An admissible
+pose farther than `eta` from every traced curve is a *suspect*, which is
+evidence of a missed component or of an under-traced one. With `k_min` the
+fewest band events assigned to any traced component, `exp(-k_min)` estimates
+the chance that a component of that band measure receives no event. On the
+deterministic Fibonacci lattice this is the Monte Carlo reading of the same
+density, not a bound. The cross-check is a diagnostic and a test tool, not a
+rendering step, and it does not change `completeness`.
+
+**Arc extent depends on the seed**, a property of the reference a caller MUST
+allow for. When a seed lies within about one
+`initial_step` of a named boundary, the first predictor step of that side
+crosses it and the trace ends there with no accepted step (section 8: an
+event met by an iterate inside the trust region). That side of the arc is
+then truncated at the seed. On path `1-3` at 65 deg the same two arcs measure
+0.258/0.259 rad from one sample and 0.196/0.171 rad from a denser one. When
+both sides stop at the seed, the component is a **one-pose arc** of length
+zero. It is counted, because it is a distinct piece of the fiber, but its
+extent is not traced. `check_band_coverage` reports the events of its
+untraced extent as suspects. An arc's length is therefore not a parity
+quantity across samples or backends; its seed, kind and end events are. The
+quadrature's per-end truncation estimate (section 7) is the only account of
+an arc's untraced tail.
+
+#### 9.5.7 Densification (the low-then-dense calling pattern)
+
+A consumer that first discovers at a low `N` and later densifies (for example
+an interactive low-resolution view) needs to know whether a denser sample can
+lose what a sparser one found. **It is not guaranteed.** The greedy clustering
+of section 9.5.4 is not monotone in the pool: added events move cluster
+centres and representatives. Only one representative per cluster is corrected,
+and an inadmissible representative is not replaced, so a component found
+through one cluster at low `N` can fall into a cluster represented by a pose of
+another component at higher `N`.
+
+Measured (bounded evidence, nested i.i.d. samples, each the prefix of the
+next):
+
+- On 8 fibers (path `3-5` at the canonical pixel `(150, 150)`, the caustic
+  pixel `(49, 0)` and the boundary-hugging pixel `(700, 150)`; path `1-3` at
+  60, 63.5 and 65 deg; path `3-1` at 64.7434 deg; the `D3h` prism's `5-3` at
+  43.0347 deg), over `N = 1e4, 3e4, 1e5, 3e5, 1e6`, every component with at
+  least one accepted step found at a lower `N` was found again at the next `N`,
+  meaning a pose within `eta` of a returned curve. The component count never
+  dropped, except in the case below.
+- Counterexample: the `D3h` prism, path `5-3` at 43.0347 deg, `3e5 -> 1e6`.
+  The three long arcs are kept, but a one-pose arc found at `3e5` is not near
+  any curve at `1e6`, and the `1e6` cross-check reports suspects.
+
+So a consumer MUST NOT assume that densification only adds components. Where
+it matters, it SHOULD run `check_band_coverage` on the denser result, or
+retain the sparser components as `extra_seeds` of the denser call.
+Components with an accepted step have been monotone on every fiber measured
+so far, but that is evidence, not a property.
+
+#### 9.5.8 v0 output subset (the Lumice `liblumice_analytic` module A)
+
+Lumice `doc/analytic-api.md` section 4.5 draft returns per trace only the
+kinematic `LUMICE_ANALYTIC_FiberResult` fields. Discovery's output maps onto
+them without new trace fields:
+
+| Discovery item | v0 representation |
+|---|---|
+| Closed component | Its seed (`double[9]`, row-major, body to world), `kind = closed`, and one `FiberResult`: `status`, `reason`, `poses` `(N, 9)`, `crystal_frame_sun_directions` `u = R^T (-s)` `(N, 3)`, `arclength_increments` `(N-1)`, `residual_norms` `(N)`, `tangents` `(N, 3)`. |
+| Arc component | Its seed, `kind = arc`, and the two `FiberResult`s (forward, then backward with the sign reversed). The stitched curve, its seed index, `reason` and `start_reason` follow from them by section 9.5.5 and need not be stored. |
+| Incomplete candidate | Its seed, its `cause`, the forward `FiberResult`, and the backward one when run. |
+| Result | `completeness`, the four funnel counts, and the six counters of section 9.5.6. |
+
+Jacobian, step, branch and closure diagnostics, terminal payloads and weight
+observables (section 9.3) are **not** in the v0 subset. They are the wave-2
+diagnostics contract (`explore-fiber-diagnostics-contract`). The `check_band_coverage`
+cross-check is likewise not part of v0.
+
+A parity fixture for discovery SHOULD carry the band itself (`u_i`, `phi_i`,
+`D_i` in pool order) next to `d`, so that a backend's steps 9.5.3–9.5.5 are
+compared on an identical pool. The sampler is compared separately against
+the formula of section 9.5.2. Parity quantities are the funnel counts and
+counters, each component's kind, seed and end events, and the traced poses
+within the continuation tolerances. Arc lengths are compared only within the
+same seed (section 9.5.6).
+
+#### 9.5.9 Reference defaults and evidence
+
+The `reference-discovery-v1` defaults. Like section 10.1, they are strategy,
+not mathematical constants.
+
+| Parameter | Default | Evidence |
+|---|---|---|
+| Sampler | antipodal Fibonacci lattice (section 9.5.2) | The Haar mean of `w` on the lattice agrees with independent uniform quaternions (`s2_store.self_check_haar_mean`); `psi` invariance is checked by `self_check_psi_invariance` (`docs/phase2.md` section 4.1(a)). |
+| `N` | `1e6` (`s2_store.DEFAULT_SEED_STORE_N`) | Task `phase1-seeds-from-store`: 32 strip pixels found every component already at `N = 1e5` with a `0.02` deg band. The store density survey (`scripts/store_seed_density_survey.py`, `docs/ch06-reference-fixture.md` section 7) pins the production size, and `check_band_coverage` found 0 suspects on the production configuration. |
+| `band_half_width` | `0.2` deg | With `N = 1e6`, a pool the size of the retired prescan's. The same probe as `N`. |
+| `cluster_radius` | `0.3` rad | `explore-component-discovery` (34+ pixels): distinct components of the surveyed fibers lie farther apart. The two `1-3` arcs at 60 deg are `0.82` rad apart (`test_path_1_3_at_60_deg_is_two_distinct_components`). |
+| `distance_threshold` | `closure_distance = 0.08` | The same "is this pose on that curve" scale as closure. It is above half the largest accepted chord (`maximum_step / 2 = 0.06`), so a pose on a traced curve is never farther than that from its nearest sample. |
+| Gauss-Newton | 30 iterations, stop at `tau / 100`, accept at `tau` | Reference constants of `discovery._newton_correct` / `_admissible_seed`. No failure attributed to them has been observed. |
+| `continuation` | section 10.1 | Discovery adds no trace policy of its own. |
+
+#### 9.5.10 Boundaries
+
+- Crystals: the reference samples and discovers on the closed-form hexagonal
+  prism of any `face_distance` (`geometry.HexPrism`). Pyramids are refused
+  before discovery by the sample store, which waits for task
+  `pyramid-lumice-semantics`
+  (`test_pyramid_is_refused_with_a_forward_pointer_to_its_own_task`). On the
+  prism the direction map and the path domain depend on the face normals
+  only. The finite extent enters only through `entry_measure`. On the `D3h`
+  fixture of section 11 the discovered fiber is the regular prism's, and only
+  the entry measure differs.
+- Discovery covers one target direction. Neighbour continuation across
+  targets, full-image completeness and the strip driver's policies are outside
+  it (`strip_pixel`, `strip_driver`).
+- It inherits the single-component boundaries of section 8. No trace crosses
+  TIR, a branch change, rank loss or a singular intersection. A fiber that
+  changes topology between two targets is discovered afresh at each.
 
 ## 10. Truth, tolerance, and strategy separation
 
@@ -672,6 +997,13 @@ failure: the named prerequisite is outside the current reference core.
 | C12 | Near self-approach or incompatible-tangent return | Does not close unless distance, section crossing, tangent, minimum extent, and final correction all pass. | Verified at the closure boundary by `test_incompatible_tangent_cannot_pass_final_closure_correction`; discovery of remote self-intersections remains open. |
 | C13 | Quaternion `q` versus `-q` storage | Represents the same samples and produces zero pose distance, identical closure, length, and integral diagnostics. | Open until a quaternion storage adapter exists; the reference result currently declares rotation-matrix storage. Cosmetic open item: no result depends on it, because every production path stores and compares rotation matrices, and the continuous-sign quaternions of `resample.fiber_spline` are derived from them. |
 | C14 | Named factor audit | Every requested factor has value/unit/normalization/availability; the coarea denominator and Haar conversion remain separate. | Partial: values, units, and normalization are exposed for `rho_pose`, `entry_measure`, `fresnel_transmission`, and `path_validity` on the canonical pixel fiber (`test_canonical_pixel_fiber_exposes_four_available_factors_pointwise`, `test_figure_data_exports_available_weight_arrays_for_the_canonical_pixel`); `test_public_result_schema_preserves_units_shapes_dtype_and_availability` verifies unregistered factors stay unavailable rather than silently one, and `conventions` carries `1/(8 pi^2)` and `J_perp` separately. Quadrature (`lumice_integral.quadrature`): an adaptive composite Simpson line integral over corrector-retracted, chord-parametrised edges with the exact `dH^1_g` speed reports method, refinements, node count, `value`, `error_estimate`, `epsilon` (`J_perp -> J_perp + epsilon`, default `1e-6`, the raw `J_perp` array stays separate) and a convergence-order estimate; `test_constant_weight_recovers_the_haar_identity_on_the_circle` and `test_trigonometric_weight_matches_the_analytic_integral_on_every_grid` verify analytic values, and `test_default_options_align_with_the_adaptive_reference_within_1e_4` / `test_node_count_doubles_until_the_estimate_meets_the_tolerance` / `test_hitting_maximum_node_count_is_reported_not_passed_off_as_converged` verify the converged `partial` canonical value and its non-silent failure (`tests/test_resample_quadrature.py`; the adaptive method and its test names were retired by task-resample-and-integrate) (`docs/ch06-reference-fixture.md` section 4.1), and `test_figure_data_exports_the_quadrature_block_and_pointwise_integrand` the exported block. Component completeness stays `unknown`, so the value remains partial. `visibility` (finite-face obstruction) is contained in `entry_measure` for the convex crystal: the corridor intersection admits only entry points whose internal segment reaches every next face's finite polygon, and a convex body obstructs no incoming or outgoing ray. It stays an unregistered name rather than a separate factor. `source_factor` / `pixel_factor` are not evaluated in code. Their conversion to Lumice's `raw / emitted_energy` is derived and numerically checked: `raw[p] / E = K_p V(w_p)`, `K_p = N_sym ybar(550) Omega_p / (S/2)`, with `S` the crystal's total surface area, because Lumice (since `6fc48bb4`, Ice Halo #597) weighs every ray by its projected area over `S/2` at entry. The bright band of columns `106 / 126 / 146` agrees within `0.3 %` at matched refractive index, and the plate and Parry families' total flux within `0.01 %` (`scripts/probe_absolute_scale.py`, `scripts/compare_lumice_family.py`, `docs/ch06-reference-fixture.md` section 7, stage 4). Against Lumice before `6fc48bb4` the denominator was the pixel-dependent `A_eff(w_p)`, the fiber-weighted harmonic mean of the projected silhouette (same section, history bullet). |
+| C15 | Discovery, single closed component: canonical 3-5 pixels, including the caustic short loops | One closed component, the other admissible candidates folded by distance, `complete`; the funnel counts and loop lengths are pinned on the production sample. | Verified by `test_canonical_pixel_has_one_closed_component`, `test_rows_225_and_226_are_one_continuous_branch` and `test_caustic_edge_pixels_are_single_short_closed_loops` (`tests/test_discovery.py`). |
+| C16 | Discovery near a domain boundary: pixels whose loop runs along the exit TIR boundary (`exit_snell_discriminant` near `event_slowdown_margin`) | Every candidate folds into one closed loop, with no budget-exhausted candidate. | Verified by `test_boundary_hugging_pixels_fold_every_candidate_into_one_closed_loop` (rows 700/780). |
+| C17 | Discovery, several components: path `1-3` on the canonical column at `delta = 60` deg, `N = 1e5` | Two distinct components (`0.82` rad apart, far above `eta` and `r_c`), each traced once, one candidate folded, `complete`, and no band event off them (`check_band_coverage`). | Verified by `test_path_1_3_at_60_deg_is_two_distinct_components`. |
+| C18 | Discovery, TIR-truncated open arc on a real path (the same fixture) and every classification branch of section 9.5.5 | Each `1-3` component is an arc cut by exit TIR (margin within the Snell event tolerance) at one end and by the entry ray leaving face 1 (`path_infeasible`) at the other, with valid accepted poses. On the analytic capped circle, a backward trace that fails, closes or meets an unnamed event, and a forward budget exhaustion, each leave the candidate incomplete with its cause. | Verified by `test_path_1_3_components_are_arcs_cut_by_tir_and_path_infeasibility`, `test_two_named_events_stitch_into_an_arc_component`, `test_backward_trace_that_does_not_end_on_a_named_event_leaves_the_candidate_incomplete`, `test_backward_trace_that_closes_is_an_anomaly_not_a_component`, `test_unnamed_event_is_incomplete_and_not_traced_backward`, `test_budget_exhausted_forward_trace_is_incomplete_not_converged` and `test_a_reversed_caller_orientation_still_traces_the_other_way_for_the_arc`. The one-pose arc of section 9.5.6 is pinned as a known limitation by `test_a_seed_within_one_initial_step_of_two_events_is_a_single_pose_arc` (path `3-1`, 64.7434 deg). |
+| C19 | Discovery outside the canonical path and crystal: a class member served by symmetry transport, a member with no lit event, a prism-face path on the `D3h` prism, and a pyramid | `3-7` through the transported `3-5` sample and `3-1-2-5` (empty sample, zero components) run the same pipeline; on the `D3h` prism the crystal reaches the entry-measure gate and the component equals the regular prism's (section 9.5.10); a pyramid is refused before discovery. | Verified by `test_discovery_runs_on_another_member_of_the_class`, `test_discovery_on_a_low_symmetry_prism` and `tests/test_s2_store.py::test_pyramid_is_refused_with_a_forward_pointer_to_its_own_task`. Discovery on pyramids is open (section 12). |
+| C20 | Pool, clustering, warm seeds, dedup threshold and the funnel counters | Lowest-index cluster centres and non-transitive membership; a warm seed is a Gauss-Newton start, not an extra trace, and a warm seed far from the fiber adds nothing; a non-positive `eta` is rejected; the funnel identities of section 9.5.6 hold on closed, arc, starved and warm results; one continuation policy governs every trace. | Verified by `test_geodesic_cluster_centres_are_the_lowest_unassigned_index_and_membership_is_not_transitive`, `test_geodesic_cluster_separates_two_tight_clusters`, `test_warm_seed_from_the_row_above_is_a_newton_start_not_a_separate_trace`, `test_warm_seed_far_from_every_fiber_neither_poisons_nor_adds_a_component`, `test_dedup_threshold_must_be_positive`, `test_discovery_funnel_identities_hold_on_closed_arc_starved_and_warm_results` and `test_continuation_options_are_the_single_trace_policy`. |
+| C21 | Procedural completeness and densification | A target with no admissible candidate is `complete` with zero components; an incomplete candidate makes it `unknown`; the band cross-check finds no suspect on a complete pixel and every event of a removed component as a suspect. Under nested densification every component with an accepted step is kept on the measured `1-3` fibers, and the `D3h` `5-3` counterexample loses a one-pose arc. | Partial, by design: the procedural semantics are verified by `test_dark_pixel_has_no_admissible_candidate_and_is_procedurally_complete`, `test_continuation_options_are_the_single_trace_policy`, `test_band_coverage_of_a_complete_pixel_has_no_suspect`, `test_band_coverage_reports_a_component_discovery_did_not_return` and `test_miss_probability_is_the_poisson_void_probability`; densification by `test_random_sampler_stores_are_nested_prefixes`, `test_nested_densification_keeps_every_traced_component` and `test_nested_densification_can_lose_a_single_pose_arc`. A completeness certificate and monotone densification are open (section 12). |
 
 ## 12. Explicit open items
 
@@ -690,94 +1022,35 @@ failure: the named prerequisite is outside the current reference core.
 - A deterministic consumer-level fixture for `linear_solve_failure` remains a
   conformance-infrastructure gap. Corrector non-convergence and rank/condition
   rejection are covered without private monkeypatching.
-- Seed search, component discovery, completeness certificates, and component
-  deduplication are outside the single-component interface.
-  `lumice_integral.discovery` provides them for one pixel of the 3-5 path as
-  a separate module with its own, weaker contract (task-pixel-pipeline-v2):
-  - `discover_components(target_direction, seeds, *,
-    continuation=ContinuationOptions(), extra_seeds=(),
-    band_half_width_deg=0.2, cluster_radius_rad=0.3,
-    distance_threshold=continuation.closure_distance)` returns
-    `ComponentDiscoveryResult(components, incomplete, completeness,
-    pool_count, extra_seed_count, raw_cluster_count, admissible_count,
-    events, trace_seconds)`.  `seeds` is a scene-level
-    `s2_store.StoreSeeds`: the $S^2$ event store of the path (`w = A T > 0`
-    events of `N` Fibonacci points on the finite crystal, sorted by the
-    deviation `D`, independent of the sun; `docs/phase2.md` section 2)
-    with the sun direction `ŝ`, the member's face sequence and, for a class
-    member served through a `D6h` element `g`, that element.  For a target
-    `d` at deviation `delta` from `s` the band `|D_i - delta| <=
-    band_half_width_deg` is posed with `s2_store.event_rotations` in the
-    azimuth of `d` (and `transported_rotations` for `g`), so a candidate's
-    outgoing direction is `|D_i - delta|` from `d`: the store is the Haar
-    sampling of `SO(3)` with the twist about `ŝ` quotiented out, and the
-    residual of a candidate is one-dimensional.  The candidate pool is
-    `extra_seeds` (converged poses of any neighbouring pixels, used only as
-    Gauss-Newton starts of their cluster, never traced on their own and
-    never a source of completeness) followed by that band; the whole pool
-    is clustered geodesically, one representative per cluster (the band
-    member with the smallest `|D_i - delta|`) is Gauss-Newton-corrected and
-    gated (`path_domain`, `entry_measure > 0`; the store filtered the
-    uncorrected points, the corrected pose is gated again), and every
-    admissible candidate is traced *once* with the caller's production
-    `continuation` options.  The face sequence, incident direction,
-    refractive index and crystal are read from `seeds`, so they have one
-    source; the store size `N` is a scene parameter a batch caller fixes
-    once per run, not per pixel.  Until 2026-09-25 the pool came from a
-    Haar prescan table indexed by outgoing direction (4M samples, 2 deg
-    cone); task `phase1-seeds-from-store` replaced it after a 32-pixel probe
-    found the same components (`docs/ch06-reference-fixture.md` section 7).
-  - Components are of two kinds: `closed` (the trace closed) and `arc` (a
-    forward and a backward trace of the same seed, each ended by a named
-    event, stitched per section 8).  Deduplication happens *before* tracing:
-    a corrected candidate whose SO(3) geodesic distance to any accepted pose
-    of an already accepted component's curve (`distance_to_curve`) is below
-    `distance_threshold` is the same component and is folded without a
-    trace (`dedup_merged`).  The threshold is the continuation's
-    `closure_distance` (`0.08`) by default: the same "is this pose on that
-    curve" scale, and above half the largest accepted chord (`maximum_step /
-    2 = 0.06`), so a pose on the curve is never farther than that from the
-    nearest sample.  Traces that neither close nor stitch are returned as
-    `incomplete` with their cause (`incomplete_not_converged`,
-    `incomplete_unnamed_event`, `arc_backward_failed`,
-    `arc_backward_closed_anomaly`) and both traces.
-  - `completeness` is procedural, not a certificate: `"complete"` means every
-    admissible candidate of this pool converged (closed or arc) and no
-    `incomplete` evidence was seen (a dark pixel with no admissible candidate
-    is `"complete"` with zero components); `"unknown"` means at least one
-    candidate did not.  It does not prove that every connected component of
-    `X_(P,d)` was found, so the single-component result's
-    `component_completeness = "unknown"` stays authoritative for quadrature.
-  - There is one step budget, `continuation.maximum_accepted_steps`; the
-    retired small discovery budget, the production retrace, the arclength
-    fingerprint dedup, the arclength-jump gate and the periodic cold check
-    of the strip driver no longer exist (every pixel always queries the
-    store, so a warm seed cannot hide a component).
-  - The pixel set and the 0.3 rad cluster radius come from
-    `scratchpad/scrum-ch06-direct-integration/explore-component-discovery`
-    (34+ pixels); the baselines are locked by `tests/test_discovery.py` with
-    the production store (`s2_store.DEFAULT_SEED_STORE_N = 1_000_000`, the
-    0.2 deg band), whose size is pinned by the store density survey in
-    `docs/ch06-reference-fixture.md` section 7
-    (`scripts/store_seed_density_survey.py`).
-  - Completeness cross-check (a diagnostic, not a certificate and not in
-    the rendering path): `check_band_coverage(d, seeds, result)` revisits
-    *every* event of the band, not one per cluster.  An event posed within
-    `closure_distance` of a traced curve is covered; every other event is
-    corrected and gated like a candidate, and an admissible fiber pose
-    farther than `distance_threshold` from every traced curve is a
-    *suspect* (evidence of a missed component).  With `k_min` the fewest
-    band events on any traced component, `exp(-k_min)` bounds the chance
-    that `N` independent uniform points leave a component of that band
-    measure without an event (`miss_probability(mu, N) = exp(-N mu / 4
-    pi)`); the Fibonacci lattice is deterministic and quasi-uniform, so
-    this is the Monte Carlo reading of the same density.  The retired
-    prescan's density survey could state stability under doubling but no
-    such bound.  No real open arc
-    exists in the current ch06 picture (task-pixel-pipeline-v2 Step 0: every
-    10th row and column, 2106 pixels, 1954 lit, all closed), so the arc path
-    is validated on the analytic two-sided circle fixture
-    (`tests/test_discovery.py`, `tests/test_resample_quadrature.py`).
+- Discovery (section 9.5) has a normative, procedural contract; its open
+  parts are:
+  - no completeness certificate: `completeness` is procedural and the
+    band-coverage `exp(-k_min)` is a Monte Carlo reading, not a bound
+    (section 9.5.6);
+  - densification is not monotone: one-pose arcs can be lost between nested
+    samples; components with an accepted step have been kept on every fiber
+    measured (section 9.5.7);
+  - arc extent depends on the seed, and a seed within one `initial_step` of
+    events on both sides gives a one-pose arc (section 9.5.6). Resolving this
+    means a first-step retry before an event is declared, which changes arc
+    lengths and counts and needs its own evidence; it is not scheduled;
+  - the lowest-index cluster centre of the reference rests on the iteration
+    order of a Python `set` of small integers (pinned by a test, section
+    9.5.4); an explicit `min` is the behaviour-preserving spelling;
+  - `d = ±s` (deviation `0` or `pi`) is not guarded in the reference
+    (section 9.5.3);
+  - pyramid crystals wait for task `pyramid-lumice-semantics` (section 9.5.10).
+  History: until 2026-09-25 the pool came from a Haar prescan table indexed by
+  outgoing direction (4M samples, 2 deg cone); task `phase1-seeds-from-store`
+  replaced it after a 32-pixel probe found the same components. The retired
+  small discovery budget, production retrace, arclength-fingerprint dedup,
+  arclength-jump gate and periodic cold check of the strip driver no longer
+  exist; every pixel always queries the sample, so a warm seed cannot hide a
+  component. No open arc exists in the ch06 `3-5` picture (task-pixel-pipeline-v2
+  Step 0: every 10th row and column, 2106 pixels, 1954 lit, all closed); real
+  arcs are those of section 11 C17 (path `1-3`), and the analytic two-sided
+  circle fixture still covers the classification branches that no optical
+  fiber reaches (`tests/test_discovery.py`, `tests/test_resample_quadrature.py`).
 - Continuation through rank loss, bifurcation, singular intersections, TIR, or
   path-branch changes is unsupported pending dedicated exploration.
 - Absolute source radiometry, wavelength/polarization integration, pixel solid
@@ -800,10 +1073,11 @@ it does not claim that a pending solver or conformance test already exists.
 | `F_P`, smooth domain, local two-dimensional residual, antipode exclusion, and chart/basis invariance | Sections 5.2–5.4 | Defined; general charts carry their metric correction. |
 | `2 x 3` Jacobian, tangent orientation, predictor-corrector, adaptive signals, and closure | Sections 5.4 and 6 | Defined for one regular seeded component only. |
 | Coarea measure, normal Jacobian, Haar conversion, and named physical factors | Sections 5.1 and 7 | Defined; absolute radiometry and unimplemented factors remain explicit. |
-| Rank loss, critical points, TIR, branch/path/visibility boundaries, self-approach, and multiple components | Section 8 and section 12 | Observable termination/open semantics defined; unsupported crossings are not claimed. |
+| Rank loss, critical points, TIR, branch/path/visibility boundaries, self-approach, and multiple components | Sections 8 and 9.5, section 12 | Observable termination/open semantics defined; unsupported crossings are not claimed. |
 | Backend-independent problem/options/result and four terminal statuses | Section 9 | Required fields, diagnostics, availability, and causal status precedence defined. |
+| Seed search and component discovery: sampling measure, candidates, clustering, gates, dedup, classification, output, v0 subset | Section 9.5 | Defined as the procedural `reference-discovery-v1` contract; completeness is not certified and densification is not monotone (section 12). |
 | Mathematical truth versus tolerances/default strategies | Section 10 | Separated; default numerical values await conformance evidence. |
-| Analytic circle, synthetic 3-5, basis changes, and failure counterexamples | Section 11 | C01–C14 assigned to current or downstream evidence owners. |
+| Analytic circle, synthetic 3-5, basis changes, and failure counterexamples | Section 11 | C01–C14 assigned to current or downstream evidence owners; C15–C21 cover discovery. |
 | float64, zero-limit AD, and stable rotation distance | Section 3 | Incorporated as reference numerical requirements, not universal mathematical constants. |
 | Roadmap linkage, Phase II boundary, Lumice independence, and downstream backfill | Sections 1, 4, and 12; [`roadmap.md`](roadmap.md) | Single detailed authority retained here; open ownership is explicit. |
 

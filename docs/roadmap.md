@@ -801,7 +801,7 @@ Moved to [overview.md](overview.md) §3.
   §1; chore `wave-plan-docs`). Wave 1 lands Lumice module A v0
   (`EvaluatePath` + seed search + `TraceFiber[Batch]`, points only) for the
   panel's function 1; LI does not switch, instead writing the seed-search
-  (discovery) contract, exporting parity fixtures LI → Lumice, and
+  (discovery) contract (`docs/phase1-math-contract.md` §9.5), exporting parity fixtures LI → Lumice, and
   stabilizing the diagnostics/weights contract. Wave 2 lands module A v1
   (diagnostics + weights) and module B (single-path S² store + band sum) for
   function 2; LI switches fiber solving after

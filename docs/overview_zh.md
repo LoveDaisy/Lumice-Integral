@@ -217,7 +217,7 @@ $\le 10^{-11}$；单点 C++ $193\,\mathrm{ns}$ vs JAX $104\,\mu\mathrm{s}$。功
 
 | 波次 | Lumice 共享库 | 服务的 Analyze 功能 | LI 侧 |
 |---|---|---|---|
-| 1 | 模块 A v0：`EvaluatePath` + **seed 搜索** + `TraceFiber[Batch]`，只返回点列 | 功能 1 光路详情 | 写 seed 搜索（discovery）契约；导出 parity fixture；研究并稳定诊断/权重契约。**不切换** |
+| 1 | 模块 A v0：`EvaluatePath` + **seed 搜索** + `TraceFiber[Batch]`，只返回点列 | 功能 1 光路详情 | 写 seed 搜索（discovery）契约（`docs/phase1-math-contract.md` §9.5）；导出 parity fixture；研究并稳定诊断/权重契约。**不切换** |
 | 2 | 模块 A v1：加诊断 + 权重（`struct_size` 兼容扩展）；模块 B：单光路 S² 仓库 + 带求和 | 功能 2 单光路全天图 | 按 `docs/phase1-math-contract.md` §11 conformance 认证 A v1 → 切换 fiber 求解、退役 JAX continuation；写作仓传递依赖按 `.lumice` release 拉取模式接入；B 只做 parity 不切换 |
 | 3 | 模块 C：`dp_field`/`contour`/`focusing`（C++ 用 `Jet2` 前向 hyper-dual） | 功能 3 预设点与机制标签 | ch12/12.1 用完、不再研究后，先切 B 再切 C |
 

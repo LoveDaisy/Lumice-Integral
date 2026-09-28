@@ -499,7 +499,7 @@ ahead of LI switching its dependency:
 
 | Wave | Lumice shared-library module | Analyze function served | LI side |
 |---|---|---|---|
-| 1 | Module A v0: `EvaluatePath` + **seed search** + `TraceFiber[Batch]`, points only | Function 1, path detail | Write the seed-search (discovery) contract; export parity fixtures; research and stabilize the diagnostics/weights contract. **No switch.** |
+| 1 | Module A v0: `EvaluatePath` + **seed search** + `TraceFiber[Batch]`, points only | Function 1, path detail | Write the seed-search (discovery) contract (`docs/phase1-math-contract.md` §9.5); export parity fixtures; research and stabilize the diagnostics/weights contract. **No switch.** |
 | 2 | Module A v1: adds diagnostics + weights (`struct_size`-compatible extension); Module B: single-path S² store + band sum | Function 2, whole-sky map for one path | Certify A v1 against `docs/phase1-math-contract.md` §11 conformance → switch fiber solving, retire the JAX continuation path; the writing repository's transitive dependency moves to the `.lumice` release-pull pattern; B is parity-only, no switch |
 | 3 | Module C: `dp_field`/`contour`/`focusing` (C++ forward hyper-dual `Jet2`) | Function 3, preset points and mechanism labels | Once ch12/12.1 are done and no longer researched, switch B first, then C |
 

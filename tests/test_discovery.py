@@ -838,3 +838,34 @@ def test_geodesic_cluster_centres_are_the_lowest_unassigned_index_and_membership
     assert _geodesic_cluster(line[::-1], radius=0.3) == [[0, 1], [2, 3]]
     assert _geodesic_cluster(line[[1, 0, 2, 3]], radius=0.3) == [[0, 1, 2], [3]]
     assert _geodesic_cluster(line[:2], radius=0.2) == [[0], [1]]  # strictly within
+
+
+def _assert_funnel_identities(result: ComponentDiscoveryResult) -> None:
+    events = result.events
+    assert set(events) == set(DISCOVERY_EVENT_NAMES)
+    assert result.admissible_count == events["dedup_merged"] + result.component_count + result.incomplete_count
+    assert result.arc_count == events["arc_stitched"]
+    assert result.incomplete_count == sum(
+        events[name]
+        for name in (
+            "arc_backward_failed",
+            "arc_backward_closed_anomaly",
+            "incomplete_unnamed_event",
+            "incomplete_not_converged",
+        )
+    )
+    assert result.raw_cluster_count >= result.admissible_count
+    assert result.raw_cluster_count <= result.pool_count + result.extra_seed_count
+    assert result.completeness == ("complete" if result.incomplete_count == 0 else "unknown")
+
+
+def test_discovery_funnel_identities_hold_on_closed_arc_starved_and_warm_results(
+    canonical_discovery: ComponentDiscoveryResult, path_1_3_two_arcs: ComponentDiscoveryResult
+) -> None:
+    """Contract section 9.5.6: admissible = folded + components + incomplete, arcs = arc_stitched,
+    incomplete = the four incomplete counters, and completeness is exactly 'incomplete is empty'."""
+    starved = discover_pixel(150, 150, continuation=ContinuationOptions(maximum_accepted_steps=50))
+    warm = discover_pixel(150, 150, extra_seeds=[np.eye(3)])
+    assert starved.incomplete_count > 0 and warm.extra_seed_count == 1
+    for result in (canonical_discovery, path_1_3_two_arcs, starved, warm):
+        _assert_funnel_identities(result)
