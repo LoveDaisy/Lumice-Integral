@@ -582,6 +582,21 @@ def test_single_member_pyramid_store_builds_and_multi_member_is_not_implemented(
         _build(members=((13, 15, 26, 28), (14, 16, 27, 23)), n=5_000, crystal=crystal)
 
 
+def test_missing_cone_pyramid_store_agrees_with_store_seeds_face_numbering() -> None:
+    """PYRAMIDS[2] has no lower cone (faces 23-28 absent): the spec side normalises members against the fixed
+    20-face template (:func:`S2StoreSpec._face_numbering`) while :class:`StoreSeeds` normalises against the real,
+    partial crystal; ``StoreSeeds`` refuses a member absent from ``store.spec.members`` (code review round 1,
+    s2-store-pyramid-seeds), so building it here is the end-to-end check that the two agree on this partial crystal,
+    not only on the full 20-face pyramid ``test_single_member_pyramid_store_builds_and_multi_member_is_not_implemented``
+    covers.
+    """
+    crystal = PYRAMIDS[2]
+    store = _build(members=((3, 5),), n=5_000, crystal=crystal)
+    assert len(store.events) > 0
+    seeds = s2_store.StoreSeeds(store, (3, 5), canonical_sun_direction())
+    assert seeds.faces == (3, 5)
+
+
 # ------------------------------------------------------- task 13 regression
 @pytest.mark.parametrize("n", [1_000_000, pytest.param(10_000_000, marks=pytest.mark.slow)])
 def test_rebuilds_task13_store_bit_for_bit(n: int) -> None:

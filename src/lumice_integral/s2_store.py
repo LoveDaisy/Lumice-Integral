@@ -479,10 +479,11 @@ def crystal_description(crystal: Polyhedron) -> dict[str, Any]:
 
 def crystal_from_description(description: Mapping[str, Any]) -> Polyhedron:
     kind = description.get("type")
-    face_distance = tuple(float(x) for x in description.get("face_distance", ()))
     if kind == "HexPrism":
+        face_distance = tuple(float(x) for x in description["face_distance"])
         return HexPrism(float(description["a"]), float(description["h"]), face_distance)
     if kind == "Pyramid":
+        face_distance = tuple(float(x) for x in description["face_distance"])
 
         def c_over_a(key: str) -> float | None:
             return None if description[key] is None else float(description[key])
@@ -500,7 +501,7 @@ def crystal_from_description(description: Mapping[str, Any]) -> Polyhedron:
 
 
 # Every pyramid face number (1-8, 13-18, 23-28) present: the numbering a pyramid store's members are checked against.
-_FULL_PYRAMID = Pyramid()
+_PYRAMID_FACE_TEMPLATE = Pyramid()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -537,7 +538,7 @@ class S2StoreSpec:
         The members are checked against the type's numbering, not the described crystal's present faces: the
         build checks those (``evaluate_fields`` on the crystal itself).
         """
-        return _FULL_PYRAMID if self.crystal.get("type") == "Pyramid" else None
+        return _PYRAMID_FACE_TEMPLATE if self.crystal.get("type") == "Pyramid" else None
 
     @property
     def path_id(self) -> str:
@@ -977,7 +978,9 @@ def _spec_of(
     from .path_class import phi_key  # path_class -> strip_pixel -> this module: imported at call time
 
     if len(spec.members) == 1:
-        return spec  # one member is one Phi class; phi_key covers the hexagonal prism only
+        if isinstance(crystal, HexPrism):
+            phi_key(crystal, spec.members[0])  # one key is trivially unique; call kept for its member validation
+        return spec  # a Phi group of size 1 needs no shared-key check; phi_key covers the hexagonal prism only
     if not isinstance(crystal, HexPrism):
         raise NotImplementedError(
             f"a multi-member store ({spec.path_id}) is checked by phi_key, which covers the hexagonal prism only"
