@@ -173,10 +173,18 @@ target 上的 `seed_search`（`N = 1e5`、band `0.2°`、聚类半径 `0.3` rad�
 
 - `3-5-6-7__critical`：在该晶体上 `3-5-6-7` 的 `D_P` 没有内部极值，`interior_critical_points` 为空，它的临界值
   （`DPField.critical_values`：50.06°、141.84°、163.47°）全是边界临界值。
-- 三个 `13-15-26-28` 格的 `seed_search`：参考 discovery 在 discovery 之前就拒绝锥晶，因为它的样本 store 不支持锥晶
-  （契约 §9.5.10）。这些格仍有 `evaluate_path` 与 `trace_fiber`。
 
-首次导出（2026-09-28）共 32 个 fixture：
+锥晶三格自任务 `s2-store-pyramid-seeds`（2026-09-29）起带 `seed_search`（此前参考 store 拒绝锥晶）。
+`13-15-26-28__near_boundary` 的 target 落在 store 亮区之外（`D = 87.33°`；保留事件覆盖 121.51°–149.23°）：它的点
+贴着 `U_P` 的入射门，而这道门只看面法向，此处有限晶体的 entry measure 已经为零（`corridor_empty`），所以 band 为空，
+期望结果是 complete、无分量。它作为负例保留：seed 搜索不得在这里凭空造出分量。
+
+样本 store 用 `PyramidShape` 描述锥晶（`s2_store.crystal_description`：`prism_h`、`upper_h`、`lower_h`、
+`upper_c_over_a`、`lower_c_over_a`、`face_distance`、`a`），而不是上面 `crystal` 的楔角：`c_over_a` 是
+`Pyramid.from_lumice` 把 Miller 指数或楔角换算成的量，可以比特级重建晶体。两者描述同一个晶体
+（`c_over_a = (√3/2) cot(wedge)`）；store 的形式是 cache key，不是交换格式。
+
+首次导出（2026-09-28）共 32 个 fixture；2026-09-29 起共 35 个：
 
 | 格 | `trace_fiber` | `seed_search` |
 |---|---|---|
@@ -185,9 +193,9 @@ target 上的 `seed_search`（`N = 1e5`、band `0.2°`、聚类半径 `0.3` rad�
 | `3-5__near_boundary`（`D = 43.23°`，入射余弦 `1e-3`） | 弧 path_infeasible / path_infeasible，0.067 + 0.916 | 4 条弧，其中一条单 pose 弧（两端 TIR，§9.5.6） |
 | `3-5-6-7__random`（`D = 143.87°`） | 弧 TIR / TIR，0.922 + 1.545 | 1 条弧 |
 | `3-5-6-7__near_boundary`（`D = 140.72°`，内反射入射余弦 `1e-3`） | 一侧在种子处即停（path_infeasible），另一侧 1.189 后止于 TIR | 2 条弧 |
-| `13-15-26-28__random`（`D = 142.54°`） | 闭合，2.735 | 跳过 |
-| `13-15-26-28__critical`（`D = 148.74°`，极大 149.24°） | 闭合，0.808 | 跳过 |
-| `13-15-26-28__near_boundary`（`D = 87.33°`） | 一侧在种子处即停，另一侧 0.428 后止于 TIR | 跳过 |
+| `13-15-26-28__random`（`D = 142.54°`） | 闭合，2.735 | 1 个闭合分量；pool 29，5 簇，折叠 4 |
+| `13-15-26-28__critical`（`D = 148.74°`，极大 149.24°） | 闭合，0.808 | 1 个闭合分量；pool 71，2 簇，折叠 1 |
+| `13-15-26-28__near_boundary`（`D = 87.33°`） | 一侧在种子处即停，另一侧 0.428 后止于 TIR | 空 band：pool 0，无分量（亮区之外，见上） |
 
 ## 7. 更新流程
 

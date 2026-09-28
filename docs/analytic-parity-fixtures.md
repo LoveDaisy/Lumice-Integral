@@ -222,12 +222,27 @@ Skipped, recorded in `manifest.json`:
 - `3-5-6-7__critical`: `D_P` of `3-5-6-7` has no interior extremum on this
   crystal. `interior_critical_points` is empty, and its critical values
   (`DPField.critical_values`: 50.06°, 141.84°, 163.47°) are all boundary ones.
-- `seed_search` of the three `13-15-26-28` cells: the reference discovery
-  refuses pyramids before discovery, because its sample store has no pyramid
-  (contract §9.5.10). These cells still carry `evaluate_path` and
-  `trace_fiber`.
 
-The first export (2026-09-28) contains 32 fixtures:
+The pyramid cells carry `seed_search` since task `s2-store-pyramid-seeds`
+(2026-09-29; until then the reference store refused pyramids). The
+`13-15-26-28__near_boundary` target lies outside the store's lit range
+(`D = 87.33°`; the kept events span 121.51°–149.23°): its point sits next to
+the entry incidence gate of `U_P`, which depends on the face normals only,
+where the finite crystal's entry measure is already zero (`corridor_empty`),
+so the band is empty and the expected result is complete with no component.
+It is kept as a negative case: a seed search must not invent a component
+there.
+
+The sample store describes the pyramid by its `PyramidShape`
+(`s2_store.crystal_description`: `prism_h`, `upper_h`, `lower_h`,
+`upper_c_over_a`, `lower_c_over_a`, `face_distance`, `a`), not by the wedge
+angles of `crystal` above: `c_over_a` is what `Pyramid.from_lumice` reduces
+the Miller indices or the wedge angle to, and it rebuilds the crystal bit for
+bit. The two describe the same crystal (`c_over_a = (√3/2) cot(wedge)`); the
+store's form is a cache key, not an exchange format.
+
+The first export (2026-09-28) contained 32 fixtures; since 2026-09-29 there
+are 35:
 
 | Cell | `trace_fiber` | `seed_search` |
 |---|---|---|
@@ -236,9 +251,9 @@ The first export (2026-09-28) contains 32 fixtures:
 | `3-5__near_boundary` (`D = 43.23°`, entry incidence cosine `1e-3`) | arc path_infeasible / path_infeasible, 0.067 + 0.916 | 4 arcs, one of them a one-pose arc (TIR at both ends, §9.5.6) |
 | `3-5-6-7__random` (`D = 143.87°`) | arc TIR / TIR, 0.922 + 1.545 | 1 arc |
 | `3-5-6-7__near_boundary` (`D = 140.72°`, internal incidence cosine `1e-3`) | one side stops at the seed (path_infeasible), the other ends on TIR after 1.189 | 2 arcs |
-| `13-15-26-28__random` (`D = 142.54°`) | closed, 2.735 | skipped |
-| `13-15-26-28__critical` (`D = 148.74°`, max 149.24°) | closed, 0.808 | skipped |
-| `13-15-26-28__near_boundary` (`D = 87.33°`) | one side stops at the seed, the other ends on TIR after 0.428 | skipped |
+| `13-15-26-28__random` (`D = 142.54°`) | closed, 2.735 | 1 closed; pool 29, 5 clusters, 4 folded |
+| `13-15-26-28__critical` (`D = 148.74°`, max 149.24°) | closed, 0.808 | 1 closed; pool 71, 2 clusters, 1 folded |
+| `13-15-26-28__near_boundary` (`D = 87.33°`) | one side stops at the seed, the other ends on TIR after 0.428 | empty band: pool 0, no component (outside the lit range, above) |
 
 ## 7. Update flow
 

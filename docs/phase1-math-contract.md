@@ -941,10 +941,16 @@ not mathematical constants.
 #### 9.5.10 Boundaries
 
 - Crystals: the reference samples and discovers on the closed-form hexagonal
-  prism of any `face_distance` (`geometry.HexPrism`). Pyramids are refused
-  before discovery by the sample store, which waits for task
-  `pyramid-lumice-semantics`
-  (`test_pyramid_is_refused_with_a_forward_pointer_to_its_own_task`). On the
+  prism of any `face_distance` (`geometry.HexPrism`) and on a pyramid built by
+  `Pyramid.from_lumice` (the store describes it by its Lumice shape;
+  `tests/test_s2_store.py::test_pyramid_description_round_trips_bit_for_bit`,
+  and a bare `Pyramid(...)` is refused because it records no shape). A store
+  of several members is checked by `phi_key`, which covers the prism only, so
+  a pyramid store has one member (`NotImplementedError` otherwise). On the
+  pyramid the three off-family paths of `focusing.classify`'s fixture run the
+  whole pipeline, and each store's `D` range and the components on either side
+  of the path's extreme or saddle level agree with the focusing onsets
+  (`tests/test_discovery.py::test_pyramid_*`). On the
   prism the direction map and the path domain depend on the face normals
   only. The finite extent enters only through `entry_measure`. On the `D3h`
   fixture of section 11 the discovered fiber is the regular prism's, and only
@@ -1100,7 +1106,7 @@ failure: the named prerequisite is outside the current reference core.
 | C16 | Discovery near a domain boundary: pixels whose loop runs along the exit TIR boundary (`exit_snell_discriminant` near `event_slowdown_margin`) | Every candidate folds into one closed loop, with no budget-exhausted candidate. | Verified by `test_boundary_hugging_pixels_fold_every_candidate_into_one_closed_loop` (rows 700/780). |
 | C17 | Discovery, several components: path `1-3` on the canonical column at `delta = 60` deg, `N = 1e5` | Two distinct components (`0.82` rad apart, far above `eta` and `r_c`), each traced once, one candidate folded, `complete`, and no band event off them (`check_band_coverage`). | Verified by `test_path_1_3_at_60_deg_is_two_distinct_components`. |
 | C18 | Discovery, TIR-truncated open arc on a real path (the same fixture) and every classification branch of section 9.5.5 | Each `1-3` component is an arc cut by exit TIR (margin within the Snell event tolerance) at one end and by the entry ray leaving face 1 (`path_infeasible`) at the other, with valid accepted poses. On the analytic capped circle, a backward trace that fails, closes or meets an unnamed event, and a forward budget exhaustion, each leave the candidate incomplete with its cause. | Verified by `test_path_1_3_components_are_arcs_cut_by_tir_and_path_infeasibility`, `test_two_named_events_stitch_into_an_arc_component`, `test_backward_trace_that_does_not_end_on_a_named_event_leaves_the_candidate_incomplete`, `test_backward_trace_that_closes_is_an_anomaly_not_a_component`, `test_unnamed_event_is_incomplete_and_not_traced_backward`, `test_budget_exhausted_forward_trace_is_incomplete_not_converged` and `test_a_reversed_caller_orientation_still_traces_the_other_way_for_the_arc`. The one-pose arc of section 9.5.6 is pinned as a known limitation by `test_a_seed_within_one_initial_step_of_two_events_is_a_single_pose_arc` (path `3-1`, 64.7434 deg). |
-| C19 | Discovery outside the canonical path and crystal: a class member served by symmetry transport, a member with no lit event, a prism-face path on the `D3h` prism, and a pyramid | `3-7` through the transported `3-5` sample and `3-1-2-5` (empty sample, zero components) run the same pipeline; on the `D3h` prism the crystal reaches the entry-measure gate and the component equals the regular prism's (section 9.5.10); a pyramid is refused before discovery. | Verified by `test_discovery_runs_on_another_member_of_the_class`, `test_discovery_on_a_low_symmetry_prism` and `tests/test_s2_store.py::test_pyramid_is_refused_with_a_forward_pointer_to_its_own_task`. Discovery on pyramids is open (section 12). |
+| C19 | Discovery outside the canonical path and crystal: a class member served by symmetry transport, a member with no lit event, a prism-face path on the `D3h` prism, and a pyramid | `3-7` through the transported `3-5` sample and `3-1-2-5` (empty sample, zero components) run the same pipeline; on the `D3h` prism the crystal reaches the entry-measure gate and the component equals the regular prism's (section 9.5.10); on the pyramid `13-15-26-28` is one closed loop below its interior maximum and dark above it, `13-5-26-28` one arc whose ends change across its saddle level, and `13-24-26` one arc cut by the path domain up to its boundary extremum. | Verified by `test_discovery_runs_on_another_member_of_the_class`, `test_discovery_on_a_low_symmetry_prism`, `test_pyramid_store_deviation_ranges_match_the_focusing_onsets`, `test_pyramid_interior_maximum_path_is_one_closed_loop_up_to_the_maximum`, `test_pyramid_saddle_path_changes_its_arc_ends_across_the_saddle` and `test_pyramid_boundary_only_path_is_one_arc_up_to_its_boundary_extremum`. |
 | C20 | Pool, clustering, warm seeds, dedup threshold and the funnel counters | Lowest-index cluster centres and non-transitive membership; a warm seed is a Gauss-Newton start, not an extra trace, and a warm seed far from the fiber adds nothing; a non-positive `eta` is rejected; the funnel identities of section 9.5.6 hold on closed, arc, starved and warm results; one continuation policy governs every trace. | Verified by `test_geodesic_cluster_centres_are_the_lowest_unassigned_index_and_membership_is_not_transitive`, `test_geodesic_cluster_separates_two_tight_clusters`, `test_warm_seed_from_the_row_above_is_a_newton_start_not_a_separate_trace`, `test_warm_seed_far_from_every_fiber_neither_poisons_nor_adds_a_component`, `test_dedup_threshold_must_be_positive`, `test_discovery_funnel_identities_hold_on_closed_arc_starved_and_warm_results` and `test_continuation_options_are_the_single_trace_policy`. |
 | C21 | Procedural completeness and densification | A target with no admissible candidate is `complete` with zero components; an incomplete candidate makes it `unknown`; the band cross-check finds no suspect on a complete pixel and every event of a removed component as a suspect. Under nested densification every component with an accepted step is kept on the measured `1-3` fibers, and the `D3h` `5-3` counterexample loses a one-pose arc. | Partial, by design: the procedural semantics are verified by `test_dark_pixel_has_no_admissible_candidate_and_is_procedurally_complete`, `test_continuation_options_are_the_single_trace_policy`, `test_band_coverage_of_a_complete_pixel_has_no_suspect`, `test_band_coverage_reports_a_component_discovery_did_not_return` and `test_miss_probability_is_the_poisson_void_probability`; densification by `test_random_sampler_stores_are_nested_prefixes`, `test_nested_densification_keeps_every_traced_component` and `test_nested_densification_can_lose_a_single_pose_arc`. A completeness certificate and monotone densification are open (section 12). |
 
@@ -1161,7 +1167,8 @@ failure: the named prerequisite is outside the current reference core.
     9.5.4); an explicit `min` is the behaviour-preserving spelling;
   - `d = ±s` (deviation `0` or `pi`) is not guarded in the reference
     (section 9.5.3);
-  - pyramid crystals wait for task `pyramid-lumice-semantics` (section 9.5.10).
+  - a pyramid store has one member: `phi_key` covers the prism only
+    (section 9.5.10).
   History: until 2026-09-25 the pool came from a Haar prescan table indexed by
   outgoing direction (4M samples, 2 deg cone); task `phase1-seeds-from-store`
   replaced it after a 32-pixel probe found the same components. The retired
