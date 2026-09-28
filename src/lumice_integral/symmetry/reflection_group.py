@@ -256,7 +256,11 @@ _B_SWAP = {1: 2, 2: 1, **{13 + i: 23 + i for i in range(6)}, **{23 + i: 13 + i f
 
 def pbd_orbit(faces: Sequence[int]) -> set[tuple[int, ...]]:
     """面序列在 Lumice ``symmetry: "PBD"`` 下的全部像：D6（P 旋转 + D 翻转，:mod:`lumice_integral.symmetry.group`）× 上下互换（B）。
-    锥晶面号（13–18 / 23–28）同样适用：D6 逐环带作用，B 把上下锥面对调。"""
+    锥晶面号（13–18 / 23–28）同样适用：D6 逐环带作用，B 把上下锥面对调。
+
+    这是标号规约意义上的 PBD（L1，`docs/conventions.md` #21，Lumice ``doc/raypath-symmetry.md`` §1.1）：
+    与晶体实际形状、姿态系综无关的上下文无关组合；晶体缺少该对称元素时会合并物理上不等价的光路。
+    需要物理等价类（L2）时用 :func:`.crystal_group.true_symmetry_group`。"""
     from . import group as D6
     faces = tuple(int(f) for f in faces)
     out: set[tuple[int, ...]] = set()

@@ -107,7 +107,9 @@ def check_filter(config: dict[str, Any], representative: list[int], members: lis
     The scattering entry's filter is either a ``PBD`` raypath filter on ``representative`` (accepted only when
     ``G_true`` is all of ``D6h``: the candidate group is ``D6h``, so order 24 is ``D6h`` itself), or exact
     raypath filters (no ``symmetry``, ``filter_in``) whose sequences, as a set, are ``members``: one filter,
-    or a ``complex`` filter whose ``composition`` is a flat list of their ids (an OR).
+    or a ``complex`` filter whose ``composition`` is a flat list of their ids (an OR).  ``PBD`` is Lumice's
+    label meaning (L1); requiring ``|G_true| == 24`` is exactly the condition under which L1 coincides with
+    the physical meaning (L2) this comparison needs (``docs/conventions.md`` #21).
     """
     entries = [e for layer in config["scene"]["scattering"] for e in layer["entries"]]
     if len(entries) != 1 or "filter" not in entries[0]:

@@ -91,7 +91,7 @@ $$
 
 Lumice 是正向 Monte Carlo 模拟器，也是首要的独立验证 oracle。Lumice Integral 是采用不同数值方法的兄弟产品线。
 
-Lumice Integral 对 Lumice 的依赖按角色与模块成熟度分层（仓库定位裁定，§5.3）。**原语与约定层**——晶体几何、面编号、对称约化与 `G_true`、Snell / Fresnel 光学——保持永久独立：LI 在这一层**不**使用 Lumice 的源码、C API、库或可执行文件，求解器自己拥有从姿态经几何、光学到方向、物理权重和导数的完整可微路径。在这一层保留两份独立实现是有意为之，不是等待未来共享引擎的临时重复：2026-09-27，Lumice 把 `fn_period_` 硬编码为 6（不读 `face_distance`）的缺陷，正是因为与 LI 的独立实现出现分歧才被发现（Lumice PR #429）；若两边共用一份原语实现，这类缺陷会让两边一起错而不可见。
+Lumice Integral 对 Lumice 的依赖按角色与模块成熟度分层（仓库定位裁定，§5.3）。**原语与约定层**——晶体几何、面编号、对称约化与 `G_true`、Snell / Fresnel 光学——保持永久独立：LI 在这一层**不**使用 Lumice 的源码、C API、库或可执行文件，求解器自己拥有从姿态经几何、光学到方向、物理权重和导数的完整可微路径。在这一层保留两份独立实现是有意为之，不是等待未来共享引擎的临时重复：2026-09-27，Lumice 把 `fn_period_` 硬编码为 6（不读 `face_distance`）的缺陷，正是因为与 LI 的独立实现出现分歧才被发现（Lumice PR #429）；若两边共用一份原语实现，这类缺陷会让两边一起错而不可见。这条实证具体针对的是光路分析面板的**物理**分组（L2，`docs/conventions.md` #21）：周期 6 正是 Lumice `symmetry: "PBD"` 标号 filter（L1）的本意——不受约束、与晶体形状无关；PR #429/#430 对 filter 本身的改动已被 Lumice PR #436 恢复，该 PR 同时点名了两种含义（`doc/raypath-symmetry.md` §1.1），把 filter 恢复为原本无条件的周期 6。实证本身仍然成立，因为当时对照的正是面板行（L2）口径。对称约化不在两仓共享边界之内：Lumice 即将发布的 `liblumice_analytic` 只接受具体面序列，不提供任何对称约化，两仓各自按自身消费者的需要（L1 或 L2）保留一份对称约化层。
 
 **算法层**——单光路反解与 fiber 行走、$S^2$ 事件仓库、带求和、`dp_field` / `focusing` 临界点分类——遵循不同的规则：模块还年轻、仍在研究驱动下变化时，两边各自实现（JAX 权威、C++ 派生，由 parity fixture 锁定；§5.3「计算落点」裁定）。模块成熟、且 LI 不再研究它之后，收敛为 Lumice 正式发布的一份共享库背后的单一 C++ 实现；LI 经 Python binding 消费它，自己的 JAX 版随之退役。LI 仍在研究的模块，不论 Lumice 一侧状态如何，继续按 JAX 权威维护。
 
@@ -177,8 +177,13 @@ $\le 10^{-11}$；单点 C++ $193\,\mathrm{ns}$ vs JAX $104\,\mu\mathrm{s}$。功
 不因面板而冻结；某模块移植后，其改动须先落在 JAX 侧并经 parity fixture 同步
 校验，再触碰 C++。
 
-待后续核实（本 chore 不做，只标记）：面板的对称约化行语义（Lumice
-`doc/raypath-symmetry.md` 的 P/B/D）与 LI 的 `G_true` 轨道是否同一口径。
+已于 2026-09-28 裁定（`doc/raypath-symmetry.md` §1.1，chore
+`symmetry-two-meanings-docs-and-comments`）：默认**不是**同一口径，不可混用。
+面板的对称约化行是**物理**含义（L2）；Lumice `PBD` 标号 filter 是另一种、与形状无关的
+标号重写（L1），只在晶体 `G_true` 为整个 `D6h` 时与 L2 重合。LI 的 `G_true` 轨道
+（`symmetry.crystal_group.true_symmetry_group`）是 L2 的形状半边；LI 自己的 L1
+（`symmetry.reflection_group.pbd_orbit`）是另一份独立实现。完整对照表见
+`docs/conventions.md` #21。
 
 **仓库定位（owner 裁定 2026-09-28）：** 该裁定在 Lumice 一侧的对应改动记在该仓
 [`doc/raypath-analysis.md`](https://github.com/LoveDaisy/ice_halo_sim) §5.1.6 与

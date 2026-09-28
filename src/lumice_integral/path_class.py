@@ -9,11 +9,14 @@ pipeline of :mod:`.strip_pixel` once per member:
 1. :func:`pbd_orbit_hexprism` expands the representative under the face
    permutations induced by the crystal's own symmetry group ``G_true``
    (:func:`.symmetry.crystal_group.true_symmetry_group`, a subgroup of
-   ``D6h``).  On the regular prism ``G_true`` is all of ``D6h`` (Lumice
-   ``PBD``: the six rotations about the c axis, the vertical mirrors and the
-   basal swap); on a prism with unequal ``face_distance`` it is smaller, and
-   a ``D6h`` image outside it is a different ray path, not the same physics.
-   It is an independent implementation -- group elements are orthogonal
+   ``D6h``): the physical orbit, L2 (``docs/conventions.md`` #21, Lumice
+   ``doc/raypath-symmetry.md`` §1.1).  On the regular prism ``G_true`` is all
+   of ``D6h`` (Lumice ``PBD``, L1: the six rotations about the c axis, the
+   vertical mirrors and the basal swap), where L1 and L2 coincide; on a
+   prism with unequal ``face_distance`` ``G_true`` is smaller, and a ``D6h``
+   image outside it is a different ray path, not the same physics -- the two
+   meanings diverge there, and this function still computes L2 for the
+   crystal it is given.  It is an independent implementation -- group elements are orthogonal
    matrices acting on the crystal's face normals, faces are matched by normal
    -- and ``tests/test_path_class.py`` cross-checks it against the index
    arithmetic of ``tests/_geometry_oracles.py::pbd_orbit`` (two routes, one
@@ -186,6 +189,18 @@ def pbd_orbit_hexprism(faces: Sequence[int], crystal: HexPrism | None = None) ->
     Only the point group acts, so on the regular prism the result does not
     depend on the aspect ratio.  A face the crystal does not have raises
     ``ValueError``.
+
+    Two meanings of "symmetry orbit" (``docs/conventions.md`` #21, Lumice
+    ``doc/raypath-symmetry.md`` §1.1): this function always expands under the
+    *given* crystal's actual ``G_true`` -- that is the physical grouping, L2
+    -- so at the default ``crystal=None`` (the regular ``HexPrism``, ``G_true
+    = D6h``) it happens to equal Lumice's ``PBD`` label filter (L1), because
+    L1 and L2 coincide exactly there.  Passing a lower-symmetry crystal here
+    gives that crystal's own L2 orbit, not Lumice's unconditional L1 one; do
+    not call this with the default crystal while actually rendering a
+    different, lower-symmetry one and expect an L1 result for it -- for the
+    context-free label orbit use :func:`.symmetry.reflection_group.pbd_orbit`
+    instead.
     """
     crystal = HexPrism() if crystal is None else crystal
     faces = normalize_faces(faces)
