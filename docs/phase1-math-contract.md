@@ -1124,8 +1124,8 @@ failure: the named prerequisite is outside the current reference core.
   `closure_distance` could carry the post-crossing pose outside the closure
   distance and skip the attempt, and the analytic circle with
   `maximum_step=0.2` closed on its third traversal). Enabling growth on
-  optical fibers still waits on two unmeasured points of that trigger and on
-  one of the domain:
+  optical fibers still waits on two unmeasured points of that trigger; a
+  third point, of the domain, has been measured:
   - the bisection assumes at most one section sign change per accepted edge;
     it holds for steps well below the loop's half period (`maximum_step=0.12`
     and the analytic sweeps up to `0.8`) and MUST be re-checked if the step
@@ -1134,10 +1134,29 @@ failure: the named prerequisite is outside the current reference core.
     (one-parameter subgroup); its deviation from the true trajectory at the
     section has not been measured on optical fibers, where the final closure
     corrector absorbs it;
-  - whether periodic or bounded narrow domain features narrower than a grown
-    step occur on optical fibers (they would be stepped over, unlike the
-    monotone TIR, branch and visibility half-spaces) is the open explore
-    thin-domain-feature-skip-risk-on-optical-fibers.
+  - periodic or bounded narrow domain features narrower than a grown step
+    would be stepped over without an event, since the approach slowdown
+    (section 6.3) only reacts to a margin already below
+    `event_slowdown_margin`; the synthetic banded domain of explore
+    thin-domain-feature-skip-risk-on-optical-fibers shows this with the
+    default options for band widths `<= 0.01`. None has been found on optical
+    fibers. The domain margins observed there have one of two topologies,
+    told apart by whether the margin ever goes negative:
+    - monotone crossing: the margin crosses zero once and keeps the new sign
+      (a TIR, branch or visibility half-space; the event is reported, e.g.
+      `path_infeasible` on path `3-5-6-7`);
+    - tangency without crossing: the margin approaches zero smoothly, down to
+      `1.0628e-6` against `event_slowdown_margin=0.02`, and recedes without
+      going negative; every pose stays valid, no event exists and none is
+      missed.
+
+    Neither has the synthetic counterexample's structure of leaving the domain
+    and re-entering it within one step. The evidence is that explore's 25
+    configurations: paths `3-5`, `3-5-6-7` and the pyramid path `13-15-26-28`
+    under `D6h` and `D3h`, with seeds forced near the critical angle, sampled
+    at step `1e-3`, and no counterexample was found. It is a finite enumeration
+    with discrete sampling, not a proof, and it does not cover crystals or
+    paths outside that set.
 - A deterministic consumer-level fixture for `linear_solve_failure` remains a
   conformance-infrastructure gap. Corrector non-convergence and rank/condition
   rejection are covered without private monkeypatching.
