@@ -14,11 +14,12 @@ Lumice Integral（LI）按固定 rev 导出一个 JSON fixture 目录，Lumice �
 uv run python scripts/export_analytic_parity.py --output-dir artifacts/analytic-parity --verify
 ```
 
-- 一条命令写出矩阵（§6）的全部 fixture 和一个 `manifest.json`，M2 Max 上全矩阵约 16 s。
+- 一条命令写出矩阵（§6）与边缘情形（§6.1）的全部 fixture 和一个 `manifest.json`，共 82 个，M2 Max 上约
+  1 min（波次 2 之前只有矩阵，约 16 s）。
 - **确定性**：同一 rev 重跑逐字节相同。LI 的 `tests/test_parity_export.py` 在两个独立解释器里各导出一次，
   逐文件比较。fixture 不记录时间、主机和路径。
 - `--verify` 读回每个 fixture，用当前 checkout 重算，按 fixture 自带容差（§5）比较，任一失败即非零退出。
-  `--cells 3-5__random ...` 只导出子集。
+  `--cells 3-5__random 3-5__limits ...` 只导出子集（矩阵格与边缘格都按名字）。
 - 产物在 `artifacts/` 下，LI 不纳入版本控制。钉住的那一份在 Lumice 仓库里，每个 fixture 自己记录来源的
   LI rev。
 - 代码：`lumice_integral.parity_export`（格式、选点、校验器）与 `scripts/export_analytic_parity.py`
@@ -28,8 +29,11 @@ uv run python scripts/export_analytic_parity.py --output-dir artifacts/analytic-
 
 一个格（cell）是矩阵的一行，即一条路径加一个点类别。它的文件名为
 `<path>__<category>__<kind>[__<label>].json`：路径用连字符（`3-5-6-7`），类别为 `random` / `critical` /
-`near_boundary`，种类为 `evaluate_path` / `trace_fiber` / `seed_search`。`manifest.json` 列出每个格的
-`files`、带原因的 `skipped`、`rationale` 以及 §6 的 `selection` 记录。
+`near_boundary`，种类为 `evaluate_path` / `trace_fiber` / `seed_search`。边缘格（§6.1）改名为
+`<path>__<label>`，文件为 `<path>__<label>__<kind>[__<suffix>].json`。`manifest.json` 在 `cells` 下列出矩阵格，
+在 `edge_cells` 下列出边缘格，每个都有 `files`、带原因的 `skipped`、`rationale` 以及 §6 的 `selection` 记录；
+边缘格另有 `label`、`point`（种子怎么选）与 `serves`（它认证的契约 §11 条目，见
+`docs/phase1-math-contract.md` §11.1）。只导出矩阵时没有 `edge_cells` 键。
 
 JSON 为 UTF-8，键排序。浮点写成能往返回同一个 float64 的最短形式，任何符合规范的 JSON 读取器
 （`strtod`）解析后都得到导出时的原始位，`-0.0` 保留，不含 NaN 和无穷。每个 fixture 都有下列字段：
@@ -37,7 +41,7 @@ JSON 为 UTF-8，键排序。浮点写成能往返回同一个 float64 的最短
 | 字段 | 含义 |
 |---|---|
 | `format` | `"lumice-integral/analytic-parity"` |
-| `schema_version` | `1`。波次 2（诊断与权重）只新增可选字段，不改名也不删已有字段；破坏性修改才升版本。 |
+| `schema_version` | `1`。波次 2 只新增了可选字段（§3.1、§3.2），没有改名或删除，v0 的每个键字节不变（对照 2026-09-29 `5ea2bde` 的导出核过）。没有波次 2 字段的 fixture 来自旧导出，按 v0 的比较方法。破坏性修改才升版本。 |
 | `fixture_kind` | `evaluate_path`、`trace_fiber` 或 `seed_search` |
 | `symmetry_semantics` | 恒为 `"none"`：输入是一个具体面序列，不涉及任何对称约化（Lumice `doc/analytic-api.md` §3.3 规则 2；`docs/conventions.md` #21）。 |
 | `provenance.li_rev` | 导出时 LI 的完整 commit SHA |
@@ -74,8 +78,14 @@ JSON 为 UTF-8，键排序。浮点写成能往返回同一个 float64 的最短
 | `interface_transmittances` | `face_count` 个值：入射、出射面的非偏振（s/p 平均）透射率 `T`，每个内反射面的反射率 `R`，TIR 时为 `1`（仅 `valid` 时） |
 | `fresnel_transmission` | `T_entry · Π R_k · T_exit`，非 `valid` 时为 `0.0` |
 | `diagnostics` | 不参与比较：LI 算出的全部 margin（`validity_margins`）、最小 validity margin 及其名字，非法 pose 另附失败信息 |
+| `branch_margins` | 波次 2。`valid` 时按名字给出有符号的 validity 余量：`entry_incidence_cosine`、`entry_snell_discriminant`、每个内反射 `k = 1, 2, ...` 的 `internal_<k>_incidence_cosine`、`exit_incidence_cosine`、`exit_snell_discriminant`（契约 §9.3 的 `branch_diagnostics`）。前者是光线与面法向的夹角余弦，后者是 Snell 判别式 `1 − n_rel²(1 − cos²)`，无量纲，在光滑分支上为正。非 `valid` 时为 `null`。 |
+| `failed_gate` | 波次 2。非 `valid` 时为 `{name, value}`：按上面的顺序第一个余量不为正的闸门（`value ≤ 0`）。`valid` 时为 `null`。 |
+| `jacobian_available` | 波次 2。恰在 `valid` 时为 `true`：法向 Jacobian 只在光滑分支上有定义。 |
+| `normal_jacobian` | 波次 2。该 pose 下 `2 × 3` 残差 Jacobian `A` 的 `J_perp = σ₁ σ₂`，目标取该 pose 自己的出射方向（契约 §5.4）。`A` 对出射方向在右平凡化旋转 `R exp([δ]×)` 下求导（δ 以弧度计，§5.1 度量），再投影到该方向切平面的一组正交基上。无量纲（每弧度姿态对应的方向弧度），与基的选取无关，只依赖 pose 和路径。不可用时为 `null`。它可以极小（`D_P` 极值点上约 `4e-17`），也可以在 Snell 边界附近很大（`d ≈ 2e-8` 处约 `2600`）。 |
+| `singular_values` | 波次 2。同一个 `A` 的 `[σ₁, σ₂]`，`σ₁ ≥ σ₂ ≥ 0`。不可用时为 `null`。 |
 
-非法 pose 只比较 `valid` 与 `fresnel_transmission`。
+非法 pose 只比较 `valid`、`fresnel_transmission`、`failed_gate` 与可用性（`jacobian_available = false`，余量与
+Jacobian 为 `null`）。
 
 ### 3.2 `trace_fiber`
 
@@ -85,7 +95,16 @@ JSON 为 UTF-8，键排序。浮点写成能往返回同一个 float64 的最短
 `expected.traces` 含一条或两条 trace。第一条用 `initial_tangent_sign = +1` 追踪；它不闭合时，从同一种子
 反号再追一条（契约 §9.5.5）。每条 trace 有 `initial_tangent_sign`、`status`、`reason`、`poses` `(N, 9)`、
 `crystal_frame_sun_directions` `u = Rᵀ(−s)` `(N, 3)`、`arclength_increments` `(N − 1)`、`residual_norms`
-`(N)`、`tangents` `(N, 3)`（契约 §9.3）与 `arclength`。一条 trace 可以只有一个 pose（没有被接受的步）。
+`(N)`、`tangents` `(N, 3)`（契约 §9.3）与 `arclength`。一条 trace 可以只有一个 pose（没有被接受的步），
+种子本身被拒时（`rank_loss`、`chart_boundary`，见 §6.1 的边缘格）可以一个也没有。
+
+波次 2 加入与 `poses` 对齐的逐点数组（契约 §9.3 的 `jacobian_diagnostics` 与 `branch_diagnostics`）：
+`branch_margin_names`（§3.1 `branch_margins` 的 `k` 个名字，按该顺序）、`branch_margins` `(N, k)`、
+`jacobian_available` `(N)`、`normal_jacobian` `(N)` 与 `singular_values` `(N, 2)`，含义同 §3.1 该字段在对应
+pose 上的值。
+
+trace 以 `budget_exhausted` 结束的 fixture 另带 `expected.reference_curve`（`poses` `(M, 9)` 与 `closed`：同一
+种子在默认选项下追出的曲线，定义见下）以及一个 `budget_extent` 容差。
 
 fixture 的**曲线**：第一条闭合时就是它；否则是第二条 trace 种子之后的 pose 倒序，接上第一条 trace 的全部
 pose，得到一条过种子的开折线（契约 §9.5.5，`resample.stitch_open_arc`）。种子切向的符号只在同一个 LAPACK
@@ -123,7 +142,24 @@ fixture（§9.5.8）。
   曲线的两种采样之间最多差半个间距。参考实现：`parity_export.curve_distance`。
 - **`trace_fiber`**：trace 条数相等；`(status, reason)` 对作为多重集相等；曲线距离不超过 `curve_distance_rad`；
   `arclength` 之和相对差不超过 `arclength_relative`；每个 `residual_norms` 不超过 `residual_norm_bound`。
-  不比较步数，也不比较单个 pose。
+  不比较步数，也不比较单个 pose。两边都没有被接受的 pose 时距离为 0；一边有一边没有时距离为无穷。
+- **`evaluate_path` 的波次 2 字段**：`jacobian_available` 相等，`branch_margins` 的名字集合相等；余量按
+  `branch_margins` 容差（绝对）比较，`normal_jacobian` 与每个奇异值按各自容差相对 `max(1, |value|)` 比较。
+  非法 pose 的 `failed_gate.name` 相等，其值按余量比较。
+- **`trace_fiber` 的逐点数组**（`pointwise_consistency`、`accepted_pose_regularity`）：两个后端步进不同，
+  所以逐点数组从不按样本和 LI 比。后端在自己的每个 pose `i` 上，`normal_jacobian[i]`、`singular_values[i]`、
+  `branch_margins[i]` 必须等于它自己的 `EvaluatePath` 在 `poses[i]` 处的返回值（容差为 §3.1 在该 pose 上的
+  容差）；`EvaluatePath` 本身在固定 pose 上对 LI 认证，两者合起来认证逐点数组，包括它与 `poses` 的对齐。每个被接受
+  的 pose 还必须正则：`jacobian_available`、每个余量 `> 0`、`normal_jacobian > 0`。
+- **`trace_fiber` 的预算**（有 `budget_extent`）：`(status, reason)` 多重集与残差界同上，但不比曲线与长度是否
+  相等（两个控制器在同一预算内到不了同一处），改为：`step_budget` 的 trace 恰有 `maximum_accepted_steps + 1`
+  个 pose（种子加每个被接受的步一个）；`arclength_budget` 的 trace 满足 `maximum_arclength − maximum_advance <
+  arclength ≤ maximum_arclength`（下一条边会越过预算）；`evaluation_budget` 的 trace 至少一个 pose（一个评估
+  单位算什么属于后端内部，契约 §9.2）；每条 trace 的每个 pose 到加密后的 `reference_curve` 的距离不超过
+  `curve_distance_rad`。后端的步数记法若不同，自己写明映射，按区间比较步数预算；fixture 不改。
+- **选项变体**（边缘格的 `trace_fiber__<variant>`）：`continuation` 与默认不同的普通 `trace_fiber` fixture。
+  对 `perturbation` 变体，导出器检查 LI 追出的曲线按上面的方法仍与默认 trace 一致，不一致就拒绝写出；后端每个
+  变体都通过，就说明它在每组设置下都复现同一个分量（契约 C06）。
 - **`seed_search`**：`completeness`、四个计数、六个计数器相等。分量按顺序比较：`kind`、`status` 相等，非空的
   两端 `{reason, start_reason}` 作为无序集合相等；后端的种子到 fixture 曲线的距离不超过 `seed_to_curve_rad`
   （契约 §9.5.4 第 5 步的 pose 到采样点距离）；曲线距离不超过 `curve_distance_rad`；闭合分量的 `arclength`
@@ -140,6 +176,11 @@ fixture（§9.5.8）。
 | 残差范数 | `≤ residual_tolerance + relative_residual_tolerance`（`1e-11`） | 契约 §9.5.4 第 3 步与 §10.1；这是对后端的界，不要求与 LI 相等。 |
 | seed 搜索的计数、计数器、kind、reason | 精确 | 契约 §9.5.8：pool 就是导出的 band，步骤顺序与闸门是规范性的。 |
 | 被发现分量的种子 | 到 fixture 曲线的距离不超过 `distance_threshold`（`0.08` rad） | 契约自己判定「这个 pose 属于那个分量」的准则（§9.5.4 第 5 步）。 |
+| 分支余量、`failed_gate` 的值 | `1e-12 · max(1, 1/(2√d))`，与方向相同 | 余量是同一条闭式链上的余弦与判别式。 |
+| `normal_jacobian`、奇异值 | 相对 `max(1, |value|)`：`1e-12 · max(1, 1/(4d))` | `J_perp` 比方向高一阶导数，方向容差中的 Snell 放大 `1/(2√d)` 以平方进入。实测：LI 的 AD 值与独立中心差分（`h = 1e-6`）相对差 `6e-9`；远离 Snell 边界时 `1e-14` rad 的姿态扰动使其相对变化至多 `2.5e-12`（`d ~ 1e-8` 处 `4e-8`，该处容差为 `2.5e-5`）。 |
+| trace 的逐点数组 | 上两行，在每个 pose 上取值 | 比较对象是后端自己的 `EvaluatePath`（§4）。 |
+| 被接受 pose 的正则性、可用性、闸门名 | 精确 | 契约 §6.1 与 §5.4：被接受的 pose 在光滑分支上且正则。 |
+| 预算范围 | 计数与界精确（§4） | 契约 §9.4：`budget_exhausted` 保留部分几何；计数规则写在契约 §11.1。 |
 
 LI 自己的读回（`--verify`）在这些容差下全部通过；第一次跨后端运行才是这些容差在 Lumice 侧的第一份证据。
 若某个容差被证明过紧或过松，改动发生在 LI（新证据记入本页），然后重新导出；不在 Lumice 读取器里悄悄放宽。
@@ -197,6 +238,35 @@ target 上的 `seed_search`（`N = 1e5`、band `0.2°`、聚类半径 `0.3` rad�
 | `13-15-26-28__critical`（`D = 148.74°`，极大 149.24°） | 闭合，0.808 | 1 个闭合分量；pool 71，2 簇，折叠 1 |
 | `13-15-26-28__near_boundary`（`D = 87.33°`） | 一侧在种子处即停，另一侧 0.428 后止于 TIR | 空 band：pool 0，无分量（亮区之外，见上） |
 
+### 6.1 边缘格（波次 2）
+
+矩阵采的是一般点。边缘格接在矩阵之后，是契约 §11 的不变量真正要被判定的情形：极短环、贴边界走的环、TIR 截断
+的弧、秩亏、预算、锥晶。每个格服务的 §11 条目写在 manifest 条目里，逐条说明见契约 §11.1。下表数字取自本 rev
+的导出。
+
+种子来源 `point` 有五种：`critical_offset`（`D_P` 内部极值点亮侧给定偏移处，同矩阵的 `critical` 类别）；
+`extremum`（极值点本身）；`random`（矩阵的随机抽样）；`antipodal_target`（同一 pose 但目标取 `−d`）；
+`target`（给定目标，种子是在 `N = 1e5` 样本上做种子搜索返回的各分量，每个一份
+`trace_fiber__component_<k>`）。像素目标来自 `camera.linear_pixel_outgoing_direction` 配
+`canonical_scene.CANONICAL_RENDER`；偏向角目标在过 `s` 的竖直平面内、
+`s` 上方。未另行说明时，一个格导出 `trace_fiber`（默认选项）、`evaluate_path__curve_min_margin` 与
+`__curve_min_jacobian`（trace 上余量最小、`J_perp` 最小的 pose），非 target 类的点另有 `evaluate_path__point`。
+
+| 格 | 服务 | 为什么选它 | 实测（LI，本 rev） |
+|---|---|---|---|
+| `3-5__short_loop` | C05 C06 C14 | 3-5 最小偏向角上方 0.01°：环长约四个初始步长，按步长的闭合判据必须在第一圈闭合。环长短于闭合最小弧长 `2 × initial_step` 时按设计会走两圈（契约 §6.4：0.001° 处的环用 `initial_step 0.01` 量得 0.0523，默认 0.04 量得 0.1046）。`J_perp` 在这里最小。变体 `initial_step_0.03`、`initial_step_0.08` 与 `controller_thresholds`（`minimum_step 2e-5`、`maximum_step 0.10`、`shrink 0.4`、`growth 1.15`、`maximum_retries 10`）。 | 闭合，0.1652（55 个 pose；三个变体下 0.1653 / 0.1652 / 0.1653）。`J_perp` 最小 0.00405。 |
+| `3-5__strip_short_loop_r100_c126` | C06 C15 | ch06 像素 (100, 126)：短于 π 的环，已退役的绝对闭合闸会走两圈。 | 闭合，1.6452；种子搜索 pool 553，3 簇，1 个闭合分量。 |
+| `3-5__caustic_loop_r49_c0` | C06 C15 | ch06 像素 (49, 0)：焦散边缘 0.19 的环，它的多余种子曾经止于虚假事件。 | 闭合，0.1898；pool 320，1 簇。 |
+| `3-5__boundary_hugging_r700_c150`、`__r780_c150` | C06 C08 C16 | 贴着出射 TIR 边界走的环（最小余量 0.0142 / 0.0062），在按速率的事件减速（契约 §6.3）之前会耗尽步数预算。 | 闭合，5.4085 / 5.6359；pool 185 / 175，13 / 15 簇，其余候选全部折叠，`complete`。 |
+| `1-3__two_arcs_60deg` | C06 C08 C17 C18 | 路径 `1-3` 在 δ = 60°：两个不同分量，各是一条弧，一端被出射 TIR 截断，另一端是入射光离开面 1。分量 0 上有 `initial_step_0.03` 与 `initial_step_0.08` 两个变体。 | `path_infeasible` 0.1397 + `tir_boundary` 0.4749，以及 `tir_boundary` 0.3820 + `path_infeasible` 0.2325；种子搜索 2 条弧（0.6146、0.6145），折叠 1；TIR 端（`d = 2.4e-8`）`J_perp` 2581。 |
+| `3-5__rank_loss_extremum` | C07 | 种子取 `D_P` 的内部极小点（21.84°）本身，fiber 在这里退化成一个点。 | 两个方向都是 `rank_loss`，没有 pose；种子处 `σ₂ = 1.1e-16`，`J_perp = 4.2e-17`。 |
+| `3-5__limits` | C09 C11 | 矩阵的 3-5 随机种子，在让 trace 提前结束的选项下：变体 `step_budget`（`maximum_accepted_steps 5`）、`arclength_budget`（`maximum_arclength 0.3`）、`evaluation_budget`（`maximum_evaluations 15`）、`corrector_failure`（`maximum_advance 0.01`、`maximum_retries 0`）、`step_underflow`（`initial_step 0.04`、`minimum_step 0.03`、`maximum_step 0.04`、`maximum_advance 0.01`）。它的默认 `trace_fiber` 就是各预算变体的 `reference_curve`。 | 每个方向：6 个 pose（0.2000）；8 个 pose（0.2800）；3 个 pose（0.0800）；1 个 pose `corrector_failure`；1 个 pose `step_underflow`。 |
+| `3-5__antipodal_target` | C04 | 3-5 随机 pose，目标取它自己出射方向的对径 `−d`：投影残差的代数零点。 | 两个方向都是 `chart_boundary`，没有 pose。 |
+| `13-24-26__boundary_arc_90deg` | C18 C19 | 锥晶路径 `13-24-26`，晶体是 LI `tests/test_discovery.py` 的参考锥晶（`prism_h = upper_h = lower_h = 0.5`，两个楔角都是 `90° − pyramid_face_angle()`，正规）。90° 处是一条两端被路径域截断的弧，路径没有内部临界点。 | `path_infeasible` 1.4403 + `path_infeasible` 0.6801；种子搜索 3 簇得 1 条弧（2.1205）。 |
+
+未覆盖：确定性的 `linear_solve_failure`（契约 §11 C09，未决）与 C19 的 `D3h` 棱柱。锥晶上的短环是矩阵的
+`13-15-26-28__critical`（0.808）。
+
 ## 7. 更新流程
 
 1. LI 改行为（求解器、约定、默认值）并提交。
@@ -209,7 +279,9 @@ target 上的 `seed_search`（`N = 1e5`、band `0.2°`、聚类半径 `0.3` rad�
 
 ## 8. 不在这些 fixture 里的内容
 
-- 诊断与权重（`jacobian_diagnostics`、`terminal_payload`、`weight_observables` 等），属于波次 2
-  （`explore-fiber-diagnostics-contract`），届时以可选字段加入。
+- 控制器内部记录（`step_diagnostics`、`closure_diagnostics`、`terminal_payload`）与权重
+  （`weight_observables`）：按 2026-09-29 的作者裁定，后端只凭输出认证，权重由 LI 在返回的 pose 上自算。契约
+  §11.1 对 §11 每一条写明输出认证了什么、哪些留给后端自己的测试。诊断里 fixture 只带 `J_perp`、奇异值与分支余量
+  （§3.1、§3.2）。
 - 采样器本身、`check_band_coverage`、加密行为（§9.5.7）。
 - 任何对称约化：`symmetry_semantics` 处处为 `none`。

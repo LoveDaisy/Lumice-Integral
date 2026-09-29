@@ -1084,11 +1084,10 @@ remained float64 and rejected float32 construction explicitly.
 
 **Backend certification (owner ruling 2026-09-29).** Certifying another
 backend (Lumice C++) against this contract is by output parity only, not by
-matching controller-internal records. Entries below that depend on internal
-diagnostics are rewritten as output checks by the task
-`output-level-conformance` of scrum `analytic-lib-wave2-spec`; this note states
-the principle and points to [overview.md](overview.md) §5.3 "Wave 2
-certification standard", and the table itself is unchanged here.
+matching controller-internal records ([overview.md](overview.md) §5.3 "Wave 2
+certification standard"). The table below is LI's own evidence and is
+unchanged by that ruling; section 11.1 states, row by row, what certifies a
+backend from its outputs alone.
 
 “Verified” identifies durable automated evidence for current public behavior.
 “Partial” keeps the supported subset precise. “Open” is not an implementation
@@ -1117,6 +1116,56 @@ failure: the named prerequisite is outside the current reference core.
 | C19 | Discovery outside the canonical path and crystal: a class member served by symmetry transport, a member with no lit event, a prism-face path on the `D3h` prism, and a pyramid | `3-7` through the transported `3-5` sample and `3-1-2-5` (empty sample, zero components) run the same pipeline; on the `D3h` prism the crystal reaches the entry-measure gate and the component equals the regular prism's (section 9.5.10); on the pyramid `13-15-26-28` is one closed loop below its interior maximum and dark above it, `13-5-26-28` one arc whose ends change across its saddle level, and `13-24-26` one arc cut by the path domain up to its boundary extremum. | Verified by `test_discovery_runs_on_another_member_of_the_class`, `test_discovery_on_a_low_symmetry_prism`, `test_pyramid_store_deviation_ranges_match_the_focusing_onsets`, `test_pyramid_interior_maximum_path_is_one_closed_loop_up_to_the_maximum`, `test_pyramid_saddle_path_changes_its_arc_ends_across_the_saddle` and `test_pyramid_boundary_only_path_is_one_arc_up_to_its_boundary_extremum`. |
 | C20 | Pool, clustering, warm seeds, dedup threshold and the funnel counters | Lowest-index cluster centres and non-transitive membership; a warm seed is a Gauss-Newton start, not an extra trace, and a warm seed far from the fiber adds nothing; a non-positive `eta` is rejected; the funnel identities of section 9.5.6 hold on closed, arc, starved and warm results; one continuation policy governs every trace. | Verified by `test_geodesic_cluster_centres_are_the_lowest_unassigned_index_and_membership_is_not_transitive`, `test_geodesic_cluster_separates_two_tight_clusters`, `test_warm_seed_from_the_row_above_is_a_newton_start_not_a_separate_trace`, `test_warm_seed_far_from_every_fiber_neither_poisons_nor_adds_a_component`, `test_dedup_threshold_must_be_positive`, `test_discovery_funnel_identities_hold_on_closed_arc_starved_and_warm_results` and `test_continuation_options_are_the_single_trace_policy`. |
 | C21 | Procedural completeness and densification | A target with no admissible candidate is `complete` with zero components; an incomplete candidate makes it `unknown`; the band cross-check finds no suspect on a complete pixel and every event of a removed component as a suspect. Under nested densification every component with an accepted step is kept on the measured `1-3` fibers, and the `D3h` `5-3` counterexample loses a one-pose arc. | Partial, by design: the procedural semantics are verified by `test_dark_pixel_has_no_admissible_candidate_and_is_procedurally_complete`, `test_continuation_options_are_the_single_trace_policy`, `test_band_coverage_of_a_complete_pixel_has_no_suspect`, `test_band_coverage_reports_a_component_discovery_did_not_return` and `test_miss_probability_is_the_poisson_void_probability`; densification by `test_random_sampler_stores_are_nested_prefixes`, `test_nested_densification_keeps_every_traced_component` and `test_nested_densification_can_lose_a_single_pose_arc`. A completeness certificate and monotone densification are open (section 12). |
+
+### 11.1 Output-level certification of the matrix
+
+A backend is certified by the parity fixtures of
+[analytic-parity-fixtures.md](analytic-parity-fixtures.md): its `EvaluatePath`,
+`TraceFiber` and seed-search outputs on fixed inputs, compared by the recipes
+of that page's section 4. Nothing below reads `step_diagnostics`,
+`closure_diagnostics` or `terminal_payload`, which a backend need not return.
+*Basis* says what the row's invariant is judged on. **output**: the invariant
+is visible in outputs. **internal**: it is a statement about records or inputs
+the API does not carry. **mixed**: its output-visible part is certified and
+the rest is named. *Red state* names the permanent test that feeds a damaged
+backend output to the recipe (`tests/test_output_conformance_red_state.py`
+unless noted) and the defect planted in LI's own implementation that turned
+the fixtures red (task `output-level-conformance`, progress log, I01–I13). A
+row without a rewrite has no red-state entry.
+
+Two counting rules are part of the recipes and belong to this contract:
+`step_budget` ends with exactly `maximum_accepted_steps + 1` poses (the seed
+plus one pose per accepted step), and `arclength_budget` ends with
+`maximum_arclength - maximum_advance < arclength <= maximum_arclength` (the
+next edge would have crossed the budget). What one evaluation unit counts is
+backend-internal (section 9.2), so `evaluation_budget` is compared by reason
+and partial geometry only. A backend that counts steps differently documents
+the mapping. The reader then compares the step budget as an interval, and the
+fixture is not changed.
+
+| ID | Basis | Output check for another backend | Not certified by outputs, and why | Red state |
+|---|---|---|---|---|
+| C01 | internal | `J_perp` and both singular values are compared at every `evaluate_path` pose and through every trace's per-pose arrays (fixtures section 4, pointwise recipes). | The analytic map `F(R) = R e3` is not an input of the API, which takes a crystal and a face sequence. LI's AD value agrees with an independent central difference to `6e-9` relative on the 3-5 fixtures. | `test_evaluate_path_rejects_a_wrong_pointwise_observable`; I09 |
+| C02 | internal | Loop lengths on real paths (C05, C06). | Haar normalization and the pose density belong to LI's quadrature, which consumes the backend's poses. Not needed from a backend. | — |
+| C03 | internal | `J_perp` and the singular values are basis-invariant and compared as such. | The target basis is chosen inside the evaluator, and the API has no basis input. | — |
+| C04 | output | `3-5__antipodal_target__trace_fiber`: both orientations `event_terminated/chart_boundary` with no pose. | — | `test_a_seed_that_must_be_rejected_cannot_be_traced`; I07 |
+| C05 | output | Every `trace_fiber` fixture: curve, length and status. At every accepted pose, every branch margin is positive and `J_perp > 0`, and the per-pose arrays equal the backend's own `EvaluatePath` at that pose. `evaluate_path` directions and margins are compared at fixed poses. | — | `test_trace_arrays_must_match_the_backends_own_evaluate_path`; I08, I10 |
+| C06 | mixed | First-traversal closure: `3-5__short_loop` (0.165 rad), `3-5__strip_short_loop_r100_c126`, `3-5__caustic_loop_r49_c0`. Controller perturbations: the `initial_step_0.03`, `initial_step_0.08` and `controller_thresholds` variants of `3-5__short_loop__trace_fiber` and the two step variants of `1-3__two_arcs_60deg`, each compared with the ordinary recipe. The exporter refuses to write a variant whose trace leaves the default one. Event approach: `3-5__boundary_hugging_r700_c150` and `r780`. | Why the controller changed `h` (accepted/rejected trial records). Under the ruling only outcomes are certified. | `test_a_short_loop_traversed_twice_is_rejected`, `test_a_perturbed_trace_that_leaves_the_curve_is_rejected`; I01, I11 |
+| C07 | mixed | `3-5__rank_loss_extremum`: the seed is the interior minimum of `D_P`, where `sigma_2 ~ 1e-16`, and both orientations end `event_terminated/rank_loss` with no pose. Its `evaluate_path` fixture carries `J_perp ~ 4e-17`. | The singular values of the rejected state are in `terminal_payload`. The fixture's `evaluate_path` at the same pose certifies them. | `test_a_seed_that_must_be_rejected_cannot_be_traced`; I06 |
+| C08 | mixed | Typed events on real paths: `tir_boundary` / `path_infeasible` in the `3-5-6-7`, `1-3__two_arcs_60deg`, `13-24-26__boundary_arc_90deg` and near-boundary fixtures. Positive margins at every accepted pose. The signed margin and name of the failing gate at every invalid `evaluate_path` pose (`failed_gate`). | The negative margin at the rejected trial pose and "before unsafe evaluation" are in `terminal_payload`, so the backend's own tests cover them. How close the last accepted pose lies to the boundary is not certified. Events end the trace at the first rejected trial without localization (the open item in C08), and on `13-24-26` LI's last pose sits at margin `0.022`. | `test_evaluate_path_rejects_a_wrong_pointwise_observable`; I12 |
+| C09 | mixed | `3-5__limits__trace_fiber__corrector_failure`: `numerical_failure/corrector_failure` with the seed as the only pose. | The trial history is in `step_diagnostics`, so the backend's own tests cover it. A deterministic `linear_solve_failure` fixture is still open. | `test_terminal_reasons_are_distinguished`; I05 |
+| C10 | internal | — | Non-finite inputs cannot be written in the fixtures (JSON without NaN, fixtures section 2), and a rejected call is an API error, not a fixture output. The backend's input-validation tests cover them. | — |
+| C11 | output | `3-5__limits__trace_fiber__step_budget`, `__arclength_budget`, `__evaluation_budget` and `__step_underflow`: distinct reasons, the counting rules above, and partial geometry within the curve distance of the same seed's unbudgeted curve. | — | `test_step_budget_counts_the_seed_plus_one_pose_per_accepted_step`, `test_arclength_budget_stops_where_the_next_edge_would_cross_it`, `test_budget_geometry_must_lie_on_the_unbudgeted_curve`, `test_terminal_reasons_are_distinguished`; I02, I03, I04 |
+| C12 | mixed | The far side of the 0.165 rad loop of `3-5__short_loop` lies within `closure_distance` of the seed and crosses the section with the reversed tangent. That is an incompatible-tangent return on a real path, so a backend that closes there fails on length and curve distance. | The section value, crossing and final-correction records are in `closure_diagnostics`. Remote self-intersections are still open. | `test_a_short_loop_closed_at_its_far_side_is_rejected`; I13 |
+| C13 | internal | — | Open. The fixtures carry rotation matrices only. | — |
+| C14 | mixed | `J_perp` (`normal_jacobian`) and the singular values per pose, with explicit availability. | The other factors are evaluated by LI on the backend's poses (section 9.1: weights never alter termination). A backend does not return `weight_observables`. | `test_evaluate_path_rejects_a_wrong_pointwise_observable`, `test_trace_arrays_must_match_the_backends_own_evaluate_path`; I08, I09 |
+| C15 | output | Seed search at the matrix's `3-5` targets, `3-5__strip_short_loop_r100_c126` and `3-5__caustic_loop_r49_c0`. Counts, counters, kinds and closed lengths. | — | `test_the_read_back_rejects_a_tampered_fixture` (`tests/test_parity_export.py`); I01 |
+| C16 | output | `3-5__boundary_hugging_r700_c150` and `3-5__boundary_hugging_r780_c150`: one closed loop, every other candidate folded, `complete`. | — | I11 |
+| C17 | mixed | `1-3__two_arcs_60deg__seed_search`: two components, one fold, `complete`. | `check_band_coverage` is an LI analysis tool, not part of module A. | I12 |
+| C18 | mixed | Arcs on real paths: `1-3__two_arcs_60deg` (TIR at one end, `path_infeasible` at the other), `13-24-26__boundary_arc_90deg` and the matrix's `3-5-6-7` cells. | The classification branches on the analytic capped circle (backward trace failing, closing or meeting an unnamed event) are synthetic, so the backend's classifier tests cover them. | I12 |
+| C19 | mixed | Pyramids: `13-24-26__boundary_arc_90deg` and the matrix's `13-15-26-28` cells. | Symmetry transport is outside module A (`symmetry_semantics = "none"`). The `D3h` prism is not yet in the fixtures. | I12 |
+| C20 | output | The six counters and four funnel counts are compared exactly in every `seed_search` fixture. | Warm seeds are not exercised, because `extra_seeds` is empty in these fixtures. | `test_the_read_back_rejects_a_tampered_fixture` (`tests/test_parity_export.py`) |
+| C21 | mixed | `completeness` in every `seed_search` fixture. | `check_band_coverage` and densification are LI analysis tools outside module A. | — |
 
 ## 12. Explicit open items
 
@@ -1233,7 +1282,7 @@ it does not claim that a pending solver or conformance test already exists.
 | Backend-independent problem/options/result and four terminal statuses | Section 9 | Required fields, diagnostics, availability, and causal status precedence defined. |
 | Seed search and component discovery: sampling measure, candidates, clustering, gates, dedup, classification, output, v0 subset | Section 9.5 | Defined as the procedural `reference-discovery-v1` contract; completeness is not certified and densification is not monotone (section 12). |
 | Mathematical truth versus tolerances/default strategies | Section 10 | Separated; default numerical values await conformance evidence. |
-| Analytic circle, synthetic 3-5, basis changes, and failure counterexamples | Section 11 | C01–C14 assigned to current or downstream evidence owners; C15–C21 cover discovery. |
+| Analytic circle, synthetic 3-5, basis changes, and failure counterexamples | Section 11 | C01–C14 assigned to current or downstream evidence owners; C15–C21 cover discovery; section 11.1 states for every row how another backend is certified from outputs alone. |
 | float64, zero-limit AD, and stable rotation distance | Section 3 | Incorporated as reference numerical requirements, not universal mathematical constants. |
 | Roadmap linkage, Phase II boundary, Lumice independence, and downstream backfill | Sections 1, 4, and 12; [`roadmap.md`](roadmap.md) | Single detailed authority retained here; open ownership is explicit. |
 

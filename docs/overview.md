@@ -541,10 +541,13 @@ controller-internal diagnostics.
   conditions.
 - Wave 2 no longer waits for research on relaxing step growth.
 
-The §11 entries that relied on internal records check outcomes; the scrum
-`analytic-lib-wave2-spec` rewrites them as output checks (task
-`output-level-conformance`), and point 2 above (diagnostics landing in
-two steps) is superseded accordingly.
+The §11 entries that relied on internal records check outcomes. Task
+`output-level-conformance` of scrum `analytic-lib-wave2-spec` rewrote them as
+output checks: [phase1-math-contract.md](phase1-math-contract.md) §11.1 states
+row by row how a backend is certified from its outputs, and
+[analytic-parity-fixtures.md](analytic-parity-fixtures.md) carries the per-point
+`J_perp` and margins plus the edge cells those checks run on. Point 2 above
+(diagnostics landing in two steps) is superseded accordingly.
 
 To be verified later (not in this chore, flagged only): whether Lumice's
 Analyze workspace design's one-to-one correspondence "level set on the

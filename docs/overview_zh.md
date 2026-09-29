@@ -246,9 +246,11 @@ $\le 10^{-11}$；单点 C++ $193\,\mathrm{ns}$ vs JAX $104\,\mu\mathrm{s}$。功
   不进 C ABI，也不作为认证条件。
 - 波次 2 不再以「放开步长增长」研究为前置。
 
-§11 中依赖内部记录的条目本质上检查的是结局；scrum `analytic-lib-wave2-spec` 的
-任务 `output-level-conformance` 将其改写为输出检查，上面第 2 点（诊断字段两步
-走）据此被取代。
+§11 中依赖内部记录的条目本质上检查的是结局。scrum `analytic-lib-wave2-spec` 的
+任务 `output-level-conformance` 已将其改写为输出检查：
+[phase1-math-contract.md](phase1-math-contract.md) §11.1 逐条写明另一后端如何只凭
+输出认证，[analytic-parity-fixtures_zh.md](analytic-parity-fixtures_zh.md) 带上逐点
+`J_perp`、余量以及这些检查所用的边缘情形。上面第 2 点（诊断字段两步走）据此被取代。
 
 待后续核实（本 chore 不做，只标记）：Lumice 的 Analyze 工作区设计里「太阳方向球
 上的水平集 = fiber」的一一对应，在锥晶与含内反射光路上是否成立，由 LI 核对
