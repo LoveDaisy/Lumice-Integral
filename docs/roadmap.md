@@ -840,3 +840,16 @@ Moved to [overview.md](overview.md) §3.
   `g != 0` or a non-finite `w > 0`; a zero from $\rho$ is not gated. Found by
   explore `level-set-vs-finite-crystal-gate` (pyramid 13-15-26-28 is 0 on
   [98°, 120.3°) with status `integrated`); fixtures at 109.588° / 120° / 134.7°.
+- **2026-09-29**: paths whose interval partition fails closed are checked
+  fiber layer against store support instead (task
+  `topology-escape-fiber-support-fixtures`,
+  `tests/test_topology_escape_fiber_support.py`). On the canonical prism
+  `3-1-5-7` and `3-5-7` raise `TopologyEscape` on 20000 and 50000 lattice points
+  alike (the slab crease crosses $U_P$), so there is no contour count to match; the store keeps only
+  $w > 0$ events, and `discover_components` finds 0 components outside its
+  deviation range and 1–2 converged ones inside (counts pinned, not
+  arclengths). This is a consistency check, not a one-to-one comparison. The
+  explore's claim that `3-5-6-7` has no contour layer was a lattice artefact:
+  it escapes only on the default 20000 points (the neck) and partitions on
+  50000, where it is compared one to one: at 70° two open arcs `gated_out`
+  against 0 fibers, at 100° / 130° two live open arcs against 2 fiber arcs.
