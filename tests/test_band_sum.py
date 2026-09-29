@@ -28,6 +28,7 @@ from lumice_integral.band_sum import (
     StoreGroup,
     Transport,
     band_contributions,
+    band_of_pixel_directions,
     band_poses,
     band_sum_estimate,
     band_sum_pixel,
@@ -35,6 +36,7 @@ from lumice_integral.band_sum import (
     kish_k_eff,
     pixel_band,
     pixel_bands,
+    pixel_bands_from_directions,
     render_band_sum_window,
     scatter_results,
     scatter_store,
@@ -49,7 +51,7 @@ from lumice_integral.canonical_scene import (
     canonical_pose_density,
     canonical_sun_direction,
 )
-from lumice_integral.camera import sun_direction
+from lumice_integral.camera import incident_direction_from_sun, linear_pixel_outgoing_direction, sun_direction
 from lumice_integral.geometry import HexPrism
 from lumice_integral.optics import path_id_of
 from lumice_integral.path_class import build_path_class, pixel_solid_angle
@@ -522,6 +524,42 @@ def test_scatter_band_edges_are_the_gathers_left_closed_right_open():
     empty = S2Events(u[:1], events.phi[:1], np.array([hi + 1.0]), w[:1])
     (z,) = scatter([(empty, group)], UNIFORM, [(row, column)])
     assert (z.value, z.K, z.K_rho_pos, z.K_eff) == (0.0, 0, 0, 0.0)
+
+
+def _pixel_band_before_the_direction_split(row, column, sun, render):
+    """``pixel_band`` as it read before ``band_of_pixel_directions`` was split out (task band-sum-module-spec)."""
+    s = incident_direction_from_sun(sun)
+    centre = linear_pixel_outgoing_direction(row, column, **render)
+    corners = [linear_pixel_outgoing_direction(row + dr, column + dc, **render) for dr in (-0.5, 0.5) for dc in (-0.5, 0.5)]
+    deviations = [float(np.arccos(np.clip(c @ s, -1.0, 1.0))) for c in corners]
+    return centre, float(np.arccos(np.clip(centre @ s, -1.0, 1.0))), min(deviations), max(deviations)
+
+
+SUN_IN_VIEW = {"width": 41, "height": 41, "fov_deg": 60.0, "view": {"azimuth": 0.0, "elevation": 15.0}}  # sun at (20, 20)
+
+
+@pytest.mark.parametrize(
+    "render, pixels",
+    [
+        (CANONICAL_RENDER, [(0, 0), (49, 0), (100, 126), (400, 126), (700, 150), (800, 250)]),
+        (SUN_IN_VIEW, [(20, 20), (19, 20), (20, 21), (5, 20), (0, 0), (40, 40)]),
+    ],
+)
+def test_pixel_band_is_its_directions_band_bit_for_bit(render, pixels):
+    """The camera enters only through the pixel's directions: ``pixel_band`` and the scatter's bands are unchanged."""
+    for row, column in pixels:
+        before = _pixel_band_before_the_direction_split(row, column, SUN, render)
+        after = pixel_band(row, column, SUN, render)
+        assert np.array_equal(before[0], after[0]) and before[1:] == after[1:]
+    centres = np.array([linear_pixel_outgoing_direction(r, c, **render) for r, c in pixels])
+    corners = np.array(
+        [[linear_pixel_outgoing_direction(r + dr, c + dc, **render) for dr in (-0.5, 0.5) for dc in (-0.5, 0.5)] for r, c in pixels]
+    )
+    via_camera = pixel_bands(pixels, SUN, render)
+    via_directions = pixel_bands_from_directions(centres, corners, SUN, via_camera.rows, via_camera.columns)
+    for name in ("rows", "columns", "delta", "lo", "hi", "zenith"):
+        assert np.array_equal(getattr(via_camera, name), getattr(via_directions, name), equal_nan=True), name
+    assert band_of_pixel_directions(centres[0], list(corners[0]), SUN)[1:] == pixel_band(*pixels[0], SUN, render)[1:]
 
 
 # ----------------------------------------------------------- window + io

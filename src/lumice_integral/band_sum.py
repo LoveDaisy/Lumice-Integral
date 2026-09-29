@@ -155,13 +155,27 @@ def pixel_band(
     The deviation is the angle between the incoming ``s = -s_hat`` and the
     outgoing propagation directions (equal to the sky point's angle from ``s_hat``).
     """
-    s = incident_direction_from_sun(sun)
     centre = linear_pixel_outgoing_direction(row, column, **render)
     corners = [
         linear_pixel_outgoing_direction(row + dr, column + dc, **render)
         for dr in (-0.5, 0.5)
         for dc in (-0.5, 0.5)
     ]
+    return band_of_pixel_directions(centre, corners, sun)
+
+
+def band_of_pixel_directions(
+    centre: np.ndarray, corners: Sequence[np.ndarray], sun: np.ndarray
+) -> tuple[np.ndarray, float, float, float]:
+    """``(centre, delta, delta_lo, delta_hi)`` of a pixel given as outgoing directions, any projection.
+
+    ``centre`` and ``corners`` are world outgoing propagation directions
+    (``d``, the sky point is ``-d``); the band is the extremes of the
+    corners' deviations from ``s = -s_hat`` (``docs/band-sum-contract.md``
+    section 4.1).  The camera enters the estimator here only:
+    :func:`pixel_band` is this function on the linear lens's directions.
+    """
+    s = incident_direction_from_sun(sun)
     deviations = [float(np.arccos(np.clip(c @ s, -1.0, 1.0))) for c in corners]
     return centre, float(np.arccos(np.clip(centre @ s, -1.0, 1.0))), min(deviations), max(deviations)
 
@@ -442,15 +456,31 @@ class PixelBands:
 
 def pixel_bands(pixels: Sequence[tuple[int, int]], sun: np.ndarray, render: Mapping[str, Any] = CANONICAL_RENDER) -> PixelBands:
     """:func:`pixel_band` of every pixel (the same per-pixel arithmetic, so the bands are bit-identical)."""
-    count = len(pixels)
+    rows = np.array([r for r, _ in pixels], dtype=np.int64)
+    columns = np.array([c for _, c in pixels], dtype=np.int64)
+    return _pixel_bands([pixel_band(row, column, sun, render) for row, column in pixels], sun, rows, columns)
+
+
+def pixel_bands_from_directions(
+    centres: np.ndarray, corners: np.ndarray, sun: np.ndarray, rows: np.ndarray, columns: np.ndarray
+) -> PixelBands:
+    """:class:`PixelBands` of pixels given as outgoing directions (``(P, 3)`` centres, ``(P, 4, 3)`` corners).
+
+    :func:`band_of_pixel_directions` per pixel, the arithmetic of :func:`pixel_bands`; ``rows`` / ``columns``
+    only label the pixels (any projection, e.g. a Lambert view, ``docs/band-sum-contract.md``).
+    """
+    centres, corners = np.asarray(centres, dtype=np.float64), np.asarray(corners, dtype=np.float64)
+    bands = [band_of_pixel_directions(centre, list(quad), sun) for centre, quad in zip(centres, corners)]
+    return _pixel_bands(bands, sun, np.asarray(rows, dtype=np.int64), np.asarray(columns, dtype=np.int64))
+
+
+def _pixel_bands(bands: Sequence[tuple[np.ndarray, float, float, float]], sun: np.ndarray, rows: np.ndarray, columns: np.ndarray) -> PixelBands:
+    count = len(bands)
     delta, lo, hi, zenith = np.zeros(count), np.zeros(count), np.zeros(count), np.zeros((count, 3))
     # The sun pixel's centre may be s_hat itself (e = 0): its band is empty or its value NaN, as in the gather.
     with np.errstate(invalid="ignore", divide="ignore"):
-        for index, (row, column) in enumerate(pixels):
-            centre, delta[index], lo[index], hi[index] = pixel_band(row, column, sun, render)
+        for index, (centre, delta[index], lo[index], hi[index]) in enumerate(bands):
             zenith[index] = pixel_world_frame(sun, centre)[2]
-    rows = np.array([r for r, _ in pixels], dtype=np.int64)
-    columns = np.array([c for _, c in pixels], dtype=np.int64)
     return PixelBands(rows, columns, delta, lo, hi, zenith)
 
 
@@ -839,6 +869,7 @@ __all__ = [
     "StoreGroup",
     "Transport",
     "band_contributions",
+    "band_of_pixel_directions",
     "band_poses",
     "band_rotations",
     "band_sum_estimate",
@@ -848,6 +879,7 @@ __all__ = [
     "kish_k_eff",
     "pixel_band",
     "pixel_bands",
+    "pixel_bands_from_directions",
     "prepare_stores",
     "render_band_sum_window",
     "render_pixels",
