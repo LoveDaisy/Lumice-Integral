@@ -203,10 +203,14 @@ def test_the_read_back_rejects_a_tampered_fixture(exported_cell, name, edit, mes
     assert any(message in failure for failure in check.failures), check.failures
 
 
-def _export(output: Path) -> subprocess.CompletedProcess:
+MATRIX_CELLS = [f"{path}__{category}" for path in ("3-5", "3-5-6-7", "13-15-26-28") for category in pe.CATEGORIES]
+
+
+def _export(output: Path, cells: list[str] | None = None) -> subprocess.CompletedProcess:
     env = {**os.environ, "JAX_PLATFORMS": "cpu"}
     return subprocess.run(
-        [sys.executable, str(REPO / "scripts" / "export_analytic_parity.py"), "--output-dir", str(output)],
+        [sys.executable, str(REPO / "scripts" / "export_analytic_parity.py"), "--output-dir", str(output)]
+        + (["--cells", *cells] if cells else []),
         cwd=REPO,
         env=env,
         capture_output=True,
@@ -215,18 +219,24 @@ def _export(output: Path) -> subprocess.CompletedProcess:
     )
 
 
-# Two full-matrix exports in separate interpreters plus a read-back: 18 s with a cold JAX cache on an M2 Max
-# (2026-09-29, with the pyramid's seed search), under the ~20 s slow-tier threshold of AGENTS.md, so CI checks
-# the determinism on Linux too.
-def test_full_matrix_export_is_byte_deterministic_and_reads_back(tmp_path: Path) -> None:
-    first, second = tmp_path / "first", tmp_path / "second"
-    _export(first)
-    _export(second)
+def _assert_byte_identical(first: Path, second: Path) -> list[str]:
     names = sorted(path.name for path in first.iterdir())
     assert names == sorted(path.name for path in second.iterdir())
     for name in names:
         assert (first / name).read_bytes() == (second / name).read_bytes(), name
+    return names
+
+
+# Two exports of the 3 x 3 matrix in separate interpreters plus a read-back: 18 s with a cold JAX cache on an
+# M2 Max (2026-09-29, with the pyramid's seed search), under the ~20 s slow-tier threshold of AGENTS.md, so CI
+# checks the determinism on Linux too.  The wave 2 edge cells are in the slow test below.
+def test_full_matrix_export_is_byte_deterministic_and_reads_back(tmp_path: Path) -> None:
+    first, second = tmp_path / "first", tmp_path / "second"
+    _export(first, MATRIX_CELLS)
+    _export(second, MATRIX_CELLS)
+    names = _assert_byte_identical(first, second)
     manifest = pe.read_json(first / pe.MANIFEST)
+    assert "edge_cells" not in manifest  # a matrix-only export keeps the v0 manifest
     cells = {entry["name"]: entry for entry in manifest["cells"]}
     assert len(cells) == 9
     assert [item["fixture"] for item in cells["3-5-6-7__critical"]["skipped"]] == ["all"]
@@ -241,6 +251,34 @@ def test_full_matrix_export_is_byte_deterministic_and_reads_back(tmp_path: Path)
     assert all(pyramid[category]["completeness"] == "complete" for category in pe.CATEGORIES)
     assert len(pyramid["random"]["components"]) > 0 and len(pyramid["critical"]["components"]) > 0
     assert pyramid["near_boundary"]["pool_count"] == 0 and pyramid["near_boundary"]["components"] == []
+    checks = pe.verify_directory(first)
+    assert len(checks) == len(names) - 1
+    assert all(not check.failures for check in checks), [(check.fixture, check.failures) for check in checks if check.failures]
+
+
+# slow: two full exports (matrix and the wave 2 edge cells, 82 fixtures) plus a read-back, about 2.5 min on an M2 Max
+@pytest.mark.slow
+def test_export_with_edge_cells_is_byte_deterministic_and_reads_back(tmp_path: Path) -> None:
+    first, second = tmp_path / "first", tmp_path / "second"
+    _export(first)
+    _export(second)
+    names = _assert_byte_identical(first, second)
+    manifest = pe.read_json(first / pe.MANIFEST)
+    edge = {entry["name"]: entry for entry in manifest["edge_cells"]}
+    assert all(entry["skipped"] == [] for entry in edge.values())
+    assert all(entry["serves"] and entry["rationale"] for entry in edge.values())
+    # Seed search on the edge targets: rows 700/780 fold every candidate into one closed loop (C16), 1-3 at
+    # 60 deg is two arcs (C17/C18), 13-24-26 one arc cut by the path domain at both ends (C19).
+    search = {name: pe.read_json(first / f"{name}__seed_search.json")["expected"] for name in edge if f"{name}__seed_search.json" in names}
+    for row in (700, 780):
+        result = search[f"3-5__boundary_hugging_r{row}_c150"]
+        assert [component["kind"] for component in result["components"]] == ["closed"] and result["completeness"] == "complete"
+        assert result["events"]["dedup_merged"] == result["admissible_count"] - 1
+    arcs = search["1-3__two_arcs_60deg"]["components"]
+    assert [c["kind"] for c in arcs] == ["arc", "arc"]
+    assert all({c["reason"], c["start_reason"]} == {"tir_boundary", "path_infeasible"} for c in arcs)
+    (pyramid,) = search["13-24-26__boundary_arc_90deg"]["components"]
+    assert pyramid["kind"] == "arc" and pyramid["reason"] == pyramid["start_reason"] == "path_infeasible"
     checks = pe.verify_directory(first)
     assert len(checks) == len(names) - 1
     assert all(not check.failures for check in checks), [(check.fixture, check.failures) for check in checks if check.failures]

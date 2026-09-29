@@ -38,8 +38,8 @@ from typing import Any, Mapping, Sequence
 import jax.numpy as jnp
 import numpy as np
 
-from .continuation import ContinuationOptions, FiberResult, FiberStatus, trace_fiber
-from .discovery import ComponentDiscoveryResult, discover_components, distance_to_curve
+from .continuation import ContinuationOptions, FiberResult, FiberStatus, local_residual_jacobian, trace_fiber
+from .discovery import ComponentDiscoveryResult, discover_components, distance_to_curve, retarget_problem
 from .geometry import HexPrism, Polyhedron, Pyramid, entry_measure
 from .geometry.pyramid import miller_indices_to_c_over_a
 from .optics import (
@@ -87,6 +87,24 @@ def kinematic_atol(margins: Mapping[str, float]) -> float:
     snell = [value for name, value in margins.items() if name.endswith("snell_discriminant") and value > 0.0]
     smallest = min(snell, default=1.0)
     return KINEMATIC_ATOL * max(1.0, 0.5 / math.sqrt(smallest))
+
+
+JACOBIAN_BASIS = (
+    "J_perp = sigma_1 sigma_2 of the 2 x 3 right-trivialised residual Jacobian (contract section 5.4) is one "
+    "derivative above the directions, so the direction tolerance's Snell amplification 1/(2 sqrt(d)) enters squared: "
+    "|error| <= 1e-12 max(1, 1/(4 d)) max(1, |value|) per value (jacobian_rtol); measured: LI's AD value agrees with "
+    "an independent central difference (h = 1e-6) to 6e-9 relative, and a 1e-14 rad pose nudge moves it by at most "
+    "2.5e-12 relative away from Snell boundaries (4e-8 at d ~ 1e-8)"
+)
+
+
+def jacobian_rtol(margins: Mapping[str, float]) -> float:
+    """Relative tolerance of ``J_perp`` and the singular values: :func:`kinematic_atol`'s amplification, squared."""
+    snell = [value for name, value in margins.items() if name.endswith("snell_discriminant") and value > 0.0]
+    smallest = min(snell, default=1.0)
+    return KINEMATIC_ATOL * max(1.0, 0.25 / smallest)
+
+
 CURVE_DISTANCE_TOL = 0.012
 CURVE_DISTANCE_BASIS = (
     "docs/phase1-math-contract.md section 10.1: bidirectional sampled-pose set distance below 0.012 rad between "
@@ -501,14 +519,84 @@ def _scene_of(fixture_input: Mapping[str, Any]) -> Scene:
 
 
 # ------------------------------------------------------------------ EvaluatePath
-def evaluate_path(scene: Scene, pose: np.ndarray) -> dict[str, Any]:
-    """The ``LUMICE_ANALYTIC_PathEvaluation`` fields of ``pose`` (outgoing etc. only where ``valid``)."""
+def failed_gate(margins: Mapping[str, float], faces: Sequence[int]) -> dict[str, Any] | None:
+    """The first validity gate (in :func:`.optics.validity_margin_names` order) whose margin is not positive."""
+    for name in validity_margin_names(faces):
+        if name in margins and not margins[name] > 0.0:
+            return {"name": name, "value": float(margins[name])}
+    return None
+
+
+def pointwise_observables(scene: Scene, pose: np.ndarray) -> dict[str, Any]:
+    """Validity, branch margins and the normal Jacobian at ``pose``: what a trace reports per accepted pose.
+
+    ``branch_margins`` are the validity margins (:func:`.optics.validity_margin_names`, the event margins
+    of :func:`.optics.path_problem`, contract section 9.3 ``branch_diagnostics``), present only where the
+    pose is valid; an invalid pose reports its ``failed_gate`` instead.  ``normal_jacobian`` is
+    ``J_perp = sigma_1 sigma_2`` of the right-trivialised residual Jacobian at the pose's own outgoing
+    direction (contract section 5.4): it depends on the pose and the path only, not on a target, and it is
+    unavailable (``None``, ``jacobian_available = False``) where the path is not valid.
+    """
     faces = normalize_faces(scene.faces, scene.crystal)
     check = path_domain(pose, faces, scene.incident_direction, scene.refractive_index, crystal=scene.crystal)
+    if not check.valid:
+        return {
+            "valid": False,
+            "check": check,
+            "branch_margins": None,
+            "failed_gate": failed_gate(check.margins, faces),
+            "jacobian_available": False,
+            "normal_jacobian": None,
+            "singular_values": None,
+        }
+    outgoing = np.asarray(path_direction(pose, faces, scene.incident_direction, scene.refractive_index, crystal=scene.crystal).direction)
+    problem = retarget_problem(_scene_problem(scene), outgoing, pose)
+    singular_values = np.linalg.svd(np.asarray(local_residual_jacobian(problem, jnp.asarray(pose, dtype=jnp.float64))), compute_uv=False)
+    return {
+        "valid": True,
+        "check": check,
+        "branch_margins": {name: float(check.margins[name]) for name in validity_margin_names(faces)},
+        "failed_gate": None,
+        "jacobian_available": True,
+        "normal_jacobian": float(singular_values[0] * singular_values[1]),
+        "singular_values": singular_values,
+    }
+
+
+_PROBLEM_CACHE: dict[tuple, Any] = {}
+
+
+def _scene_problem(scene: Scene):
+    """One :func:`.optics.path_problem` per scene, retargeted per pose: its evaluator closures key the JIT cache."""
+    key = (json.dumps(_jsonable(scene.crystal_spec), sort_keys=True), scene.faces, scene.refractive_index, scene.sun_direction)
+    if key not in _PROBLEM_CACHE:
+        _PROBLEM_CACHE[key] = path_problem(
+            jnp.eye(3, dtype=jnp.float64),
+            scene.faces,
+            jnp.asarray(scene.incident_direction),
+            target_direction=jnp.asarray(scene.sun, dtype=jnp.float64),
+            refractive_index=jnp.asarray(scene.refractive_index, dtype=jnp.float64),
+            crystal=scene.crystal,
+        )
+    return _PROBLEM_CACHE[key]
+
+
+POINTWISE_FIELDS = ("branch_margins", "failed_gate", "jacobian_available", "normal_jacobian", "singular_values")
+
+
+def evaluate_path(scene: Scene, pose: np.ndarray) -> dict[str, Any]:
+    """The ``LUMICE_ANALYTIC_PathEvaluation`` fields of ``pose`` (outgoing etc. only where ``valid``).
+
+    Wave 2 adds :data:`POINTWISE_FIELDS` (:func:`pointwise_observables`); the v0 fields are unchanged.
+    """
+    faces = normalize_faces(scene.faces, scene.crystal)
+    observables = pointwise_observables(scene, pose)
+    check = observables.pop("check")
+    pointwise = {key: observables[key] for key in POINTWISE_FIELDS}
     name, value = minimum_validity_margin(check.margins, faces)
     diagnostics = {"validity_margins": dict(check.margins), "nearest_margin": name, "nearest_margin_value": value}
     if not check.valid:
-        return {"valid": False, "fresnel_transmission": 0.0, "diagnostics": {**diagnostics, "message": check.message}}
+        return {"valid": False, "fresnel_transmission": 0.0, "diagnostics": {**diagnostics, "message": check.message}, **pointwise}
     index = scene.refractive_index
     evaluation = path_direction(pose, faces, scene.incident_direction, index, crystal=scene.crystal)
     rotation = np.asarray(pose)
@@ -531,6 +619,7 @@ def evaluate_path(scene: Scene, pose: np.ndarray) -> dict[str, Any]:
         "interface_transmittances": np.asarray(transmittances, dtype=np.float64),
         "fresnel_transmission": fresnel_transmission_path(pose, faces, scene.incident_direction, index, crystal=scene.crystal),
         "diagnostics": diagnostics,
+        **pointwise,
     }
 
 
@@ -550,8 +639,24 @@ def build_evaluate_path_fixture(
             f"{diagnostics['nearest_margin_value']:.3g}, far above the float64 rounding of a margin (~1e-15)",
         ),
         **{key: _tolerance(atol, KINEMATIC_BASIS) for key in ("outgoing_direction", "segment_directions", "interface_transmittances", "fresnel_transmission")},
+        **pointwise_tolerances(diagnostics["validity_margins"]),
     }
     return fixture
+
+
+def pointwise_tolerances(margins: Mapping[str, float]) -> dict[str, Any]:
+    """Tolerances of :data:`POINTWISE_FIELDS` at a pose with these margins (``evaluate_path`` and trace poses)."""
+    atol = kinematic_atol(margins)
+    jacobian = _tolerance(jacobian_rtol(margins), "relative, " + JACOBIAN_BASIS)
+    return {
+        "branch_margins": _tolerance(
+            atol, "absolute, per named margin, the same key set; the margins are cosines and discriminants of the chain: " + KINEMATIC_BASIS
+        ),
+        "failed_gate": _tolerance(atol, "the gate name exactly, its (non-positive) margin as branch_margins"),
+        "jacobian_available": _tolerance(0.0, "exact boolean: available exactly where the path is valid (contract section 9.3)"),
+        "normal_jacobian": jacobian,
+        "singular_values": jacobian,
+    }
 
 
 # ------------------------------------------------------------------ curves
@@ -606,6 +711,10 @@ def curve_distance(
     a: np.ndarray, a_closed: bool, b: np.ndarray, b_closed: bool, spacing: float = CURVE_DENSIFY_SPACING
 ) -> float:
     """Symmetric Hausdorff distance between two pose polylines (geodesic chords, sampled ``spacing`` apart)."""
+    a = np.asarray(a, dtype=np.float64).reshape(-1, 3, 3)
+    b = np.asarray(b, dtype=np.float64).reshape(-1, 3, 3)
+    if len(a) == 0 or len(b) == 0:  # a trace that accepted no pose (seed rejected) has no curve
+        return 0.0 if len(a) == len(b) else math.inf
     dense_a = densify_curve(a, a_closed, spacing)
     dense_b = densify_curve(b, b_closed, spacing)
     a_to_b = max(float(np.min(rotation_distances(pose, dense_b))) for pose in np.asarray(a).reshape(-1, 3, 3))
@@ -618,18 +727,29 @@ def continuation_options_dict(options: ContinuationOptions) -> dict[str, Any]:
     return asdict(options)
 
 
-def _trace_record(result: FiberResult, sign: int, incident: np.ndarray) -> dict[str, Any]:
+def _trace_record(result: FiberResult, sign: int, scene: Scene) -> dict[str, Any]:
+    """One trace: the v0 point lists plus, per accepted pose, its branch margins and normal Jacobian (wave 2)."""
     poses = np.asarray(result.poses, dtype=np.float64)
+    names = validity_margin_names(normalize_faces(scene.faces, scene.crystal))
+    jacobians = result.jacobian_diagnostics
+    margins = result.branch_diagnostics.accepted_margins
+    if not len(jacobians) == len(margins) == len(poses):
+        raise AssertionError(f"per-pose diagnostics {len(jacobians)} / {len(margins)} do not match {len(poses)} poses")
     return {
         "initial_tangent_sign": sign,
         "status": str(result.status),
         "reason": str(result.reason),
         "poses": poses.reshape(-1, 9),
-        "crystal_frame_sun_directions": np.einsum("nji,j->ni", poses, -incident),
+        "crystal_frame_sun_directions": np.einsum("nji,j->ni", poses, -scene.incident_direction),
         "arclength_increments": np.asarray(result.arclength_increments, dtype=np.float64),
         "residual_norms": np.asarray(result.residual_norms, dtype=np.float64),
         "tangents": np.asarray(result.tangents, dtype=np.float64),
         "arclength": float(np.sum(result.arclength_increments)),
+        "branch_margin_names": list(names),
+        "branch_margins": np.asarray([[margin[name] for name in names] for margin in margins], dtype=np.float64).reshape(-1, len(names)),
+        "jacobian_available": [bool(diagnostic.available) for diagnostic in jacobians],
+        "normal_jacobian": np.asarray([diagnostic.normal_jacobian for diagnostic in jacobians], dtype=np.float64),
+        "singular_values": np.asarray([diagnostic.singular_values for diagnostic in jacobians], dtype=np.float64).reshape(-1, 2),
     }
 
 
@@ -644,11 +764,11 @@ def run_traces(scene: Scene, seed: np.ndarray, target: np.ndarray, options: Cont
         crystal=scene.crystal,
     )
     forward = trace_fiber(problem, options)
-    traces = [_trace_record(forward, options.initial_tangent_sign, scene.incident_direction)]
+    traces = [_trace_record(forward, options.initial_tangent_sign, scene)]
     if forward.status != FiberStatus.CLOSED:
         backward_options = ContinuationOptions(**{**asdict(options), "initial_tangent_sign": -options.initial_tangent_sign})
         backward = trace_fiber(problem, backward_options)
-        traces.append(_trace_record(backward, backward_options.initial_tangent_sign, scene.incident_direction))
+        traces.append(_trace_record(backward, backward_options.initial_tangent_sign, scene))
     return traces
 
 
@@ -670,7 +790,14 @@ def build_trace_fiber_fixture(
     cell: Mapping[str, Any],
     provenance: Mapping[str, Any],
     options: ContinuationOptions | None = None,
+    reference_traces: Sequence[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    """A ``trace_fiber`` fixture; ``reference_traces`` (the same seed under unlimited options) for a budget fixture.
+
+    When the traces end ``budget_exhausted`` the fixture carries ``expected.reference_curve`` (the curve of
+    ``reference_traces``) and a ``budget_extent`` tolerance, and the curve and length are compared by
+    containment and by the budget's own extent instead of by equality (:func:`_compare_budget_traces`).
+    """
     options = options or ContinuationOptions()
     fixture = _header("trace_fiber", provenance, cell)
     fixture["input"] = {
@@ -679,7 +806,8 @@ def build_trace_fiber_fixture(
         "seed_pose": np.asarray(seed).reshape(9),
         "continuation": continuation_options_dict(options),
     }
-    fixture["expected"] = {"traces": run_traces(scene, seed, target, options)}
+    traces = run_traces(scene, seed, target, options)
+    fixture["expected"] = {"traces": traces}
     tau = options.residual_tolerance + options.relative_residual_tolerance
     fixture["tolerance"] = {
         "status_reason": _tolerance(
@@ -690,8 +818,40 @@ def build_trace_fiber_fixture(
         "curve_distance_rad": _tolerance(CURVE_DISTANCE_TOL, CURVE_DISTANCE_BASIS),
         "arclength_relative": _tolerance(ARCLENGTH_RTOL, ARCLENGTH_BASIS),
         "residual_norm_bound": _tolerance(tau, "every accepted pose: residual_tolerance + relative_residual_tolerance (section 10.1)"),
+        **TRACE_POINTWISE_TOLERANCES,
     }
+    if any(trace["status"] == FiberStatus.BUDGET_EXHAUSTED for trace in traces):
+        if reference_traces is None:
+            raise ValueError("a budget-exhausted trace_fiber fixture needs the unbudgeted reference traces")
+        curve, closed = traced_curve(reference_traces)
+        fixture["expected"]["reference_curve"] = {"poses": curve.reshape(-1, 9), "closed": closed}
+        fixture["tolerance"]["budget_extent"] = _tolerance(0.0, BUDGET_EXTENT_BASIS)
     return fixture
+
+
+TRACE_POINTWISE_TOLERANCES = {
+    "pointwise_consistency": _tolerance(
+        KINEMATIC_ATOL,
+        "per trace and pose i: jacobian_available[i] is true, and normal_jacobian[i], singular_values[i] and "
+        "branch_margins[i] equal the backend's own EvaluatePath at poses[i] within the evaluate_path tolerances at "
+        "that pose (value 1e-12 is their base: kinematic_atol for margins, jacobian_rtol for J_perp); a per-sample "
+        "comparison with LI is not made, because two backends step differently",
+    ),
+    "accepted_pose_regularity": _tolerance(
+        0.0,
+        "exact: at every accepted pose every branch margin is positive and normal_jacobian > 0 (contract sections "
+        "6.1 and 5.4: an accepted pose is on the smooth branch and regular)",
+    ),
+}
+BUDGET_EXTENT_BASIS = (
+    "budget_exhausted traces (contract section 9.4; partial geometry, section 9.3): step_budget ends with exactly "
+    "maximum_accepted_steps + 1 poses (the seed plus one pose per accepted step); arclength_budget ends with "
+    "maximum_arclength - maximum_advance < arclength <= maximum_arclength (the next edge would have crossed the "
+    "budget); evaluation_budget ends with at least one pose (what one evaluation unit counts is backend-internal, "
+    "section 9.2); every pose lies within curve_distance_rad of expected.reference_curve, the same seed traced "
+    "without the budget.  Curve equality and arclength equality are not compared: two step controllers reach "
+    "different extents inside one budget"
+)
 
 
 # ------------------------------------------------------------------ seed search
@@ -881,27 +1041,141 @@ def verify_evaluate_path(fixture: Mapping[str, Any], name: str = "") -> Check:
             _close(check, key, got[key], expected[key], tolerance[key]["value"])
     else:
         _close(check, "fresnel_transmission", got["fresnel_transmission"], expected["fresnel_transmission"], 0.0)
+    if "jacobian_available" in expected:  # wave 2 fields; a v0 fixture has none of them
+        _compare_pointwise(check, "", got, expected, tolerance)
     return check
 
 
-def _compare_traces(check: Check, got: Sequence[Mapping[str, Any]], expected: Sequence[Mapping[str, Any]], tolerance: Mapping[str, Any]) -> None:
+def _close_relative(check: Check, name: str, got: Any, expected: Any, rtol: float) -> None:
+    got = np.asarray(got, dtype=np.float64)
+    expected = np.asarray(expected, dtype=np.float64)
+    if got.shape != expected.shape:
+        check.expect(False, f"{name}: shape {got.shape} != {expected.shape}")
+        return
+    error = float(np.max(np.abs(got - expected) / np.maximum(1.0, np.abs(expected)))) if got.size else 0.0
+    check.expect(error <= rtol, f"{name}: max |error|/max(1, |value|) {error:.3e} > {rtol:.1e}")
+
+
+def _compare_pointwise(check: Check, where: str, got: Mapping[str, Any], expected: Mapping[str, Any], tolerance: Mapping[str, Any]) -> None:
+    """:data:`POINTWISE_FIELDS` of one pose: availability and gate names exact, values within their tolerances."""
+    check.expect(
+        got["jacobian_available"] == expected["jacobian_available"],
+        f"{where}jacobian_available: {got['jacobian_available']} != {expected['jacobian_available']}",
+    )
+    if got["jacobian_available"] and expected["jacobian_available"]:
+        rtol = tolerance["normal_jacobian"]["value"]
+        _close_relative(check, f"{where}normal_jacobian", got["normal_jacobian"], expected["normal_jacobian"], rtol)
+        _close_relative(check, f"{where}singular_values", got["singular_values"], expected["singular_values"], tolerance["singular_values"]["value"])
+    else:
+        check.expect(
+            expected["normal_jacobian"] is None and expected["singular_values"] is None,
+            f"{where}normal_jacobian present although jacobian_available is false",
+        )
+    got_margins, expected_margins = got["branch_margins"], expected["branch_margins"]
+    if got_margins is None or expected_margins is None:
+        check.expect(got_margins is None and expected_margins is None, f"{where}branch_margins: one side is unavailable")
+    else:
+        check.expect(sorted(got_margins) == sorted(expected_margins), f"{where}branch_margins: names {sorted(got_margins)} != {sorted(expected_margins)}")
+        if sorted(got_margins) == sorted(expected_margins):
+            names = sorted(expected_margins)
+            _close(check, f"{where}branch_margins", [got_margins[n] for n in names], [expected_margins[n] for n in names], tolerance["branch_margins"]["value"])
+    got_gate, expected_gate = got["failed_gate"], expected["failed_gate"]
+    if got_gate is None or expected_gate is None:
+        check.expect(got_gate is None and expected_gate is None, f"{where}failed_gate: {got_gate} != {expected_gate}")
+    else:
+        check.expect(got_gate["name"] == expected_gate["name"], f"{where}failed_gate: {got_gate['name']} != {expected_gate['name']}")
+        _close(check, f"{where}failed_gate", got_gate["value"], expected_gate["value"], tolerance["failed_gate"]["value"])
+
+
+def curve_containment(poses: np.ndarray, curve: np.ndarray, closed: bool, spacing: float = CURVE_DENSIFY_SPACING) -> float:
+    """The largest distance from a pose of ``poses`` to the densified ``curve`` (one-sided; 0 without poses)."""
+    poses = np.asarray(poses, dtype=np.float64).reshape(-1, 3, 3)
+    if len(poses) == 0:
+        return 0.0
+    dense = densify_curve(curve, closed, spacing)
+    if len(dense) == 0:
+        return math.inf
+    return max(float(np.min(rotation_distances(pose, dense))) for pose in poses)
+
+
+def _compare_traces(check: Check, got: Sequence[Mapping[str, Any]], fixture: Mapping[str, Any]) -> None:
+    expected = fixture["expected"]["traces"]
+    tolerance = fixture["tolerance"]
     check.expect(len(got) == len(expected), f"trace count {len(got)} != {len(expected)}")
     check.expect(
         sorted((t["status"], t["reason"]) for t in got) == sorted((t["status"], t["reason"]) for t in expected),
         f"status/reason {[(t['status'], t['reason']) for t in got]} != {[(t['status'], t['reason']) for t in expected]}",
     )
-    curve, closed = traced_curve(got)
-    reference, reference_closed = traced_curve(expected)
-    distance = curve_distance(curve, closed, reference, reference_closed)
-    limit = tolerance["curve_distance_rad"]["value"]
-    check.expect(distance <= limit, f"curve distance {distance:.3e} > {limit}")
-    length = sum(t["arclength"] for t in got)
-    reference_length = sum(t["arclength"] for t in expected)
-    rtol = tolerance["arclength_relative"]["value"]
-    check.expect(abs(length - reference_length) <= rtol * reference_length + 1e-12, f"arclength {length} vs {reference_length}")
+    if "budget_extent" in tolerance:
+        _compare_budget_traces(check, got, fixture)
+    else:
+        curve, closed = traced_curve(got)
+        reference, reference_closed = traced_curve(expected)
+        distance = curve_distance(curve, closed, reference, reference_closed)
+        limit = tolerance["curve_distance_rad"]["value"]
+        check.expect(distance <= limit, f"curve distance {distance:.3e} > {limit}")
+        length = sum(t["arclength"] for t in got)
+        reference_length = sum(t["arclength"] for t in expected)
+        rtol = tolerance["arclength_relative"]["value"]
+        check.expect(abs(length - reference_length) <= rtol * reference_length + 1e-12, f"arclength {length} vs {reference_length}")
     bound = tolerance["residual_norm_bound"]["value"]
     worst = max((float(np.max(t["residual_norms"])) for t in got if len(t["residual_norms"])), default=0.0)
     check.expect(worst <= bound, f"residual norm {worst:.3e} > {bound:.1e}")
+    if "pointwise_consistency" in tolerance:  # wave 2 recipes; a v0 fixture has none of them
+        _compare_trace_pointwise(check, got, fixture)
+
+
+def _compare_budget_traces(check: Check, got: Sequence[Mapping[str, Any]], fixture: Mapping[str, Any]) -> None:
+    """The :data:`BUDGET_EXTENT_BASIS` recipe: the budget's own extent, and containment in the unbudgeted curve."""
+    options = fixture["input"]["continuation"]
+    reference = fixture["expected"]["reference_curve"]
+    reference_curve = np.asarray(reference["poses"], dtype=np.float64).reshape(-1, 3, 3)
+    limit = fixture["tolerance"]["curve_distance_rad"]["value"]
+    for index, trace in enumerate(got):
+        poses = np.asarray(trace["poses"], dtype=np.float64).reshape(-1, 3, 3)
+        if trace["reason"] == "step_budget":
+            expected_count = options["maximum_accepted_steps"] + 1
+            check.expect(len(poses) == expected_count, f"trace {index}: step_budget with {len(poses)} poses != {expected_count}")
+        elif trace["reason"] == "arclength_budget":
+            low, high = options["maximum_arclength"] - options["maximum_advance"], options["maximum_arclength"]
+            check.expect(low < trace["arclength"] <= high, f"trace {index}: arclength_budget at {trace['arclength']} outside ({low}, {high}]")
+        elif trace["reason"] == "evaluation_budget":
+            check.expect(len(poses) >= 1, f"trace {index}: evaluation_budget without partial geometry")
+        distance = curve_containment(poses, reference_curve, bool(reference["closed"]))
+        check.expect(distance <= limit, f"trace {index}: {distance:.3e} from the unbudgeted curve > {limit}")
+
+
+def _compare_trace_pointwise(check: Check, got: Sequence[Mapping[str, Any]], fixture: Mapping[str, Any]) -> None:
+    """Self-consistency of the per-pose arrays with EvaluatePath, and regularity of every accepted pose."""
+    scene = _scene_of(fixture["input"])
+    for index, trace in enumerate(got):
+        poses = np.asarray(trace["poses"], dtype=np.float64).reshape(-1, 3, 3)
+        names = list(trace["branch_margin_names"])
+        margins = np.asarray(trace["branch_margins"], dtype=np.float64).reshape(len(poses), len(names))
+        jacobian = np.asarray(trace["normal_jacobian"], dtype=np.float64)
+        singular = np.asarray(trace["singular_values"], dtype=np.float64).reshape(-1, 2)
+        available = list(trace["jacobian_available"])
+        check.expect(
+            len(jacobian) == len(singular) == len(available) == len(poses),
+            f"trace {index}: per-pose arrays {len(jacobian)}/{len(singular)}/{len(available)} for {len(poses)} poses",
+        )
+        if not len(jacobian) == len(singular) == len(available) == len(poses):
+            continue
+        regular = all(available) and bool(np.all(margins > 0.0)) and bool(np.all(jacobian > 0.0))
+        check.expect(regular, f"trace {index}: an accepted pose is unavailable, has a non-positive margin or J_perp <= 0")
+        for i, pose in enumerate(poses):
+            reference = pointwise_observables(scene, pose)
+            mine = {
+                "jacobian_available": bool(available[i]),
+                "normal_jacobian": float(jacobian[i]),
+                "singular_values": singular[i],
+                "branch_margins": dict(zip(names, margins[i])),
+                "failed_gate": None,
+            }
+            before = len(check.failures)
+            _compare_pointwise(check, f"trace {index} pose {i}: ", mine, reference, pointwise_tolerances(reference["check"].margins))
+            if len(check.failures) > before:
+                break  # the first inconsistent pose names the defect; the rest would repeat it
 
 
 def verify_trace_fiber(fixture: Mapping[str, Any], name: str = "") -> Check:
@@ -912,7 +1186,7 @@ def verify_trace_fiber(fixture: Mapping[str, Any], name: str = "") -> Check:
     seed = np.asarray(data["seed_pose"], dtype=np.float64).reshape(3, 3)
     target = np.asarray(data["target_direction"], dtype=np.float64)
     got = run_traces(scene, seed, target, options)
-    _compare_traces(check, got, fixture["expected"]["traces"], fixture["tolerance"])
+    _compare_traces(check, got, fixture)
     return check
 
 
@@ -1035,8 +1309,202 @@ def export_cell(cell: Cell, output_dir: Path, provenance: Mapping[str, Any]) -> 
     return entry
 
 
-def export_matrix(cells: Sequence[Cell], output_dir: Path) -> dict[str, Any]:
-    """Export every cell into ``output_dir`` and write :data:`MANIFEST`; returns the manifest."""
+# ------------------------------------------------------------------ edge cells (wave 2)
+EDGE_POINTS = ("critical_offset", "extremum", "random", "antipodal_target", "target")
+
+
+@dataclass(frozen=True)
+class OptionVariant:
+    """A ``trace_fiber`` fixture from the edge cell's seed under changed options.
+
+    ``kind`` is ``"perturbation"`` (controller settings around the reference defaults: the export asserts the
+    traced curve still equals the default one within the fixture tolerances, contract C06) or ``"limit"`` (a
+    budget or a step/corrector limit that ends the trace early: C09, C11).
+    """
+
+    label: str
+    kind: str
+    overrides: tuple[tuple[str, Any], ...]
+
+    def __post_init__(self) -> None:
+        if self.kind not in ("perturbation", "limit"):
+            raise ValueError("kind must be 'perturbation' or 'limit'")
+
+    def options(self) -> ContinuationOptions:
+        return ContinuationOptions(**dict(self.overrides))
+
+
+@dataclass(frozen=True)
+class EdgeCell:
+    """A wave 2 edge case (``docs/analytic-parity-fixtures.md`` section 6.1), kept apart from the 3 x 3 matrix.
+
+    ``point`` says where the seed comes from: ``critical_offset`` (the lit side of an interior extremum of
+    ``D_P`` at ``critical_offset_deg``, as the matrix's ``critical`` category), ``extremum`` (the extremum
+    itself: a rank-deficient seed), ``random`` (the matrix's random draw), ``antipodal_target`` (the random
+    pose aimed at ``-d``), or ``target`` (``target`` given; the seeds are the components that seed search on
+    the ``store_n`` sample returns, one ``trace_fiber`` each).  ``serves`` names the contract section 11 rows.
+    """
+
+    label: str
+    scene: Scene
+    point: str
+    serves: tuple[str, ...]
+    rationale: str
+    critical_offset_deg: float = 0.5
+    rng_seed: int = 20260928
+    target: tuple[float, float, float] | None = None
+    seed_search: bool = False
+    variants: tuple[OptionVariant, ...] = ()
+    store_n: int = 100_000
+    band_half_width_deg: float = 0.2
+    cluster_radius_rad: float = 0.3
+    distance_threshold: float = ContinuationOptions.closure_distance
+
+    def __post_init__(self) -> None:
+        if self.point not in EDGE_POINTS:
+            raise ValueError(f"point must be one of {EDGE_POINTS}")
+        if (self.point == "target") != (self.target is not None):
+            raise ValueError("give target exactly for point='target'")
+        if self.point == "target" and not self.seed_search:
+            raise ValueError("point='target' takes its seeds from seed search")
+
+    @property
+    def name(self) -> str:
+        return f"{self.scene.path_id}__{self.label}"
+
+    @property
+    def search_cell(self) -> Cell:
+        """The seed-search parameters as a matrix :class:`Cell` (``build_seed_search_fixture`` reads them)."""
+        return Cell(
+            self.scene,
+            "random",
+            self.rationale,
+            store_n=self.store_n,
+            band_half_width_deg=self.band_half_width_deg,
+            cluster_radius_rad=self.cluster_radius_rad,
+            distance_threshold=self.distance_threshold,
+        )
+
+
+def _extremum_u(scene: Scene) -> tuple[np.ndarray, dict]:
+    from .dp_field import DPField
+
+    extrema = [point for point in DPField.build(scene.crystal, scene.faces, scene.refractive_index).interior_critical_points if point.kind in ("minimum", "maximum")]
+    if not extrema:
+        raise PointUnavailable(f"D_P of {scene.path_id} has no interior extremum on this crystal")
+    centre = _unit(np.asarray(extrema[0].position, dtype=np.float64))
+    return centre, {"method": "the first interior extremum of D_P itself", "extremum_kind": extrema[0].kind, "extremum_deviation_deg": math.degrees(extrema[0].value)}
+
+
+def _outgoing(scene: Scene, pose: np.ndarray) -> np.ndarray:
+    return np.asarray(path_direction(pose, scene.faces, scene.incident_direction, scene.refractive_index, crystal=scene.crystal).direction)
+
+
+def edge_seeds(cell: EdgeCell) -> tuple[list[np.ndarray], np.ndarray, dict[str, Any]]:
+    """The seed poses, the target and the selection record of an edge cell (``target`` cells run seed search)."""
+    scene = cell.scene
+    if cell.point == "target":
+        target = np.asarray(cell.target, dtype=np.float64)
+        store = scene_store(scene, cell.store_n)
+        result = discover_components(
+            target,
+            StoreSeeds(store, scene.faces, scene.sun),
+            continuation=ContinuationOptions(),
+            band_half_width_deg=cell.band_half_width_deg,
+            cluster_radius_rad=cell.cluster_radius_rad,
+            distance_threshold=cell.distance_threshold,
+        )
+        if not result.components:
+            raise PointUnavailable(f"seed search at the target returned no component ({result.completeness})")
+        seeds = [np.asarray(component.seed, dtype=np.float64) for component in result.components]
+        deviation = math.degrees(math.acos(float(np.clip(target @ scene.incident_direction, -1.0, 1.0))))
+        return seeds, target, {"method": "the component seeds of seed search at the given target", "deviation_deg": deviation, "components": len(seeds)}
+    if cell.point == "critical_offset":
+        u, selection = critical_u(scene, cell.critical_offset_deg)
+        selection = {"method": "lit side of an interior extremum of D_P", **selection}
+    elif cell.point == "extremum":
+        u, selection = _extremum_u(scene)
+    else:
+        u, draws = random_u(scene, cell.rng_seed)
+        selection = {"method": "first admissible uniform draw", "rng": "numpy.random.default_rng", "rng_seed": cell.rng_seed, "draws": draws}
+    pose = pose_of_u(scene, u)
+    target = _outgoing(scene, pose)
+    if cell.point == "antipodal_target":
+        target = -target
+        selection = {**selection, "target": "the antipode -d of the pose's own outgoing direction d"}
+    return [pose], target, {**selection, "u": u, "deviation_deg": math.degrees(body_outgoing(scene, u)[1])}
+
+
+def _curve_extreme_poses(scene: Scene, curve: np.ndarray) -> dict[str, np.ndarray]:
+    """The traced poses with the smallest branch margin and the smallest ``J_perp`` (evaluate_path points)."""
+    observables = [pointwise_observables(scene, pose) for pose in curve]
+    margins = [min(item["branch_margins"].values()) for item in observables]
+    jacobians = [item["normal_jacobian"] for item in observables]
+    return {"curve_min_margin": curve[int(np.argmin(margins))], "curve_min_jacobian": curve[int(np.argmin(jacobians))]}
+
+
+def export_edge_cell(cell: EdgeCell, output_dir: Path, provenance: Mapping[str, Any]) -> dict[str, Any]:
+    """Write the fixtures of one edge cell; returns its manifest entry."""
+    scene = cell.scene
+    entry: dict[str, Any] = {
+        "name": cell.name,
+        "path": scene.path_id,
+        "crystal": dict(scene.crystal_spec),
+        "label": cell.label,
+        "point": cell.point,
+        "serves": list(cell.serves),
+        "rationale": cell.rationale,
+        "files": [],
+        "skipped": [],
+    }
+    try:
+        seeds, target, selection = edge_seeds(cell)
+    except PointUnavailable as error:
+        entry["skipped"].append({"fixture": "all", "reason": str(error)})
+        return entry
+    entry["selection"] = selection
+    record = {"name": cell.name, "path": scene.path_id, "category": "edge", "label": cell.label, "serves": list(cell.serves), "rationale": cell.rationale, "selection": selection}
+
+    def write(suffix: str, document: Mapping[str, Any]) -> None:
+        name = f"{cell.name}__{suffix}.json"
+        write_json(Path(output_dir) / name, document)
+        entry["files"].append(name)
+
+    if cell.point != "target":
+        write("evaluate_path__point", build_evaluate_path_fixture(scene, seeds[0], {**record, "pose_label": "point"}, provenance))
+    base_traces = None
+    for index, seed in enumerate(seeds):
+        suffix = "trace_fiber" if len(seeds) == 1 else f"trace_fiber__component_{index}"
+        trace = build_trace_fiber_fixture(scene, seed, target, {**record, "seed_label": suffix}, provenance)
+        write(suffix, trace)
+        base_traces = base_traces or trace["expected"]["traces"]
+    curve, _ = traced_curve(base_traces)
+    if len(curve):
+        for label, pose in _curve_extreme_poses(scene, curve).items():
+            text = {"curve_min_margin": "the traced pose with the smallest branch margin", "curve_min_jacobian": "the traced pose with the smallest J_perp"}[label]
+            write(f"evaluate_path__{label}", build_evaluate_path_fixture(scene, pose, {**record, "pose_label": text}, provenance))
+    for variant in cell.variants:
+        options = variant.options()
+        fixture = build_trace_fiber_fixture(
+            scene, seeds[0], target, {**record, "variant": variant.label, "variant_kind": variant.kind}, provenance, options, reference_traces=base_traces
+        )
+        if variant.kind == "perturbation":
+            check = Check(variant.label)
+            _compare_traces(check, fixture["expected"]["traces"], {**fixture, "expected": {"traces": base_traces}})
+            if check.failures:
+                raise AssertionError(f"{cell.name} {variant.label}: the perturbed trace left the default one: {check.failures}")
+        write(f"trace_fiber__{variant.label}", fixture)
+    if cell.seed_search:
+        write("seed_search", build_seed_search_fixture(cell.search_cell, target, record, provenance))
+    return entry
+
+
+def export_matrix(cells: Sequence[Cell], output_dir: Path, edge_cells: Sequence[EdgeCell] = ()) -> dict[str, Any]:
+    """Export every cell (and edge cell) into ``output_dir`` and write :data:`MANIFEST`; returns the manifest.
+
+    The manifest lists the matrix under ``cells`` and the edge cells under ``edge_cells``; the second key is
+    absent when there are none, so a matrix-only export has the v0 manifest.
+    """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     provenance = fixture_provenance()
@@ -1047,14 +1515,17 @@ def export_matrix(cells: Sequence[Cell], output_dir: Path) -> dict[str, Any]:
         "provenance": provenance,
         "cells": [export_cell(cell, output_dir, provenance) for cell in cells],
     }
+    if edge_cells:
+        manifest["edge_cells"] = [export_edge_cell(cell, output_dir, provenance) for cell in edge_cells]
     write_json(output_dir / MANIFEST, manifest)
     return manifest
 
 
 def verify_directory(output_dir: Path) -> list[Check]:
-    """:func:`verify_fixture` of every file the manifest lists."""
+    """:func:`verify_fixture` of every file the manifest lists (matrix and edge cells)."""
     manifest = read_json(Path(output_dir) / MANIFEST)
-    return [verify_fixture(Path(output_dir) / name) for cell in manifest["cells"] for name in cell["files"]]
+    entries = [*manifest["cells"], *manifest.get("edge_cells", [])]
+    return [verify_fixture(Path(output_dir) / name) for cell in entries for name in cell["files"]]
 
 
 __all__ = [
@@ -1066,6 +1537,8 @@ __all__ = [
     "BandSeeds",
     "Cell",
     "Check",
+    "EdgeCell",
+    "OptionVariant",
     "PointChoice",
     "PointUnavailable",
     "Scene",
@@ -1078,6 +1551,7 @@ __all__ = [
     "dumps",
     "evaluate_path",
     "export_cell",
+    "export_edge_cell",
     "export_matrix",
     "fixture_provenance",
     "miller_wedge_deg",
