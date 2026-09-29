@@ -475,7 +475,8 @@ category matrix (§6).
   (0.51, 2.49) px at 0.5°: along its level set it does not narrow. The two
   3-6-4-8 cells carry this contrast on fixed pixels. The `σ` dependence of
   `D` itself (`std/σ ≈ 0.577` for 3-6-4-8, 5.67° fixed for 3-5) is the
-  exploration's measurement.
+  exploration's measurement, with a signed zenith sampler; under the plate
+  density these cells use it is `0.818` (a factor `√2`, [phase2.md](phase2.md) §10).
 - *Mechanism check outside the band sum.*
   `tests/test_parity_export.py::test_family_pinned_cells_put_their_whole_sigma_zero_family_on_one_deviation`
   evaluates `D` and `w` on the `σ = 0` ring. Each pinned cell has valid poses
@@ -519,4 +520,7 @@ this page and of `parity_export.SCHEMA_VERSION` in the same LI commit.
   rank-0 point mass under a non-random density (contract §1, §5).
 - A radiometric comparison of the family-pinned cells with Lumice. The cells
   certify a backend's band sum, not the physics of the degenerate families.
-  The Lumice comparison is scrum task `lumice-radiometric-check-degenerate-plate`.
+  The Lumice comparison of the 3-6-4-8 plate family (task
+  `lumice-radiometric-check-degenerate-plate`, [phase2.md](phase2.md) §10)
+  agrees in flux within `2e-4` and in deviation spread within `1e-3` at
+  `σ = 0.5–4°`.

@@ -1077,9 +1077,14 @@ needs street-lamp halos (backlog).
   dimension collapse. Tests: `tests/test_focusing.py`.
 - **Family pinned** (task `focusing-family-pinned-label`, 2026-09-29).
   Two dimension collapses can behave oppositely: under plates `3-6-4-8`
-  lands in one deviation (its deviation std is $0.577\,\sigma$), `3-5` keeps
-  a std of $5.67°$ at every $\sigma$ (explore `degenerate-path-family-coverage`
-  #2, #5). `focusing.family_pinned`, carried as
+  lands in one deviation, `3-5` keeps a std of $5.67°$ at every $\sigma$
+  (explore `degenerate-path-family-coverage` #2, #5). The deviation std of
+  `3-6-4-8` is $0.818\,\sigma$ under the plate density of
+  [`pose_density`](../src/lumice_integral/pose_density.py) and Lumice (a
+  Gaussian in the c-axis zenith angle as a density on the sphere); the
+  exploration's $0.577\,\sigma$ sampled a signed zenith angle without the
+  $\sin\theta$ factor, which halves the tilt variance, hence the factor
+  $\sqrt 2$ (task `lumice-radiometric-check-degenerate-plate`). `focusing.family_pinned`, carried as
   `FocusingClassification.family_pinned` (an orthogonal flag; `mechanism` is
   unchanged), is true iff the density holds the c axis at a pole (plate,
   Lowitz), the path has rank 2 and wedge 0 (refractions cancel, the
@@ -1093,6 +1098,44 @@ needs street-lamp halos (backlog).
   against Lumice is unchecked). Tests: `tests/test_focusing.py`
   (`test_family_pinned_*`, including $D_P$ measured on latitude circles:
   $\le 10^{-9}$° pinned, $\ge 1°$ for `3-5` / `1-3`).
+- *Lumice, absolute and shape, on a pinned family* (task
+  `lumice-radiometric-check-degenerate-plate`, 2026-09-29). The `3-6-4-8`
+  class (12 members) under plates, $\sigma = 0.5, 1, 2, 4°$, against a Lumice
+  raypath filter (`symmetry: PBD`, `max_hits` 5, Metal, $2\times10^9$ rays,
+  seeds 7 and 11; Lumice `4.7.0-dev`), $n = 1.3110129$, sun at 15°, band sum
+  $N = 10^8$, `scripts/compare_lumice_family.py` ($K_p = \bar y\,\Omega_p/(S/2)$,
+  nothing fitted). Camera 241×241 centred on the 120° parhelion (az 120°,
+  el 15°) with fov $24\,\sigma$, so the spot has the same size in pixels at
+  every $\sigma$; `3-5` at $\sigma = 1°$ (fov 40°, az 30°) is the control.
+
+  | class, $\sigma$ | flux ratio (seeds) | bright median | bright rel. std (expected) | $D$ std, LI | $D$ std Lumice / LI |
+  |---|---|---|---|---|---|
+  | `3-6-4-8`, 0.5° | 0.9999 (0.9997, 1.0002) | 0.9988 | 1.58 % (1.79 %) | 0.409° | 1.0000 |
+  | `3-6-4-8`, 1° | 0.9999 (0.9997, 1.0001) | 0.9996 | 0.86 % (1.36 %) | 0.818° | 0.9997 |
+  | `3-6-4-8`, 2° | 0.9998 (0.9997, 1.0000) | 0.9997 | 0.65 % (1.04 %) | 1.630° | 0.9995 |
+  | `3-6-4-8`, 4° | 0.9998 (0.9998, 0.9998) | 1.0004 | 0.68 % (0.78 %) | 3.181° | 0.9991 |
+  | `3-5`, 1° | 1.0000 (1.0000, 1.0000) | 0.9958 | 1.33 % (0.81 %) | 3.081° | 1.0000 |
+
+  $D$ std is the flux-weighted spread of the pixel deviations on the image:
+  it scales with $\sigma$ (0.819, 0.818, 0.815, 0.795 times $\sigma$) and the
+  two sides agree to `1e-3`. Two differences remain, both explained with
+  nothing fitted. (1) `3-6-4-8`: Lumice has a one-pixel hole at the pinned
+  image point with a bright ring around it (centre column 1.19 / 0.70 / 1.19
+  of LI at $\sigma = 0.5°$, 1.09 / 0.89 / 1.09 at 1°, within 3 % at 2°), so
+  the max-normalised profiles differ by 0.09 at $0.5°$ against a 0.004 seed
+  floor. It comes from Lumice's zenith sampler (`src/core/lat_lut.cpp`, read
+  as evidence only): the table is built on $\pi/4096 = 0.0439°$ colatitude
+  bins and starts at the first bin's upper edge, so no pose has a tilt below
+  $0.0439°$. The pinned image is a linear image of the tilt (singular values
+  $\sqrt 3$ and $0.448$), and a model of that table alone predicts the centre
+  column (1.21 / 0.70 / 1.20 at $0.5°$, 1.10 / 0.89 / 1.09 at 1°); starting the
+  table at 0 instead would predict 1.40 at the centre, not 0.70. It is a
+  Lumice sampler resolution and does not change the flux. (2) `3-5`: the
+  band sum takes the pixel centre along the $D$ circle, Lumice averages over
+  the pixel. The second-order correction from LI's own image,
+  $1 + f''p^2/24$ along the column, moves the bright median to 0.9998, and
+  without the two columns on the inner-edge caustic the relative std is
+  0.17 %. Artifacts: `scratchpad/scrum-analytic-lib-wave2-spec/task-lumice-radiometric-check-degenerate-plate/artifacts/`.
 - **Wavelength-critical onsets** (task `wavelength-critical-api`, 2026-09-27).
   `focusing.wavelength_critical_table` runs `classify` once per refractive
   index (label $\to n(\lambda)$, from `spectrum.dispersion.refractive_index`
