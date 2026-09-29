@@ -16,6 +16,7 @@ section 11.1).  The module B cells (``BAND_SUM_CELLS``, ``docs/band-sum-contract
     uv run python scripts/export_analytic_parity.py --output-dir /tmp/parity-smoke --cells 3-5__random --verify
     uv run python scripts/export_analytic_parity.py --output-dir /tmp/parity-edge --cells 3-5__limits --verify
     uv run python scripts/export_analytic_parity.py --output-dir /tmp/parity-band --cells 3-5__band_sum_plate --verify
+    uv run python scripts/export_analytic_parity.py --output-dir /tmp/parity-pinned --cells 3-6-4-8__band_sum_plate --verify
 """
 
 from __future__ import annotations
@@ -27,10 +28,12 @@ from pathlib import Path
 
 import numpy as np
 
-from lumice_integral.camera import linear_pixel_outgoing_direction
+from lumice_integral.camera import linear_pixel_outgoing_direction, sun_direction
 from lumice_integral.canonical_scene import (
     CANONICAL_REFRACTIVE_INDEX,
     CANONICAL_RENDER,
+    CANONICAL_SUN_ALTITUDE_DEG,
+    CANONICAL_SUN_AZIMUTH_DEG,
     LUMICE_HEIGHT_OVER_DIAMETER,
     canonical_incident_direction,
     canonical_sun_direction,
@@ -260,6 +263,15 @@ SUN_VIEW = lambert(SUN, 30.0, 65)  # about 0.93 deg per pixel, the sun at the ce
 ANTISUN_VIEW = lambert([-x for x in SUN], 60.0, 65)  # about 1.8 deg per pixel, the antisun at the centre of (32, 32)
 SUN_CLOSE_VIEW = lambert(SUN, 5.0, 9)  # about 1.1 deg per pixel, the sun at the centre of pixel (4, 4)
 SCENE_3_6 = Scene(PRISM, (3, 6), CANONICAL_REFRACTIVE_INDEX, SUN)
+# The family-pinned cells: Lambert views like SUN_CLOSE_VIEW centred on the spot's sky point.  1-2-1 and
+# 1-2-3-4-1 need a thin plate: on the column the ray leaves through a prism face after the basal reflection, so
+# the plate family (c axis vertical) has no valid pose there (w = 0 on the whole sigma = 0 ring).
+PLATE_CRYSTAL = prism_crystal(0.2)
+SCENE_3_6_4_8 = Scene(PRISM, (3, 6, 4, 8), CANONICAL_REFRACTIVE_INDEX, SUN)
+PARHELION_120_VIEW = lambert(sun_direction(CANONICAL_SUN_ALTITUDE_DEG, CANONICAL_SUN_AZIMUTH_DEG + 120.0), 5.0, 9)
+SUBSUN_VIEW = lambert(sun_direction(-CANONICAL_SUN_ALTITUDE_DEG, CANONICAL_SUN_AZIMUTH_DEG), 5.0, 9)
+SUBPARHELION_120_VIEW = lambert(sun_direction(-CANONICAL_SUN_ALTITUDE_DEG, CANONICAL_SUN_AZIMUTH_DEG + 120.0), 5.0, 9)
+PINNED_SPOT_PIXELS = ((4, 4), (3, 4), (5, 4), (4, 3), (4, 5), (0, 4), (8, 4), (4, 1), (4, 7), (4, 0))
 
 BAND_SUM_CELLS = (
     BandSumCell(
@@ -332,6 +344,49 @@ BAND_SUM_CELLS = (
         20_000,
         "the same point mass under the plate family: m from LI's Haar stream, compared statistically",
         rank0_sample_count=4_000_000,
+    ),
+    # Family-pinned paths (focusing.family_pinned: rank 2, wedge 0, fold matrix commuting with R_z, a plate or
+    # Lowitz density): the sigma -> 0 plate family lies in one level set of D_P, so it lands on one sky point and
+    # the spot narrows with sigma.  3-5__band_sum_plate above is the control: the same family, not pinned.
+    BandSumCell(
+        "plate",
+        SCENE_3_6_4_8,
+        {"family": "plate", "zenith_std_deg": 1.0},
+        PARHELION_120_VIEW,
+        PINNED_SPOT_PIXELS,
+        20_000,
+        "family pinned, reflection group element 6 (fold matrix R_z(120 deg)): the 120 deg parhelion at D = "
+        "113.548 deg, its spot centre, the four neighbours, the vertical and horizontal tails down to 1e-26",
+    ),
+    BandSumCell(
+        "plate_sigma_0.5",
+        SCENE_3_6_4_8,
+        {"family": "plate", "zenith_std_deg": 0.5},
+        PARHELION_120_VIEW,
+        PINNED_SPOT_PIXELS,
+        20_000,
+        "the same view and pixels at half the zenith spread: the centre brightens, the tails fall to 1e-92 "
+        "(the spot's width scales with sigma; the 3-5 parhelion's does not)",
+    ),
+    BandSumCell(
+        "plate",
+        Scene(PLATE_CRYSTAL, (1, 2, 1), CANONICAL_REFRACTIVE_INDEX, SUN),
+        {"family": "plate", "zenith_std_deg": 1.0},
+        SUBSUN_VIEW,
+        ((4, 4), (3, 4), (0, 4), (8, 4), (4, 3), (4, 2), (4, 1), (4, 0)),
+        20_000,
+        "family pinned, element 11 (a basal reflection) on a thin plate: the subsun at D = 30 deg, lit along the "
+        "vertical, falling to 1e-15 across it (the column crystal has no valid pose on this family)",
+    ),
+    BandSumCell(
+        "plate",
+        Scene(PLATE_CRYSTAL, (1, 2, 3, 4, 1), CANONICAL_REFRACTIVE_INDEX, SUN),
+        {"family": "plate", "zenith_std_deg": 1.0},
+        SUBPARHELION_120_VIEW,
+        ((4, 4), (3, 4), (5, 4), (4, 3), (4, 5), (4, 6), (4, 7), (0, 4), (4, 1)),
+        20_000,
+        "family pinned, element 5 on a thin plate: the 120 deg subparhelion at D = 122.242 deg, a pixel on the "
+        "path's smallest deviation (120 deg) and an empty band beyond it",
     ),
 )
 
