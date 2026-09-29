@@ -22,7 +22,8 @@ The procedure (task-pixel-pipeline-v2, after the author's ruling of
    source of the face sequence this call discovers, and the store's crystal
    and refractive index are the problem's.
 2. Greedy geodesic clustering of the whole pool with radius
-   ``cluster_radius_rad``.  A cluster's representative is its first extra
+   ``cluster_radius_rad``, centred on the lowest unassigned pool index.  A
+   cluster's representative is its first (lowest-index) extra
    seed if it contains one (that is all a warm seed does: it puts the
    Gauss-Newton start of its cluster on a neighbouring solution), else its
    store member with the smallest ``|D_i - delta|``.
@@ -207,16 +208,28 @@ class ComponentDiscoveryResult:
 
 
 def _geodesic_cluster(rotations: np.ndarray, radius: float) -> list[list[int]]:
-    """Greedy clustering by SO(3) geodesic distance to the first unassigned member."""
+    """Greedy clustering by SO(3) geodesic distance to the lowest-index unassigned member.
+
+    Contract section 9.5.4 step 1: the centre is the lowest unassigned pool
+    index, members (ascending) are the unassigned poses strictly within
+    ``radius`` of it. A Python ``set``'s first element is not its minimum once
+    a bulk removal shrinks its table (Lumice task 640.1), so the unassigned
+    pool is a mask scanned by a cursor that only moves forward.
+    """
+    if radius <= 0.0:
+        raise ValueError("cluster radius must be positive")
     count = rotations.shape[0]
-    unassigned = set(range(count))
+    unassigned = np.ones(count, dtype=bool)
     clusters: list[list[int]] = []
-    while unassigned:
-        seed_index = next(iter(unassigned))
-        distances = rotation_distances(rotations[seed_index], rotations)
-        members = [i for i in unassigned if distances[i] < radius]
-        clusters.append(members)
-        unassigned -= set(members)
+    centre = 0
+    while centre < count:
+        distances = rotation_distances(rotations[centre], rotations)
+        members = np.flatnonzero(unassigned & (distances < radius))
+        clusters.append(members.tolist())
+        unassigned[members] = False
+        # The centre is its own member (distance 0 < radius); the next centre is the next unassigned index.
+        remaining = np.flatnonzero(unassigned[centre + 1 :])
+        centre = centre + 1 + int(remaining[0]) if len(remaining) else count
     return clusters
 
 

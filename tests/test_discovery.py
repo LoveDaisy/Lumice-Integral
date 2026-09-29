@@ -929,6 +929,8 @@ def test_geodesic_cluster_centres_are_the_lowest_unassigned_index_and_membership
     assert _geodesic_cluster(line[::-1], radius=0.3) == [[0, 1], [2, 3]]
     assert _geodesic_cluster(line[[1, 0, 2, 3]], radius=0.3) == [[0, 1, 2], [3]]
     assert _geodesic_cluster(line[:2], radius=0.2) == [[0], [1]]  # strictly within
+    with pytest.raises(ValueError, match="cluster radius must be positive"):
+        _geodesic_cluster(line, radius=0.0)
 
 
 def _lowest_index_clusters(rotations: np.ndarray, radius: float) -> list[list[int]]:
