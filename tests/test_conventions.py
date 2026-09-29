@@ -68,6 +68,39 @@ def test_roll_zero_puts_face_3_up_and_theta_zero_puts_it_down():
     np.testing.assert_allclose(column_attitude(30.0, 0.0) @ face_3, [0.0, 0.0, -1.0], atol=1e-15)
 
 
+@pytest.mark.parametrize(
+    "az, zenith, roll, n1_world, n3_world",
+    [
+        (0.0, 0.0, 0.0, [0.0, 0.0, 1.0], [-1.0, 0.0, 0.0]),  # Case A
+        (0.0, 90.0, 0.0, [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]),  # Case B = section 8, the Parry default
+        (90.0, 90.0, 0.0, [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]),  # Case C
+        (0.0, 0.0, 90.0, [0.0, 0.0, 1.0], [0.0, -1.0, 0.0]),  # Case D
+    ],
+    ids=["A", "B", "C", "D"],
+)
+def test_chain_output_quick_reference(az, zenith, roll, n1_world, n3_world):
+    """Lumice ``doc/coordinate-convention.md`` appendix "Chain Output Quick Reference" (``N1 = R e_z``, ``N3 = R e_x``)."""
+    rotation = lumice_chain(az, zenith, roll)
+    np.testing.assert_allclose(rotation @ [0.0, 0.0, 1.0], n1_world, atol=1e-15)
+    np.testing.assert_allclose(rotation @ [1.0, 0.0, 0.0], n3_world, atol=1e-15)
+
+
+def test_parry_default_holds_face_3_up_over_the_whole_azimuth_circle():
+    """Section 5.3: at the Parry means (zenith 90, roll 0) ``N3`` is world ``+z`` for every azimuth, the c axis ``N1``
+    is horizontal at azimuth ``az`` (section 8 at ``az = 0``: ``N1 = +x``) and ``pose_density`` reads zenith 90, roll 0.
+
+    Roll 180 (``column_attitude``'s theta = 0) puts face 6 (body ``-x``) up instead: the same vertical body line.
+    """
+    for az in np.arange(0.0, 360.0, 7.5):
+        rotation = lumice_chain(az, 90.0, 0.0)
+        np.testing.assert_allclose(rotation @ [1.0, 0.0, 0.0], [0.0, 0.0, 1.0], atol=1e-15)
+        t = np.radians(az)
+        np.testing.assert_allclose(rotation @ [0.0, 0.0, 1.0], [np.cos(t), np.sin(t), 0.0], atol=1e-15)
+        assert c_axis_zenith(rotation) == pytest.approx(np.pi / 2.0, abs=1e-15)
+        assert c_axis_roll(rotation) == pytest.approx(0.0, abs=1e-15)
+        np.testing.assert_allclose(lumice_chain(az, 90.0, 180.0) @ [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0], atol=1e-15)
+
+
 # ------------------------------------------------------------ sun and u
 def test_sun_direction_is_the_writing_series_sun_vector():
     """``halo_notes/math/attitude.py::sun_vector``: ``(cos S, 0, sin S)``, toward the sun; light travels along ``-s_hat``."""
