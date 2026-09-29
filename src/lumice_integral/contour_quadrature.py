@@ -556,7 +556,12 @@ class ContourQuadratureResult:
     surfaced so a future non-canonical render can be checked against
     ``EXTREMUM_ATOL`` without a one-off probe script). ``status`` is
     ``"integrated"``, ``"empty"`` (no component) or ``"critical_delta"``
-    (``delta`` at a critical value; not integrated).
+    (``delta`` at a critical value; not integrated).  ``gated_out`` marks an
+    ``"integrated"`` level set outside the finite crystal's gate: it has
+    components but ``w = 0`` at every point (see
+    :attr:`LevelSetGeometry.gated_out`), so ``value`` is exactly ``0`` for
+    that reason and not a cancellation or ``rho = 0``; it is ``False`` for
+    ``"empty"`` and ``"critical_delta"``.
     """
 
     delta: float
@@ -576,6 +581,7 @@ class ContourQuadratureResult:
     non_finite_points: int
     max_residual: float = 0.0
     status: str = "integrated"
+    gated_out: bool = False
 
 
 def _scale(delta: float) -> float:
@@ -591,8 +597,11 @@ class LevelSetGeometry:
     them, ``slot_offsets[j]`` the first slot of level set ``j``); the arrays
     ``evaluations`` / ``low_order_splits`` / ``exhausted_panels`` /
     ``max_depth`` / ``residual_by_unit`` are per level set; ``max_residual``
-    is their overall worst case.  Build with :meth:`build`, integrate pixels
-    with :meth:`integrate`.
+    is their overall worst case.  ``gated_out`` is per level set: it has
+    components, yet no stage-one leaf point has ``g != 0`` or is ``bad``,
+    i.e. ``w = 0`` everywhere on it (the finite crystal's gate; a pixel
+    property only through ``rho``, which cannot revive a zero ``g``).  Build
+    with :meth:`build`, integrate pixels with :meth:`integrate`.
     """
 
     field: DPField
@@ -605,6 +614,7 @@ class LevelSetGeometry:
     exhausted_panels: np.ndarray
     max_residual: float
     residual_by_unit: np.ndarray
+    gated_out: np.ndarray
 
     @classmethod
     def build(cls, field: DPField, level_sets: Sequence[LevelSet], options: QuadratureOptions = QuadratureOptions()) -> "LevelSetGeometry":
@@ -618,8 +628,10 @@ class LevelSetGeometry:
         residual = float(residual_by_unit.max()) if len(residual_by_unit) else 0.0
         offsets = np.r_[0, np.cumsum(np.bincount(slot_unit, minlength=len(level_sets)))]
         evaluations = 5 * np.bincount(nodes.unit, minlength=len(level_sets)) + 4 * tally.splits
+        live = np.bincount(leaves.unit, weights=np.any((leaves.g != 0.0) | leaves.bad, axis=1), minlength=len(level_sets)) > 0
+        gated_out = ~live & (np.diff(offsets) > 0)
         return cls(field, level_sets, options, leaves, offsets, evaluations, tally.low_order_splits, tally.exhausted, residual,
-                   residual_by_unit)
+                   residual_by_unit, gated_out)
 
     def integrate(
         self, sun: np.ndarray, centres: Sequence[np.ndarray] | np.ndarray, density, level_set_index: Sequence[int] | None = None
@@ -682,6 +694,7 @@ class LevelSetGeometry:
                 non_finite_points=int(np.sum(self.panels.bad[bounds[group]:bounds[group + 1]])),
                 max_residual=float(max(self.residual_by_unit[group], tally.max_residual[job])),
                 status="integrated" if level_set.components else "empty",
+                gated_out=bool(self.gated_out[group]),
             ))
         return results
 
@@ -707,7 +720,7 @@ FORMAT_VERSION = "lumice-integral.contour-quadrature/v1"
 PIXEL_CSV_COLUMNS = (
     "row", "column", "value", "error_estimate", "delta_deg", "band_width_rad", "status", "n_closed", "n_open",
     "level_sets", "panels", "geometry_evaluations", "pixel_evaluations", "max_depth", "exhausted_panels",
-    "low_order_splits", "non_finite_points", "max_residual",
+    "low_order_splits", "non_finite_points", "max_residual", "gated_out",
 )
 
 
@@ -756,6 +769,9 @@ class ContourPixelResult:
     deviations (see :class:`ContourQuadratureResult`); a non-canonical render
     should compare it against ``EXTREMUM_ATOL`` (``provenance.json``'s
     ``summary.max_residual_rad`` / ``summary.residual_exceeded_pixels``).
+    ``gated_out`` holds when every one of its level sets is gated out (see
+    :class:`ContourQuadratureResult`): an integrated pixel whose ``0`` is the
+    finite crystal's gate.
     """
 
     row: int
@@ -776,6 +792,7 @@ class ContourPixelResult:
     low_order_splits: int
     non_finite_points: int
     max_residual: float = 0.0
+    gated_out: bool = False
 
     def csv_row(self) -> dict[str, Any]:
         row = dataclasses.asdict(self)
@@ -819,6 +836,7 @@ def _combine(row: int, column: int, delta: float, width: float, weights: np.ndar
         max_depth=max((r.max_depth for r in results), default=0), exhausted_panels=sum(r.exhausted_panels for r in results),
         low_order_splits=sum(r.low_order_splits for r in results), non_finite_points=sum(r.non_finite_points for r in results),
         max_residual=max((r.max_residual for r in results), default=0.0),
+        gated_out=bool(results) and all(r.gated_out for r in results),
     )
 
 
@@ -1047,6 +1065,7 @@ def write_contour_quadrature_strip(
             "rendered_pixels": int(rendered.sum()),
             "pixels_with_light": int((values > 0.0).sum()),
             "critical_delta_pixels": int(sum(r.status == "critical_delta" for r in results)),
+            "gated_out_pixels": int(sum(r.gated_out for r in results)),
             "exhausted_pixels": int(sum(r.exhausted_panels > 0 for r in results)),
             "value_min": float(rendered_values.min()) if rendered_values.size else None,
             "value_max": float(rendered_values.max()) if rendered_values.size else None,
