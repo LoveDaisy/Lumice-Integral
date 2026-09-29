@@ -182,6 +182,8 @@ $$
 
 **分工。** 等值线法负责精度和完整性证书；带求和两者都没有，除采样外也没有收敛阶，但它无分支、可 `vmap`，一份仓库被所有像素、姿态密度和光源方向共享。它是快速渲染器、参数扫描工具和独立的交叉检查。生产模块：`lumice_integral.s2_store`（构建、缓存、provenance、带切片、$D_{6h}$ 搬运）与 `lumice_integral.band_sum`（估计量、光路与类渲染；CLI `scripts/render_band_sum.py`）。$N = 10^8$ 的 canonical 条带：Mac 4 个 worker `30.8 s`（§8 的 scatter 形态之前为 `169 s`），Phase I 在 `home-wsl` 30 个 worker 上 `34.7 min`（见附录）。
 
+**后端契约。** 供另一后端实现的估计量规格（共享库模块 B，波次 2：输入、带、姿态、值、诊断、秩 0 点质量、一致性认证与绝对尺度）见 [band-sum-contract.md](band-sum-contract.md)；本节仍是设计叙述，公式不在两处各写一份权威。
+
 ## 6. 一份预计算，三个用户
 
 Phase I 也做过预计算。2026-09-25 之前，它的 `prescan.PrescanTable` 对固定太阳在 $\mathrm{SO}(3)$ 上抽 $4\times10^6$ 个 Haar 姿态，保留域内有效的并记下出射方向，用 k-d 树建索引；像素查询自己方向周围一个球冠内的样本，用作 Newton seed。

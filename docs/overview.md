@@ -549,6 +549,15 @@ row by row how a backend is certified from its outputs, and
 `J_perp` and margins plus the edge cells those checks run on. Point 2 above
 (diagnostics landing in two steps) is superseded accordingly.
 
+Module B of wave 2 (the single-path $S^2$ store and band sum) is specified,
+backend-independently, in [band-sum-contract.md](band-sum-contract.md) (task
+`band-sum-module-spec`): v1 is one concrete path at one refractive index with
+no symmetry transport (an L2 row is the caller's sum of its members), pixels
+as a table of directions (any projection, the Analyze Lambert view included),
+the five pose-density families, and rank-0 paths as point masses. Its parity
+fixtures are [analytic-parity-fixtures.md](analytic-parity-fixtures.md) §3.4 and
+§6.2. LI certifies B by parity only and does not switch.
+
 To be verified later (not in this chore, flagged only): whether Lumice's
 Analyze workspace design's one-to-one correspondence "level set on the
 sun-direction sphere = fiber" still holds on cone crystals and raypaths with

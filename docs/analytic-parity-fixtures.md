@@ -5,12 +5,15 @@
 Lumice Integral (LI) exports, at a fixed rev, a directory of JSON fixtures that
 Lumice copies into its repository and replays in CI against
 `liblumice_analytic` module A v0 (Lumice `doc/analytic-api.md` §4:
-`EvaluatePath`, seed search, `TraceFiber[Batch]`, point lists only). The
+`EvaluatePath`, seed search, `TraceFiber[Batch]`, point lists only) and,
+since wave 2, against module B, the single-path band sum
+([band-sum-contract.md](band-sum-contract.md)). The
 direction is one way (owner ruling 2026-09-28): LI is the reference, Lumice
 follows. This page is written so that a reader can be implemented on the Lumice
 side without reading LI source. The normative semantics behind the fixtures
-are `docs/phase1-math-contract.md` §9 (continuation) and §9.5 (discovery), and
-the conventions are those of `docs/conventions.md`.
+are `docs/phase1-math-contract.md` §9 (continuation) and §9.5 (discovery) and
+`docs/band-sum-contract.md` (the band sum), and the conventions are those of
+`docs/conventions.md`.
 
 ## 1. Producing the fixtures
 
@@ -19,16 +22,20 @@ uv run python scripts/export_analytic_parity.py --output-dir artifacts/analytic-
 ```
 
 - One command writes every fixture of the matrix (§6), the edge cells
-  (§6.1) and a `manifest.json`, 82 fixtures in about 1 min on an M2 Max
-  (the matrix alone took about 16 s before wave 2).
+  (§6.1), the band-sum cells (§6.2) and a `manifest.json`, 89 fixtures. On an
+  M2 Max at load average 20–30 (2026-09-29) the export took 50 s and the
+  read-back 153 s, of which the seven band-sum fixtures took 38 s (the
+  statistical rank-0 cell replays a `4e6`-pose Haar stream); the 82 fixtures
+  before them took about 1 min with the read-back on an idle machine, and the
+  matrix alone about 16 s before wave 2.
 - **Deterministic.** The same rev re-exports byte for byte. LI's test
   `tests/test_parity_export.py` exports the matrix in two separate
   interpreters and compares every file. The fixtures do not record time,
   host or paths.
 - `--verify` reads every fixture back, recomputes it with the checkout, and
   compares within the fixture's own tolerances (§5). It exits non-zero on any
-  failure. `--cells 3-5__random 3-5__limits ...` exports a subset (matrix
-  cells and edge cells by name).
+  failure. `--cells 3-5__random 3-5__limits 3-5__band_sum_plate ...` exports
+  a subset (matrix, edge and band-sum cells by name).
 - The output lives under `artifacts/`, which is not versioned in LI. The pinned
   copy is Lumice's, and each fixture records the LI rev it came from.
 - Code: `lumice_integral.parity_export` (formats, selection, verifiers) and
@@ -47,7 +54,12 @@ with its `files`, its `skipped` fixtures (with a reason), its `rationale` and
 the `selection` record of §6. An edge cell also has `label`, `point` (how its
 seed was chosen) and `serves` (the contract §11 rows it certifies,
 `docs/phase1-math-contract.md` §11.1). A matrix-only export has no
-`edge_cells` key.
+`edge_cells` key. A band-sum cell (§6.2) is one file,
+`<path>__band_sum_<label>.json`, listed under `band_sum_cells` with its
+`label`, `rank`, `pose_density` family, `projection` kind and `rationale`; an
+export without band-sum cells has no `band_sum_cells` key, so the files and
+the manifest of §6 and §6.1 keep their bytes. A reader MUST ignore top-level
+manifest keys it does not know: later waves add fixture kinds under new keys.
 
 The JSON is UTF-8 with sorted keys. Floats are written in the shortest form
 that round-trips to the same float64, so parsing with any conforming JSON
@@ -58,12 +70,12 @@ there are no NaN or infinities. Every fixture has these fields:
 |---|---|
 | `format` | `"lumice-integral/analytic-parity"` |
 | `schema_version` | `1`. Wave 2 added optional fields (§3.1, §3.2) and renamed or removed none, so every v0 key keeps its bytes (checked against the 2026-09-29 export at `5ea2bde`). A fixture without the wave 2 fields comes from an older export, and its recipes are the v0 ones. A breaking change raises the version. |
-| `fixture_kind` | `evaluate_path`, `trace_fiber` or `seed_search` |
+| `fixture_kind` | `evaluate_path`, `trace_fiber`, `seed_search` or `band_sum` |
 | `symmetry_semantics` | Always `"none"`. The input is one concrete face sequence and no symmetry reduction is involved (Lumice `doc/analytic-api.md` §3.3 rule 2; `docs/conventions.md` #21). |
 | `provenance.li_rev` | Full LI commit SHA of the export |
 | `provenance.li_tracked_tree_clean` | `false` if tracked files differed from that commit at export time. Such a fixture should not be copied into Lumice. |
 | `provenance.conventions_sha256` | SHA-256 of LI `docs/conventions.md`. A change flags that a convention may have moved. |
-| `cell` | `name`, `path`, `category`, `rationale`, `selection`, and for `evaluate_path` a `pose_label` |
+| `cell` | `name`, `path`, `category`, `rationale`, `selection`, and for `evaluate_path` a `pose_label`; for `band_sum`: `name`, `path`, `label`, `rationale`, `rank` |
 | `input` | The call's arguments (below) |
 | `expected` | The reference output (below) |
 | `tolerance` | One entry per compared quantity: `{"value": number, "basis": text}` |
@@ -80,7 +92,7 @@ there are no NaN or infinities. Every fixture has these fields:
 | `target_direction` | World propagation direction of the outgoing light, crystal → observer (`d`) |
 | `continuation` | LI's `ContinuationOptions` (contract §9.2, reference defaults of §10.1), every field. Lumice's v0 options block has fewer fields. A backend uses its own equivalents and documents the mapping. |
 
-## 3. The three fixture kinds
+## 3. The four fixture kinds
 
 ### 3.1 `evaluate_path`
 
@@ -163,6 +175,26 @@ these fixtures (§9.5.8).
 | `components` | In trace order: `kind` (`closed` / `arc`), `seed` (9), `status`, `reason`, `start_reason` (`null` for closed), `arclength`, `curve_poses` `(N, 9)` (the closed trace or the stitched arc), and `seed_index` for an arc |
 | `incomplete` | `cause`, `seed`, `status`, `reason` |
 
+### 3.4 `band_sum`
+
+Module B (`docs/band-sum-contract.md`): one concrete path, one pose density,
+a table of pixels given as directions. Input: `crystal`, `faces`,
+`refractive_index`, `incident_direction` (§2.1), and
+
+| `input` field | Meaning |
+|---|---|
+| `pose_density` | `family` (`random` / `column` / `plate` / `parry` / `lowitz`) and its resolved parameters in degrees (contract §2.2). `normalization_informative` holds LI's `I` (and `Q`); not compared. |
+| `sample` | `sampler` and `n`: the antipodal Fibonacci lattice of `n` points (contract §3). |
+| `pixels` | `labels` `(P, 2)`, `centre` `(P, 3)`, `corners` `(P, 4, 3)` in cyclic order, `solid_angle` `(P)`: outgoing propagation directions, the sky point is their negative (contract §2.3). `projection` records how LI expanded them (a Lumice linear `render` block, or a single-disk Lambert view) and is informative. |
+| `events` | Layer 1 (contract §7.1). Rank 2: `u`, `phi`, `deviation`, `w` of every kept event in some non-singular pixel's band, in LI's order (increasing `D`). Rank 0 under the random density: `w` of every kept event. Absent for a statistical rank-0 cell. |
+
+| `expected` field | Meaning |
+|---|---|
+| `rank` | `2` (a band sum) or `0` (a point mass, contract §5) |
+| `pixels` | In table order: `label`, `status`, `value`; for rank 2 also `delta`, `delta_lo`, `delta_hi`, `K`, `K_rho_pos`, `K_eff` (null when `singular`), `total`, `square` (informative), and `allowance` (below) |
+| `pixels[].allowance` | Rank 2, non-singular: `K_rho_pos_subnormal` (band events whose `c_i` is subnormal in LI), the layer-2 allowances `K_layer2`, `K_rho_pos_layer2`, `value_layer2`, `K_eff_layer2`, and the `candidates` they come from (`band_end`, `gate`, `gate_without_finite_D`; contract §7.2) |
+| `point_mass` | Rank 0: `m`, `method` (`lattice_mean`, or `haar_stream` with `error_estimate`, `sample_count`, `rng_seed`); a lattice-mean cell also records LI's `haar_check_informative` |
+
 ## 4. Comparison recipes
 
 - **Vectors and scalars**: the largest absolute componentwise difference is at
@@ -227,6 +259,20 @@ these fixtures (§9.5.8).
   are within `curve_distance_rad`. For closed components the `arclength`
   agrees to `closed_arclength_relative`. The `incomplete` causes are equal in
   order.
+- **`band_sum`**, in two layers (contract §7). Layer 1 runs the estimator on
+  `input.events`; layer 2 regenerates the sample and runs the whole call. In
+  both, every pixel's `status` is equal (a singular pixel has no value). For
+  an `ok` pixel of a rank-2 cell: `K` is equal in layer 1 and within
+  `allowance.K_layer2` in layer 2; `K_rho_pos` within
+  `allowance.K_rho_pos_subnormal` (layer 1) or `allowance.K_rho_pos_layer2`
+  (layer 2); `value` and `K_eff` within `value_relative` × |expected|, plus
+  `allowance.value_layer2` / `allowance.K_eff_layer2` in layer 2. A rank-0
+  cell compares `m` and each pixel's value to `point_mass_relative`; for a
+  `haar_stream` cell that tolerance is five of LI's standard errors, relative,
+  and a backend with its own estimator error `σ` widens it to
+  `5 √(σ_LI² + σ²)`. LI's `--verify` runs layer 1 through both of its forms
+  of the sum (the production scatter and the per-pixel gather), checks that
+  the fixture's events are its regenerated sample's, and runs layer 2.
 
 ## 5. Tolerances and their basis
 
@@ -244,6 +290,11 @@ these fixtures (§9.5.8).
 | Per-pose arrays of a trace | the two rows above, evaluated at each pose | The comparison is with the backend's own `EvaluatePath` (§4). |
 | Accepted-pose regularity, availability, gate names | exact | Contract §6.1 and §5.4: an accepted pose is on the smooth branch and regular. |
 | Budget extent | exact counts and bounds (§4) | Contract §9.4: `budget_exhausted` retains partial geometry. The counting rules are stated in contract §11.1. |
+| Band sum: statuses, layer-1 `K` | exact | Singular iff the pixel contains `s` or `−s`; band membership is `delta_lo ≤ D < delta_hi` on the fixture's own `D` (contract §4.1, §4.2). |
+| Band sum: value, `K_eff` (layer 1) | `1e-10` relative | The same sum over bit-identical events: summation order and the rounding of `arccos`, `atan2`, `exp`. LI's scatter and gather agree to `1e-12` (`3e-12` for `K_eff` near one); the spec-only reference implementation (`tests/test_band_sum_spec_reference.py`, scipy quadrature for `I` and the closed form for `Q`) agrees with every exported value to `8e-14`. |
+| Band sum: `K_rho_pos` (layer 1) | per pixel `allowance.K_rho_pos_subnormal` | Contract §4.5 requires gradual underflow; a band event whose `c_i` is subnormal in LI is the only one a flush-to-zero backend would count differently (up to 12 per pixel on the Parry cell). |
+| Band sum, layer 2 | per pixel `allowance.*_layer2` | Contract §7.2: the lattice points within `edge_epsilon_rad = 1e-9` of a band end, `gate_epsilon = 1e-9` of a validity gate, or with `0 < w ≤ weight_epsilon = 1e-9`, and the most they can move each quantity. On the exported cells every count is 0, so layer 2 is as tight as layer 1. |
+| Rank-0 point mass | `1e-10` relative (lattice mean); `5 σ_LI` relative (Haar stream) | Contract §5: the lattice mean is deterministic; LI's Haar stream cannot be reproduced by another backend. |
 
 These are the tolerances under which LI's own read-back passes (`--verify`).
 The first cross-backend run is the first evidence about them on the Lumice
@@ -362,6 +413,31 @@ Not covered: a deterministic `linear_solve_failure` (contract §11 C09, open)
 and the `D3h` prism of C19. A short loop on a pyramid is the matrix's
 `13-15-26-28__critical` (0.808).
 
+### 6.2 Band-sum cells (module B)
+
+The sun is the matrix's (altitude 15°, azimuth 0), `n = 1.31`. Pixel tables
+come from three views: a Lumice linear lens (41 × 41, 60° field, elevation
+15°, the sun at pixel (20, 20), about 1.5° per pixel), a Lambert view about
+the sun (65 × 65, 30° field radius, about 0.93° per pixel, the sun at the
+centre of (32, 32)) and one about the antisun (65 × 65, 60°, about 1.8°); the
+rank-0 cells use a small Lambert view about the sun (9 × 9, 5°, the sun at
+(4, 4)). Each cell's pixels were picked from a scan of its view. Every
+pixel is labelled with its table `(row, column)` or `(y, x)`.
+
+| Cell | Path, crystal, `N` | Density, view | Covers | Observed (LI, this rev) |
+|---|---|---|---|---|
+| `3-5__band_sum_random` | 3-5, canonical column, `2e4` | random, linear | no internal reflection | sun pixel singular; two empty bands (inside the halo); lit `K` 112–384, `K_eff/K` 0.88–1.00 |
+| `3-5__band_sum_plate` | same | plate 1°, Lambert (sun) | a narrow zenith family | the single path's parhelion (one side only), value 108 at `K_eff` 21.5; tails to `9e-88`; the mirror side has `K = 258`, `K_rho_pos = 0`; subnormal allowances up to 6 |
+| `3-5__band_sum_parry` | same | Parry 1° / 1°, linear | the roll-locked family (reads `e1`, `e2`, `e3`) | upper Parry arc 0.017–1.6 at `K_eff` 2.4–4.7; tails to `8e-238` with `K_eff = 0` (the squares underflow); subnormal allowances up to 12 |
+| `3-5-6-7__band_sum_random` | 3-5-6-7, canonical column, `5e4` | random, Lambert (antisun) | two internal reflections (Fresnel `R`) | the antisolar pixel singular (`δ = π`); lit `K` 12–103; a dark pixel beyond the largest deviation |
+| `13-15-26-28__band_sum_random` | the matrix's asymmetric pyramid, `5e4` | random, Lambert (antisun) | pyramid faces | lit ring (`D` 121–149°) `K` 44–107; dark on both sides |
+| `3-6__band_sum_rank0` | 3-6, canonical column, `2e4` | random, Lambert (sun, small) | a rank-0 point mass, deterministic | `m = 0.118166` (lattice mean; LI's Haar check `0.11845 ± 0.00030`), on pixel (4, 4) only |
+| `3-6__band_sum_rank0_plate` | same | plate 1° | a rank-0 point mass, statistical | `m = 0.157 ± 0.011` (Haar stream, `4e6` poses) |
+
+The LI side of the Lambert cells is computed by the same two forms of the sum
+as the linear ones: the camera enters LI's estimator only through a pixel's
+directions (contract §10).
+
 ## 7. Update flow
 
 1. LI changes behaviour (a solver, a convention, a default) and commits.
@@ -386,5 +462,9 @@ this page and of `parity_export.SCHEMA_VERSION` in the same LI commit.
   tests. From the diagnostics the fixtures carry only `J_perp`, the singular
   values and the branch margins (§3.1, §3.2).
 - The sampler itself, `check_band_coverage`, and densification behaviour
-  (§9.5.7).
-- Any symmetry reduction. `symmetry_semantics` is `none` throughout.
+  (§9.5.7). A band-sum backend's sampler is exercised only through layer 2's
+  result (§4).
+- Any symmetry reduction. `symmetry_semantics` is `none` throughout; a class
+  (an L2 row) is the caller's sum of its members (contract §1).
+- Band sums over several wavelengths, divergent light, and a deterministic
+  rank-0 point mass under a non-random density (contract §1, §5).

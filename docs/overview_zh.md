@@ -252,6 +252,12 @@ $\le 10^{-11}$；单点 C++ $193\,\mathrm{ns}$ vs JAX $104\,\mu\mathrm{s}$。功
 输出认证，[analytic-parity-fixtures_zh.md](analytic-parity-fixtures_zh.md) 带上逐点
 `J_perp`、余量以及这些检查所用的边缘情形。上面第 2 点（诊断字段两步走）据此被取代。
 
+波次 2 的模块 B（单光路 S² 仓库与带求和）的后端无关规格是
+[band-sum-contract.md](band-sum-contract.md)（任务 `band-sum-module-spec`）：v1 为一条具体光路、单一折射率、
+无对称搬运（L2 行由调用方对成员求和），像素以方向表给出（任意投影，含 Analyze 的 Lambert 视图），五个姿态密度族，
+秩 0 光路按点质量处理。其 parity fixture 见 [analytic-parity-fixtures_zh.md](analytic-parity-fixtures_zh.md) §3.4 与
+§6.2。LI 对 B 只做 parity，不切换。
+
 待后续核实（本 chore 不做，只标记）：Lumice 的 Analyze 工作区设计里「太阳方向球
 上的水平集 = fiber」的一一对应，在锥晶与含内反射光路上是否成立，由 LI 核对
 （来源：Lumice `doc/raypath-analysis.md` §5.1.8，已标为 assistant 推断）。

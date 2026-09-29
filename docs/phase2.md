@@ -750,6 +750,12 @@ strip at $N = 10^8$: `30.8 s` on four Mac workers (`169 s` before the
 scatter form of section 8) against Phase I's `34.7 min` on 30 `home-wsl`
 workers (appendix).
 
+**Backend contract.** The estimator as a specification another backend
+implements (module B of the shared library, wave 2: inputs, band, pose,
+value, diagnostics, rank-0 point masses, conformance and the absolute scale)
+is [band-sum-contract.md](band-sum-contract.md). This section stays the
+design narrative; the formulas are not repeated there as a second authority.
+
 ## 6. One precomputation, three consumers
 
 Phase I also precomputed. Until 2026-09-25 its `prescan.PrescanTable` drew

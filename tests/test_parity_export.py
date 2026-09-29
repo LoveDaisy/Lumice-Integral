@@ -259,7 +259,8 @@ def test_full_matrix_export_is_byte_deterministic_and_reads_back(tmp_path: Path)
     assert all(not check.failures for check in checks), [(check.fixture, check.failures) for check in checks if check.failures]
 
 
-# slow: two full exports (matrix and the wave 2 edge cells, 82 fixtures) plus a read-back, 40 s with a warm JAX cache on a loaded M2 Max
+# slow: two full exports (matrix, wave 2 edge cells and band-sum cells, 89 fixtures) plus a read-back; 40 s for the 82 before
+# the band-sum cells with a warm JAX cache on a loaded M2 Max
 @pytest.mark.slow
 def test_export_with_edge_cells_is_byte_deterministic_and_reads_back(tmp_path: Path) -> None:
     first, second = tmp_path / "first", tmp_path / "second"

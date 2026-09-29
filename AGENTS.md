@@ -132,7 +132,8 @@ uv run python scripts/render_ch06_strip.py --rows 300:302 --columns 126:127 --ou
   --pose-density-family parry --pose-density-zenith-std-deg 1 --pose-density-roll-std-deg 1
 # LI -> Lumice analytic parity fixtures (docs/analytic-parity-fixtures.md): EvaluatePath / TraceFiber / seed search
 # over the path x point-category matrix plus the wave 2 edge cells (per-point J_perp and margins; contract section
-# 11.1 says which section 11 row each certifies), byte-deterministic per rev; --verify reads all 82 back (~1 min, M2 Max)
+# 11.1 says which section 11 row each certifies) and the module B band-sum cells (docs/band-sum-contract.md, two
+# layers), byte-deterministic per rev; --verify reads all 89 back (export 50 s + read-back 2.5 min at load 20-30, M2 Max)
 uv run python scripts/export_analytic_parity.py --output-dir artifacts/analytic-parity --verify
 # Linux/NVIDIA environment
 uv sync --extra cuda13 --dev
@@ -205,6 +206,7 @@ The design is `docs/overview.md` (entry), `docs/phase1.md` and `docs/phase2.md`
 │   ├── overview.md        # Entry: direct integration vs Monte Carlo, phases, plan (+ _zh)
 │   ├── phase1.md          # Phase I design, pipeline, key turns; measured record (+ _zh)
 │   ├── phase2.md          # Phase II design: S^2 integral, band sum, contours, event store (+ _zh)
+│   ├── band-sum-contract.md  # Module B: the band sum as a backend-independent spec (wave 2)
 │   ├── roadmap.md         # Status, near-term queue, writing coupling, decisions log
 │   ├── conventions.md     # Every coordinate / sign / symbol convention and its check
 │   └── decisions/         # Accepted architecture decisions

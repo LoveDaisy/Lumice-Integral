@@ -487,7 +487,8 @@ with the zoom at fixed $K_{\mathrm{eff}}$, [phase2.md](phase2.md) §7).
   a linear one.
 - **The spec-only reference implementation**
   (`tests/test_band_sum_spec_reference.py`) was written from this document
-  alone and recomputes the layer-1 fixtures within their tolerances. It shows
+  alone and recomputes the layer-1 fixtures within their tolerances (every
+  value and `K_eff` within `8e-14` relative of LI's, 2026-09-29). It shows
   that the text is enough to encode the estimator. It does not show that
   Lumice will read the text the same way: it shares its author's reading, and
   its input events are LI's. **A disagreement found by Lumice's first
