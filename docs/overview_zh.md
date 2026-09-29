@@ -258,9 +258,19 @@ $\le 10^{-11}$；单点 C++ $193\,\mathrm{ns}$ vs JAX $104\,\mu\mathrm{s}$。功
 秩 0 光路按点质量处理。其 parity fixture 见 [analytic-parity-fixtures_zh.md](analytic-parity-fixtures_zh.md) §3.4 与
 §6.2。LI 对 B 只做 parity，不切换。
 
-待后续核实（本 chore 不做，只标记）：Lumice 的 Analyze 工作区设计里「太阳方向球
-上的水平集 = fiber」的一一对应，在锥晶与含内反射光路上是否成立，由 LI 核对
-（来源：Lumice `doc/raypath-analysis.md` §5.1.8，已标为 assistant 推断）。
+已核实（2026-09-29，D4）：Lumice 的 Analyze 工作区设计里「太阳方向球上的水平集 = fiber」
+的一一对应，在棱柱、含内反射棱柱与锥晶上成立，由两条互不共享实现的链路核验。LI：scrum
+`analytic-lib-wave2-spec` 探索 46.4（`degenerate-path-family-coverage`，H5），LI PR #43（`fa8dadd`）。
+Lumice：scrum `raypath-subcommand` 探索 640.3（`level-set-fiber-verification`，本仓
+`Lumice raypath` 加 analytic 核，未调用 LI），在 `3-5`、`3-5-6-7` 与锥晶 `13-15-26-28` 上
+$|R u + s| \le 3\times10^{-15}$、$|\mathrm{out} - T| \le 4.5\times10^{-12}$，扭转角唯一；
+Lumice PR #445（`e129d76c`），`doc/raypath-analysis.md` §5.1.8。两条限定保留：(1) 水平集属于
+$U_P$，纤维还需通过有限晶体的入射门，故存在有等值线无纤维的情形（锥晶 `13-15-26-28` 在
+$\delta \in [98^\circ, 120.3^\circ)$），`contour_quadrature` 现以 `gated_out` 标记（46.11）；
+(2) 退化的是「纤维 $\cap$ 姿态族」而非水平集本身：片晶族与纬线圈水平集重合的光路（如
+`1-4-5-2` / `3-6-4-8`，机械判据 `focusing.family_pinned`）。柱晶 / Parry / Lowitz 族与纤维
+的交，Lumice 侧只在 `3-5` 上验过（位姿空间的离散点）；LI 46.9 发现 Parry 族对折叠矩阵为
+`S_x` 的光路（如 `1-6-2`）会整族坍缩。
 
 ## 6. 验证策略
 

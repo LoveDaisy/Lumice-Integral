@@ -853,3 +853,10 @@ Moved to [overview.md](overview.md) §3.
   it escapes only on the default 20000 points (the neck) and partitions on
   50000, where it is compared one to one: at 70° two open arcs `gated_out`
   against 0 fibers, at 100° / 130° two live open arcs against 2 fiber arcs.
+- **2026-09-29**: D4 ("level set on the sun-direction sphere = fiber") is
+  verified by two chains that share no implementation (LI explore 46.4 H5,
+  PR #43; Lumice explore 640.3, PR #445) on the prism, a prism with internal
+  reflections and the pyramid, and is written back to
+  [overview.md](overview.md) §5.3 (task `d4-verified-docs`). Kept there: a
+  level set can exist without a fiber (finite-crystal gate, `gated_out`), and
+  what degenerates is fiber $\cap$ pose family, not the level set.
