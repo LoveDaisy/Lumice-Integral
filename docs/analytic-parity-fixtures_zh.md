@@ -295,7 +295,7 @@ target 上的 `seed_search`（`N = 1e5`、band `0.2°`、聚类半径 `0.3` rad�
 | `3-5__short_loop` | C05 C06 C14 | 3-5 最小偏向角上方 0.01°：环长约四个初始步长，按步长的闭合判据必须在第一圈闭合。环长短于闭合最小弧长 `2 × initial_step` 时按设计会走两圈（契约 §6.4：0.001° 处的环用 `initial_step 0.01` 量得 0.0523，默认 0.04 量得 0.1046）。`J_perp` 在这里最小。变体 `initial_step_0.03`、`initial_step_0.08` 与 `controller_thresholds`（`minimum_step 2e-5`、`maximum_step 0.10`、`shrink 0.4`、`growth 1.15`、`maximum_retries 10`）。 | 闭合，0.1652（55 个 pose；三个变体下 0.1653 / 0.1652 / 0.1653）。`J_perp` 最小 0.00405。 |
 | `3-5__strip_short_loop_r100_c126` | C06 C15 | ch06 像素 (100, 126)：短于 π 的环，已退役的绝对闭合闸会走两圈。 | 闭合，1.6452；种子搜索 pool 553，3 簇，1 个闭合分量。 |
 | `3-5__caustic_loop_r49_c0` | C06 C15 | ch06 像素 (49, 0)：焦散边缘 0.19 的环，它的多余种子曾经止于虚假事件。 | 闭合，0.1898；pool 320，1 簇。 |
-| `3-5__boundary_hugging_r700_c150`、`__r780_c150` | C06 C08 C16 | 贴着出射 TIR 边界走的环（最小余量 0.0142 / 0.0062），在按速率的事件减速（契约 §6.3）之前会耗尽步数预算。 | 闭合，5.4085 / 5.6359；pool 185 / 175，13 / 15 簇，其余候选全部折叠，`complete`。 |
+| `3-5__boundary_hugging_r700_c150`、`__r780_c150` | C06 C08 C16 | 贴着出射 TIR 边界走的环（最小余量 0.0142 / 0.0062），在按速率的事件减速（契约 §6.3）之前会耗尽步数预算。 | 闭合，5.4085 / 5.6359；pool 185 / 175，13 / 13 簇，其余候选全部折叠，`complete`。 |
 | `1-3__two_arcs_60deg` | C06 C08 C17 C18 | 路径 `1-3` 在 δ = 60°：两个不同分量，各是一条弧，一端被出射 TIR 截断，另一端是入射光离开面 1。分量 0 上有 `initial_step_0.03` 与 `initial_step_0.08` 两个变体。 | `path_infeasible` 0.1397 + `tir_boundary` 0.4749，以及 `tir_boundary` 0.3820 + `path_infeasible` 0.2325；种子搜索 2 条弧（0.6146、0.6145），折叠 1；TIR 端（`d = 2.4e-8`）`J_perp` 2581。 |
 | `3-5__rank_loss_extremum` | C07 | 种子取 `D_P` 的内部极小点（21.84°）本身，fiber 在这里退化成一个点。 | 两个方向都是 `rank_loss`，没有 pose；种子处 `σ₂ = 1.1e-16`，`J_perp = 4.2e-17`。 |
 | `3-5__limits` | C09 C11 | 矩阵的 3-5 随机种子，在让 trace 提前结束的选项下：变体 `step_budget`（`maximum_accepted_steps 5`）、`arclength_budget`（`maximum_arclength 0.3`）、`evaluation_budget`（`maximum_evaluations 15`）、`corrector_failure`（`maximum_advance 0.01`、`maximum_retries 0`）、`step_underflow`（`initial_step 0.04`、`minimum_step 0.03`、`maximum_step 0.04`、`maximum_advance 0.01`）。它的默认 `trace_fiber` 就是各预算变体的 `reference_curve`。 | 每个方向：6 个 pose（0.2000）；8 个 pose（0.2800）；3 个 pose（0.0800）；1 个 pose `corrector_failure`；1 个 pose `step_underflow`。 |
@@ -360,6 +360,12 @@ Lambert 格的 LI 侧与线性格走同样两种求和形式：相机只经像�
 5. Lumice 改 C++ 直到变绿，不改 fixture；对容差或语义有异议则回到第 1 步。
 
 格式变更（字段、文件名、比较方法）必须在同一个 LI commit 里同时改本页与 `parity_export.SCHEMA_VERSION`。
+
+改变了 fixture 数值的行为变更：
+
+| 日期、任务 | 变更 | 数值变化的 fixture |
+|---|---|---|
+| 2026-09-29，`discovery-cluster-min-index` | 簇心取最小未分配池下标（契约 §9.5.4 第 1 条）；参考实现原先取 Python `set` 的迭代首元，set 的表收缩后二者不同。 | 仅 `3-5__boundary_hugging_r780_c150__seed_search`：`raw_cluster_count` 15 → 13，`admissible_count` 15 → 13，`dedup_merged` 14 → 12；唯一的闭合分量不变。其余 92 个 fixture 只有 `provenance` 变化。 |
 
 ## 8. 不在这些 fixture 里的内容
 

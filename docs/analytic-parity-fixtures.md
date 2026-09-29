@@ -404,7 +404,7 @@ points `evaluate_path__point`.
 | `3-5__short_loop` | C05 C06 C14 | 0.01° above the 3-5 minimum deviation: the loop is about four initial steps long. The step-aware closure must close it on its first traversal. A loop shorter than the `2 × initial_step` closure extent is traversed twice by design (contract §6.4: at 0.001° the loop is 0.0523 with `initial_step 0.01` and 0.1046 with the default 0.04). `J_perp` is smallest here. Variants `initial_step_0.03`, `initial_step_0.08` and `controller_thresholds` (`minimum_step 2e-5`, `maximum_step 0.10`, `shrink 0.4`, `growth 1.15`, `maximum_retries 10`). | closed, 0.1652 (55 poses; 0.1653 / 0.1652 / 0.1653 under the variants). `J_perp` min 0.00405. |
 | `3-5__strip_short_loop_r100_c126` | C06 C15 | ch06 pixel (100, 126): a loop shorter than π that the retired absolute closure gate traversed twice. | closed, 1.6452; seed search pool 553, 3 clusters, 1 closed. |
 | `3-5__caustic_loop_r49_c0` | C06 C15 | ch06 pixel (49, 0): a 0.19 loop at the caustic edge whose extra seeds used to end on a spurious event. | closed, 0.1898; pool 320, 1 cluster. |
-| `3-5__boundary_hugging_r700_c150`, `__r780_c150` | C06 C08 C16 | Loops running along the exit TIR boundary (smallest margin 0.0142 / 0.0062). They exhausted the step budget before the rate-based event slowdown (contract §6.3). | closed, 5.4085 / 5.6359; pool 185 / 175, 13 / 15 clusters, every other candidate folded, `complete`. |
+| `3-5__boundary_hugging_r700_c150`, `__r780_c150` | C06 C08 C16 | Loops running along the exit TIR boundary (smallest margin 0.0142 / 0.0062). They exhausted the step budget before the rate-based event slowdown (contract §6.3). | closed, 5.4085 / 5.6359; pool 185 / 175, 13 / 13 clusters, every other candidate folded, `complete`. |
 | `1-3__two_arcs_60deg` | C06 C08 C17 C18 | Path `1-3` at δ = 60°: two distinct components, each an arc cut by exit TIR at one end and by the entry ray leaving face 1 at the other. Variants `initial_step_0.03` and `initial_step_0.08` on component 0. | `path_infeasible` 0.1397 + `tir_boundary` 0.4749, and `tir_boundary` 0.3820 + `path_infeasible` 0.2325. Seed search: 2 arcs (0.6146, 0.6145), 1 fold. `J_perp` 2581 at the TIR end (`d = 2.4e-8`). |
 | `3-5__rank_loss_extremum` | C07 | The seed is the interior minimum of `D_P` (21.84°), where the fiber degenerates to a point. | Both orientations `rank_loss` with no pose. At the seed `σ₂ = 1.1e-16`, `J_perp = 4.2e-17`. |
 | `3-5__limits` | C09 C11 | The matrix's 3-5 random seed under options that end the trace early: variants `step_budget` (`maximum_accepted_steps 5`), `arclength_budget` (`maximum_arclength 0.3`), `evaluation_budget` (`maximum_evaluations 15`), `corrector_failure` (`maximum_advance 0.01`, `maximum_retries 0`) and `step_underflow` (`initial_step 0.04`, `minimum_step 0.03`, `maximum_step 0.04`, `maximum_advance 0.01`). Its default `trace_fiber` is the budgets' `reference_curve`. | Per orientation: 6 poses (0.2000); 8 poses (0.2800); 3 poses (0.0800); 1 pose `corrector_failure`; 1 pose `step_underflow`. |
@@ -501,6 +501,12 @@ category matrix (§6).
 
 A change to this format, meaning fields, file names or recipes, is a change of
 this page and of `parity_export.SCHEMA_VERSION` in the same LI commit.
+
+Behaviour changes that moved fixture values:
+
+| Date, task | Change | Fixtures that moved |
+|---|---|---|
+| 2026-09-29, `discovery-cluster-min-index` | Cluster centres are the lowest unassigned pool index (contract §9.5.4 step 1); the reference used to take a Python `set`'s first element, which differs once the set's table shrinks. | Only `3-5__boundary_hugging_r780_c150__seed_search`: `raw_cluster_count` 15 → 13, `admissible_count` 15 → 13, `dedup_merged` 14 → 12; the one closed component is unchanged. The other 92 fixtures differ only in `provenance`. |
 
 ## 8. Not in these fixtures
 

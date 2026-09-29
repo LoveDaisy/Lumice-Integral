@@ -823,3 +823,11 @@ Moved to [overview.md](overview.md) §3.
   `FiberResult` fields, all stable, and a function-by-function C++ port should
   not be held to the first implementation's internal process. Full statement:
   [overview.md](overview.md) §5.3 "Wave 2 certification standard".
+- **2026-09-29**: discovery's cluster centre is the lowest unassigned pool
+  index, as contract §9.5.4 always said (task `discovery-cluster-min-index`).
+  The reference took a Python `set`'s first element, which is not its minimum
+  once a bulk removal shrinks the set's table. Lumice task 640.1 found it
+  (`3-5-6-7`, 1145-member pool: 6 clusters against the contract's 7; both
+  now 7 / 7 / 5). One parity fixture moved (`3-5__boundary_hugging_r780_c150`
+  seed search, 15 → 13 clusters, same component; list in
+  [analytic-parity-fixtures.md](analytic-parity-fixtures.md) §7).
