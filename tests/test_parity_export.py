@@ -2,7 +2,9 @@
 
 The format (bit-exact float round trip, crystal blocks, field shapes), one ``3-5`` cell exported on a small
 store and read back, tampered fixtures that the read-back must reject, and the full matrix exported twice by
-two independent interpreters, byte for byte, and read back.
+two independent interpreters, byte for byte, and read back.  The module B ``band_sum`` fixtures
+(``docs/band-sum-contract.md``): pixel tables, singular pixels, both layers of the read-back and the red
+states, and their byte determinism.
 """
 
 from __future__ import annotations
@@ -237,7 +239,7 @@ def test_full_matrix_export_is_byte_deterministic_and_reads_back(tmp_path: Path)
     _export(second, MATRIX_CELLS)
     names = _assert_byte_identical(first, second)
     manifest = pe.read_json(first / pe.MANIFEST)
-    assert "edge_cells" not in manifest  # a matrix-only export keeps the v0 manifest
+    assert "edge_cells" not in manifest and "band_sum_cells" not in manifest  # a matrix-only export keeps the v0 manifest
     cells = {entry["name"]: entry for entry in manifest["cells"]}
     assert len(cells) == 9
     assert [item["fixture"] for item in cells["3-5-6-7__critical"]["skipped"]] == ["all"]
@@ -283,3 +285,130 @@ def test_export_with_edge_cells_is_byte_deterministic_and_reads_back(tmp_path: P
     checks = pe.verify_directory(first)
     assert len(checks) == len(names) - 1
     assert all(not check.failures for check in checks), [(check.fixture, check.failures) for check in checks if check.failures]
+
+
+# ------------------------------------------------------------------ band sum (module B)
+LINEAR = {"kind": "linear", "render": {"width": 41, "height": 41, "fov_deg": 60.0, "view": {"azimuth": 0.0, "elevation": 15.0}}}
+SUN_LAMBERT = {"kind": "lambert_azimuthal_equal_area", "centre_sky": list(SUN), "field_radius_deg": 30.0, "size": 65}
+BAND_CELLS = [
+    pe.BandSumCell("random", SCENE_3_5, {"family": "random"}, LINEAR, ((20, 20), (20, 12), (5, 20), (3, 33)), SMALL_N, "fast-tier smoke"),
+    pe.BandSumCell(
+        "plate", SCENE_3_5, {"family": "plate", "zenith_std_deg": 1.0}, SUN_LAMBERT, ((32, 32), (31, 8), (29, 7), (32, 57)), SMALL_N, "fast-tier smoke"
+    ),
+    pe.BandSumCell("rank0", pe.Scene(PRISM, (3, 6), CANONICAL_REFRACTIVE_INDEX, SUN), {"family": "random"}, LINEAR, ((20, 20), (20, 21)), SMALL_N, "smoke"),
+]
+
+
+@pytest.fixture(scope="module")
+def band_fixtures(tmp_path_factory) -> tuple[Path, dict]:
+    directory = tmp_path_factory.mktemp("parity-band")
+    return directory, pe.export_matrix([], directory, band_sum_cells=BAND_CELLS)
+
+
+def test_pixel_containment_is_the_closed_spherical_quadrilateral_on_the_corners_side() -> None:
+    corners = np.array([[1.0, -0.1, -0.1], [1.0, 0.1, -0.1], [1.0, 0.1, 0.1], [1.0, -0.1, 0.1]])
+    corners /= np.linalg.norm(corners, axis=1, keepdims=True)
+    assert pe.pixel_contains(corners, np.array([1.0, 0.0, 0.0])) and pe.pixel_contains(corners[::-1], np.array([1.0, 0.0, 0.0]))
+    assert not pe.pixel_contains(corners, np.array([-1.0, 0.0, 0.0]))  # the antipode passes the sign test alone
+    assert not pe.pixel_contains(corners, np.array([1.0, 0.2, 0.0]) / np.hypot(1.0, 0.2))
+    assert pe.pixel_contains(corners, corners[0])  # closed: a corner belongs to the pixel
+
+
+def test_linear_pixel_table_is_the_cameras_directions_in_cyclic_order() -> None:
+    from lumice_integral.band_sum import pixel_band
+    from lumice_integral.path_class import sun_pixel
+
+    table = pe.linear_pixel_table(LINEAR["render"], [(20, 20), (5, 20)])
+    for label, centre, corners in zip(table["labels"], table["centre"], table["corners"]):
+        band = pixel_band(*label, np.asarray(SUN), LINEAR["render"])
+        assert np.array_equal(band[0], centre)
+        edges = [np.linalg.norm(corners[k] - corners[(k + 1) % 4]) for k in range(4)]
+        assert max(edges) < 1.2 * min(edges)  # consecutive corners are neighbours, not diagonals (sqrt 2 longer)
+    s = SCENE_3_5.incident_direction
+    assert pe.pixel_contains(table["corners"][0], s) and tuple(table["labels"][0]) == sun_pixel(LINEAR["render"], s)
+
+
+def test_lambert_pixels_are_equal_area_and_tile_the_cap() -> None:
+    """Every pixel's solid angle is 1/k^2, and the pixels inside the disk add up to the cap's area."""
+    size, radius = 33, 20.0
+    view = pe.lambert_view(SUN, radius, size)
+    inside = [(y, x) for y in range(size) for x in range(size) if np.hypot(x + 0.5 - size / 2, y + 0.5 - size / 2) <= 0.492 * size - 1.0]
+    table = pe.lambert_pixel_table(SUN, radius, size, inside)
+    polygon = [
+        abs(float(np.linalg.det(np.stack([c[0], c[1], c[2]])))) + abs(float(np.linalg.det(np.stack([c[0], c[2], c[3]])))) for c in table["corners"]
+    ]
+    # a unit-sphere quadrilateral's area ~ the flat quad spanned by its corners (sub-pixel curvature ~1e-4)
+    assert np.allclose(0.5 * np.array(polygon), table["solid_angle"], rtol=1e-3)
+    assert np.isclose(table["solid_angle"][0], 1.0 / view["k"] ** 2)
+    assert np.allclose(np.linalg.norm(table["centre"], axis=1), 1.0)
+    assert np.isclose(-table["centre"][inside.index((16, 16))] @ np.asarray(SUN), 1.0)  # the view is centred on the sky point
+
+
+def test_band_sum_fixtures_cover_the_statuses_and_read_back(band_fixtures) -> None:
+    directory, manifest = band_fixtures
+    assert [entry["name"] for entry in manifest["band_sum_cells"]] == [cell.name for cell in BAND_CELLS]
+    random = pe.read_json(directory / "3-5__band_sum_random.json")
+    assert random["fixture_kind"] == "band_sum" and random["symmetry_semantics"] == "none" and random["cell"]["rank"] == 2
+    statuses = [p["status"] for p in random["expected"]["pixels"]]
+    assert statuses[0] == "singular" and set(statuses[1:]) == {"ok"}
+    assert random["expected"]["pixels"][1]["K"] == 0 and random["expected"]["pixels"][2]["K"] > 10
+    plate = pe.read_json(directory / "3-5__band_sum_plate.json")
+    mirror = plate["expected"]["pixels"][3]
+    assert mirror["K"] > 0 and mirror["K_rho_pos"] == 0 and mirror["value"] == 0.0  # a narrow family: rho = 0 on every band event
+    rank0 = pe.read_json(directory / "3-6__band_sum_rank0.json")
+    assert [p["status"] for p in rank0["expected"]["pixels"]] == ["point_mass", "ok"] and rank0["cell"]["rank"] == 0
+    for fixture in (random, plate):
+        for tolerance in fixture["tolerance"].values():
+            assert tolerance["basis"]
+    checks = pe.verify_directory(directory)
+    assert len(checks) == len(BAND_CELLS) and all(not check.failures for check in checks), [check.failures for check in checks]
+
+
+def _move_one_band_event(fixture: dict) -> None:
+    """Shift a band-centre event of the brightest pixel far below every band (not a boundary event)."""
+    pixels = [p for p in fixture["expected"]["pixels"] if p["status"] == "ok"]
+    brightest = max(pixels, key=lambda p: p["K"])
+    deviation = np.asarray(fixture["input"]["events"]["deviation"])
+    centre = 0.5 * (brightest["delta_lo"] + brightest["delta_hi"])
+    index = int(np.argmin(np.abs(deviation - centre)))
+    assert min(abs(deviation[index] - brightest["delta_lo"]), abs(deviation[index] - brightest["delta_hi"])) > 1e-4
+    deviation[index] = 1e-3
+    fixture["input"]["events"]["deviation"] = deviation
+    order = np.argsort(deviation, kind="stable")
+    for key in ("u", "phi", "deviation", "w"):
+        fixture["input"]["events"][key] = np.asarray(fixture["input"]["events"][key])[order].tolist()
+
+
+@pytest.mark.parametrize(
+    "name, edit, message",
+    [
+        ("3-5__band_sum_random.json", _move_one_band_event, "layer 1 scatter: pixel"),
+        ("3-5__band_sum_random.json", _move_one_band_event, "not the regenerated sample"),
+        ("3-5__band_sum_plate.json", lambda f: f["input"].__setitem__("refractive_index", 1.32), "layer 2: pixel"),
+        (
+            "3-5__band_sum_plate.json",
+            lambda f: f["expected"]["pixels"][1].__setitem__("value", f["expected"]["pixels"][1]["value"] * (1.0 + 1e-8)),
+            "value",
+        ),
+        ("3-5__band_sum_plate.json", lambda f: f["expected"]["pixels"][0].__setitem__("status", "ok"), "status"),
+        ("3-5__band_sum_plate.json", lambda f: f["input"]["pose_density"].__setitem__("zenith_std_deg", 1.01), "layer 1 gather: pixel"),
+        ("3-6__band_sum_rank0.json", lambda f: f["input"]["events"]["w"].pop(), "layer 1 point mass"),
+    ],
+)
+def test_the_band_sum_read_back_rejects_a_tampered_fixture(band_fixtures, name, edit, message) -> None:
+    directory, _ = band_fixtures
+    check = _tampered(directory, name, edit)
+    assert any(message in failure for failure in check.failures), check.failures
+
+
+# Two exports of three band-sum cells in separate interpreters: about 10 s.  The full set (with the 4e6-sample
+# rank-0 plate cell) is exported by the slow test above.
+def test_band_sum_export_is_byte_deterministic(tmp_path: Path) -> None:
+    cells = ["3-5__band_sum_plate", "3-5__band_sum_parry", "3-5-6-7__band_sum_random"]
+    first, second = tmp_path / "first", tmp_path / "second"
+    _export(first, cells)
+    _export(second, cells)
+    names = _assert_byte_identical(first, second)
+    assert len(names) == len(cells) + 1
+    manifest = pe.read_json(first / pe.MANIFEST)
+    assert manifest["cells"] == [] and "edge_cells" not in manifest and len(manifest["band_sum_cells"]) == len(cells)

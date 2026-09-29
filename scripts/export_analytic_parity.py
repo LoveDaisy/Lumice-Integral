@@ -9,11 +9,13 @@ x point category (``lumice_integral.parity_export.CATEGORIES``); the
 selection method of each category is ``parity_export.choose_point``.  The
 edge cells (``EDGE_CELLS``, wave 2) follow the matrix: one named case each,
 chosen for the contract section 11 rows it serves (``docs/phase1-math-contract.md``
-section 11.1).
+section 11.1).  The module B cells (``BAND_SUM_CELLS``, ``docs/band-sum-contract.md``) come last: one
+``band_sum`` fixture each, a path, a pose density and a small pixel table.
 
     uv run python scripts/export_analytic_parity.py --output-dir artifacts/analytic-parity --verify
     uv run python scripts/export_analytic_parity.py --output-dir /tmp/parity-smoke --cells 3-5__random --verify
     uv run python scripts/export_analytic_parity.py --output-dir /tmp/parity-edge --cells 3-5__limits --verify
+    uv run python scripts/export_analytic_parity.py --output-dir /tmp/parity-band --cells 3-5__band_sum_plate --verify
 """
 
 from __future__ import annotations
@@ -36,6 +38,7 @@ from lumice_integral.canonical_scene import (
 from lumice_integral.geometry.pyramid import pyramid_face_angle
 from lumice_integral.parity_export import (
     CATEGORIES,
+    BandSumCell,
     Cell,
     EdgeCell,
     OptionVariant,
@@ -241,6 +244,98 @@ EDGE_CELLS = (
 )
 
 
+# ------------------------------------------------------------------ band-sum cells (module B, docs/band-sum-contract.md)
+# A linear view with the sun at pixel (20, 20) (about 1.5 deg per pixel), and Lambert views (the Analyze
+# projection, docs/band-sum-contract.md section 3.3) centred on the sun and on the antisun; each cell's pixels
+# were picked from a scan of that view: lit pixels with K of tens to hundreds, a dark one, and the pixel that
+# contains s or -s (singular) or, for a rank-0 path, the sun (point mass).
+LINEAR_VIEW = {"kind": "linear", "render": {"width": 41, "height": 41, "fov_deg": 60.0, "view": {"azimuth": 0.0, "elevation": 15.0}}}
+
+
+def lambert(centre_sky, field_radius_deg: float, size: int) -> dict:
+    return {"kind": "lambert_azimuthal_equal_area", "centre_sky": [float(x) for x in centre_sky], "field_radius_deg": field_radius_deg, "size": size}
+
+
+SUN_VIEW = lambert(SUN, 30.0, 65)  # about 0.93 deg per pixel, the sun at the centre of pixel (32, 32)
+ANTISUN_VIEW = lambert([-x for x in SUN], 60.0, 65)  # about 1.8 deg per pixel, the antisun at the centre of (32, 32)
+SUN_CLOSE_VIEW = lambert(SUN, 5.0, 9)  # about 1.1 deg per pixel, the sun at the centre of pixel (4, 4)
+SCENE_3_6 = Scene(PRISM, (3, 6), CANONICAL_REFRACTIVE_INDEX, SUN)
+
+BAND_SUM_CELLS = (
+    BandSumCell(
+        "random",
+        SCENE_3_5,
+        {"family": "random"},
+        LINEAR_VIEW,
+        ((20, 20), (20, 12), (7, 20), (6, 20), (5, 20), (4, 20), (3, 33)),
+        20_000,
+        "no internal reflection, Haar-uniform poses, linear lens: the sun pixel (singular), a pixel inside the "
+        "22 deg halo (empty band) and the halo's inner edge and tail",
+    ),
+    BandSumCell(
+        "plate",
+        SCENE_3_5,
+        {"family": "plate", "zenith_std_deg": 1.0},
+        SUN_VIEW,
+        ((32, 32), (30, 8), (31, 8), (31, 6), (29, 7), (33, 8), (26, 9), (26, 10), (32, 57), (32, 20)),
+        20_000,
+        "a narrow zenith family (plate, 1 deg) on a Lambert view: the parhelion of the single path 3-5 (one side "
+        "only), its tails down to 1e-88, the mirror side where every band event has rho = 0 (K_rho_pos = 0 < K), an "
+        "empty band inside the halo, and the sun pixel",
+    ),
+    BandSumCell(
+        "parry",
+        SCENE_3_5,
+        {"family": "parry", "zenith_std_deg": 1.0, "roll_std_deg": 1.0},
+        LINEAR_VIEW,
+        ((20, 20), (0, 12), (0, 20), (0, 28), (1, 12), (1, 26), (2, 20), (5, 20), (8, 13), (9, 20)),
+        20_000,
+        "the roll-locked family (Parry, zenith and roll 1 deg): the density reads all three body-axis zenith "
+        "components (the roll atan2(-e2, e1)); the upper Parry arc, tails to 1e-238 and a dark pixel",
+    ),
+    BandSumCell(
+        "random",
+        Scene(PRISM, (3, 5, 6, 7), CANONICAL_REFRACTIVE_INDEX, SUN),
+        {"family": "random"},
+        ANTISUN_VIEW,
+        ((32, 32), (32, 14), (20, 20), (14, 26), (26, 20), (2, 32), (8, 8), (26, 26)),
+        50_000,
+        "two internal reflections weighted by Fresnel R on a Lambert view about the antisun: the antisolar pixel "
+        "(delta = pi, singular), the lit ring and a dark pixel beyond the path's largest deviation",
+    ),
+    BandSumCell(
+        "random",
+        Scene(PYRAMID, (13, 15, 26, 28), CANONICAL_REFRACTIVE_INDEX, SUN),
+        {"family": "random"},
+        ANTISUN_VIEW,
+        ((32, 32), (32, 14), (14, 20), (8, 26), (20, 20), (14, 14), (2, 2), (26, 26)),
+        50_000,
+        "pyramid faces off the prism family on the asymmetric pyramid (the matrix's crystal): the lit ring "
+        "(D 121-149 deg), a pixel on each side of it and the antisolar pixel",
+    ),
+    BandSumCell(
+        "rank0",
+        SCENE_3_6,
+        {"family": "random"},
+        SUN_CLOSE_VIEW,
+        ((4, 4), (4, 5), (3, 3), (0, 0)),
+        20_000,
+        "a rank-0 path (3-6, parallel faces): a point mass m on the pixel containing the sun, 0 elsewhere; under "
+        "the random density m is the lattice mean of w, deterministic",
+    ),
+    BandSumCell(
+        "rank0_plate",
+        SCENE_3_6,
+        {"family": "plate", "zenith_std_deg": 1.0},
+        SUN_CLOSE_VIEW,
+        ((4, 4), (4, 5)),
+        20_000,
+        "the same point mass under the plate family: m from LI's Haar stream, compared statistically",
+        rank0_sample_count=4_000_000,
+    ),
+)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--output-dir", type=Path, default=Path("artifacts/analytic-parity"))
@@ -248,16 +343,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--verify", action="store_true", help="read every fixture back and recompute it")
     args = parser.parse_args(argv)
 
-    cells, edge_cells = matrix(), list(EDGE_CELLS)
+    cells, edge_cells, band_sum_cells = matrix(), list(EDGE_CELLS), list(BAND_SUM_CELLS)
     if args.cells:
-        known = [cell.name for cell in (*cells, *edge_cells)]
+        known = [cell.name for cell in (*cells, *edge_cells, *band_sum_cells)]
         unknown = set(args.cells) - set(known)
         if unknown:
             parser.error(f"unknown cells {sorted(unknown)}; known: {known}")
         cells = [cell for cell in cells if cell.name in args.cells]
         edge_cells = [cell for cell in edge_cells if cell.name in args.cells]
-    manifest = export_matrix(cells, args.output_dir, edge_cells)
-    for entry in [*manifest["cells"], *manifest.get("edge_cells", [])]:
+        band_sum_cells = [cell for cell in band_sum_cells if cell.name in args.cells]
+    manifest = export_matrix(cells, args.output_dir, edge_cells, band_sum_cells)
+    for entry in [*manifest["cells"], *manifest.get("edge_cells", []), *manifest.get("band_sum_cells", [])]:
         skipped = "; ".join(f"{item['fixture']} skipped: {item['reason']}" for item in entry["skipped"])
         print(f"{entry['name']}: {len(entry['files'])} files" + (f" ({skipped})" if skipped else ""))
     if not args.verify:

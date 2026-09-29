@@ -50,6 +50,7 @@ from .optics import (
     normalize_faces,
     path_direction,
     path_domain,
+    path_domain_batch,
     path_id_of,
     path_problem,
     trace_path,
@@ -1499,11 +1500,14 @@ def export_edge_cell(cell: EdgeCell, output_dir: Path, provenance: Mapping[str, 
     return entry
 
 
-def export_matrix(cells: Sequence[Cell], output_dir: Path, edge_cells: Sequence[EdgeCell] = ()) -> dict[str, Any]:
-    """Export every cell (and edge cell) into ``output_dir`` and write :data:`MANIFEST`; returns the manifest.
+def export_matrix(
+    cells: Sequence[Cell], output_dir: Path, edge_cells: Sequence[EdgeCell] = (), band_sum_cells: Sequence[BandSumCell] = ()
+) -> dict[str, Any]:
+    """Export every cell (edge cell, band-sum cell) into ``output_dir`` and write :data:`MANIFEST`; returns the manifest.
 
-    The manifest lists the matrix under ``cells`` and the edge cells under ``edge_cells``; the second key is
-    absent when there are none, so a matrix-only export has the v0 manifest.
+    The manifest lists the matrix under ``cells``, the edge cells under ``edge_cells`` and the module B
+    fixtures under ``band_sum_cells``; a key is absent when it has no entry, so a matrix-only export has the
+    v0 manifest and an export without band-sum cells the wave 2 one, byte for byte.
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1517,24 +1521,553 @@ def export_matrix(cells: Sequence[Cell], output_dir: Path, edge_cells: Sequence[
     }
     if edge_cells:
         manifest["edge_cells"] = [export_edge_cell(cell, output_dir, provenance) for cell in edge_cells]
+    if band_sum_cells:
+        manifest["band_sum_cells"] = [export_band_sum_cell(cell, output_dir, provenance) for cell in band_sum_cells]
     write_json(output_dir / MANIFEST, manifest)
     return manifest
 
 
 def verify_directory(output_dir: Path) -> list[Check]:
-    """:func:`verify_fixture` of every file the manifest lists (matrix and edge cells)."""
+    """:func:`verify_fixture` of every file the manifest lists (matrix, edge and band-sum cells)."""
     manifest = read_json(Path(output_dir) / MANIFEST)
-    entries = [*manifest["cells"], *manifest.get("edge_cells", [])]
+    entries = [*manifest["cells"], *manifest.get("edge_cells", []), *manifest.get("band_sum_cells", [])]
     return [verify_fixture(Path(output_dir) / name) for cell in entries for name in cell["files"]]
 
 
+# ------------------------------------------------------------------ band sum (module B, docs/band-sum-contract.md)
+# One fixture per cell: a single concrete path, one pose density, a pixel table given as directions (any
+# projection) and the estimator's per-pixel output.  Layer 1 replays the estimator on the band events the
+# fixture carries (tight: summation order); layer 2 regenerates the sample from the section 9.5.2 lattice
+# (allowances derived per pixel from the events within float reach of a band end or a gate).
+BAND_SUM_KIND = "band_sum"
+BAND_SUM_SAMPLER = "antipodal Fibonacci lattice (docs/phase1-math-contract.md section 9.5.2), kept events w = A T > 0"
+BAND_SUM_VALUE_RTOL = 1e-10
+BAND_SUM_VALUE_BASIS = (
+    "the same sum over bit-identical events (layer 1): summation order and the rounding of rho's arccos/atan2/exp; "
+    "LI's scatter and gather forms agree to 1e-12 on values and 3e-12 on K_eff near 1 (docs/phase2.md section 8), "
+    "a narrow density amplifies d(theta) by |theta - mean| / sigma^2; 1e-10 relative leaves >= 30x room; the "
+    "density's normalisation integrals I, Q must be accurate to 1e-12 relative (docs/band-sum-contract.md section 4.3)"
+)
+BAND_SUM_EDGE_EPSILON_RAD = 1e-9
+BAND_SUM_GATE_EPSILON = 1e-9
+BAND_SUM_WEIGHT_EPSILON = 1e-9
+BAND_SUM_LAYER2_BASIS = (
+    "layer 2 (the backend regenerates the sample): an event can change sides only within float reach of a band end "
+    "(|D - delta_lo|, |D - delta_hi| <= edge_epsilon_rad), a validity gate (|smallest validity margin| <= gate_epsilon) "
+    "or the w > 0 gate (0 < w <= weight_epsilon; w -> 0 continuously at every validity gate: A ~ cos at entry and "
+    "every face the corridor projects, T_exit -> 0 at exit TIR); per pixel expected.pixels[].allowance counts those "
+    "lattice points and bounds their effect on K, K_rho_pos, the value and K_eff (docs/band-sum-contract.md section 7.2); "
+    "float64 D of the same closed-form chain differs by <= 1e-13 rad away from D = 0, pi, so 1e-9 leaves >= 1e4 room"
+)
+BAND_SUM_SUBNORMAL_BASIS = (
+    "K_rho_pos counts c_i = w_i rho_i > 0 in IEEE-754 double with gradual underflow; a band event whose c_i is "
+    "subnormal in LI (0 < c_i < 2.2250738585072014e-308) may be 0 on a backend that flushes subnormals, so each pixel "
+    "allows allowance.K_rho_pos_subnormal of them; its value contribution is below 1e-300"
+)
+RANK0_SIGMAS = 5.0
+RANK0_HAAR_CHECK_SAMPLES = 1_000_000
+
+
+def linear_pixel_table(render: Mapping[str, Any], pixels: Sequence[tuple[int, int]]) -> dict[str, Any]:
+    """Outgoing directions of linear-lens pixels: centre, four corners in cyclic order, the solid angle.
+
+    The solid angle is :func:`.path_class.pixel_solid_angle` (centre approximation ``cos^3 / scale^2``).
+    """
+    from .camera import linear_pixel_outgoing_direction
+    from .path_class import pixel_solid_angle
+
+    cyclic = ((-0.5, -0.5), (-0.5, 0.5), (0.5, 0.5), (0.5, -0.5))
+    return {
+        "projection": {"kind": "linear", "render": dict(render)},
+        "labels": [[int(r), int(c)] for r, c in pixels],
+        "centre": np.array([linear_pixel_outgoing_direction(r, c, **render) for r, c in pixels]),
+        "corners": np.array([[linear_pixel_outgoing_direction(r + dr, c + dc, **render) for dr, dc in cyclic] for r, c in pixels]),
+        "solid_angle": np.array([pixel_solid_angle(render, r, c) for r, c in pixels]),
+    }
+
+
+def lambert_view(centre_sky: Sequence[float], field_radius_deg: float, size: int) -> dict[str, Any]:
+    """A single-disk Lambert azimuthal equal-area view (Lumice ``doc/prototypes/analyze-workspace.html`` ``makeView``).
+
+    ``centre_sky`` is the sky direction at the disk centre; screen ``up`` is the zenith projected on the
+    tangent plane (``[-1, 0, 0]`` when the centre is within ``acos(0.999)`` of the zenith), ``right = centre x
+    up``; the disk of radius ``0.492 size`` pixels reaches ``field_radius_deg`` from the centre.  An example
+    expansion for the fixtures, not part of the contract (``docs/band-sum-contract.md`` section 3.3).
+    """
+    centre = np.asarray(centre_sky, dtype=np.float64)
+    centre = centre / np.linalg.norm(centre)
+    up = np.array([-1.0, 0.0, 0.0]) if abs(centre[2]) > 0.999 else _unit(np.array([0.0, 0.0, 1.0]) - centre * centre[2])
+    radius = size * 0.492
+    return {
+        "centre": centre,
+        "up": up,
+        "right": np.cross(centre, up),
+        "half": size / 2.0,
+        "k": radius / (2.0 * math.sin(min(math.radians(field_radius_deg), math.pi) / 2.0)),
+    }
+
+
+def lambert_sky_direction(view: Mapping[str, Any], x: float, y: float) -> np.ndarray:
+    """The sky direction at screen point ``(x, y)`` (``y`` down), the prototype's ``vInv`` without its disk clip."""
+    big_x, big_y = (x - view["half"]) / view["k"], (view["half"] - y) / view["k"]
+    rho = math.hypot(big_x, big_y)
+    if rho < 1e-12:
+        return np.array(view["centre"], dtype=np.float64)
+    theta = 2.0 * math.asin(min(1.0, rho / 2.0))
+    tangent = _unit(view["right"] * (big_x / rho) + view["up"] * (big_y / rho))
+    return _unit(view["centre"] * math.cos(theta) + tangent * math.sin(theta))
+
+
+def lambert_pixel_table(
+    centre_sky: Sequence[float], field_radius_deg: float, size: int, pixels: Sequence[tuple[int, int]]
+) -> dict[str, Any]:
+    """Outgoing directions ``d = -sky`` of Lambert pixels ``(y, x)`` covering ``[x, x+1) x [y, y+1)``.
+
+    Corners in cyclic order; the solid angle is exact for an equal-area map, ``1 / k^2`` per unit pixel.
+    """
+    view = lambert_view(centre_sky, field_radius_deg, size)
+    cyclic = ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
+    return {
+        "projection": {
+            "kind": "lambert_azimuthal_equal_area",
+            "centre_sky": [float(v) for v in view["centre"]],
+            "field_radius_deg": float(field_radius_deg),
+            "size": int(size),
+            "label_meaning": "(y, x): pixel [x, x + 1) x [y, y + 1), y down, up = zenith on the tangent plane, right = centre x up",
+        },
+        "labels": [[int(y), int(x)] for y, x in pixels],
+        "centre": np.array([-lambert_sky_direction(view, x + 0.5, y + 0.5) for y, x in pixels]),
+        "corners": np.array([[-lambert_sky_direction(view, x + dx, y + dy) for dx, dy in cyclic] for y, x in pixels]),
+        "solid_angle": np.full(len(pixels), 1.0 / view["k"] ** 2),
+    }
+
+
+def pixel_table_of(projection: Mapping[str, Any], pixels: Sequence[tuple[int, int]]) -> dict[str, Any]:
+    if projection["kind"] == "linear":
+        return linear_pixel_table(projection["render"], pixels)
+    if projection["kind"] == "lambert_azimuthal_equal_area":
+        return lambert_pixel_table(projection["centre_sky"], projection["field_radius_deg"], projection["size"], pixels)
+    raise ValueError(f"unknown projection {projection['kind']!r}")
+
+
+def pixel_contains(corners: np.ndarray, direction: np.ndarray) -> bool:
+    """``direction`` lies in the spherical quadrilateral of the cyclic ``corners`` (great-circle edges, closed).
+
+    Every ``det(c_k, c_{k+1}, x)`` has one sign (zero allowed) and ``x`` is on the corners' side of the sphere
+    (the sign test alone also accepts the antipode).
+    """
+    corners = np.asarray(corners, dtype=np.float64)
+    x = np.asarray(direction, dtype=np.float64)
+    signs = np.array([np.linalg.det(np.stack([corners[k], corners[(k + 1) % 4], x])) for k in range(4)])
+    return bool(corners.sum(axis=0) @ x > 0.0 and (np.all(signs >= 0.0) or np.all(signs <= 0.0)))
+
+
+def density_of(spec: Mapping[str, Any]):
+    from .pose_density import build_pose_density
+
+    return build_pose_density(spec["family"], **{key: value for key, value in spec.items() if key != "family"})
+
+
+def _density_block(spec: Mapping[str, Any]) -> dict[str, Any]:
+    """The fixture's ``pose_density``: family, resolved degree parameters, LI's normalisation integrals (informative)."""
+    from .pose_density import resolve_pose_density_parameters
+
+    density = density_of(spec)
+    block: dict[str, Any] = {"family": spec["family"], **resolve_pose_density_parameters(**dict(spec))}
+    informative = {}
+    if hasattr(density, "marginal_integral"):
+        informative["zenith_marginal_integral"] = density.marginal_integral
+    if hasattr(density, "roll_integral"):
+        informative["zenith_marginal_integral"] = density.zenith.marginal_integral
+        informative["roll_marginal_integral"] = density.roll_integral
+    if informative:
+        block["normalization_informative"] = informative
+    return block
+
+
+def _density_max(density) -> float:
+    """The largest value of ``rho_H`` (the Gaussian profiles peak at 1)."""
+    if hasattr(density, "roll_integral"):
+        return 2.0 / density.zenith.marginal_integral * 2.0 * math.pi / density.roll_integral
+    if hasattr(density, "marginal_integral"):
+        return 2.0 / density.marginal_integral
+    return 1.0
+
+
+@dataclass(frozen=True)
+class BandSumCell:
+    """A module B fixture: one concrete path, one pose density, a pixel table (``docs/band-sum-contract.md``).
+
+    ``projection`` is how LI expands the table (``linear`` with a Lumice ``render`` block, or
+    ``lambert_azimuthal_equal_area``); ``pixels`` are its ``(row, column)`` / ``(y, x)`` labels.  A rank-0
+    path's point mass is the lattice mean when ``rank0_sample_count`` is ``None`` (deterministic, the random
+    density only) and LI's Haar-stream estimate of that many samples otherwise (a statistical comparison).
+    """
+
+    label: str
+    scene: Scene
+    density: Mapping[str, Any]
+    projection: Mapping[str, Any]
+    pixels: tuple[tuple[int, int], ...]
+    n: int
+    rationale: str
+    rank0_sample_count: int | None = None
+
+    @property
+    def name(self) -> str:
+        return f"{self.scene.path_id}__band_sum_{self.label}"
+
+
+def _identity_group(faces: tuple[int, ...]):
+    from .path_class import StoreGroup, Transport
+
+    return StoreGroup((faces,), (Transport((faces,), None),))
+
+
+def _singular(table: Mapping[str, Any], scene: Scene) -> np.ndarray:
+    s = scene.incident_direction
+    return np.array([pixel_contains(quad, s) or pixel_contains(quad, -s) for quad in np.asarray(table["corners"], dtype=np.float64)])
+
+
+def _bands(table: Mapping[str, Any], scene: Scene):
+    from .band_sum import pixel_bands_from_directions
+
+    labels = np.asarray(table["labels"], dtype=np.int64).reshape(-1, 2)
+    return pixel_bands_from_directions(
+        np.asarray(table["centre"], dtype=np.float64), np.asarray(table["corners"], dtype=np.float64), scene.sun, labels[:, 0], labels[:, 1]
+    )
+
+
+def band_sum_pixels(scene: Scene, density, table: Mapping[str, Any], events, n: int, form: str) -> list[dict[str, Any]]:
+    """The rank-2 per-pixel output of ``docs/band-sum-contract.md`` section 6 on ``events`` (an :class:`.s2_store.S2Events`).
+
+    ``form`` is ``"scatter"`` (the production :func:`.band_sum.scatter_store`) or ``"gather"`` (the oracle
+    :func:`.band_sum.class_band_sum_of_band`); a singular pixel (it contains ``s`` or ``-s``) has no value.
+    """
+    from .band_sum import ScatterSums, class_band_sum_of_band, scatter_results, scatter_store
+
+    group = _identity_group(scene.faces)
+    bands = _bands(table, scene)
+    singular = _singular(table, scene)
+    regular = np.flatnonzero(~singular)
+    if form == "scatter":
+        part = bands.take(regular)
+        sums = ScatterSums.zeros(len(part))
+        scatter_store(events, group, density, part, sums)
+        results = scatter_results(part, sums, n)
+    elif form == "gather":
+        centres, corners = np.asarray(table["centre"], dtype=np.float64), np.asarray(table["corners"], dtype=np.float64)
+        from .band_sum import band_of_pixel_directions
+
+        results = [
+            class_band_sum_of_band([(events.arrays(), group)], scene.sun, density, band_of_pixel_directions(centres[i], list(corners[i]), scene.sun), n)
+            for i in regular
+        ]
+    else:
+        raise ValueError("form must be 'scatter' or 'gather'")
+    by_pixel = dict(zip(regular.tolist(), results))
+    out = []
+    for i, label in enumerate(np.asarray(table["labels"]).reshape(-1, 2).tolist()):
+        record: dict[str, Any] = {"label": label, "delta": bands.delta[i], "delta_lo": bands.lo[i], "delta_hi": bands.hi[i]}
+        if singular[i]:
+            record.update(status="singular", value=None, K=None, K_rho_pos=None, K_eff=None, total=None, square=None)
+        else:
+            r = by_pixel[i]
+            record.update(status="ok", value=r.value, K=r.K, K_rho_pos=r.K_rho_pos, K_eff=r.K_eff, total=r.total, square=r.square)
+        out.append(record)
+    return out
+
+
+def _events_of(store: S2EventStore):
+    from .s2_store import S2Events
+
+    e = store.events
+    return S2Events(*(np.asarray(a, dtype=np.float64) for a in (e.u, e.phi, e.D, e.w)))
+
+
+def _band_union(events, bands, regular: np.ndarray) -> np.ndarray:
+    """Store indices of every event in a regular pixel's band (``searchsorted``, left-closed right-open), in store order."""
+    first = np.searchsorted(events.D, bands.lo[regular])
+    stop = np.searchsorted(events.D, bands.hi[regular])
+    return np.unique(np.concatenate([np.arange(a, b) for a, b in zip(first, stop)] + [np.zeros(0, dtype=np.int64)])).astype(np.int64)
+
+
+def _lattice_fields(scene: Scene, n: int) -> dict[str, np.ndarray]:
+    """``D``, ``w`` and the smallest validity margin at every lattice point (all ``n``, kept or not)."""
+    from .s2_store import align_rotations, evaluate_fields, store_lattice
+
+    u = store_lattice(n)
+    rotations = align_rotations(u, scene.sun)
+    fields = evaluate_fields(rotations, scene.sun, scene.crystal, scene.refractive_index, [scene.faces])
+    margins = path_domain_batch(rotations, scene.faces, scene.incident_direction, scene.refractive_index, crystal=scene.crystal).margins
+    smallest = np.min(np.stack([np.asarray(margins[name], dtype=np.float64) for name in validity_margin_names(scene.faces)]), axis=0)
+    return {"D": np.asarray(fields["D"]), "w": np.asarray(fields["w"]), "phi": np.asarray(fields["phi"]), "u": u, "margin": smallest}
+
+
+def _contributions(scene: Scene, density, centre: np.ndarray, u: np.ndarray, phi: np.ndarray, d: np.ndarray, w: np.ndarray) -> np.ndarray:
+    if len(w) == 0:
+        return np.zeros(0)
+    return w * density.evaluate_batch(event_rotations(u, phi, d, scene.sun, centre))
+
+
+def _kish_range(total: float, square: float, count: int, candidates: np.ndarray, flips: int) -> float:
+    """How far Kish ``total^2 / square`` can move when the candidate contributions are added or removed."""
+    k_eff = total * total / square if square > 0.0 else 0.0
+    if flips == 0:
+        return 0.0
+    spread, squares = float(np.sum(np.abs(candidates))), float(np.sum(candidates**2))
+    high = (abs(total) + spread) ** 2 / (square - squares) if square - squares > 0.0 else math.inf
+    low = max(abs(total) - spread, 0.0) ** 2 / (square + squares) if square + squares > 0.0 else 0.0
+    return float(min(max(high - k_eff, k_eff - low), k_eff + count + flips))
+
+
+def band_sum_allowances(
+    scene: Scene, density, table: Mapping[str, Any], events, n: int, pixels: Sequence[Mapping[str, Any]]
+) -> list[dict[str, Any] | None]:
+    """Per regular pixel, the layer-2 allowances (``BAND_SUM_LAYER2_BASIS``) and the subnormal count of its band events."""
+    fields = _lattice_fields(scene, n)
+    d, w, margin = fields["D"], fields["w"], fields["margin"]
+    finite = np.isfinite(d)
+    gate = np.abs(margin) <= BAND_SUM_GATE_EPSILON
+    small = (w > 0.0) & (w <= BAND_SUM_WEIGHT_EPSILON)
+    unplaced = int(np.count_nonzero(gate & ~finite))  # at a gate, D not finite: counted against every pixel
+    centres = np.asarray(table["centre"], dtype=np.float64)
+    rho_max = _density_max(density)
+    out: list[dict[str, Any] | None] = []
+    for i, pixel in enumerate(pixels):
+        if pixel["status"] != "ok":
+            out.append(None)
+            continue
+        lo, hi = pixel["delta_lo"], pixel["delta_hi"]
+        near = finite & (d >= lo - BAND_SUM_EDGE_EPSILON_RAD) & (d <= hi + BAND_SUM_EDGE_EPSILON_RAD)
+        edge = near & (w > 0.0) & ((np.abs(d - lo) <= BAND_SUM_EDGE_EPSILON_RAD) | (np.abs(d - hi) <= BAND_SUM_EDGE_EPSILON_RAD))
+        gated = near & (gate | small)
+        candidate = edge | gated
+        kept = candidate & (w > 0.0)
+        flips = int(np.count_nonzero(candidate)) + unplaced
+        c_kept = _contributions(scene, density, centres[i], fields["u"][kept], fields["phi"][kept], d[kept], w[kept])
+        a, b = np.searchsorted(events.D, [lo, hi])
+        c_band = _contributions(scene, density, centres[i], events.u[a:b], events.phi[a:b], events.D[a:b], events.w[a:b])
+        unkept = flips - int(np.count_nonzero(kept))
+        width, delta = hi - lo, pixel["delta"]
+        scale = 2.0 * math.pi * n * width * math.sin(delta)
+        bound = float(np.sum(np.abs(c_kept))) + unkept * BAND_SUM_WEIGHT_EPSILON * rho_max
+        subnormal = int(np.count_nonzero((c_band > 0.0) & (c_band < np.finfo(np.float64).tiny)))
+        out.append(
+            {
+                "K_layer2": flips,
+                "K_rho_pos_subnormal": subnormal,
+                "K_rho_pos_layer2": flips + subnormal,
+                "value_layer2": bound / scale if scale > 0.0 else (0.0 if bound == 0.0 else math.inf),
+                "K_eff_layer2": _kish_range(pixel["total"], pixel["square"], pixel["K"], np.append(c_kept, np.full(unkept, BAND_SUM_WEIGHT_EPSILON * rho_max)), flips),
+                "candidates": {"band_end": int(np.count_nonzero(edge)), "gate": int(np.count_nonzero(gated)), "gate_without_finite_D": unplaced},
+            }
+        )
+    return out
+
+
+def rank0_point_mass(cell: BandSumCell, samples: int | None = None) -> dict[str, Any]:
+    """The rank-0 point mass ``m = E_Haar[[valid] rho A T]`` (lattice mean, or LI's Haar stream; section 5)."""
+    from .path_class import RANK0_RNG_SEED, estimate_rank0_contribution
+
+    scene = cell.scene
+    count = samples or cell.rank0_sample_count
+    if count is None:
+        w = np.asarray(scene_store(scene, cell.n).events.w, dtype=np.float64)
+        return {"m": float(np.sum(w)) / cell.n, "method": "lattice_mean", "n": cell.n}
+    estimate = estimate_rank0_contribution(
+        scene.crystal, scene.faces, scene.incident_direction, scene.refractive_index, density_of(cell.density), sample_count=count
+    )
+    return {
+        "m": estimate.value,
+        "method": "haar_stream",
+        "error_estimate": estimate.error_estimate,
+        "sample_count": estimate.sample_count,
+        "rng_seed": RANK0_RNG_SEED,
+        "rng": "numpy.random.default_rng(rng_seed); path_class.haar_domain_batches, 200000 per batch",
+    }
+
+
+def rank0_pixels(scene: Scene, table: Mapping[str, Any], m: float) -> list[dict[str, Any]]:
+    s = scene.incident_direction
+    out = []
+    for label, quad, omega in zip(np.asarray(table["labels"]).reshape(-1, 2).tolist(), np.asarray(table["corners"]), np.asarray(table["solid_angle"])):
+        lit = pixel_contains(quad, s)
+        out.append({"label": label, "status": "point_mass" if lit else "ok", "value": m / float(omega) if lit else 0.0})
+    return out
+
+
+def build_band_sum_fixture(cell: BandSumCell, provenance: Mapping[str, Any]) -> dict[str, Any]:
+    from .geometry import halo_map_rank
+
+    scene = cell.scene
+    density = density_of(cell.density)
+    table = pixel_table_of(cell.projection, cell.pixels)
+    rank = halo_map_rank(scene.crystal, scene.faces)
+    record = {"name": cell.name, "path": scene.path_id, "label": cell.label, "rationale": cell.rationale, "rank": rank}
+    fixture = _header(BAND_SUM_KIND, provenance, record)
+    fixture["input"] = {
+        **_scene_input(scene),
+        "pose_density": _density_block(cell.density),
+        "sample": {"sampler": BAND_SUM_SAMPLER, "n": cell.n},
+        "pixels": table,
+    }
+    if rank == 0:
+        mass = rank0_point_mass(cell)
+        pixels = rank0_pixels(scene, table, mass["m"])
+        statistical = mass["method"] == "haar_stream"
+        if not statistical:
+            fixture["input"]["events"] = {"w": np.asarray(scene_store(scene, cell.n).events.w, dtype=np.float64)}
+            check = rank0_point_mass(cell, RANK0_HAAR_CHECK_SAMPLES)
+            mass["haar_check_informative"] = {key: check[key] for key in ("m", "error_estimate", "sample_count", "rng_seed")}
+        fixture["expected"] = {"rank": 0, "point_mass": mass, "pixels": pixels}
+        fixture["tolerance"] = {
+            "point_mass_relative": _tolerance(
+                RANK0_SIGMAS * mass["error_estimate"] / mass["m"] if statistical else BAND_SUM_VALUE_RTOL,
+                (
+                    f"statistical: {RANK0_SIGMAS:g} standard errors of LI's Haar-stream mean, relative; a backend widens it by "
+                    "its own error, |m - m_LI| <= 5 sqrt(sigma_LI^2 + sigma_backend^2) (docs/band-sum-contract.md section 5)"
+                )
+                if statistical
+                else "the lattice mean sum(w)/N over the fixture's w (layer 1) or the regenerated lattice (layer 2): "
+                "summation order, and the w -> 0 continuity at every gate for layer 2 (" + BAND_SUM_LAYER2_BASIS + ")",
+            ),
+            "status": _tolerance(0.0, "exact: the point mass sits on the pixel containing s (section 5), every other pixel is 0"),
+        }
+        return fixture
+    store = scene_store(scene, cell.n)
+    events = _events_of(store)
+    pixels = band_sum_pixels(scene, density, table, events, cell.n, "scatter")
+    regular = np.flatnonzero(~_singular(table, scene))
+    union = _band_union(events, _bands(table, scene), regular)
+    fixture["input"]["events"] = {"u": events.u[union], "phi": events.phi[union], "deviation": events.D[union], "w": events.w[union]}
+    for pixel, allowance in zip(pixels, band_sum_allowances(scene, density, table, events, cell.n, pixels)):
+        pixel["allowance"] = allowance
+    fixture["expected"] = {"rank": 2, "pixels": pixels}
+    fixture["tolerance"] = {
+        "value_relative": _tolerance(BAND_SUM_VALUE_RTOL, BAND_SUM_VALUE_BASIS),
+        "K_eff_relative": _tolerance(BAND_SUM_VALUE_RTOL, BAND_SUM_VALUE_BASIS),
+        "K": _tolerance(0.0, "exact in layer 1: left-closed right-open band on the fixture's own D values (section 4.2)"),
+        "K_rho_pos": _tolerance(0.0, "per pixel allowance.K_rho_pos_subnormal in layer 1: " + BAND_SUM_SUBNORMAL_BASIS),
+        "status": _tolerance(0.0, "exact: singular iff the pixel contains s or -s (section 4.1)"),
+        "edge_epsilon_rad": _tolerance(BAND_SUM_EDGE_EPSILON_RAD, BAND_SUM_LAYER2_BASIS),
+        "gate_epsilon": _tolerance(BAND_SUM_GATE_EPSILON, BAND_SUM_LAYER2_BASIS),
+        "weight_epsilon": _tolerance(BAND_SUM_WEIGHT_EPSILON, BAND_SUM_LAYER2_BASIS),
+    }
+    return fixture
+
+
+def compare_band_sum_pixels(check: Check, where: str, got: Sequence[Mapping[str, Any]], fixture: Mapping[str, Any], layer: int) -> None:
+    """``docs/analytic-parity-fixtures.md`` section 4, ``band_sum``: statuses exact, then per pixel within the layer's allowance."""
+    expected = fixture["expected"]["pixels"]
+    rtol = fixture["tolerance"]["value_relative"]["value"]
+    check.expect(len(got) == len(expected), f"{where}pixel count {len(got)} != {len(expected)}")
+    for mine, reference in zip(got, expected):
+        label = f"{where}pixel {reference['label']}"
+        check.expect(mine["status"] == reference["status"], f"{label}: status {mine['status']} != {reference['status']}")
+        if reference["status"] != "ok" or mine["status"] != "ok":
+            check.expect(mine["value"] is None, f"{label}: a singular pixel has no value")
+            continue
+        allowance = reference["allowance"]
+        k_tol = 0 if layer == 1 else allowance["K_layer2"]
+        pos_tol = allowance["K_rho_pos_subnormal"] if layer == 1 else allowance["K_rho_pos_layer2"]
+        value_tol = rtol * abs(reference["value"]) + (0.0 if layer == 1 else allowance["value_layer2"])
+        k_eff_tol = rtol * abs(reference["K_eff"]) + (0.0 if layer == 1 else allowance["K_eff_layer2"])
+        check.expect(abs(mine["K"] - reference["K"]) <= k_tol, f"{label}: K {mine['K']} vs {reference['K']} (allowance {k_tol})")
+        check.expect(
+            abs(mine["K_rho_pos"] - reference["K_rho_pos"]) <= pos_tol, f"{label}: K_rho_pos {mine['K_rho_pos']} vs {reference['K_rho_pos']} (allowance {pos_tol})"
+        )
+        check.expect(abs(mine["value"] - reference["value"]) <= value_tol, f"{label}: value {mine['value']!r} vs {reference['value']!r} (tolerance {value_tol:.3e})")
+        check.expect(abs(mine["K_eff"] - reference["K_eff"]) <= k_eff_tol, f"{label}: K_eff {mine['K_eff']!r} vs {reference['K_eff']!r} (tolerance {k_eff_tol:.3e})")
+
+
+def _cell_of(fixture: Mapping[str, Any]) -> BandSumCell:
+    data = fixture["input"]
+    table = data["pixels"]
+    density = {key: value for key, value in data["pose_density"].items() if key != "normalization_informative"}
+    point_mass = fixture["expected"].get("point_mass", {})
+    return BandSumCell(
+        fixture["cell"]["label"],
+        _scene_of(data),
+        density,
+        table["projection"],
+        tuple(tuple(label) for label in table["labels"]),
+        int(data["sample"]["n"]),
+        fixture["cell"]["rationale"],
+        point_mass.get("sample_count") if point_mass.get("method") == "haar_stream" else None,
+    )
+
+
+def verify_band_sum(fixture: Mapping[str, Any], name: str = "") -> Check:
+    """LI's read-back of a ``band_sum`` fixture: the pixel table, then layer 1 (both forms) and layer 2."""
+    from .s2_store import S2Events
+
+    check = Check(name)
+    cell = _cell_of(fixture)
+    scene, data = cell.scene, fixture["input"]
+    table = pixel_table_of(cell.projection, cell.pixels)
+    for key in ("centre", "corners", "solid_angle"):
+        check.expect(np.array_equal(np.asarray(table[key]), np.asarray(data["pixels"][key])), f"pixel table {key} is not LI's expansion of the projection")
+    density = density_of(cell.density)
+    if fixture["expected"]["rank"] == 0:
+        mass = fixture["expected"]["point_mass"]
+        rtol = fixture["tolerance"]["point_mass_relative"]["value"]
+        if mass["method"] == "lattice_mean":
+            layer1 = float(np.sum(np.asarray(data["events"]["w"], dtype=np.float64))) / cell.n
+            check.expect(abs(layer1 - mass["m"]) <= rtol * abs(mass["m"]), f"layer 1 point mass {layer1!r} vs {mass['m']!r}")
+            haar = mass["haar_check_informative"]
+            check.expect(abs(mass["m"] - haar["m"]) <= RANK0_SIGMAS * haar["error_estimate"], "the lattice mean is not the Haar mean (definition check)")
+        got = rank0_point_mass(cell)
+        check.expect(abs(got["m"] - mass["m"]) <= rtol * abs(mass["m"]), f"point mass {got['m']!r} vs {mass['m']!r}")
+        pixels = rank0_pixels(scene, table, got["m"])
+        for mine, reference in zip(pixels, fixture["expected"]["pixels"]):
+            check.expect(mine["status"] == reference["status"], f"pixel {reference['label']}: status")
+            check.expect(abs(mine["value"] - reference["value"]) <= rtol * abs(reference["value"]), f"pixel {reference['label']}: value")
+        return check
+    given = data["events"]
+    events = S2Events(*(np.asarray(given[key], dtype=np.float64) for key in ("u", "phi", "deviation", "w")))
+    events = S2Events(events.u.reshape(-1, 3), events.phi.reshape(-1, 3), events.D, events.w)
+    for form in ("scatter", "gather"):
+        compare_band_sum_pixels(check, f"layer 1 {form}: ", band_sum_pixels(scene, density, table, events, cell.n, form), fixture, 1)
+    store_events = _events_of(scene_store(scene, cell.n))
+    regular = np.flatnonzero(~_singular(table, scene))
+    union = _band_union(store_events, _bands(table, scene), regular)
+    same = all(np.array_equal(getattr(store_events, key)[union], getattr(events, key)) for key in ("u", "phi", "D", "w"))
+    check.expect(same, "the fixture's events are not the regenerated sample's band events")
+    compare_band_sum_pixels(check, "layer 2: ", band_sum_pixels(scene, density, table, store_events, cell.n, "scatter"), fixture, 2)
+    return check
+
+
+VERIFIERS[BAND_SUM_KIND] = verify_band_sum
+
+
+def export_band_sum_cell(cell: BandSumCell, output_dir: Path, provenance: Mapping[str, Any]) -> dict[str, Any]:
+    """Write one ``band_sum`` fixture; returns its manifest entry."""
+    name = f"{cell.name}.json"
+    fixture = build_band_sum_fixture(cell, provenance)
+    write_json(Path(output_dir) / name, fixture)
+    return {
+        "name": cell.name,
+        "path": cell.scene.path_id,
+        "crystal": dict(cell.scene.crystal_spec),
+        "label": cell.label,
+        "rank": fixture["cell"]["rank"],
+        "pose_density": fixture["input"]["pose_density"]["family"],
+        "projection": cell.projection["kind"],
+        "rationale": cell.rationale,
+        "files": [name],
+        "skipped": [],
+    }
+
 __all__ = [
+    "BAND_SUM_KIND",
     "CATEGORIES",
     "FORMAT",
     "MANIFEST",
     "SCHEMA_VERSION",
     "SYMMETRY_SEMANTICS",
     "BandSeeds",
+    "BandSumCell",
     "Cell",
     "Check",
     "EdgeCell",
@@ -1542,21 +2075,31 @@ __all__ = [
     "PointChoice",
     "PointUnavailable",
     "Scene",
+    "band_sum_allowances",
+    "band_sum_pixels",
+    "build_band_sum_fixture",
     "build_crystal",
     "build_evaluate_path_fixture",
     "build_seed_search_fixture",
     "build_trace_fiber_fixture",
     "choose_point",
+    "compare_band_sum_pixels",
     "curve_distance",
     "dumps",
     "evaluate_path",
+    "export_band_sum_cell",
     "export_cell",
     "export_edge_cell",
     "export_matrix",
     "fixture_provenance",
+    "lambert_pixel_table",
+    "linear_pixel_table",
     "miller_wedge_deg",
+    "pixel_contains",
     "prism_crystal",
     "pyramid_crystal",
+    "rank0_point_mass",
+    "verify_band_sum",
     "verify_directory",
     "verify_fixture",
 ]

@@ -294,7 +294,23 @@ def class_band_sum_pixel(
     and one identity transport this is :func:`band_sum_pixel`, value for
     value, except that an empty band is ``0`` also where ``sin(delta) = 0``.
     """
-    centre, delta, lo_d, hi_d = pixel_band(row, column, sun, render)
+    return class_band_sum_of_band(stores, sun, density, pixel_band(row, column, sun, render), n, row, column)
+
+
+def class_band_sum_of_band(
+    stores: Sequence[tuple[Mapping[str, np.ndarray], StoreGroup]],
+    sun: np.ndarray,
+    density: PoseDensity,
+    band: tuple[np.ndarray, float, float, float],
+    n: int,
+    row: int = 0,
+    column: int = 0,
+) -> BandSumPixelResult:
+    """:func:`class_band_sum_pixel` of a pixel given by its band ``(centre, delta, delta_lo, delta_hi)``.
+
+    The band of any projection (:func:`band_of_pixel_directions`); ``row`` / ``column`` only label the result.
+    """
+    centre, delta, lo_d, hi_d = band
     width = hi_d - lo_d
     total, square, k, k_pos = 0.0, 0.0, 0, 0
     for events, group in stores:
@@ -874,6 +890,7 @@ __all__ = [
     "band_rotations",
     "band_sum_estimate",
     "band_sum_pixel",
+    "class_band_sum_of_band",
     "class_band_sum_pixel",
     "deviation_segments",
     "kish_k_eff",
