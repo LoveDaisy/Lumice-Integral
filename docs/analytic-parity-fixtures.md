@@ -22,12 +22,14 @@ uv run python scripts/export_analytic_parity.py --output-dir artifacts/analytic-
 ```
 
 - One command writes every fixture of the matrix (§6), the edge cells
-  (§6.1), the band-sum cells (§6.2) and a `manifest.json`, 89 fixtures. On an
-  M2 Max at load average 20–30 (2026-09-29) the export took 50 s and the
-  read-back 153 s, of which the seven band-sum fixtures took 38 s (the
-  statistical rank-0 cell replays a `4e6`-pose Haar stream); the 82 fixtures
-  before them took about 1 min with the read-back on an idle machine, and the
-  matrix alone about 16 s before wave 2.
+  (§6.1), the band-sum cells (§6.2) and a `manifest.json`, 93 fixtures. On an
+  idle M2 Max (2026-09-29) the export and the read-back took 64 s together.
+  Before the four family-pinned cells were added, at load average 20–30, the
+  export of 89 fixtures took 50 s and the read-back 153 s. The seven band-sum
+  fixtures of that set took 38 s, because the statistical rank-0 cell replays a
+  `4e6`-pose Haar stream. The 82 fixtures before those took about 1 min with
+  the read-back on an idle machine, and the matrix alone took about 16 s
+  before wave 2.
 - **Deterministic.** The same rev re-exports byte for byte. LI's test
   `tests/test_parity_export.py` exports the matrix in two separate
   interpreters and compares every file. The fixtures do not record time,
@@ -421,7 +423,10 @@ come from three views: a Lumice linear lens (41 × 41, 60° field, elevation
 the sun (65 × 65, 30° field radius, about 0.93° per pixel, the sun at the
 centre of (32, 32)) and one about the antisun (65 × 65, 60°, about 1.8°); the
 rank-0 cells use a small Lambert view about the sun (9 × 9, 5°, the sun at
-(4, 4)). Each cell's pixels were picked from a scan of its view. Every
+(4, 4)). The family-pinned cells use the same small view centred on their
+spot: the 120° parhelion (azimuth 120°, elevation 15°), the subsun (azimuth
+0°, elevation −15°) and the 120° subparhelion (azimuth 120°, elevation −15°).
+Each cell's pixels were picked from a scan of its view. Every
 pixel is labelled with its table `(row, column)` or `(y, x)`.
 
 | Cell | Path, crystal, `N` | Density, view | Covers | Observed (LI, this rev) |
@@ -433,10 +438,54 @@ pixel is labelled with its table `(row, column)` or `(y, x)`.
 | `13-15-26-28__band_sum_random` | the matrix's asymmetric pyramid, `5e4` | random, Lambert (antisun) | pyramid faces | lit ring (`D` 121–149°) `K` 44–107; dark on both sides |
 | `3-6__band_sum_rank0` | 3-6, canonical column, `2e4` | random, Lambert (sun, small) | a rank-0 point mass, deterministic | `m = 0.118166` (lattice mean; LI's Haar check `0.11845 ± 0.00030`), on pixel (4, 4) only |
 | `3-6__band_sum_rank0_plate` | same | plate 1° | a rank-0 point mass, statistical | `m = 0.157 ± 0.011` (Haar stream, `4e6` poses) |
+| `3-6-4-8__band_sum_plate` | 3-6-4-8, canonical column, `2e4` | plate 1°, Lambert (120° parhelion, small) | family pinned, reflection group element 6 | spot centre (4, 4) `9.51e-3` at `K = 48`, `K_eff = 14.9` (`δ = 113.548°`); neighbours `1.7e-3`–`7.9e-3`; tails to `5.1e-26`; `K_rho_pos = K/2` (the upside-down half of the band events has `rho = 0`) |
+| `3-6-4-8__band_sum_plate_sigma_0.5` | same | plate 0.5°, same view and pixels | the same spot at half the spread | centre `2.14e-2`, horizontal neighbours `4.4e-4`–`5.9e-4`, tails to `2.4e-92` |
+| `1-2-1__band_sum_plate` | 1-2-1, thin plate (`height = 0.2`), `2e4` | plate 1°, Lambert (subsun, small) | family pinned, element 11 (basal reflection) | subsun centre `17.9` at `K = 95`, `K_eff = 95.0` (`δ = 30°`); lit along the vertical (`1.4`–`15.6`), `8.5e-16` four pixels across |
+| `1-2-3-4-1__band_sum_plate` | 1-2-3-4-1, thin plate, `2e4` | plate 1°, Lambert (120° subparhelion, small) | family pinned, element 5 | centre `0.102` at `K = 123` (`δ = 122.242°`); (4, 6) sits on the path's smallest deviation, 120°, and has the only nonzero layer-2 allowance (`K_layer2 = 3`); (4, 7) is an empty band |
 
 The LI side of the Lambert cells is computed by the same two forms of the sum
 as the linear ones: the camera enters LI's estimator only through a pixel's
 directions (contract §10).
+
+**Family-pinned cells.** On these paths the `σ → 0` plate family lies in one
+level set of `D_P`, so the whole family lands on one sky point, and at
+`σ > 0` the spot's width scales with `σ`. The criterion is
+`focusing.family_pinned`: rank 2, wedge 0, a fold matrix that commutes with
+`R_z` (reflection group elements 3, 4, 5, 6 and 11), and a plate or Lowitz
+density. The source is exploration 46.4 (`degenerate-path-family-coverage`).
+`3-5__band_sum_plate` is the control: the same family on a path that is not
+pinned. Its fold matrix also commutes with `R_z`, and its 60° wedge is what
+excludes it. The cells are rows of `band_sum_cells`, not of the path ×
+category matrix (§6).
+
+- *Crystal.* 1-2-1 and 1-2-3-4-1 use a thin plate
+  (`prism_crystal(0.2)`). On the canonical column the ray leaves through a
+  prism face after the basal reflection, so no pose of the `σ = 0` ring (c
+  axis vertical, every azimuth) is valid (`w = 0`), and a plate cell there
+  would carry only Gaussian tails (`1e-69` and lower). The other element-5
+  candidate, 3-1-6-4-8, has no valid pose on the ring on any prism of height
+  0.1–1.0, because the ray enters a prism face going down and never reaches
+  the top face. 3-6-4-8 stays on the column: it has no valid pose on plates of
+  height 0.3 or less.
+- *Observed spread (LI self-observation, not an independent check).* On the
+  full 9 × 9 view the intensity-weighted standard deviation of the 3-6-4-8
+  spot is (1.52, 0.52) px (vertical, horizontal) at `σ = 1°` and
+  (0.77, 0.21) px at `σ = 0.5°`. It is unchanged at `N = 5e4`. The 3-5
+  parhelion on the 65 × 65 sun view is (0.58, 2.14) px at 1° and
+  (0.51, 2.49) px at 0.5°: along its level set it does not narrow. The two
+  3-6-4-8 cells carry this contrast on fixed pixels. The `σ` dependence of
+  `D` itself (`std/σ ≈ 0.577` for 3-6-4-8, 5.67° fixed for 3-5) is the
+  exploration's measurement.
+- *Mechanism check outside the band sum.*
+  `tests/test_parity_export.py::test_family_pinned_cells_put_their_whole_sigma_zero_family_on_one_deviation`
+  evaluates `D` and `w` on the `σ = 0` ring. Each pinned cell has valid poses
+  there and a single `D` (spread below `1e-9°`). The control spreads by more
+  than 10°. `family_pinned` names exactly the four pinned cells.
+- *No fiber-layer cell.* At the 120° parhelion target, 3-6-4-8's fiber is two
+  arcs, and on one of them the c axis stays vertical: that arc is the `σ = 0`
+  family itself. No contract §11 row certifies this beyond what C17/C18
+  already cover with `1-3__two_arcs_60deg`, so it is recorded here and not
+  exported.
 
 ## 7. Update flow
 
@@ -468,3 +517,6 @@ this page and of `parity_export.SCHEMA_VERSION` in the same LI commit.
   (an L2 row) is the caller's sum of its members (contract §1).
 - Band sums over several wavelengths, divergent light, and a deterministic
   rank-0 point mass under a non-random density (contract §1, §5).
+- A radiometric comparison of the family-pinned cells with Lumice. The cells
+  certify a backend's band sum, not the physics of the degenerate families.
+  The Lumice comparison is scrum task `lumice-radiometric-check-degenerate-plate`.
