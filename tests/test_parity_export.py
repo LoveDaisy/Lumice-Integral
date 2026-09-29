@@ -228,8 +228,9 @@ def _assert_byte_identical(first: Path, second: Path) -> list[str]:
 
 
 # Two exports of the 3 x 3 matrix in separate interpreters plus a read-back: 18 s with a cold JAX cache on an
-# M2 Max (2026-09-29, with the pyramid's seed search), under the ~20 s slow-tier threshold of AGENTS.md, so CI
-# checks the determinism on Linux too.  The wave 2 edge cells are in the slow test below.
+# idle M2 Max (2026-09-29, with the pyramid's seed search), 22 s with a warm cache at load average 33 after the
+# wave 2 per-pose checks; about the ~20 s slow-tier threshold of AGENTS.md, kept fast so CI checks the
+# determinism on Linux too.  The wave 2 edge cells are in the slow test below.
 def test_full_matrix_export_is_byte_deterministic_and_reads_back(tmp_path: Path) -> None:
     first, second = tmp_path / "first", tmp_path / "second"
     _export(first, MATRIX_CELLS)
@@ -256,7 +257,7 @@ def test_full_matrix_export_is_byte_deterministic_and_reads_back(tmp_path: Path)
     assert all(not check.failures for check in checks), [(check.fixture, check.failures) for check in checks if check.failures]
 
 
-# slow: two full exports (matrix and the wave 2 edge cells, 82 fixtures) plus a read-back, about 2.5 min on an M2 Max
+# slow: two full exports (matrix and the wave 2 edge cells, 82 fixtures) plus a read-back, 40 s with a warm JAX cache on a loaded M2 Max
 @pytest.mark.slow
 def test_export_with_edge_cells_is_byte_deterministic_and_reads_back(tmp_path: Path) -> None:
     first, second = tmp_path / "first", tmp_path / "second"

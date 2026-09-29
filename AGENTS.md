@@ -131,7 +131,8 @@ uv run python scripts/store_seed_density_survey.py --output-dir /tmp/store-seed-
 uv run python scripts/render_ch06_strip.py --rows 300:302 --columns 126:127 --output-dir /tmp/strip-parry \
   --pose-density-family parry --pose-density-zenith-std-deg 1 --pose-density-roll-std-deg 1
 # LI -> Lumice analytic parity fixtures (docs/analytic-parity-fixtures.md): EvaluatePath / TraceFiber / seed search
-# over the path x point-category matrix, byte-deterministic per rev; --verify reads every fixture back (~16 s, M2 Max)
+# over the path x point-category matrix plus the wave 2 edge cells (per-point J_perp and margins; contract section
+# 11.1 says which section 11 row each certifies), byte-deterministic per rev; --verify reads all 82 back (~1 min, M2 Max)
 uv run python scripts/export_analytic_parity.py --output-dir artifacts/analytic-parity --verify
 # Linux/NVIDIA environment
 uv sync --extra cuda13 --dev
