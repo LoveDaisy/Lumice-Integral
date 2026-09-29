@@ -1078,7 +1078,7 @@ needs street-lamp halos (backlog).
 - **Family pinned** (task `focusing-family-pinned-label`, 2026-09-29).
   Two dimension collapses can behave oppositely: under plates `3-6-4-8`
   lands in one deviation, `3-5` keeps a std of $5.67°$ at every $\sigma$
-  (explore `degenerate-path-family-coverage` #2, #5). The deviation std of
+  (the exploration's sampling convention, not re-measured at the rendering density; explore `degenerate-path-family-coverage` #2, #5). The deviation std of
   `3-6-4-8` is $0.818\,\sigma$ under the plate density of
   [`pose_density`](../src/lumice_integral/pose_density.py) and Lumice (a
   Gaussian in the c-axis zenith angle as a density on the sphere); the
@@ -1126,8 +1126,9 @@ needs street-lamp halos (backlog).
   of LI at $\sigma = 0.5°$, 1.09 / 0.89 / 1.09 at 1°, within 3 % at 2°), so
   the max-normalised profiles differ by 0.09 at $0.5°$ against a 0.004 seed
   floor. It comes from Lumice's zenith sampler (`src/core/lat_lut.cpp`, read
-  as evidence only; baseline: Lumice `Ice Halo 44ce8b21`, binary
-  `4.7.0-dev` / `73b0f697`, so a claim on that baseline that a later sampler
+  as evidence only, in the Lumice repository; baseline: source read at Lumice
+  `Ice Halo 44ce8b21`, binary `4.7.0-dev` built 2026-09-28 (the repository HEAD
+  then was `73b0f697`), so a claim on that baseline that a later sampler
   change can void): the table is built on $\pi/4096 = 0.0439°$ colatitude
   bins and starts at the first bin's upper edge, so no pose has a tilt below
   $0.0439°$. The pinned image is a linear image of the tilt (singular values
