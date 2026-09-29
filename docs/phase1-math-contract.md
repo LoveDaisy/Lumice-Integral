@@ -1082,6 +1082,14 @@ remained float64 and rejected float32 construction explicitly.
 
 ## 11. Conformance evidence matrix
 
+**Backend certification (owner ruling 2026-09-29).** Certifying another
+backend (Lumice C++) against this contract is by output parity only, not by
+matching controller-internal records. Entries below that depend on internal
+diagnostics are rewritten as output checks by the task
+`output-level-conformance` of scrum `analytic-lib-wave2-spec`; this note states
+the principle and points to [overview.md](overview.md) §5.3 "Wave 2
+certification standard", and the table itself is unchanged here.
+
 “Verified” identifies durable automated evidence for current public behavior.
 “Partial” keeps the supported subset precise. “Open” is not an implementation
 failure: the named prerequisite is outside the current reference core.
