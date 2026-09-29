@@ -1075,6 +1075,24 @@ needs street-lamp halos (backlog).
   `dp-field-partial-reflection-boundaries`). Across the parhelic circle of `1-3-2`
   under plates, halving $\sigma$ doubles the peak at a fixed cross integral:
   dimension collapse. Tests: `tests/test_focusing.py`.
+- **Family pinned** (task `focusing-family-pinned-label`, 2026-09-29).
+  Two dimension collapses can behave oppositely: under plates `3-6-4-8`
+  lands in one deviation (its deviation std is $0.577\,\sigma$), `3-5` keeps
+  a std of $5.67°$ at every $\sigma$ (explore `degenerate-path-family-coverage`
+  #2, #5). `focusing.family_pinned`, carried as
+  `FocusingClassification.family_pinned` (an orthogonal flag; `mechanism` is
+  unchanged), is true iff the density holds the c axis at a pole (plate,
+  Lowitz), the path has rank 2 and wedge 0 (refractions cancel, the
+  outgoing direction is $M_P\mathbf u$) and $M_P$ commutes with $R_z$: then
+  $D_P$ is constant on every latitude circle about the c axis, the
+  $\sigma \to 0$ support. On $G$ these are elements 3, 4, 5, 6, 11
+  (`symmetry.reflection_group`; 12 is rank 0). The wedge condition is not
+  implied: `3-5` and `1-3` have $M_P = I$ and are not pinned. The label is
+  the $\sigma \to 0$ limit: at $\sigma > 0$ a pinned family's spread is
+  $\propto \sigma$, not zero. Parry is not claimed (its roll convention
+  against Lumice is unchecked). Tests: `tests/test_focusing.py`
+  (`test_family_pinned_*`, including $D_P$ measured on latitude circles:
+  $\le 10^{-9}$° pinned, $\ge 1°$ for `3-5` / `1-3`).
 - **Wavelength-critical onsets** (task `wavelength-critical-api`, 2026-09-27).
   `focusing.wavelength_critical_table` runs `classify` once per refractive
   index (label $\to n(\lambda)$, from `spectrum.dispersion.refractive_index`
