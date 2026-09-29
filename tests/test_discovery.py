@@ -26,7 +26,7 @@ import pytest
 
 import lumice_integral.discovery as discovery_module
 from lumice_integral.analytic import BODY_AXIS, direction_map, tangent_basis
-from lumice_integral.camera import linear_pixel_outgoing_direction
+from lumice_integral.camera import linear_pixel_outgoing_direction, sun_direction
 from lumice_integral.canonical_scene import (
     CANONICAL_REFRACTIVE_INDEX,
     CANONICAL_RENDER,
@@ -63,9 +63,10 @@ from lumice_integral.discovery import (
 from lumice_integral.geometry import HexPrism, Pyramid
 from lumice_integral.geometry.pyramid import C_OVER_A_ICE, pyramid_face_angle
 from lumice_integral.optics import path_domain
+from lumice_integral.parity_export import Scene, prism_crystal, scene_store
 from lumice_integral.resample import OpenArc
 from lumice_integral.s2_store import StoreSeeds, build_event_store
-from lumice_integral.so3 import exp
+from lumice_integral.so3 import exp, rotation_distances
 from lumice_integral.weights import WeightEvaluator
 
 STORE_N = 1_000_000
@@ -928,6 +929,54 @@ def test_geodesic_cluster_centres_are_the_lowest_unassigned_index_and_membership
     assert _geodesic_cluster(line[::-1], radius=0.3) == [[0, 1], [2, 3]]
     assert _geodesic_cluster(line[[1, 0, 2, 3]], radius=0.3) == [[0, 1, 2], [3]]
     assert _geodesic_cluster(line[:2], radius=0.2) == [[0], [1]]  # strictly within
+    with pytest.raises(ValueError, match="cluster radius must be positive"):
+        _geodesic_cluster(line, radius=0.0)
+
+
+def _lowest_index_clusters(rotations: np.ndarray, radius: float) -> list[list[int]]:
+    """Contract section 9.5.4 step 1 written out naively: a fresh ``min`` and a full distance scan per centre."""
+    unassigned = list(range(len(rotations)))
+    clusters = []
+    while unassigned:
+        centre = min(unassigned)
+        members = [i for i in unassigned if rotation_distances(rotations[centre], rotations[i : i + 1])[0] < radius]
+        clusters.append(members)
+        unassigned = [i for i in unassigned if i not in members]
+    return clusters
+
+
+def test_geodesic_cluster_centre_is_the_lowest_index_after_a_bulk_removal_rehashes_the_pool() -> None:
+    """A pool of the Lumice 640.1 size (1145) whose first cluster leaves only {6, 1025, 1030}: CPython
+    3.12's set shrinks into a small table there, where 1025 iterates before 6. Poses on one axis at
+    0 / 1.0 / 1.2 / 1.4 rad with r_c = 0.3: centre 6 takes {6, 1025} and leaves 1030 alone, centre
+    1025 would take all three."""
+    count = 1145
+    angles = np.zeros(count)
+    angles[[6, 1025, 1030]] = (1.0, 1.2, 1.4)
+    rotations = np.stack([np.asarray(exp(jnp.asarray(np.array([0.0, 0.0, theta])))) for theta in angles])
+    # Input validity only (not a constraint on the implementation): the removal really rehashes the set so
+    # that its first element is not its minimum; without that this pool would not exercise the rule.
+    remaining = set(range(count))
+    remaining -= {i for i in range(count) if angles[i] == 0.0}
+    assert next(iter(remaining)) != min(remaining)
+    clusters = _geodesic_cluster(rotations, radius=0.3)
+    assert clusters == _lowest_index_clusters(rotations, 0.3)
+    assert clusters[1:] == [[6, 1025], [1030]]
+
+
+def test_geodesic_cluster_reproduces_the_lumice_640_1_pool_of_path_3_5_6_7() -> None:
+    """The pool on which Lumice's contract-following kernel found 7 clusters and the set-order reference 6
+    (Lumice task 640.1: prism height 1.3, n(550), sun (20, 0) deg, N = 1e6, target opposite (18, 175) deg,
+    centres 0, 2, 6, 9, 18, 74, 597). Every centre is the lowest unassigned index and members ascend."""
+    scene = Scene(prism_crystal(1.3), (3, 5, 6, 7), 1.3110129100622272, tuple(float(x) for x in sun_direction(20.0)))
+    store = scene_store(scene, 1_000_000)
+    seeds = StoreSeeds(store, scene.faces, scene.sun)
+    rotations, _ = seeds.candidates(-sun_direction(18.0, 175.0), np.radians(0.2))
+    assert len(rotations) == 1145
+    clusters = _geodesic_cluster(rotations, radius=0.3)
+    assert [cluster[0] for cluster in clusters] == [0, 2, 6, 9, 18, 74, 597]
+    assert clusters == _lowest_index_clusters(rotations, 0.3)
+    assert all(cluster == sorted(cluster) for cluster in clusters)
 
 
 def _assert_funnel_identities(result: ComponentDiscoveryResult) -> None:

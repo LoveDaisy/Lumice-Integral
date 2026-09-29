@@ -32,6 +32,7 @@ Queue (tasks in `scratchpad/tasks.md`; dispatched 20 ∥ 21, then 22 ∥ 24, 23 
 | 37 | scrum `crystal-reduction-generalize` (stage 2 of scrum 29's fail-fast ruling; requirement source [overview.md](overview.md) §5.3): `reduction-cluster-g-true` → `pose-density-reference-face` → `low-symmetry-lumice-validation` → `stage2-docs` — `reduction-cluster-g-true` **done 2026-09-27** (reduced cluster's candidate group is the crystal's own `G_true`; [overview.md](overview.md) §4.1, §9); `pose-density-reference-face` **done 2026-09-27** (Parry/Lowitz roll reference is body `+x`, independent of whether the crystal has face 3; [conventions.md](conventions.md) #3, §9); `low-symmetry-lumice-validation` **done 2026-09-27** (two low-symmetry prisms validated against Lumice Monte Carlo at absolute scale, `4e-4`; surfaced a Lumice-side `P`/`B`/`D` over-merge defect below `D6h`, §9); `stage2-docs` **done 2026-09-27** (this row and the §9 entries below, [overview.md](overview.md) §4.1, backlog) | 29 |
 | 42 | scrum `multi-wavelength`: `spectral-conventions` → `spectrum-wl-pool-store` → `xyz-band-sum-render` / `wavelength-critical-api` — `spectral-conventions` **done 2026-09-27** (explore; Lumice Sellmeier n(λ), M-slot pool and CMF machinery white-boxed, [overview.md](overview.md) §5.3, backlog); `spectrum-wl-pool-store` **done 2026-09-27** (`lumice_integral.spectrum`: `dispersion`/`cmf`/`illuminant`/`wl_pool`/`store`, per-wavelength `S^2` stores reuse `s2_store`'s existing cache key with zero changes to `S2StoreSpec`; [conventions.md](conventions.md) #20; commit `7d03f02`); `xyz-band-sum-render` **done 2026-09-27** (`spectrum.xyz_band_sum`: one monochrome band sum per distinct n(λ) summed to linear XYZ with Lumice's slot-average / emitted-weight normalisation, `render_band_sum.py --illuminant` / `--discrete-wavelength-nm`, `compare_lumice_family.py` per channel; the `[3, 5]` class under D65, `M = 5`, against Lumice Metal at 1e9 rays: X / Y / Z flux ratios 1.0000–1.0002, chromaticity within 2e-5; [conventions.md](conventions.md) #20); `wavelength-critical-api` **done 2026-09-27** (`focusing.wavelength_critical_table`: `classify` per n(λ), onsets paired by rank with a topology check that refuses rather than mis-pairs; `3-5` plate at 450 / 550 / 650 nm shifts 0.581 / 0.631 / 0.604 / 0.748°, [phase2.md](phase2.md) §10; commit `7cfc9a2`) | 29 |
 | 45 | scrum `analytic-lib-wave1-spec` (wave 1 of the shared-library rollout, [overview.md](overview.md) §5.3 "Rollout in waves"; requirement source: 2026-09-28 owner+author cross-repo ruling): `chore-wave-plan-docs` / `chore-rename-pbd-orbit-hexprism` / `task-discovery-contract` / `explore-fiber-diagnostics-contract` run independently; `task-parity-fixture-export` depends on the rename and the discovery contract — `chore-wave-plan-docs` **done 2026-09-28** (this row and the §9 entry below, [overview.md](overview.md) §5.3); `task-parity-fixture-export` **done 2026-09-28** (`lumice_integral.parity_export`, `scripts/export_analytic_parity.py`: `evaluate_path` / `trace_fiber` / `seed_search` JSON fixtures over `3-5` / `3-5-6-7` / `13-15-26-28` × random / critical / near-boundary, 32 fixtures, byte-deterministic, read back by `--verify`; [analytic-parity-fixtures.md](analytic-parity-fixtures.md)) | — |
+| 46 | scrum `analytic-lib-wave2-spec` (wave 2 of the shared-library rollout, [overview.md](overview.md) §5.3 "Wave 2 certification standard"; requirement source: 2026-09-29 author ruling): `chore-certification-ruling-docs` first, then `task-output-level-conformance` / `task-band-sum-module-spec`; explore `degenerate-path-family-coverage` independent — `chore-certification-ruling-docs` **done 2026-09-29** (this row and the §9 entry below, [overview.md](overview.md) §5.3, [phase1-math-contract.md](phase1-math-contract.md) §11); `task-output-level-conformance` landed 2026-09-29 (contract §11.1: output-level certification of C01–C21 with red-state evidence; fixtures gain per-point `J_perp` and branch margins and ten edge cells, [analytic-parity-fixtures.md](analytic-parity-fixtures.md) §6.1, 82 fixtures); `task-band-sum-module-spec` landed 2026-09-29 (module B spec [band-sum-contract.md](band-sum-contract.md): v1 = one concrete path, one index, no transport, pixel tables as directions, five densities, rank-0 point masses; seven `band_sum` fixtures in two layers, [analytic-parity-fixtures.md](analytic-parity-fixtures.md) §3.4 / §6.2, 89 fixtures); `task-focusing-family-pinned-label` landed 2026-09-29 (`focusing.family_pinned`: plate / Lowitz family inside one level set iff rank 2, wedge 0 and $M_P$ commuting with $R_z$, [phase2.md](phase2.md) §10); `task-degenerate-family-parity-cells` landed 2026-09-29 (four family-pinned `band_sum` cells: 3-6-4-8 at plate 1° and 0.5°, 1-2-1 and 1-2-3-4-1 on a thin plate, with `3-5__band_sum_plate` as the control; [analytic-parity-fixtures.md](analytic-parity-fixtures.md) §6.2, 93 fixtures); `task-lumice-radiometric-check-degenerate-plate` landed 2026-09-29 (3-6-4-8 plate class at `σ = 0.5–4°` against Lumice `4.7.0-dev`, `2e9` rays × 2 seeds: flux ratio 0.9998–0.9999, deviation spread Lumice / LI 0.9991–1.0000, `3-5` control 1.0000 (its bright-pixel rel. std 1.33 % misses the 0.81 % criterion, pixel-area averaging, see phase2 §10); the one shape difference, a one-pixel hole with a ring at the pinned image point, is Lumice's zenith table starting at its first 0.0439° bin's upper edge, predicted with nothing fitted; [phase2.md](phase2.md) §10) | 45 |
 
 Deferred: the chapter-11 table (path classes × pose families) after 22 and
 M2; divergent light ([phase2.md](phase2.md) §9, backlog); finite solar disk;
@@ -812,3 +813,43 @@ Moved to [overview.md](overview.md) §3.
   no LI task is actively researching it, and no planned requirement needs AD
   through it. Full statement: [overview.md](overview.md) §5.3 "Rollout in
   waves".
+- **2026-09-29**: wave 2 certification standard ruled by the author: LI retires
+  the JAX fiber tracer on **output parity only**. C++ adds per-point `J_perp`
+  and per-point boundary margins; weights are computed by LI from the poses;
+  `step_diagnostics` / `closure_diagnostics` / `terminal_payload` /
+  `component_scope` stay out of the C ABI and are not certification
+  conditions; wave 2 no longer waits for step-growth research. Basis: probe
+  `fiber-diagnostics-contract` found LI production reads only 8 of the 14
+  `FiberResult` fields, all stable, and a function-by-function C++ port should
+  not be held to the first implementation's internal process. Full statement:
+  [overview.md](overview.md) §5.3 "Wave 2 certification standard".
+- **2026-09-29**: discovery's cluster centre is the lowest unassigned pool
+  index, as contract §9.5.4 always said (task `discovery-cluster-min-index`).
+  The reference took a Python `set`'s first element, which is not its minimum
+  once a bulk removal shrinks the set's table. Lumice task 640.1 found it
+  (`3-5-6-7`, 1145-member pool: 6 clusters against the contract's 7; both
+  now 7 / 7 / 5). One parity fixture moved (`3-5__boundary_hugging_r780_c150`
+  seed search, 15 → 13 clusters, same component; list in
+  [analytic-parity-fixtures.md](analytic-parity-fixtures.md) §7).
+- **2026-09-29**: contour quadrature marks the finite crystal's gate
+  explicitly (task `contour-quadrature-gated-out-status`): `gated_out` is a
+  separate boolean on `LevelSetGeometry` (per level set), the result, the
+  pixel and `pixels.csv`, not a new `status` value (every `== "integrated"`
+  test would silently change) nor a status bit (the published `status_uint8`
+  layout stays). It is geometric: components, yet no stage-one point with
+  `g != 0` or a non-finite `w > 0`; a zero from $\rho$ is not gated. Found by
+  explore `level-set-vs-finite-crystal-gate` (pyramid 13-15-26-28 is 0 on
+  [98°, 120.3°) with status `integrated`); fixtures at 109.588° / 120° / 134.7°.
+- **2026-09-29**: paths whose interval partition fails closed are checked
+  fiber layer against store support instead (task
+  `topology-escape-fiber-support-fixtures`,
+  `tests/test_topology_escape_fiber_support.py`). On the canonical prism
+  `3-1-5-7` and `3-5-7` raise `TopologyEscape` on 20000 and 50000 lattice points
+  alike (the slab crease crosses $U_P$), so there is no contour count to match; the store keeps only
+  $w > 0$ events, and `discover_components` finds 0 components outside its
+  deviation range and 1–2 converged ones inside (counts pinned, not
+  arclengths). This is a consistency check, not a one-to-one comparison. The
+  explore's claim that `3-5-6-7` has no contour layer was a lattice artefact:
+  it escapes only on the default 20000 points (the neck) and partitions on
+  50000, where it is compared one to one: at 70° two open arcs `gated_out`
+  against 0 fibers, at 100° / 130° two live open arcs against 2 fiber arcs.

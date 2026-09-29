@@ -218,7 +218,7 @@ $\le 10^{-11}$；单点 C++ $193\,\mathrm{ns}$ vs JAX $104\,\mu\mathrm{s}$。功
 | 波次 | Lumice 共享库 | 服务的 Analyze 功能 | LI 侧 |
 |---|---|---|---|
 | 1 | 模块 A v0：`EvaluatePath` + **seed 搜索** + `TraceFiber[Batch]`，只返回点列 | 功能 1 光路详情 | 写 seed 搜索（discovery）契约（`docs/phase1-math-contract.md` §9.5）；导出 parity fixture；研究并稳定诊断/权重契约。**不切换** |
-| 2 | 模块 A v1：加诊断 + 权重（`struct_size` 兼容扩展）；模块 B：单光路 S² 仓库 + 带求和 | 功能 2 单光路全天图 | 按 `docs/phase1-math-contract.md` §11 conformance 认证 A v1 → 切换 fiber 求解、退役 JAX continuation；写作仓传递依赖按 `.lumice` release 拉取模式接入；B 只做 parity 不切换 |
+| 2 | 模块 A v1：加逐点 `J_perp` 与逐点边界余量（`struct_size` 兼容扩展）；模块 B：单光路 S² 仓库 + 带求和 | 功能 2 单光路全天图 | **只看输出对照**认证 A v1（作者裁定 2026-09-29，见下）→ 切换 fiber 求解、退役 JAX continuation；写作仓传递依赖按 `.lumice` release 拉取模式接入；B 只做 parity 不切换 |
 | 3 | 模块 C：`dp_field`/`contour`/`focusing`（C++ 用 `Jet2` 前向 hyper-dual） | 功能 3 预设点与机制标签 | ch12/12.1 用完、不再研究后，先切 B 再切 C |
 
 1. **v0 含 seed 搜索**（作者判断：合理）；不需要 Lumice MC 记录光线姿态——Analyze
@@ -235,6 +235,28 @@ $\le 10^{-11}$；单点 C++ $193\,\mathrm{ns}$ vs JAX $104\,\mu\mathrm{s}$。功
    影响——前向模型对 ρ 线性）。
 
 波次 1 的落地任务见 scrum `analytic-lib-wave1-spec`（本仓 `scratchpad/`）。
+
+**波次 2 认证标准（作者裁定 2026-09-29；权威记录本仓
+`scratchpad/scrum-analytic-lib-wave2-spec/scrum.md` §1）：** LI 退役 JAX 纤维追踪
+的认证标准是**只看输出对照**，不要求 C++ 返回控制器内部诊断。
+
+- C++ 仍需补的字段：`J_perp`（逐点）与边界余量（`branch_diagnostics` 的逐点余量）。
+- 权重由 LI 在拿到姿态后自算（`weights.py` 本就是后处理），C++ 不必返回权重字段。
+- `step_diagnostics`、`closure_diagnostics`、`terminal_payload`、`component_scope`
+  不进 C ABI，也不作为认证条件。
+- 波次 2 不再以「放开步长增长」研究为前置。
+
+§11 中依赖内部记录的条目本质上检查的是结局。scrum `analytic-lib-wave2-spec` 的
+任务 `output-level-conformance` 已将其改写为输出检查：
+[phase1-math-contract.md](phase1-math-contract.md) §11.1 逐条写明另一后端如何只凭
+输出认证，[analytic-parity-fixtures_zh.md](analytic-parity-fixtures_zh.md) 带上逐点
+`J_perp`、余量以及这些检查所用的边缘情形。上面第 2 点（诊断字段两步走）据此被取代。
+
+波次 2 的模块 B（单光路 S² 仓库与带求和）的后端无关规格是
+[band-sum-contract.md](band-sum-contract.md)（任务 `band-sum-module-spec`）：v1 为一条具体光路、单一折射率、
+无对称搬运（L2 行由调用方对成员求和），像素以方向表给出（任意投影，含 Analyze 的 Lambert 视图），五个姿态密度族，
+秩 0 光路按点质量处理。其 parity fixture 见 [analytic-parity-fixtures_zh.md](analytic-parity-fixtures_zh.md) §3.4 与
+§6.2。LI 对 B 只做 parity，不切换。
 
 待后续核实（本 chore 不做，只标记）：Lumice 的 Analyze 工作区设计里「太阳方向球
 上的水平集 = fiber」的一一对应，在锥晶与含内反射光路上是否成立，由 LI 核对

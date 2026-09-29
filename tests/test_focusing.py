@@ -9,7 +9,8 @@ from lumice_integral import focusing
 from lumice_integral.canonical_scene import CANONICAL_REFRACTIVE_INDEX, canonical_crystal
 from lumice_integral.dp_field import DPField
 from lumice_integral.geometry import halo_map_rank
-from lumice_integral.pose_density import build_pose_density
+from lumice_integral.pose_density import ZenithGaussianPoseDensity, build_pose_density
+from lumice_integral.symmetry import reflection_group
 
 INDEX = CANONICAL_REFRACTIVE_INDEX
 RANDOM = build_pose_density("random")
@@ -189,3 +190,79 @@ def test_wavelength_critical_table_raises_on_shape_mismatch() -> None:
         focusing._align_onsets({"blue": _classification(jump, corner), "red": _classification(jump, extremum)})
     rows = focusing._align_onsets({"blue": _classification(jump, corner), "red": _classification(jump, corner)})
     assert [row.displacement_deg for row in rows] == [0.0, 0.0]
+
+
+# ---- family pinned: the sigma -> 0 family inside one level set -------------------------------------
+PINNED = ((3, 6, 4, 8), (1, 2, 1), (1, 3, 4, 2))
+# 3-5 and 1-3: fold matrix I (commutes with R_z), wedge 60 / 90 deg -- the wedge guard's counterexamples
+NOT_PINNED = ((3, 5), (1, 3))
+
+
+def test_family_pinned_truth_table() -> None:
+    crystal = canonical_crystal()
+    for faces in PINNED:
+        for density in (PLATE, LOWITZ):
+            assert focusing.family_pinned(crystal, faces, density)
+        for density in (COLUMN, PARRY, RANDOM):
+            assert not focusing.family_pinned(crystal, faces, density)
+    for faces in NOT_PINNED:
+        for density in (PLATE, LOWITZ, COLUMN, PARRY, RANDOM):
+            assert not focusing.family_pinned(crystal, faces, density)
+    # the c axis held at the other pole is the same family; off a pole the support is no circle about c
+    assert focusing.family_pinned(crystal, (3, 6, 4, 8), ZenithGaussianPoseDensity(np.pi, np.radians(0.5)))
+    assert not focusing.family_pinned(crystal, (3, 6, 4, 8), build_pose_density("plate", zenith_mean_deg=20.0, zenith_std_deg=0.5))
+    # rank 0: M = I and wedge 0 commute trivially, but there is no field; the label is point_mass alone
+    assert not focusing.family_pinned(crystal, (3, 6), PLATE)
+    label = focusing.classify(crystal, (3, 6), PLATE, INDEX)
+    assert label.mechanism == "point_mass" and not label.family_pinned
+
+
+def test_family_pinned_matches_the_element_table() -> None:
+    """Every representative path of G (rank > 0): pinned under a plate density iff its element commutes with R_z."""
+    crystal = canonical_crystal()
+    checked = 0
+    for element in reflection_group.ELEMENTS:
+        for faces in element.representative_paths:
+            if len(faces) == 1 or halo_map_rank(crystal, faces) == 0:
+                continue
+            assert focusing.family_pinned(crystal, faces, PLATE) == element.commutes_with_rz, (element.number, faces)
+            checked += 1
+    assert checked == 24
+
+
+def test_classify_carries_family_pinned() -> None:
+    crystal = canonical_crystal()
+    pinned = focusing.classify(crystal, (3, 6, 4, 8), PLATE, INDEX)
+    assert pinned.family_pinned and pinned.mechanism == "jacobian+dimension_collapse"
+    assert pinned.as_json()["family_pinned"] is True
+    ring = focusing.classify(crystal, (3, 5), PLATE, INDEX)
+    assert ring.mechanism == "dimension_collapse" and not ring.family_pinned
+    assert ring.as_json()["family_pinned"] is False
+    assert not focusing.classify(crystal, (3, 6, 4, 8), RANDOM, INDEX).family_pinned
+
+
+@pytest.mark.parametrize("faces", PINNED + NOT_PINNED)
+def test_family_pinned_against_d_p_on_latitude_circles(faces) -> None:
+    """Independent of the criterion: ``D_P`` round the latitude circles about body ``z`` that a plate family's ``u`` runs.
+
+    ``u`` at sun elevations 5, 25, 60 deg (``z = +- sin h``, 721 azimuths),
+    points outside ``U_P`` dropped; a pinned path's ``D_P`` is constant on
+    every circle (explore degenerate-path-family-coverage #1/#5: <= 5.1e-14
+    deg), the others vary by degrees.  At least two circles with 50 valid
+    points each, so an empty ``U_P`` cannot pass.
+    """
+    field = DPField.build(canonical_crystal(), faces, INDEX)
+    phi = np.linspace(0.0, 2.0 * np.pi, 721, endpoint=False)
+    spreads = []
+    for z in np.sin(np.radians([5.0, 25.0, 60.0, -5.0, -25.0, -60.0])):
+        r = np.sqrt(1.0 - z * z)
+        u = np.stack([r * np.cos(phi), r * np.sin(phi), np.full_like(phi, z)], axis=1)
+        inside = u[field.valid_batch(u)]
+        if len(inside) >= 50:
+            d = np.degrees(field.d_p_batch(inside))
+            spreads.append(float(d.max() - d.min()))
+    assert len(spreads) >= 2
+    if faces in PINNED:
+        assert max(spreads) <= 1e-9
+    else:
+        assert min(spreads) >= 1.0

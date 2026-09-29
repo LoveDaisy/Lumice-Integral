@@ -500,7 +500,7 @@ ahead of LI switching its dependency:
 | Wave | Lumice shared-library module | Analyze function served | LI side |
 |---|---|---|---|
 | 1 | Module A v0: `EvaluatePath` + **seed search** + `TraceFiber[Batch]`, points only | Function 1, path detail | Write the seed-search (discovery) contract (`docs/phase1-math-contract.md` §9.5); export parity fixtures; research and stabilize the diagnostics/weights contract. **No switch.** |
-| 2 | Module A v1: adds diagnostics + weights (`struct_size`-compatible extension); Module B: single-path S² store + band sum | Function 2, whole-sky map for one path | Certify A v1 against `docs/phase1-math-contract.md` §11 conformance → switch fiber solving, retire the JAX continuation path; the writing repository's transitive dependency moves to the `.lumice` release-pull pattern; B is parity-only, no switch |
+| 2 | Module A v1: adds the per-point `J_perp` and per-point boundary margins (`struct_size`-compatible extension); Module B: single-path S² store + band sum | Function 2, whole-sky map for one path | Certify A v1 by **output parity only** (owner ruling 2026-09-29, below) → switch fiber solving, retire the JAX continuation path; the writing repository's transitive dependency moves to the `.lumice` release-pull pattern; B is parity-only, no switch |
 | 3 | Module C: `dp_field`/`contour`/`focusing` (C++ forward hyper-dual `Jet2`) | Function 3, preset points and mechanism labels | Once ch12/12.1 are done and no longer researched, switch B first, then C |
 
 1. **Wave 1 includes seed search** (author's judgment: sound); Lumice's Monte
@@ -525,6 +525,38 @@ ahead of LI switching its dependency:
 
 Wave 1's landing tasks are tracked in scrum `analytic-lib-wave1-spec` (this
 repository's `scratchpad/`).
+
+**Wave 2 certification standard (owner ruling 2026-09-29, decided by the
+author; this repository's authority is
+`scratchpad/scrum-analytic-lib-wave2-spec/scrum.md` §1):** LI retires the JAX
+fiber tracer on **output parity only**. The C++ side is not asked to return
+controller-internal diagnostics.
+
+- The fields C++ still has to add are `J_perp` (per point) and the boundary
+  margins (the per-point margins of `branch_diagnostics`).
+- Weights are computed by LI after it receives the poses (`weights.py` is
+  already post-processing), so no weight field is required from C++.
+- `step_diagnostics`, `closure_diagnostics`, `terminal_payload` and
+  `component_scope` do not enter the C ABI and are not certification
+  conditions.
+- Wave 2 no longer waits for research on relaxing step growth.
+
+The §11 entries that relied on internal records check outcomes. Task
+`output-level-conformance` of scrum `analytic-lib-wave2-spec` rewrote them as
+output checks: [phase1-math-contract.md](phase1-math-contract.md) §11.1 states
+row by row how a backend is certified from its outputs, and
+[analytic-parity-fixtures.md](analytic-parity-fixtures.md) carries the per-point
+`J_perp` and margins plus the edge cells those checks run on. Point 2 above
+(diagnostics landing in two steps) is superseded accordingly.
+
+Module B of wave 2 (the single-path $S^2$ store and band sum) is specified,
+backend-independently, in [band-sum-contract.md](band-sum-contract.md) (task
+`band-sum-module-spec`): v1 is one concrete path at one refractive index with
+no symmetry transport (an L2 row is the caller's sum of its members), pixels
+as a table of directions (any projection, the Analyze Lambert view included),
+the five pose-density families, and rank-0 paths as point masses. Its parity
+fixtures are [analytic-parity-fixtures.md](analytic-parity-fixtures.md) §3.4 and
+§6.2. LI certifies B by parity only and does not switch.
 
 To be verified later (not in this chore, flagged only): whether Lumice's
 Analyze workspace design's one-to-one correspondence "level set on the
