@@ -558,11 +558,26 @@ the five pose-density families, and rank-0 paths as point masses. Its parity
 fixtures are [analytic-parity-fixtures.md](analytic-parity-fixtures.md) §3.4 and
 §6.2. LI certifies B by parity only and does not switch.
 
-To be verified later (not in this chore, flagged only): whether Lumice's
-Analyze workspace design's one-to-one correspondence "level set on the
-sun-direction sphere = fiber" still holds on cone crystals and raypaths with
-an internal reflection — LI to check (source: Lumice
-`doc/raypath-analysis.md` §5.1.8, flagged there as an assistant inference).
+Verified (2026-09-29, D4): Lumice's Analyze workspace design's one-to-one
+correspondence "level set on the sun-direction sphere = fiber" holds on the
+prism, on a prism with internal reflections and on the pyramid, checked by two
+chains that share no implementation. LI: scrum `analytic-lib-wave2-spec`
+explore 46.4 (`degenerate-path-family-coverage`, H5), LI PR #43 (`fa8dadd`).
+Lumice: scrum `raypath-subcommand` explore 640.3 (`level-set-fiber-verification`,
+the repository's `Lumice raypath` plus the analytic kernel, LI not called) on
+`3-5`, `3-5-6-7` and the pyramid `13-15-26-28`: $|R u + s| \le 3\times10^{-15}$,
+$|\mathrm{out} - T| \le 4.5\times10^{-12}$, the twist angle unique; Lumice PR #445
+(`e129d76c`), `doc/raypath-analysis.md` §5.1.8. Two qualifications stay. (1) The
+level set belongs to $U_P$; a fiber also has to pass the finite crystal's
+entry gate, so a level set can exist without a fiber (pyramid `13-15-26-28`
+on $\delta \in [98^\circ, 120.3^\circ)$), which `contour_quadrature` now marks
+`gated_out` (46.11). (2) What degenerates is "fiber $\cap$ pose family", not the
+level set: a plate family coincides with the latitude-circle level set on paths
+such as `1-4-5-2` / `3-6-4-8` (mechanical test `focusing.family_pinned`). The
+intersection of the column / Parry / Lowitz families with the fiber has been
+checked on Lumice's side only on `3-5` (discrete points of pose space); LI 46.9
+found that the Parry family collapses whole on paths whose folded matrix is
+`S_x` (e.g. `1-6-2`).
 
 ## 6. Validation strategy
 

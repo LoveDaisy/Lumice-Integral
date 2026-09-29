@@ -496,9 +496,11 @@ with the zoom at fixed $K_{\mathrm{eff}}$, [phase2.md](phase2.md) §7).
   local fix in either code base.
 - **Fiber and level set.** The estimator is a quadrature of the $S^2$
   integral and does not assume that a level set $\{D_P = \delta\}$ is one
-  fiber. Whether the two correspond one-to-one on the pyramid and on paths
-  with internal reflections is the open question of
-  [overview.md](overview.md) §5.3 and is not decided here.
+  fiber. The one-to-one correspondence has since been verified on the prism,
+  on a prism with internal reflections and on the pyramid by two independent
+  chains (overview.md §5.3, with its two qualifications: the finite crystal's
+  entry gate, and degeneration of fiber $\cap$ pose family); the estimator
+  still does not depend on it.
 - **Sun-adjacent pixels.** The corner band (§4.1) misses the part of the
   pixels next to the sun and the antisun that is closer than their corners. A
   finer model there (an exact per-pixel deviation range) would be a v2
