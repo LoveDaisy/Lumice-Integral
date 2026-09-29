@@ -30,6 +30,15 @@ no regularisation, and a pixel whose ``delta`` is within
 ``dp_field.boundary.EXTREMUM_ATOL`` of a critical value is not integrated
 (reported, value ``0``).
 
+Gate, empty and zero.  The integrand carries ``w`` point by point, so the
+finite crystal's gate acts pointwise: a level set with components whose every
+point has ``w = 0`` integrates to exactly ``0`` with ``status ==
+"integrated"``.  ``gated_out`` (:attr:`LevelSetGeometry.gated_out`, carried
+to :class:`ContourQuadratureResult` / :class:`ContourPixelResult` and the
+``pixels.csv`` column) says so, apart from ``"empty"`` (no component) and from
+a zero of ``rho`` or a cancellation (``gated_out`` false: the geometry is
+live).
+
 Parametrisation (exact, not interpolated).  A panel is the stretch of a
 component between two of its nodes ``a``, ``b``: a first panel merges a run
 of the extraction's nodes up to ``QuadratureOptions.initial_panel_rad`` of

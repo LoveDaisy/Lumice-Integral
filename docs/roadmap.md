@@ -831,3 +831,12 @@ Moved to [overview.md](overview.md) §3.
   now 7 / 7 / 5). One parity fixture moved (`3-5__boundary_hugging_r780_c150`
   seed search, 15 → 13 clusters, same component; list in
   [analytic-parity-fixtures.md](analytic-parity-fixtures.md) §7).
+- **2026-09-29**: contour quadrature marks the finite crystal's gate
+  explicitly (task `contour-quadrature-gated-out-status`): `gated_out` is a
+  separate boolean on `LevelSetGeometry` (per level set), the result, the
+  pixel and `pixels.csv`, not a new `status` value (every `== "integrated"`
+  test would silently change) nor a status bit (the published `status_uint8`
+  layout stays). It is geometric: components, yet no stage-one point with
+  `g != 0` or a non-finite `w > 0`; a zero from $\rho$ is not gated. Found by
+  explore `level-set-vs-finite-crystal-gate` (pyramid 13-15-26-28 is 0 on
+  [98°, 120.3°) with status `integrated`); fixtures at 109.588° / 120° / 134.7°.

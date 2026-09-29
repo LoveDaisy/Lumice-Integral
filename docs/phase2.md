@@ -562,6 +562,12 @@ extracted components, deterministic, with an error estimate per pixel:
   critical values inside it, where the band average is finite also for a
   fold (the loop around a minimum has $\int d\ell/|\nabla D_P| \to$ a finite
   limit, the finite jump section 10 expects at the random-orientation 22° inner edge).
+  A level set that has components but $w = 0$ at every point (outside the
+  finite crystal's gate; the integrand carries $w$ point by point) integrates
+  to exactly 0 with status `integrated` and `gated_out = True`, so its zero is
+  told apart from a cancellation, from $\rho = 0$ and from `empty` (no
+  component); fixture: the pyramid path 13-15-26-28 at 109.588° / 120° / 134.7°
+  (`tests/test_contour_quadrature_gate.py`).
 - *Points on the curve, exact speed.* A panel is a run of the extraction's
   nodes $\mathbf a \to \mathbf b$ (first panels merge nodes up to 1° of chord
   and 20° of turn, never at a node with a margin below `1e-3`, where a chord
