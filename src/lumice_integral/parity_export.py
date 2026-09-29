@@ -1546,7 +1546,7 @@ BAND_SUM_VALUE_BASIS = (
     "the same sum over bit-identical events (layer 1): summation order and the rounding of rho's arccos/atan2/exp; "
     "LI's scatter and gather forms agree to 1e-12 on values and 3e-12 on K_eff near 1 (docs/phase2.md section 8), "
     "a narrow density amplifies d(theta) by |theta - mean| / sigma^2; 1e-10 relative leaves >= 30x room; the "
-    "density's normalisation integrals I, Q must be accurate to 1e-12 relative (docs/band-sum-contract.md section 4.3)"
+    "density's normalisation integrals I, Q must be accurate to 1e-12 relative (docs/band-sum-contract.md section 2.2)"
 )
 BAND_SUM_EDGE_EPSILON_RAD = 1e-9
 BAND_SUM_GATE_EPSILON = 1e-9
@@ -1592,7 +1592,7 @@ def lambert_view(centre_sky: Sequence[float], field_radius_deg: float, size: int
     ``centre_sky`` is the sky direction at the disk centre; screen ``up`` is the zenith projected on the
     tangent plane (``[-1, 0, 0]`` when the centre is within ``acos(0.999)`` of the zenith), ``right = centre x
     up``; the disk of radius ``0.492 size`` pixels reaches ``field_radius_deg`` from the centre.  An example
-    expansion for the fixtures, not part of the contract (``docs/band-sum-contract.md`` section 3.3).
+    expansion for the fixtures, not part of the contract (``docs/band-sum-contract.md`` section 2.4).
     """
     centre = np.asarray(centre_sky, dtype=np.float64)
     centre = centre / np.linalg.norm(centre)
@@ -1889,10 +1889,12 @@ def rank0_point_mass(cell: BandSumCell, samples: int | None = None) -> dict[str,
 
 
 def rank0_pixels(scene: Scene, table: Mapping[str, Any], m: float) -> list[dict[str, Any]]:
+    """``m / Omega_p`` on the first pixel (table order) that contains ``s``, ``0`` elsewhere (``docs/band-sum-contract.md`` section 5)."""
     s = scene.incident_direction
-    out = []
+    out, placed = [], False
     for label, quad, omega in zip(np.asarray(table["labels"]).reshape(-1, 2).tolist(), np.asarray(table["corners"]), np.asarray(table["solid_angle"])):
-        lit = pixel_contains(quad, s)
+        lit = not placed and pixel_contains(quad, s)
+        placed = placed or lit
         out.append({"label": label, "status": "point_mass" if lit else "ok", "value": m / float(omega) if lit else 0.0})
     return out
 
@@ -1932,7 +1934,7 @@ def build_band_sum_fixture(cell: BandSumCell, provenance: Mapping[str, Any]) -> 
                 else "the lattice mean sum(w)/N over the fixture's w (layer 1) or the regenerated lattice (layer 2): "
                 "summation order, and the w -> 0 continuity at every gate for layer 2 (" + BAND_SUM_LAYER2_BASIS + ")",
             ),
-            "status": _tolerance(0.0, "exact: the point mass sits on the pixel containing s (section 5), every other pixel is 0"),
+            "status": _tolerance(0.0, "exact: the point mass sits on the pixel containing s (docs/band-sum-contract.md section 5), every other pixel is 0"),
         }
         return fixture
     store = scene_store(scene, cell.n)
@@ -1947,9 +1949,9 @@ def build_band_sum_fixture(cell: BandSumCell, provenance: Mapping[str, Any]) -> 
     fixture["tolerance"] = {
         "value_relative": _tolerance(BAND_SUM_VALUE_RTOL, BAND_SUM_VALUE_BASIS),
         "K_eff_relative": _tolerance(BAND_SUM_VALUE_RTOL, BAND_SUM_VALUE_BASIS),
-        "K": _tolerance(0.0, "exact in layer 1: left-closed right-open band on the fixture's own D values (section 4.2)"),
+        "K": _tolerance(0.0, "exact in layer 1: left-closed right-open band on the fixture's own D values (docs/band-sum-contract.md section 4.2)"),
         "K_rho_pos": _tolerance(0.0, "per pixel allowance.K_rho_pos_subnormal in layer 1: " + BAND_SUM_SUBNORMAL_BASIS),
-        "status": _tolerance(0.0, "exact: singular iff the pixel contains s or -s (section 4.1)"),
+        "status": _tolerance(0.0, "exact: singular iff the pixel contains s or -s (docs/band-sum-contract.md section 4.1)"),
         "edge_epsilon_rad": _tolerance(BAND_SUM_EDGE_EPSILON_RAD, BAND_SUM_LAYER2_BASIS),
         "gate_epsilon": _tolerance(BAND_SUM_GATE_EPSILON, BAND_SUM_LAYER2_BASIS),
         "weight_epsilon": _tolerance(BAND_SUM_WEIGHT_EPSILON, BAND_SUM_LAYER2_BASIS),
