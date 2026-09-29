@@ -50,6 +50,22 @@ wedge 0) have no field at all (:meth:`.dp_field.DPField.build` refuses them):
 their image is a point mass at the sun (:func:`.path_class.estimate_rank0_contribution`),
 labelled ``point_mass`` here and nothing else.
 
+*Family pinned* (:func:`family_pinned`) is a third, orthogonal label, not a
+``mechanism`` token: a dimension collapse whose whole family lies in one level
+set.  A plate or Lowitz density with its c-axis zenith mean at a pole
+confines the pose, as ``sigma -> 0``, to rotations about the c axis (body
+``z`` in LI's convention), so ``u`` runs round a latitude circle about body
+``z``.  When the path's refractions cancel (wedge ``0``: the outgoing
+direction is ``M_P u``) and ``M_P`` commutes with ``R_z``, ``D_P(R_z u) =
+angle(R_z u, M_P R_z u) = D_P(u)``: the circle is inside one level set and
+the family's image is one deviation.  ``3-6-4-8`` and ``1-2-1`` (elements 6
+and 11 of :mod:`.symmetry.reflection_group`) are pinned under a plate
+density; ``3-5`` collapses too (``dimension_collapse``) but its fold matrix
+is ``I`` with wedge 60 deg, ``D_P`` varies round the circle, and it is not.
+The label is the ``sigma -> 0`` support: at ``sigma > 0`` a pinned family's
+deviation spread is proportional to ``sigma`` rather than finite as
+``sigma -> 0``, it is not zero.
+
 Nothing here changes a value the quadratures compute; the labels are read
 from the same critical data (:class:`.dp_field.DPField`) and density
 (:mod:`.pose_density`) the renderers use.
@@ -72,9 +88,10 @@ from . import optics
 from .dp_field import DPField
 from .dp_field.boundary import EXTREMUM_ATOL, ZERO_MARGIN_ATOL
 from .dp_field.field import tangent_basis
-from .geometry import Polyhedron, halo_map_rank
+from .geometry import WEDGE_ZERO_TOLERANCE_DEG, Polyhedron, fold_matrix, halo_map_rank, wedge_angle_deg
 from .pose_density import HaarUniformPoseDensity, PoseDensity, ZenithGaussianPoseDensity, ZenithRollGaussianPoseDensity
 from .s2_store import fibonacci_sphere
+from .symmetry.reflection_group import commutes_with_rz
 
 PROFILES = (
     "finite_jump",
@@ -148,7 +165,7 @@ class FocusingClassification:
     ``gradient_norm_range`` is ``(min, max)`` of ``|grad D_P|`` on the ``U_P``
     points of a ``LATTICE_N`` Fibonacci lattice (a sampled bound, not a
     proof); ``confined_dimensions`` / ``confinement_widths_rad`` come from
-    :func:`confined_dimensions`.
+    :func:`confined_dimensions`; ``family_pinned`` from :func:`family_pinned`.
     """
 
     path: str
@@ -157,6 +174,7 @@ class FocusingClassification:
     gradient_norm_range: tuple[float, float] | None
     confined_dimensions: int
     confinement_widths_rad: tuple[float, ...]
+    family_pinned: bool = False
 
     @property
     def jacobian_focusing(self) -> bool:
@@ -183,6 +201,7 @@ class FocusingClassification:
             "dimension_collapse": self.dimension_collapse,
             "confined_dimensions": self.confined_dimensions,
             "confinement_widths_deg": [float(np.degrees(w)) for w in self.confinement_widths_rad],
+            "family_pinned": self.family_pinned,
             "gradient_norm_range": None if self.gradient_norm_range is None else list(self.gradient_norm_range),
             "onsets": [onset.as_json() for onset in self.onsets],
         }
@@ -205,6 +224,28 @@ def confined_dimensions(density: PoseDensity) -> tuple[int, tuple[float, ...]]:
     if isinstance(density, ZenithRollGaussianPoseDensity):
         return 2, (float(density.zenith_std_rad), float(density.roll_std_rad))
     raise TypeError(f"no confinement rule for pose density {type(density).__name__}")
+
+
+def family_pinned(crystal: Polyhedron, faces: Sequence[int], density: PoseDensity) -> bool:
+    """Whether the ``sigma -> 0`` family of ``density`` lies in one level set of ``D_P`` (module docstring).
+
+    True iff the path has rank ``2``, its wedge is ``0`` (within
+    :data:`.geometry.WEDGE_ZERO_TOLERANCE_DEG`, the tolerance of
+    :func:`.geometry.halo_map_rank`), its fold matrix commutes with ``R_z``
+    (:func:`.symmetry.reflection_group.commutes_with_rz`) and ``density``
+    holds the c axis at a pole (a zenith Gaussian, with or without roll, whose
+    mean is ``0`` or ``pi``: plate and Lowitz, not column or Parry).  The
+    density test is on its type and mean, not its family name, like
+    :func:`confined_dimensions`.
+    """
+    faces = optics.normalize_faces(faces, crystal)
+    if not isinstance(density, (ZenithGaussianPoseDensity, ZenithRollGaussianPoseDensity)):
+        return False
+    if min(density.zenith_mean_rad, np.pi - density.zenith_mean_rad) != 0.0:
+        return False
+    if halo_map_rank(crystal, faces) == 0 or wedge_angle_deg(crystal, faces) > WEDGE_ZERO_TOLERANCE_DEG:
+        return False
+    return commutes_with_rz(fold_matrix(crystal, faces))
 
 
 def interior_onset(value: float, kind: str, hessian_eigenvalues: np.ndarray, gradient_norm: float) -> CriticalOnset:
@@ -329,7 +370,8 @@ def classify(
         field = DPField.build(crystal, faces, index)
     elif field.faces != faces:
         raise ValueError(f"field is for {optics.path_id_of(field.faces, field.crystal)}, not {path}")
-    return FocusingClassification(path, rank, field_onsets(field), gradient_norm_range(field), dims, widths)
+    return FocusingClassification(path, rank, field_onsets(field), gradient_norm_range(field), dims, widths,
+                                  family_pinned(crystal, faces, density))
 
 
 @dataclass(frozen=True)
@@ -438,6 +480,7 @@ __all__ = [
     "WavelengthOnsetShift",
     "classify",
     "confined_dimensions",
+    "family_pinned",
     "field_onsets",
     "gradient_norm_range",
     "interior_onset",
