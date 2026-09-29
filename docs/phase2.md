@@ -1116,15 +1116,19 @@ needs street-lamp halos (backlog).
   | `3-6-4-8`, 4° | 0.9998 (0.9998, 0.9998) | 1.0004 | 0.68 % (0.78 %) | 3.181° | 0.9991 |
   | `3-5`, 1° | 1.0000 (1.0000, 1.0000) | 0.9958 | 1.33 % (0.81 %) | 3.081° | 1.0000 |
 
-  $D$ std is the flux-weighted spread of the pixel deviations on the image:
+  $D$ std is the flux-weighted spread of the pixel deviations on the image
+  (for `3-5` the 40° window truncates it: 3.081° here is a pipeline check
+  against Lumice, not a value to compare with the $5.67°$ over all poses):
   it scales with $\sigma$ (0.819, 0.818, 0.815, 0.795 times $\sigma$) and the
-  two sides agree to `1e-3`. Two differences remain, both explained with
-  nothing fitted. (1) `3-6-4-8`: Lumice has a one-pixel hole at the pinned
+  two sides agree to `1e-3`. Two differences remain, both explained by
+  a model of the mechanism (the one post-hoc choice is flagged below). (1) `3-6-4-8`: Lumice has a one-pixel hole at the pinned
   image point with a bright ring around it (centre column 1.19 / 0.70 / 1.19
   of LI at $\sigma = 0.5°$, 1.09 / 0.89 / 1.09 at 1°, within 3 % at 2°), so
   the max-normalised profiles differ by 0.09 at $0.5°$ against a 0.004 seed
   floor. It comes from Lumice's zenith sampler (`src/core/lat_lut.cpp`, read
-  as evidence only): the table is built on $\pi/4096 = 0.0439°$ colatitude
+  as evidence only; baseline: Lumice `Ice Halo 44ce8b21`, binary
+  `4.7.0-dev` / `73b0f697`, so a claim on that baseline that a later sampler
+  change can void): the table is built on $\pi/4096 = 0.0439°$ colatitude
   bins and starts at the first bin's upper edge, so no pose has a tilt below
   $0.0439°$. The pinned image is a linear image of the tilt (singular values
   $\sqrt 3$ and $0.448$), and a model of that table alone predicts the centre
@@ -1133,9 +1137,11 @@ needs street-lamp halos (backlog).
   Lumice sampler resolution and does not change the flux. (2) `3-5`: the
   band sum takes the pixel centre along the $D$ circle, Lumice averages over
   the pixel. The second-order correction from LI's own image,
-  $1 + f''p^2/24$ along the column, moves the bright median to 0.9998, and
-  without the two columns on the inner-edge caustic the relative std is
-  0.17 %. Artifacts: `scratchpad/scrum-analytic-lib-wave2-spec/task-lumice-radiometric-check-degenerate-plate/artifacts/`.
+  $1 + f''p^2/24$ along the column, moves the bright median from 0.9958 to 0.9998; the
+  relative std of 1.33 % misses its 0.81 % criterion, and only after a
+  post-hoc exclusion of the two columns on the inner-edge caustic (93 px) it
+  is 0.17 %. Artifacts are local and not in the repository (they move with
+  scratchpad archiving): `scratchpad/scrum-analytic-lib-wave2-spec/task-lumice-radiometric-check-degenerate-plate/artifacts/`.
 - **Wavelength-critical onsets** (task `wavelength-critical-api`, 2026-09-27).
   `focusing.wavelength_critical_table` runs `classify` once per refractive
   index (label $\to n(\lambda)$, from `spectrum.dispersion.refractive_index`

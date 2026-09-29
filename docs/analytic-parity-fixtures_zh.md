@@ -371,5 +371,5 @@ Lambert 格的 LI 侧与线性格走同样两种求和形式：相机只经像�
 - 任何对称约化：`symmetry_semantics` 处处为 `none`；一个类（L2 行）由调用方对成员求和（契约 §1）。
 - 多波长带求和、发散光，以及非随机密度下确定性的秩 0 点质量（契约 §1、§5）。
 - 族钉定格与 Lumice 的辐射量对照。这些格认证的是后端的带求和，不是退化族的物理；3-6-4-8 板晶族与 Lumice 的对照
-  （任务 `lumice-radiometric-check-degenerate-plate`，[phase2_zh.md](phase2_zh.md) §10）在 `σ = 0.5–4°` 上通量一致到 `2e-4`，
+  （任务 `lumice-radiometric-check-degenerate-plate`，[phase2_zh.md](phase2_zh.md) §10）在 `σ = 0.5–4°` 上合并通量一致到 `2e-4`（单个 seed 在 `3e-4` 内），
   偏向角散布一致到 `1e-3`。

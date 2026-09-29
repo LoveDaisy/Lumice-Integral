@@ -522,5 +522,5 @@ this page and of `parity_export.SCHEMA_VERSION` in the same LI commit.
   certify a backend's band sum, not the physics of the degenerate families.
   The Lumice comparison of the 3-6-4-8 plate family (task
   `lumice-radiometric-check-degenerate-plate`, [phase2.md](phase2.md) §10)
-  agrees in flux within `2e-4` and in deviation spread within `1e-3` at
+  agrees in merged flux within `2e-4` (single seeds within `3e-4`) and in deviation spread within `1e-3` at
   `σ = 0.5–4°`.
