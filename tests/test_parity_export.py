@@ -259,7 +259,7 @@ def test_full_matrix_export_is_byte_deterministic_and_reads_back(tmp_path: Path)
     assert all(not check.failures for check in checks), [(check.fixture, check.failures) for check in checks if check.failures]
 
 
-# slow: two full exports (matrix, wave 2 edge cells and band-sum cells, 89 fixtures) plus a read-back; 40 s for the 82 before
+# slow: two full exports (matrix, wave 2 edge cells and band-sum cells, 93 fixtures) plus a read-back; 40 s for the 82 before
 # the band-sum cells with a warm JAX cache on a loaded M2 Max
 @pytest.mark.slow
 def test_export_with_edge_cells_is_byte_deterministic_and_reads_back(tmp_path: Path) -> None:
@@ -413,3 +413,51 @@ def test_band_sum_export_is_byte_deterministic(tmp_path: Path) -> None:
     assert len(names) == len(cells) + 1
     manifest = pe.read_json(first / pe.MANIFEST)
     assert manifest["cells"] == [] and "edge_cells" not in manifest and len(manifest["band_sum_cells"]) == len(cells)
+
+
+# ------------------------------------------------------------------ family-pinned band-sum cells
+def _export_script():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("export_analytic_parity", REPO / "scripts" / "export_analytic_parity.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _sigma_zero_plate_ring(scene: pe.Scene) -> tuple[np.ndarray, np.ndarray]:
+    """``D`` and ``w`` on the plate family at ``sigma = 0``: c axis vertical, every azimuth (0.25 deg steps)."""
+    from lumice_integral.s2_store import evaluate_fields
+
+    azimuth = np.radians(np.arange(0.0, 360.0, 0.25))
+    c, s = np.cos(azimuth), np.sin(azimuth)
+    rotations = np.zeros((len(azimuth), 3, 3))
+    rotations[:, 0, 0], rotations[:, 0, 1], rotations[:, 1, 0], rotations[:, 1, 1], rotations[:, 2, 2] = c, -s, s, c, 1.0
+    fields = evaluate_fields(rotations, scene.sun, scene.crystal, scene.refractive_index, [scene.faces])
+    return np.asarray(fields["D"]), np.asarray(fields["w"])
+
+
+def test_family_pinned_cells_put_their_whole_sigma_zero_family_on_one_deviation() -> None:
+    """Independent of the band sum: the pinned cells' paths are the ones focusing.family_pinned names, each has
+    valid poses on the sigma = 0 plate ring and one D there; the 3-5 plate control is not pinned and spreads.
+
+    3-5's fold matrix commutes with R_z too (its wedge of 60 deg is what excludes it), so the test goes through
+    family_pinned, not commutes_with_rz.  On the canonical column 1-2-1 has no valid pose on the ring, which is
+    why its cell uses the thin plate.
+    """
+    from lumice_integral.focusing import family_pinned
+
+    script = _export_script()
+    cells = {cell.name: cell for cell in script.BAND_SUM_CELLS}
+    pinned = ["3-6-4-8__band_sum_plate", "3-6-4-8__band_sum_plate_sigma_0.5", "1-2-1__band_sum_plate", "1-2-3-4-1__band_sum_plate"]
+    for name in [*pinned, "3-5__band_sum_plate"]:
+        cell = cells[name]
+        scene = cell.scene
+        assert family_pinned(scene.crystal, scene.faces, pe.density_of(cell.density)) == (name in pinned), name
+        d, w = _sigma_zero_plate_ring(scene)
+        valid = w > 0.0
+        assert valid.any(), name
+        spread = np.degrees(np.ptp(d[valid]))
+        assert (spread < 1e-9) if name in pinned else (spread > 10.0), (name, spread)
+    column = pe.Scene(PRISM, (1, 2, 1), CANONICAL_REFRACTIVE_INDEX, SUN)
+    assert not (_sigma_zero_plate_ring(column)[1] > 0.0).any()
