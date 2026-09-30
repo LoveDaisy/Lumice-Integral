@@ -85,8 +85,10 @@ class KinkCurve:
     ``method`` is ``"great_circle"`` or ``"marched"``; ``normal`` is
     ``m_k`` for the closed form (``None`` when marched).  ``arcs`` may be
     empty: the onset misses ``U_P`` (every pose of the path reflects
-    totally, or none does, at that step).  ``note`` says why a marched curve
-    has no arcs when a walk failed (the error is reported, not hidden).
+    totally, or none does, at that step; ``note`` says so when ``n >= sqrt 2``
+    takes the onset off ``S^2``).  ``failed_seeds`` counts the marched seeds
+    whose walk raised; the other seeds are still walked, and ``note`` carries
+    the first error (reported, not hidden).
     """
 
     step: int
@@ -96,6 +98,12 @@ class KinkCurve:
     normal: np.ndarray | None
     arcs: tuple[KinkArc, ...]
     note: str = ""
+    failed_seeds: int = 0
+
+    @property
+    def complete(self) -> bool:
+        """No seed walk failed (the arcs are still not certified to be all of ``C_k``, module docstring)."""
+        return self.failed_seeds == 0
 
     @property
     def points(self) -> np.ndarray:
@@ -131,7 +139,13 @@ def weight_kinks(
 
 
 def _circle_curve(walker: Walker, step: int, margin: str, m: np.ndarray, index: float) -> KinkCurve | None:
-    """``m . u = -sqrt(n^2 - 1)`` clipped to ``U_P``; ``None`` if the discriminant does not vanish on it (fall back to the walk)."""
+    """``m . u = -sqrt(n^2 - 1)`` clipped to ``U_P``; ``None`` if the discriminant does not vanish on it (fall back to the walk).
+
+    For ``n^2 - 1 >= 1`` the circle is empty: ``disc_k = n^2 - 1 - (m . u)^2 >= 0`` on all of ``S^2``.
+    """
+    if index * index - 1.0 >= 1.0:
+        note = f"n^2 - 1 >= 1 at n = {index}: disc_k >= 0 on all of S^2, the reflection is total everywhere (no onset)"
+        return KinkCurve(step, margin, float(index), "great_circle", m, (), note=note)
     height = np.sqrt(index * index - 1.0)
     e1 = unit(np.cross(m, np.eye(3)[int(np.argmin(np.abs(m)))]))
     e2 = np.cross(m, e1)
@@ -214,21 +228,24 @@ def _marched_curve(walker: Walker, step: int, margin: str, index: float, lattice
     near = np.abs(disc) < SEED_BAND
     seeds = lattice[near][np.argsort(np.abs(disc[near]))]
     arcs: list[KinkArc] = []
-    walked: list[np.ndarray] = []
-    covered = SEED_COVERED_STEPS * WALK_STEP_RAD
-    try:
-        for seed in seeds:
-            if walked and cKDTree(np.concatenate(walked)).query(seed)[0] < 2.0 * np.sin(covered / 2.0):
-                continue
+    walked: cKDTree | None = None  # rebuilt when an arc is added
+    covered = 2.0 * np.sin(SEED_COVERED_STEPS * WALK_STEP_RAD / 2.0)
+    errors: list[str] = []
+    for seed in seeds:
+        if walked is not None and walked.query(seed)[0] < covered:
+            continue
+        try:
             start = walker.correct(seed, margin)
             if abs(walker.margins(start)[k]) > 1e-12 or walker.violated(start, {margin}):
                 continue
             arc = _walk_both_ways(walker, start, margin)
-            arcs.append(arc)
-            walked.append(arc.points)
-    except RuntimeError as error:
-        return KinkCurve(step, margin, float(index), "marched", None, tuple(arcs), note=str(error))
-    return KinkCurve(step, margin, float(index), "marched", None, tuple(arcs))
+        except RuntimeError as error:  # one seed's walk: counted and reported, the other seeds still walked
+            errors.append(str(error))
+            continue
+        arcs.append(arc)
+        walked = cKDTree(np.concatenate([a.points for a in arcs]))
+    note = f"{len(errors)} seed walk(s) failed, first: {errors[0]}" if errors else ""
+    return KinkCurve(step, margin, float(index), "marched", None, tuple(arcs), note=note, failed_seeds=len(errors))
 
 
 def _walk_both_ways(walker: Walker, start: np.ndarray, margin: str) -> KinkArc:

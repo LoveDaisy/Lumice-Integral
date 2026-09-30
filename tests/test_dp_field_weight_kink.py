@@ -134,3 +134,36 @@ def test_weight_kink_uses_only_the_public_walk_interface() -> None:
         if isinstance(target, ast.Attribute)
     ]
     assert assigned == []
+
+
+def test_a_failed_seed_walk_does_not_stop_the_others(monkeypatch) -> None:
+    """``3-5-6-7-3``: the first seed's walk raises; the remaining seeds still give arcs and the failure is counted."""
+    faces, index = (3, 5, 6, 7, 3), 1.31
+    crystal = HexPrism.from_ratio(2.0)
+    reference = W.marched_kink(crystal, faces, index, 1, slab=None)
+    assert reference.complete and reference.note == "" and reference.arcs
+    walk = W._walk_both_ways
+    calls = []
+
+    def first_fails(walker, start, margin):
+        calls.append(start)
+        if len(calls) == 1:
+            raise RuntimeError("injected walk failure")
+        return walk(walker, start, margin)
+
+    monkeypatch.setattr(W, "_walk_both_ways", first_fails)
+    curve = W.marched_kink(crystal, faces, index, 1, slab=None)
+    assert curve.failed_seeds == 1 and not curve.complete
+    assert "1 seed walk(s) failed" in curve.note and "injected walk failure" in curve.note
+    assert curve.arcs and len(calls) > 1
+    # the seeds after the failure recover most of the onset (not all: the failed seed's own stretch may be lost)
+    gap = np.linalg.norm(reference.points[::20, None, :] - curve.points[None, ::5], axis=2).min(axis=1)
+    assert np.mean(gap < 0.01) > 0.9
+
+
+@pytest.mark.filterwarnings("error")
+def test_index_above_sqrt_2_has_no_onset_on_the_sphere() -> None:
+    """``n^2 - 1 >= 1``: the closed-form circle is empty by construction (said in the note), no NaN comparison."""
+    (curve,) = DPField.build(HexPrism(), (3, 1, 6), 1.5).weight_kinks
+    assert curve.method == "great_circle" and curve.arcs == ()
+    assert "n^2 - 1 >= 1" in curve.note and curve.complete

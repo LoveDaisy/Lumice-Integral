@@ -172,7 +172,11 @@ class ChromaticVerdict:
     of the ratio, ``none`` / ``white`` inside the threshold, or ``none`` /
     ``none`` for a class that disperses (a note says so).  ``position`` is ``delta`` of the
     dominant feature (radians, the blue one's for blue); ``None`` for a
-    tint (its sky point is not traced).
+    tint (its sky point is not traced).  ``coverage_complete`` is ``False``
+    when a line the verdict rests on was not fully analysed: a weight-kink
+    walk with failed seeds (:attr:`.dp_field.KinkCurve.complete`) or gates
+    that could not be walked; the notes say which.  For a class, it is the
+    conjunction over its member verdicts.
     """
 
     faces: Faces
@@ -185,6 +189,7 @@ class ChromaticVerdict:
     notes: tuple[str, ...] = ()
     n_red: float = N_RED
     n_blue: float = N_BLUE
+    coverage_complete: bool = True
 
 
 def diagnose(
@@ -205,10 +210,12 @@ def diagnose(
     notes: list[str] = []
     unresolved: list[str] = []
     features: list[ChromaticFeature] = []
+    complete = True
     for kink_red, kink_blue in zip(red.weight_kinks, blue.weight_kinks, strict=True):
         for kink in (kink_red, kink_blue):
             if kink.note:
                 notes.append(f"{kink.margin} at n = {kink.index}: {kink.note}")
+            complete = complete and kink.complete
         if kink_red.arcs and kink_blue.arcs:
             features.append(_kink_feature(red, blue, kink_red, kink_blue))
         elif kink_red.arcs or kink_blue.arcs:
@@ -218,7 +225,8 @@ def diagnose(
         features.extend(_gate_features(red, blue, unresolved))
     except (RuntimeError, ValueError) as error:  # a boundary walk that fails is reported, not hidden
         notes.append(f"gates not analysed: {error}")
-    return _verdict(faces, tuple(features), tuple(notes) + tuple(unresolved), n_red, n_blue, bool(unresolved))
+        complete = False
+    return _verdict(faces, tuple(features), tuple(notes) + tuple(unresolved), n_red, n_blue, bool(unresolved), complete)
 
 
 def _verdict(
@@ -228,13 +236,14 @@ def _verdict(
     n_red: float,
     n_blue: float,
     unresolved: bool = False,
+    coverage_complete: bool = True,
 ) -> ChromaticVerdict:
     if not features:
         kind = "unresolved" if unresolved else "none"
-        return ChromaticVerdict(faces, kind, "none", False, None, (), None, notes, n_red, n_blue)
+        return ChromaticVerdict(faces, kind, "none", False, None, (), None, notes, n_red, n_blue, coverage_complete)
     top = _dominant(features)
     position = top.delta_blue if top.color == "blue" else top.delta_red
-    return ChromaticVerdict(faces, top.kind, top.color, top.visible, position, features, None, notes, n_red, n_blue)
+    return ChromaticVerdict(faces, top.kind, top.color, top.visible, position, features, None, notes, n_red, n_blue, coverage_complete)
 
 
 def _dominant(features: Sequence[ChromaticFeature]) -> ChromaticFeature:
@@ -252,8 +261,9 @@ def _is_visible(shift: float, spread: float, lit_fraction: float) -> bool:
 
 
 def _kink_feature(red: DPField, blue: DPField, kink_red: KinkCurve, kink_blue: KinkCurve) -> ChromaticFeature:
-    k = optics.domain_margin_names(red.faces).index(kink_red.margin)
-    cosine = k - 1  # internal_{j}_incidence_cosine precedes its discriminant
+    names = optics.domain_margin_names(red.faces)
+    k = names.index(kink_red.margin)
+    cosine = names.index(f"internal_{kink_red.step}_incidence_cosine")
     d_dn, margin_dn = red.index_derivatives_batch(kink_red.points)
     positive = float(np.mean(margin_dn[:, k] > 0.0))
     color = "blue" if positive >= 0.5 else "red"
@@ -485,7 +495,8 @@ def diagnose_class(
         member_verdicts.append(diagnose(crystal, member, n_red=n_red, n_blue=n_blue, lattice_n=lattice_n))
     features = tuple(f for v in member_verdicts for f in v.features)
     notes = tuple(n for v in member_verdicts for n in v.notes)
-    verdict = _verdict(tuple(representative), features, notes, n_red, n_blue)
+    complete = all(v.coverage_complete for v in member_verdicts)
+    verdict = _verdict(tuple(representative), features, notes, n_red, n_blue, coverage_complete=complete)
     return ClassVerdict(tuple(representative), members, lit, verdict, tuple(member_verdicts), _covering_radius(lattice_n))
 
 

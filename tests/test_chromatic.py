@@ -284,3 +284,62 @@ def test_one_sided_line_without_features_is_unresolved_not_none():
     verdict = _verdict((3, 1, 5), (), ("internal_1_tir_discriminant: weight kink at n = 1.317 only (not assessed)",), 1.307, 1.317, True)
     assert (verdict.kind, verdict.color, verdict.visible) == ("unresolved", "none", False)
     assert _verdict((3, 1, 5), (), (), 1.307, 1.317).kind == "none"
+
+
+# ---- coverage and lookups (task chromatic-consolidation) ------------------------------------------------------
+
+
+def test_a_failed_kink_walk_marks_the_verdict_incomplete(monkeypatch) -> None:
+    """``3-7-5``'s kink is marched; one failed seed walk leaves the verdict standing but ``coverage_complete`` False."""
+    from lumice_integral.dp_field import weight_kink as W
+
+    assert C.diagnose(HexPrism(), (3, 7, 5)).coverage_complete
+    walk = W._walk_both_ways
+    calls = []
+
+    def first_fails(walker, start, margin):
+        calls.append(start)
+        if len(calls) == 1:
+            raise RuntimeError("injected walk failure")
+        return walk(walker, start, margin)
+
+    monkeypatch.setattr(W, "_walk_both_ways", first_fails)
+    verdict = C.diagnose(HexPrism(), (3, 7, 5))
+    assert not verdict.coverage_complete
+    assert any("injected walk failure" in note for note in verdict.notes)
+
+
+def test_kink_feature_reads_the_incidence_cosine_by_name(monkeypatch) -> None:
+    """Reverse the margin layout (names and columns together): the kink feature is unchanged."""
+    import types
+
+    from lumice_integral import optics
+
+    red, blue = (DPField.build(HexPrism(), (3, 1, 5), n) for n in (C.N_RED, C.N_BLUE))
+    kink_red, kink_blue = red.weight_kinks[0], blue.weight_kinks[0]
+    expected = C._kink_feature(red, blue, kink_red, kink_blue)
+
+    class Reversed:
+        def __init__(self, field):
+            self._field = field
+
+        def __getattr__(self, name):
+            return getattr(self._field, name)
+
+        def margins_batch(self, u):
+            return self._field.margins_batch(u)[:, ::-1]
+
+        def index_derivatives_batch(self, u):
+            d, m = self._field.index_derivatives_batch(u)
+            return d, m[:, ::-1]
+
+    proxy = types.SimpleNamespace(**{name: getattr(optics, name) for name in dir(optics) if not name.startswith("__")})
+    proxy.domain_margin_names = lambda faces, *args: tuple(reversed(optics.domain_margin_names(faces, *args)))
+    monkeypatch.setattr(C, "optics", proxy)
+    assert C._kink_feature(Reversed(red), Reversed(blue), kink_red, kink_blue) == expected
+
+
+def test_every_fixture_verdict_is_complete() -> None:
+    for faces in PROBE_MONO_PATHS:
+        assert C.diagnose(HexPrism(), faces).coverage_complete, faces
+    assert C.diagnose_class(HexPrism(), (3, 1, 6), C.RandomOrientation()).verdict.coverage_complete
