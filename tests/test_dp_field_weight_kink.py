@@ -80,8 +80,7 @@ def test_walk_agrees_with_the_closed_form_on_a_slab() -> None:
     index = 1.31
     field = DPField.build(HexPrism(), (3, 1, 6), index)
     (closed_form,) = field.weight_kinks
-    walker = W._KinkWalker(field.crystal, field.faces, index, field.slab)
-    marched = W._marched_curve(walker, 1, closed_form.margin, index, field.lattice_n)
+    marched = W.marched_kink(field.crystal, field.faces, index, 1, slab=field.slab, lattice_n=field.lattice_n)
     assert marched.method == "marched" and marched.arcs
     np.testing.assert_allclose(marched.points @ closed_form.normal, -np.sqrt(index * index - 1.0), atol=1e-12)
     np.testing.assert_allclose(marched.values, 2.0 * np.arcsin(np.sqrt(index * index - 1.0)), atol=1e-12)
@@ -114,3 +113,24 @@ def test_kinks_do_not_change_the_boundary() -> None:
     field = DPField.build(HexPrism(), (3, 1, 5), 1.31)
     assert field.weight_kinks
     assert not any(piece.margin.endswith("_tir_discriminant") for piece in field.boundary_curves)
+
+
+def test_weight_kink_uses_only_the_public_walk_interface() -> None:
+    """No private name of ``boundary`` is imported by ``weight_kink``, and no walker state is mutated there."""
+    import ast
+    from pathlib import Path
+
+    source = Path(W.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    imported = [
+        alias.name for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module == "boundary" for alias in node.names
+    ]
+    assert imported and not [name for name in imported if name.startswith("_")]
+    assigned = [
+        target.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Attribute)
+    ]
+    assert assigned == []

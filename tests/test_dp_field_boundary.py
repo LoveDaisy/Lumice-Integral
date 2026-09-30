@@ -209,3 +209,39 @@ def test_restricted_extrema_come_in_mirror_pairs(fields, faces) -> None:
     assert len(values) % 2 == 0
     pairs = np.array(values).reshape(-1, 2)
     assert np.max(np.abs(pairs[:, 0] - pairs[:, 1])) <= 5e-8  # exit-TIR pieces carry the ~1e-8 sqrt error
+
+
+@pytest.mark.parametrize("faces", [(3, 5), (1, 3, 2), (3, 5, 6, 7, 3)])
+def test_walk_zero_set_orientation_reverses_the_walk(fields, faces) -> None:
+    """From the middle of a ``dU_P`` piece, ``orientation = 1`` ends on the piece's last corner and ``-1`` on its first.
+
+    Covers both steppers: great-circle pieces (``1-3-2`` is a lune of two circles) and marched ones.
+    """
+    field = fields[faces]
+    walker = B.Walker(field.crystal, field.faces, N, field.slab)
+    kinds = set()
+    for piece in field.boundary_curves:
+        if len(piece.points) < 8:
+            continue
+        middle = piece.points[len(piece.points) // 2]
+        forward, forward_corner, _ = B.walk_zero_set(walker, middle, piece.margin)
+        backward, backward_corner, _ = B.walk_zero_set(walker, middle, piece.margin, orientation=-1.0)
+        assert _angle(forward_corner, piece.points[-1]) < 1e-9
+        assert _angle(backward_corner, piece.points[0]) < 1e-9
+        # the two halves retrace the piece: every walked point is on it
+        walked = np.concatenate([np.asarray(backward), np.asarray(forward)])
+        assert np.max(cKDTree(piece.points).query(walked)[0]) < 2.0 * B.WALK_STEP_RAD
+        kinds.add(piece.kind)
+    assert kinds
+    if faces == (1, 3, 2):
+        assert kinds == {"great_circle"}
+    if faces == (3, 5, 6, 7, 3):
+        assert "marched" in kinds
+
+
+def test_walk_zero_set_rejects_other_orientations(fields) -> None:
+    field = fields[(3, 5)]
+    walker = B.Walker(field.crystal, field.faces, N, field.slab)
+    piece = field.boundary_curves[0]
+    with pytest.raises(ValueError, match="orientation"):
+        B.walk_zero_set(walker, piece.points[1], piece.margin, orientation=0.5)
