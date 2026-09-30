@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from scipy.spatial import cKDTree
 
 from lumice_integral import chromatic as C
 from lumice_integral.dp_field import DPField
@@ -123,18 +124,47 @@ def test_3_5_6_8_class_on_the_rhombic_plate_is_lit_only_through_other_members() 
 
 
 def test_3_5_6_8_class_is_impossible_on_the_regular_prism() -> None:
-    verdict = C.diagnose_class(HexPrism(a=1.0, h=2.0), (3, 5, 6, 8), C.RandomOrientation(samples=20000))
+    verdict = C.diagnose_class(HexPrism(a=1.0, h=2.0), (3, 5, 6, 8), C.RandomOrientation())
     assert verdict.lit_members == {"red": (), "blue": ()}
     assert (verdict.verdict.kind, verdict.verdict.color) == ("none", "none")
 
 
 def test_random_class_of_3_1_6_is_one_member_verdict_on_the_regular_prism() -> None:
     """``G_true = D6h`` on the regular prism: the lit members are one symmetry orbit, diagnosed once."""
-    verdict = C.diagnose_class(HexPrism(), (3, 1, 6), C.RandomOrientation(samples=20000))
+    verdict = C.diagnose_class(HexPrism(), (3, 1, 6), C.RandomOrientation())
     assert len(verdict.member_verdicts) == 1
     assert len(verdict.lit_members["red"]) == len(C.class_members((3, 1, 6)))
     assert (verdict.verdict.kind, verdict.verdict.color, verdict.verdict.visible) == ("edge", "blue", True)
     assert verdict.verdict.position == pytest.approx(_rim(C.N_BLUE), abs=1e-12)
+
+
+def test_random_class_feasibility_resolution_is_the_lattice_covering_radius() -> None:
+    """Every point of ``S^2`` is within ``feasibility_resolution_rad`` of the lattice (checked on 2e5 random points)."""
+    verdict = C.diagnose_class(HexPrism(a=1.0, h=2.0), (3, 5, 6, 8), C.RandomOrientation(), lattice_n=5000)
+    radius = verdict.feasibility_resolution_rad
+    probe = np.random.default_rng(1).normal(size=(200000, 3))
+    probe /= np.linalg.norm(probe, axis=1)[:, None]
+    farthest = np.max(2.0 * np.arcsin(0.5 * cKDTree(fibonacci_sphere(5000)).query(probe)[0]))
+    assert 0.9 * radius < farthest <= radius  # a bound, and a tight one
+    assert np.radians(1.5) < radius < np.radians(3.0)
+    assert C.diagnose_class(HexPrism(), (1, 3, 5, 2), C.PlateFamily(9.0, samples=2000)).feasibility_resolution_rad is None
+
+
+def test_random_class_finds_every_lit_set_wider_than_its_resolution(monkeypatch) -> None:
+    """A synthetic member lit on one cap just wider than the resolution is found wherever the cap sits.
+
+    (No natural member with a lit set that small was found on five prisms x nine classes, 2e4 lattice points.)
+    """
+    radius = C._covering_radius(2000)
+    centres = np.random.default_rng(2).normal(size=(40, 3))
+    centres /= np.linalg.norm(centres, axis=1)[:, None]
+    for centre in centres:
+        def cap(points, faces, index, crystal, centre=centre):
+            return (np.arccos(np.clip(points @ centre, -1.0, 1.0)) <= 1.0001 * radius).astype(float)
+
+        monkeypatch.setattr(C, "_body_weight", cap)
+        verdict = C.diagnose_class(HexPrism(), (3, 6), C.RandomOrientation(), lattice_n=2000)
+        assert verdict.lit_members["red"] == C.class_members((3, 6)), centre
 
 
 def test_plate_1_3_5_2_is_blue_on_a_small_sample() -> None:

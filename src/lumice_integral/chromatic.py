@@ -55,11 +55,12 @@ sample, not by the ``n = 1.31`` gates of :mod:`.geometry.feasibility`.
 
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass, field
 from typing import Sequence
 
 import numpy as np
-from scipy.spatial import cKDTree
+from scipy.spatial import SphericalVoronoi, cKDTree
 
 from . import optics
 from .camera import incident_direction_from_sun, sun_direction
@@ -69,7 +70,6 @@ from .path_class import g_true_orbit
 from .path_weight import weighted_power
 from .pose_density import sample_plate_poses
 from .s2_store import align_rotations, fibonacci_sphere
-from .so3 import haar_rotations
 from .symmetry.reflection_group import pbd_orbit
 
 Faces = tuple[int, ...]
@@ -361,10 +361,14 @@ def _median_weight_inside(field_: DPField) -> float:
 
 @dataclass(frozen=True)
 class RandomOrientation:
-    """Random (Haar) orientation.  ``samples`` Haar poses (``seed``) decide which class members are lit at each index."""
+    """Random (Haar) orientation.
 
-    samples: int = 20000
-    seed: int = 0
+    ``A T`` of a pose depends on the body sun direction ``u = R^-1 s_hat``
+    only (``A`` is twist invariant), so a class member is lit at an index iff
+    ``A T > 0`` somewhere on ``S^2``; :func:`diagnose_class` decides it on the
+    ``lattice_n``-point Fibonacci lattice, with its covering radius as the
+    resolution (:attr:`ClassVerdict.feasibility_resolution_rad`).
+    """
 
 
 @dataclass(frozen=True)
@@ -417,10 +421,16 @@ class ClassVerdict:
 
     ``members``: the ``PBD`` orbit of ``representative`` (sorted);
     ``lit_members``: per index (``{"red": ..., "blue": ...}``) the members
-    with positive weighted power on the family sample (a sampled verdict, not
-    a certificate); ``member_verdicts``: random orientation only, one per
-    ``G_true`` orbit of lit members (members related by the crystal's own
-    symmetry have congruent fields).
+    with positive weighted power on the family sample (plate: the family's
+    poses) or lattice (random orientation: body sun directions); ``member_verdicts``:
+    random orientation only, one per ``G_true`` orbit of lit members
+    (members related by the crystal's own symmetry have congruent fields).
+    ``feasibility_resolution_rad`` (random orientation only): the covering
+    radius of that lattice, every point of ``S^2`` is within it of a lattice
+    point.  A member whose lit set ``{A T > 0}`` contains a disc of this
+    radius is lit on the lattice, so a member reported unlit has no lit
+    component wider than that.  It bounds what can be missed; it is not a
+    proof that an unlit member is impossible.
     """
 
     representative: Faces
@@ -428,6 +438,7 @@ class ClassVerdict:
     lit_members: dict[str, tuple[Faces, ...]]
     verdict: ChromaticVerdict
     member_verdicts: tuple[ChromaticVerdict, ...] = field(default=())
+    feasibility_resolution_rad: float | None = None
 
 
 def class_members(representative: Sequence[int]) -> tuple[Faces, ...]:
@@ -448,23 +459,25 @@ def diagnose_class(
     members = class_members(representative)
     if isinstance(family, PlateFamily):
         rotations, incident = family.poses(), family.incident_direction()
-    else:
-        rotations, incident = haar_rotations(family.samples, np.random.default_rng(family.seed)), incident_direction_from_sun(_PROBE_SUN)
-    weights: dict[str, dict[Faces, np.ndarray]] = {"red": {}, "blue": {}}
-    checks: dict[str, dict[Faces, optics.BatchDomainCheck]] = {"red": {}, "blue": {}}
-    for label, index in (("red", n_red), ("blue", n_blue)):
-        for member in members:
-            if not _has_faces(crystal, member):
-                continue
-            w = weighted_power(rotations, member, incident, index, crystal=crystal)
-            if np.any(w > 0.0):
-                weights[label][member] = w
-                checks[label][member] = optics.path_domain_batch(rotations, member, incident, index, crystal=crystal)
-    lit = {label: tuple(sorted(weights[label])) for label in weights}
-    if isinstance(family, PlateFamily):
+        weights: dict[str, dict[Faces, np.ndarray]] = {"red": {}, "blue": {}}
+        checks: dict[str, dict[Faces, optics.BatchDomainCheck]] = {"red": {}, "blue": {}}
+        for label, index in (("red", n_red), ("blue", n_blue)):
+            for member in members:
+                if not _has_faces(crystal, member):
+                    continue
+                w = weighted_power(rotations, member, incident, index, crystal=crystal)
+                if np.any(w > 0.0):
+                    weights[label][member] = w
+                    checks[label][member] = optics.path_domain_batch(rotations, member, incident, index, crystal=crystal)
+        lit = {label: tuple(sorted(weights[label])) for label in weights}
         tint = _tint(weights, checks)
         verdict = _tint_verdict(tuple(representative), tint, n_red, n_blue)
         return ClassVerdict(tuple(representative), members, lit, verdict)
+    lattice = fibonacci_sphere(lattice_n)  # members (sorted) lit somewhere on S^2, decided on the lattice
+    lit = {
+        label: tuple(m for m in members if _has_faces(crystal, m) and np.any(_body_weight(lattice, m, index, crystal) > 0.0))
+        for label, index in (("red", n_red), ("blue", n_blue))
+    }
     member_verdicts = []
     for member in _one_per_symmetry_orbit(crystal, sorted(set(lit["red"]) | set(lit["blue"]))):
         if halo_map_rank(crystal, member) == 0:
@@ -472,9 +485,16 @@ def diagnose_class(
         member_verdicts.append(diagnose(crystal, member, n_red=n_red, n_blue=n_blue, lattice_n=lattice_n))
     features = tuple(f for v in member_verdicts for f in v.features)
     notes = tuple(n for v in member_verdicts for n in v.notes)
-    return ClassVerdict(
-        tuple(representative), members, lit, _verdict(tuple(representative), features, notes, n_red, n_blue), tuple(member_verdicts)
-    )
+    verdict = _verdict(tuple(representative), features, notes, n_red, n_blue)
+    return ClassVerdict(tuple(representative), members, lit, verdict, tuple(member_verdicts), _covering_radius(lattice_n))
+
+
+@functools.lru_cache(maxsize=4)
+def _covering_radius(lattice_n: int) -> float:
+    """Covering radius (rad) of the ``lattice_n``-point Fibonacci lattice: the farthest Voronoi vertex from its generators."""
+    lattice = fibonacci_sphere(lattice_n)
+    chord = float(np.max(cKDTree(lattice).query(SphericalVoronoi(lattice).vertices)[0]))
+    return 2.0 * float(np.arcsin(0.5 * chord))
 
 
 def _has_faces(crystal: Polyhedron, faces: Faces) -> bool:
