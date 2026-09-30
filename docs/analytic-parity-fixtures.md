@@ -22,8 +22,10 @@ uv run python scripts/export_analytic_parity.py --output-dir artifacts/analytic-
 ```
 
 - One command writes every fixture of the matrix (§6), the edge cells
-  (§6.1), the band-sum cells (§6.2) and a `manifest.json`, 93 fixtures. On an
-  idle M2 Max (2026-09-29) the export and the read-back took 64 s together.
+  (§6.1), the band-sum cells (§6.2) and a `manifest.json`, 94 fixtures. On an
+  idle M2 Max (2026-09-29) the export and the read-back of the 93 before the
+  `n = 1.307` cell took 64 s together (the 94 took 7 min on 2026-09-30 with a
+  second export running beside it).
   Before the four family-pinned cells were added, at load average 20–30, the
   export of 89 fixtures took 50 s and the read-back 153 s. The seven band-sum
   fixtures of that set took 38 s, because the statistical rank-0 cell replays a
@@ -417,7 +419,8 @@ and the `D3h` prism of C19. A short loop on a pyramid is the matrix's
 
 ### 6.2 Band-sum cells (module B)
 
-The sun is the matrix's (altitude 15°, azimuth 0), `n = 1.31`. Pixel tables
+The sun is the matrix's (altitude 15°, azimuth 0), `n = 1.31`, except in
+`1-3-4-2__band_sum_plate_n1.307` (below). Pixel tables
 come from three views: a Lumice linear lens (41 × 41, 60° field, elevation
 15°, the sun at pixel (20, 20), about 1.5° per pixel), a Lambert view about
 the sun (65 × 65, 30° field radius, about 0.93° per pixel, the sun at the
@@ -442,6 +445,7 @@ pixel is labelled with its table `(row, column)` or `(y, x)`.
 | `3-6-4-8__band_sum_plate_sigma_0.5` | same | plate 0.5°, same view and pixels | the same spot at half the spread | centre `2.14e-2`, horizontal neighbours `4.4e-4`–`5.9e-4`, tails to `2.4e-92` |
 | `1-2-1__band_sum_plate` | 1-2-1, thin plate (`height = 0.2`), `2e4` | plate 1°, Lambert (subsun, small) | family pinned, element 11 (basal reflection) | subsun centre `17.9` at `K = 95`, `K_eff = 95.0` (`δ = 30°`); lit along the vertical (`1.4`–`15.6`), `8.5e-16` four pixels across |
 | `1-2-3-4-1__band_sum_plate` | 1-2-3-4-1, thin plate, `2e4` | plate 1°, Lambert (120° subparhelion, small) | family pinned, element 5 | centre `0.102` at `K = 123` (`δ = 122.242°`); (4, 6) sits on the path's smallest deviation, 120°, and has the only nonzero layer-2 allowance (`K_layer2 = 3`); (4, 7) is an empty band |
+| `1-3-4-2__band_sum_plate_n1.307` | 1-3-4-2, plate with two long faces (`height = 0.3`, `face_distance = (1.5, 1, 1, 1.5, 1, 1)`), `n = 1.307`, **sun on the horizon**, `2e4` | plate 1°, Lambert (small, centred on azimuth 120°, elevation 0) | an index other than 1.31; the entry measure's exit gate at the caller's index (below) | a vertical streak in column 4 (azimuth 120°): (2, 4) `8.56e-4` at `K = 132`, `K_eff = 34.3`, (0, 4)–(4, 4) `9.7e-5`–`8.6e-4`, down to `6.1e-13` at (8, 4); horizontal tails (2, 5) `1.2e-12`, (2, 6) `3.6e-38`; (2, 3) an empty band |
 
 The LI side of the Lambert cells is computed by the same two forms of the sum
 as the linear ones: the camera enters LI's estimator only through a pixel's
@@ -481,12 +485,33 @@ category matrix (§6).
   `tests/test_parity_export.py::test_family_pinned_cells_put_their_whole_sigma_zero_family_on_one_deviation`
   evaluates `D` and `w` on the `σ = 0` ring. Each pinned cell has valid poses
   there and a single `D` (spread below `1e-9°`). The control spreads by more
-  than 10°. `family_pinned` names exactly the four pinned cells.
+  than 10°. `family_pinned` names exactly the four pinned cells. (The
+  `n = 1.307` cell below is family pinned too, element 6, but it is there
+  for its index, not for the family.)
 - *No fiber-layer cell.* At the 120° parhelion target, 3-6-4-8's fiber is two
   arcs, and on one of them the c axis stays vertical: that arc is the `σ = 0`
   family itself. No contract §11 row certifies this beyond what C17/C18
   already cover with `1-3__two_arcs_60deg`, so it is recorded here and not
   exported.
+
+**The `n = 1.307` cell.** Every other fixture is at `n = 1.31`, where the
+package constant and the call's index agree. Path 1-3-4-2 enters through one
+basal face, reflects on prism faces 3 and 4 and leaves through the parallel
+basal face; with the sun on the horizon the entry is grazing, so the internal
+ray lies just inside the critical cone of the call's index,
+`cos θ_c = sqrt(1 − 1/n²)`. At `n = 1.307` that cone is wider than the one of
+1.31, and the ray falls between the two. The entry measure's exit gate
+(contract §3, `geometry.entry_measure`) must use the call's index. Until task
+`entry-measure-exit-gate-index` (2026-09-30) LI used the package constant
+`N_ICE = 1.31` there, which rejected every grazing event: the spot centre was
+`4.8e-10` from 18 non-grazing events instead of `8.56e-4` from 132. Ice Halo's
+`src/analytic/entry_measure` already takes the call's index, so its expected
+parity on this cell is a plain pass; a backend that gates at a fixed 1.31
+fails it by six orders of magnitude on column 4 while (2, 5) and (2, 6), whose
+events are not grazing, agree bit for bit either way. The spot's position does
+not depend on `n` (parallel entry and exit faces), only its weights do.
+`tests/test_parity_export.py::test_non_canonical_index_cell_lights_the_grazing_slab_spot`
+pins the lit streak.
 
 ## 7. Update flow
 
@@ -507,6 +532,7 @@ Behaviour changes that moved fixture values:
 | Date, task | Change | Fixtures that moved |
 |---|---|---|
 | 2026-09-29, `discovery-cluster-min-index` | Cluster centres are the lowest unassigned pool index (contract §9.5.4 step 1); the reference used to take a Python `set`'s first element, which differs once the set's table shrinks. | Only `3-5__boundary_hugging_r780_c150__seed_search`: `raw_cluster_count` 15 → 13, `admissible_count` 15 → 13, `dedup_merged` 14 → 12; the one closed component is unchanged. The other 92 fixtures differ only in `provenance`. |
+| 2026-09-30, `entry-measure-exit-gate-index` | The entry measure's exit gate uses the critical angle of the call's index, `cos_critical(n)`, not of the package constant 1.31. | None: all 93 fixtures are at `n = 1.31` and are byte identical apart from `li_rev`. The new `1-3-4-2__band_sum_plate_n1.307` (§6.2) is the first fixture at another index. |
 
 ## 8. Not in these fixtures
 

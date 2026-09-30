@@ -133,8 +133,9 @@ uv run python scripts/render_ch06_strip.py --rows 300:302 --columns 126:127 --ou
 # LI -> Lumice analytic parity fixtures (docs/analytic-parity-fixtures.md): EvaluatePath / TraceFiber / seed search
 # over the path x point-category matrix plus the wave 2 edge cells (per-point J_perp and margins; contract section
 # 11.1 says which section 11 row each certifies) and the module B band-sum cells (docs/band-sum-contract.md, two
-# layers, including four family-pinned plate cells), byte-deterministic per rev; --verify reads all 93 back (export +
-# read-back 64 s on an idle M2 Max; 89 fixtures took 50 s + 2.5 min at load 20-30)
+# layers, including four family-pinned plate cells and one at n = 1.307), byte-deterministic per rev; --verify reads
+# all 94 back (export + read-back of the 93 before the n = 1.307 cell: 64 s on an idle M2 Max; 89 took 50 s + 2.5 min
+# at load 20-30)
 uv run python scripts/export_analytic_parity.py --output-dir artifacts/analytic-parity --verify
 # Linux/NVIDIA environment
 uv sync --extra cuda13 --dev
