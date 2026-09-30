@@ -860,3 +860,28 @@ Moved to [overview.md](overview.md) §3.
   [overview.md](overview.md) §5.3 (task `d4-verified-docs`). Kept there: a
   level set can exist without a fiber (finite-crystal gate, `gated_out`), and
   what degenerates is fiber $\cap$ pose family, not the level set.
+- **2026-09-30**: the entry measure's exit gate uses the critical angle of the
+  caller's index, `geometry.cos_critical(n)` (task
+  `entry-measure-exit-gate-index`). The entry refraction already used the
+  caller's `n_ice`, but the exit gate used the package constant
+  `N_ICE = 1.31`. At `n > 1.31` this made no difference: the looser gate was
+  cut by the Fresnel chain's own TIR gate. At `n < 1.31` (Lumice's pool
+  slots above 580 nm) it dropped every event whose exit direction lies
+  between the two critical cones. Under Haar poses and the canonical sun that
+  is `1e-4`–`3e-2` of a path's flux at 600–700 nm, largest on 3-5-6-7. A
+  plate slab with a grazing entry (1-3-4-2, the sun on the horizon) lost the
+  whole path, which gave the false "very blue" colour. The `S^2` store goes
+  to schema 6 so that no stale `n < 1.31` store is reused. The canonical
+  `n = 1.31` results, the `n(550) = 1.3110129` comparisons and all 93
+  existing parity fixtures are unchanged. A new band-sum fixture at
+  `n = 1.307` pins the fix
+  ([analytic-parity-fixtures.md](analytic-parity-fixtures.md) §6.2). The
+  gates of `feasibility.admissible_directions`, `enumerate` and
+  `symmetry.signature` stay at 1.31 on purpose: they are defined at the
+  canonical index and have no caller at another one. The `[3, 5]` D65
+  comparison of `xyz-band-sum-render` (#42) had two slots below 1.31 (660 and
+  740 nm). From the probe (3-5 loses about `1e-3` of a slot's flux at
+  700 nm, and the 660 nm slot carries roughly a seventh of X), X should move by
+  `1e-4` or less, about the size of that comparison's `2e-4` agreement. This is
+  an estimate, not a re-run. The comparison is re-run with the
+  multi-wavelength check of #49.

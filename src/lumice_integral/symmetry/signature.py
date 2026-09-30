@@ -14,7 +14,9 @@ $\\Phi=\\mathcal S_{\\mathbf n_b}\\circ M\\circ\\mathcal S_{\\mathbf n_a}$ 的**
 （$\\langle\\mathbf d,\\mathbf n_a\\rangle<0$），出射须无 TIR 且从外侧离开面 $b$。定义域判据与可行性判定
 （:func:`lumice_integral.geometry.feasibility.entry_ok` / :func:`~lumice_integral.geometry.feasibility.exit_ok`）是同一份实现：
 两者都作用在**晶体内**方向上，$\\tilde{\\mathbf n}_b=M^{-1}\\mathbf n_b$。漏掉入射侧判据会把 60° 的 12 个 signature 类
-错并成 6 个（一条光路与其时间反演在指纹上无法区分）。
+错并成 6 个（一条光路与其时间反演在指纹上无法区分）。全模块固定 $n$ = :data:`~lumice_integral.geometry.core.N_ICE`
+（:func:`phi_batch` 的两次折射与两道临界角门禁同为 1.31，signature 表逐字节对照写作系列 ch8 / ch9 的 CSV），
+不随调用折射率变化。
 
 楔角：:func:`wedge_angle` 与 :func:`lumice_integral.geometry.wedge_angle_deg` 共用同一份数值实现
 （``geometry.unfold._wedge_angle_deg_from_normals``，``atan2`` 形式；写作仓原文是 ``arccos``，在 0° 附近丢 ~√ε）。
@@ -37,7 +39,7 @@ from typing import Sequence
 import numpy as np
 
 from ..geometry.core import N_ICE, Polyhedron
-from ..geometry.feasibility import entry_ok, exit_ok
+from ..geometry.feasibility import COS_CRITICAL, entry_ok, exit_ok
 from ..geometry.unfold import _wedge_angle_deg_from_normals
 from . import reflection_group as rg
 
@@ -145,7 +147,7 @@ def phi_batch(crystal: Polyhedron, M: np.ndarray, a: int, b: int, d: np.ndarray)
     if not outside.any():
         return out
     d1 = _refract(d[outside], n_a, 1.0 / N_ICE)             # 晶体内方向
-    ok = entry_ok(n_a, d1) & exit_ok(M.T @ n_b, d1)         # 与可行性判定同一份光学判据（作用在晶体内方向上）
+    ok = entry_ok(n_a, d1, cos_tc=COS_CRITICAL) & exit_ok(M.T @ n_b, d1, cos_tc=COS_CRITICAL)         # 与可行性判定同一份光学判据（作用在晶体内方向上）
     d3 = _refract((M @ d1[ok].T).T, -n_b, N_ICE)            # 从内侧出射：法向取指向内部的 -n_b
     rows = np.flatnonzero(outside)[ok]
     out[rows] = d3
