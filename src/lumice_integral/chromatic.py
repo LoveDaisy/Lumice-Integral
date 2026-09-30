@@ -50,7 +50,9 @@ the one ``A T`` kernel of the library).  Path classes are Lumice's filter orbits
 (``3-5-6-8`` is geometrically impossible on the rhombic plate
 ``[1.5, 1, 1, 1.5, 1, 1]`` while four members of its class are lit).
 Member feasibility is decided per index by that kernel on the family's
-sample, not by the ``n = 1.31`` gates of :mod:`.geometry.feasibility`.
+sample (a plate: its poses; random orientation: a Fibonacci lattice of body sun
+directions, with the lattice's covering radius as the resolution), not by the
+``n = 1.31`` gates of :mod:`.geometry.feasibility`.
 """
 
 from __future__ import annotations
