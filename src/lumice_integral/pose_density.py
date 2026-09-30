@@ -80,7 +80,6 @@ from typing import ClassVar, Literal, get_args
 
 import numpy as np
 
-from .so3 import exp_batch
 
 _GAUSS_LEGENDRE_NODES = 400
 _WINDOW_HALF_WIDTH_SIGMAS = 12.0
@@ -119,6 +118,8 @@ def sample_plate_poses(samples: int, zenith_std_deg: float, seed: int) -> np.nda
     toward = rng.uniform(0.0, 2.0 * np.pi, samples)
     zeros = np.zeros_like(tilt)
     tilt_vectors = np.stack([-np.sin(toward) * tilt, np.cos(toward) * tilt, zeros], axis=1)
+    from .so3 import exp_batch  # lazy: this module stays importable without JAX (package __init__ contract)
+
     return exp_batch(tilt_vectors) @ exp_batch(np.stack([zeros, zeros, spin], axis=1))
 
 

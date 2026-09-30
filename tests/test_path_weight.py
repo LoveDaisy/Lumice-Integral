@@ -83,3 +83,18 @@ def test_the_factor_authorities_are_called_together_only_in_the_kernel() -> None
         if both <= called:
             offenders.append(str(path.relative_to(PACKAGE_ROOT)))
     assert offenders == []
+
+
+@pytest.mark.parametrize("index", [float("nan"), -1.0])
+def test_weighted_power_validates_like_path_domain_batch(index):
+    """The random-orientation class branch dropped its direct ``path_domain_batch`` call; ``weighted_power``
+    must keep rejecting what it rejects (it reaches it through ``fresnel_transmission_path_batch``)."""
+    from lumice_integral.geometry import HexPrism
+
+    crystal = HexPrism.from_ratio(2.0)
+    rotations = np.stack([np.eye(3)] * 2)
+    s = np.array([0.0, 0.0, -1.0])
+    with pytest.raises(ValueError):
+        optics.path_domain_batch(rotations, (3, 1, 6), s, index, crystal=crystal)
+    with pytest.raises(ValueError):
+        path_weight.weighted_power(rotations, (3, 1, 6), s, index, crystal=crystal)

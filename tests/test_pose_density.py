@@ -553,3 +553,13 @@ def test_exp_batch_is_exp_per_row_including_the_taylor_branch():
     np.testing.assert_allclose(batch, Rotation.from_rotvec(vectors).as_matrix(), rtol=0.0, atol=1e-15)
     for vector, matrix in zip(vectors, batch, strict=True):
         np.testing.assert_allclose(matrix, np.asarray(exp(vector)), rtol=0.0, atol=1e-16)
+
+
+def test_importing_pose_density_does_not_import_jax():
+    """``pose_density`` is a numpy module; only the plate sampler needs ``so3`` (JAX), imported lazily."""
+    import subprocess
+    import sys
+
+    code = "import sys, lumice_integral.pose_density; print('jax' in sys.modules)"
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True).stdout.strip()
+    assert out == "False"
