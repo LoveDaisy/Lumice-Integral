@@ -880,6 +880,8 @@ Moved to [overview.md](overview.md) §3.
   `symmetry.signature` stay at 1.31 on purpose: they are defined at the
   canonical index and have no caller at another one. The `[3, 5]` D65
   comparison of `xyz-band-sum-render` (#42) had two slots below 1.31 (660 and
-  740 nm); from the probe, its shift should be well below that comparison's
-  `2e-4` agreement, but this is an estimate, and the comparison is re-run with
-  the multi-wavelength check of #49.
+  740 nm). From the probe (3-5 loses about `1e-3` of a slot's flux at
+  700 nm, and the 660 nm slot carries roughly a seventh of X), X should move by
+  `1e-4` or less, about the size of that comparison's `2e-4` agreement. This is
+  an estimate, not a re-run. The comparison is re-run with the
+  multi-wavelength check of #49.
