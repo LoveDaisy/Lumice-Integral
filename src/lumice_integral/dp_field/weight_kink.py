@@ -16,7 +16,7 @@ topology certificate of :mod:`.certificate`.
 Two ways to find ``C_k`` (the same split as :mod:`.boundary`'s curve kinds):
 
 - ``great_circle`` normal: when ``m_k = R_{k-1}^T n_k`` (the step's
-  unfolded incidence normal, :func:`.boundary._incidence_normals`) is
+  unfolded incidence normal, :func:`.boundary.incidence_normals`) is
   orthogonal to the entry normal ``n_a``, the entry refraction keeps the
   tangential component, ``incidence_cosine = -(m_k . u) / n`` and
   ``disc_k = n^2 - 1 - (m_k . u)^2``: ``C_k`` inside the incidence gate is
@@ -27,8 +27,8 @@ Two ways to find ``C_k`` (the same split as :mod:`.boundary`'s curve kinds):
   On a single-mirror slab (``3-1-6``, ``1-3-2``: ``M`` the mirror of ``m``)
   ``D_P = 2 arcsin |m . u|`` is constant on it, ``2 arcsin sqrt(n^2 - 1)``.
 - ``marched``: otherwise, predictor-corrector along the zero set of
-  ``disc_k`` with the steppers of :class:`.boundary._Walker` (read only: its
-  ``correct`` / ``advance`` take any margin name), from lattice seeds near
+  ``disc_k`` with :func:`.boundary.walk_zero_set` (its :class:`.boundary.Walker`
+  steppers take any margin name), from lattice seeds near
   the zero set, both ways until a gate of ``U_P`` stops it or the walk
   closes.  Seeds within a few steps of a walked arc are dropped, the rest
   start new arcs; the arcs found are *not* certified to be all of ``C_k``
@@ -43,16 +43,9 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 from .. import optics
-from ..geometry import Polyhedron
+from ..geometry import Polyhedron, unit
 from ..s2_store import fibonacci_sphere
-from .boundary import (
-    GREAT_CIRCLE_ATOL,
-    WALK_STEP_RAD,
-    _incidence_normals,
-    _unit,
-    _walk_piece,
-    _Walker,
-)
+from .boundary import GREAT_CIRCLE_ATOL, WALK_STEP_RAD, Walker, incidence_normals, walk_zero_set
 from .field import d_p_batch, margins_batch, validity_margins_batch
 
 Faces = tuple[int, ...]
@@ -92,8 +85,10 @@ class KinkCurve:
     ``method`` is ``"great_circle"`` or ``"marched"``; ``normal`` is
     ``m_k`` for the closed form (``None`` when marched).  ``arcs`` may be
     empty: the onset misses ``U_P`` (every pose of the path reflects
-    totally, or none does, at that step).  ``note`` says why a marched curve
-    has no arcs when a walk failed (the error is reported, not hidden).
+    totally, or none does, at that step; ``note`` says so when ``n >= sqrt 2``
+    takes the onset off ``S^2``).  ``failed_seeds`` counts the marched seeds
+    whose walk raised; the other seeds are still walked, and ``note`` carries
+    the first error (reported, not hidden).
     """
 
     step: int
@@ -103,6 +98,12 @@ class KinkCurve:
     normal: np.ndarray | None
     arcs: tuple[KinkArc, ...]
     note: str = ""
+    failed_seeds: int = 0
+
+    @property
+    def complete(self) -> bool:
+        """No seed walk failed (the arcs are still not certified to be all of ``C_k``, module docstring)."""
+        return self.failed_seeds == 0
 
     @property
     def points(self) -> np.ndarray:
@@ -122,14 +123,14 @@ def weight_kinks(
     crystal: Polyhedron, faces: Faces, index: float, *, slab: np.ndarray | None, lattice_n: int = 20000
 ) -> tuple[KinkCurve, ...]:
     """One :class:`KinkCurve` per internal reflection of ``faces`` at ``index``, in step order (``()`` for ``a-b`` paths)."""
-    walker = _KinkWalker(crystal, faces, index, slab)
-    incidence = _incidence_normals(crystal, faces)
+    walker = Walker(crystal, faces, index, slab)
+    incidence = incidence_normals(crystal, faces)
     n_a = incidence["entry_incidence_cosine"]
     out = []
     for step in range(1, len(faces) - 1):
         margin = f"internal_{step}_tir_discriminant"
         m = incidence[f"internal_{step}_incidence_cosine"]
-        circle = _circle_curve(walker, step, margin, _unit(m), index) if abs(m @ n_a) <= GREAT_CIRCLE_ATOL else None
+        circle = _circle_curve(walker, step, margin, unit(m), index) if abs(m @ n_a) <= GREAT_CIRCLE_ATOL else None
         out.append(circle if circle is not None else _marched_curve(walker, step, margin, index, lattice_n))
     return tuple(out)
 
@@ -137,10 +138,16 @@ def weight_kinks(
 # ---- closed form ----------------------------------------------------------------------------------------
 
 
-def _circle_curve(walker: _KinkWalker, step: int, margin: str, m: np.ndarray, index: float) -> KinkCurve | None:
-    """``m . u = -sqrt(n^2 - 1)`` clipped to ``U_P``; ``None`` if the discriminant does not vanish on it (fall back to the walk)."""
+def _circle_curve(walker: Walker, step: int, margin: str, m: np.ndarray, index: float) -> KinkCurve | None:
+    """``m . u = -sqrt(n^2 - 1)`` clipped to ``U_P``; ``None`` if the discriminant does not vanish on it (fall back to the walk).
+
+    For ``n^2 - 1 >= 1`` the circle is empty: ``disc_k = n^2 - 1 - (m . u)^2 >= 0`` on all of ``S^2``.
+    """
+    if index * index - 1.0 >= 1.0:
+        note = f"n^2 - 1 >= 1 at n = {index}: disc_k >= 0 on all of S^2, the reflection is total everywhere (no onset)"
+        return KinkCurve(step, margin, float(index), "great_circle", m, (), note=note)
     height = np.sqrt(index * index - 1.0)
-    e1 = _unit(np.cross(m, np.eye(3)[int(np.argmin(np.abs(m)))]))
+    e1 = unit(np.cross(m, np.eye(3)[int(np.argmin(np.abs(m)))]))
     e2 = np.cross(m, e1)
     radius = np.sqrt(1.0 - height * height)
 
@@ -177,7 +184,7 @@ def _circle_curve(walker: _KinkWalker, step: int, margin: str, m: np.ndarray, in
     return KinkCurve(step, margin, float(index), "great_circle", m, tuple(arcs))
 
 
-def _bisect_end(walker: _KinkWalker, at, inside_t: float, outside_t: float) -> tuple[float, str]:
+def _bisect_end(walker: Walker, at, inside_t: float, outside_t: float) -> tuple[float, str]:
     """The angle where the circle leaves ``U_P`` between an inside and an outside sample, and the gate that stops it."""
     names = optics.validity_margin_names(walker.faces)
     lo, hi = inside_t, outside_t
@@ -193,7 +200,7 @@ def _bisect_end(walker: _KinkWalker, at, inside_t: float, outside_t: float) -> t
     return lo, names[int(np.argmin(gates))]
 
 
-def _arc(walker: _KinkWalker, t: np.ndarray, at, *, closed: bool, ends: tuple[str | None, str | None]) -> KinkArc:
+def _arc(walker: Walker, t: np.ndarray, at, *, closed: bool, ends: tuple[str | None, str | None]) -> KinkArc:
     points = at(t)
     values = d_p_batch(points, walker.faces, walker.index, walker.slab, crystal=walker.crystal)
     return KinkArc(points, values, closed, ends)
@@ -202,70 +209,64 @@ def _arc(walker: _KinkWalker, t: np.ndarray, at, *, closed: bool, ends: tuple[st
 # ---- marched ---------------------------------------------------------------------------------------------
 
 
-class _KinkWalker(_Walker):
-    """:class:`.boundary._Walker` whose tangent can be reversed (``sign = -1``): a TIR onset is walked both ways from a seed."""
-
-    def __init__(self, crystal: Polyhedron, faces: Faces, index: float, slab: np.ndarray | None) -> None:
-        super().__init__(crystal, faces, index, slab)
-        self.slab = slab
-        self.sign = 1.0
-
-    def direction(self, u: np.ndarray, name: str) -> np.ndarray:
-        return self.sign * super().direction(u, name)
+def marched_kink(
+    crystal: Polyhedron, faces: Faces, index: float, step: int, *, slab: np.ndarray | None, lattice_n: int = 20000
+) -> KinkCurve:
+    """``C_k`` of internal step ``step`` by the walk alone, whatever its normal (the closed form's cross-check)."""
+    walker = Walker(crystal, faces, index, slab)
+    return _marched_curve(walker, step, f"internal_{step}_tir_discriminant", index, lattice_n)
 
 
-def _marched_curve(kink: _KinkWalker, step: int, margin: str, index: float, lattice_n: int) -> KinkCurve:
-    k = kink.k(margin)
+def _marched_curve(walker: Walker, step: int, margin: str, index: float, lattice_n: int) -> KinkCurve:
+    k = walker.k(margin)
     lattice = fibonacci_sphere(lattice_n)
-    gates = validity_margins_batch(lattice, kink.faces, kink.index, crystal=kink.crystal)
+    gates = validity_margins_batch(lattice, walker.faces, walker.index, crystal=walker.crystal)
     lattice = lattice[np.all(gates > 0.0, axis=1)]
     if len(lattice) == 0:
         return KinkCurve(step, margin, float(index), "marched", None, ())
-    disc = margins_batch(lattice, kink.faces, kink.index, crystal=kink.crystal)[:, k]
+    disc = margins_batch(lattice, walker.faces, walker.index, crystal=walker.crystal)[:, k]
     near = np.abs(disc) < SEED_BAND
     seeds = lattice[near][np.argsort(np.abs(disc[near]))]
     arcs: list[KinkArc] = []
-    walked: list[np.ndarray] = []
-    covered = SEED_COVERED_STEPS * WALK_STEP_RAD
-    try:
-        for seed in seeds:
-            if walked and cKDTree(np.concatenate(walked)).query(seed)[0] < 2.0 * np.sin(covered / 2.0):
+    walked: cKDTree | None = None  # rebuilt when an arc is added
+    covered = 2.0 * np.sin(SEED_COVERED_STEPS * WALK_STEP_RAD / 2.0)
+    errors: list[str] = []
+    for seed in seeds:
+        if walked is not None and walked.query(seed)[0] < covered:
+            continue
+        try:
+            start = walker.correct(seed, margin)
+            if abs(walker.margins(start)[k]) > 1e-12 or walker.violated(start, {margin}):
                 continue
-            start = kink.correct(seed, margin)
-            if abs(kink.margins(start)[k]) > 1e-12 or kink.violated(start, {margin}):
-                continue
-            arc = _walk_both_ways(kink, start, margin)
-            arcs.append(arc)
-            walked.append(arc.points)
-    except RuntimeError as error:
-        return KinkCurve(step, margin, float(index), "marched", None, tuple(arcs), note=str(error))
-    return KinkCurve(step, margin, float(index), "marched", None, tuple(arcs))
+            arc = _walk_both_ways(walker, start, margin)
+        except RuntimeError as error:  # one seed's walk: counted and reported, the other seeds still walked
+            errors.append(str(error))
+            continue
+        arcs.append(arc)
+        walked = cKDTree(np.concatenate([a.points for a in arcs]))
+    note = f"{len(errors)} seed walk(s) failed, first: {errors[0]}" if errors else ""
+    return KinkCurve(step, margin, float(index), "marched", None, tuple(arcs), note=note, failed_seeds=len(errors))
 
 
-def _walk_both_ways(walker: _KinkWalker, start: np.ndarray, margin: str) -> KinkArc:
-    walker.sign = 1.0
-    forward, corner, _ = _walk_piece(walker, start, margin, stop_at=start, step=WALK_STEP_RAD)
+def _walk_both_ways(walker: Walker, start: np.ndarray, margin: str) -> KinkArc:
+    forward, corner, _ = walk_zero_set(walker, start, margin, stop_at=start, step=WALK_STEP_RAD)
     if corner is None:  # back at the seed: a loop inside U_P
         points = np.asarray(forward)
         return KinkArc(points, _values(walker, points), True, (None, None))
-    walker.sign = -1.0
-    try:
-        backward, back_corner, _ = _walk_piece(walker, start, margin, stop_at=None, step=WALK_STEP_RAD)
-    finally:
-        walker.sign = 1.0
+    backward, back_corner, _ = walk_zero_set(walker, start, margin, orientation=-1.0, step=WALK_STEP_RAD)
     points = np.asarray(backward[::-1] + forward[1:])
     ends = (_stopping_gate(walker, back_corner, margin), _stopping_gate(walker, corner, margin))
     return KinkArc(points, _values(walker, points), False, ends)
 
 
-def _stopping_gate(walker: _KinkWalker, corner: np.ndarray, margin: str) -> str:
-    """The gate closest to zero at an arc end (the one :func:`.boundary._walk_piece` stopped at)."""
+def _stopping_gate(walker: Walker, corner: np.ndarray, margin: str) -> str:
+    """The gate closest to zero at an arc end (the one :func:`.boundary.walk_zero_set` stopped at)."""
     m = walker.margins(corner)
     return min(walker.active, key=lambda name: abs(float(m[walker.k(name)])))
 
 
-def _values(walker: _KinkWalker, points: np.ndarray) -> np.ndarray:
+def _values(walker: Walker, points: np.ndarray) -> np.ndarray:
     return d_p_batch(points, walker.faces, walker.index, walker.slab, crystal=walker.crystal)
 
 
-__all__ = ["KinkArc", "KinkCurve", "weight_kinks"]
+__all__ = ["KinkArc", "KinkCurve", "marched_kink", "weight_kinks"]

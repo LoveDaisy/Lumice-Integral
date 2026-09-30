@@ -37,11 +37,11 @@ from typing import Callable, Mapping, NamedTuple, Sequence
 
 import numpy as np
 
-from .geometry import HexPrism, entry_measure, entry_measure_batch
+from . import path_weight
+from .geometry import HexPrism, entry_measure
 from .optics import (
     PATH_3_5_FACES,
     fresnel_transmission_path,
-    fresnel_transmission_path_batch,
     normalize_faces,
     path_domain,
     path_domain_batch,
@@ -212,7 +212,7 @@ def fresnel_transmission_weight(
 
 
 class _EntryMeasureBatch:
-    """:func:`.geometry.entry_measure_batch` for one face sequence, memoised once.
+    """:func:`.path_weight.entry_measure` for one face sequence, memoised once.
 
     ``entry_measure`` and ``path_validity`` need the same per-pose footprint
     areas; the memo keeps the most recent pose array object and its values so
@@ -235,9 +235,8 @@ class _EntryMeasureBatch:
         if self._last is not None and self._last[0] is rotations:
             return self._last[1]
         values = np.asarray(
-            entry_measure_batch(
-                np.asarray(rotations, dtype=np.float64), self._faces, self._incident, self._crystal,
-                n_ice=self._index,
+            path_weight.entry_measure(
+                np.asarray(rotations, dtype=np.float64), self._faces, self._incident, self._index, crystal=self._crystal
             ),
             dtype=np.float64,
         )
@@ -330,9 +329,7 @@ def build_path_weight_evaluators(
                 "reflection is total); "
                 f"0 outside the smooth {path_id} domain"
             ),
-            evaluate_batch=lambda rotations: fresnel_transmission_path_batch(
-                rotations, faces, incident, index, crystal=crystal
-            ),
+            evaluate_batch=lambda rotations: path_weight.path_power(rotations, faces, incident, index, crystal=crystal),
         ),
         "path_validity": WeightEvaluator(
             lambda rotation: path_validity_weight(

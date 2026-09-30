@@ -125,7 +125,10 @@ def check_316(args: argparse.Namespace) -> dict:
         "blue_over_red_on_total_side_median": float(np.nanmedian(ratio[total_side])),
         "z_chromaticity_fringe_median": float(np.nanmedian(z[fringe_xyz])),
         "z_chromaticity_total_side_median": float(np.nanmedian(z[total_xyz])),
-        "criterion": {"kind": verdict.kind, "color": verdict.color, "visible": verdict.visible, "position_deg": float(np.degrees(verdict.position))},
+        "criterion": {
+            "kind": verdict.kind, "color": verdict.color, "visible": verdict.visible,
+            "position_deg": float(np.degrees(verdict.position)), "coverage_complete": verdict.coverage_complete,
+        },  # fmt: skip
     }
 
 
@@ -200,7 +203,10 @@ def check_315(args: argparse.Namespace) -> dict:
         "blue_band_seen": any(max(s["ratio_below"], s["ratio_above"]) >= chromatic.TINT_RATIO_MIN for s in steps),
         "z_chromaticity_in_kink_interval_median": float(np.nanmedian(z[band])),
         "z_chromaticity_below_kink_interval_median": float(np.nanmedian(z[(delta_xyz < kink_interval[0]) & lit])),
-        "criterion": {"kind": verdict.kind, "color": verdict.color, "visible": verdict.visible, "features": features},
+        "criterion": {
+            "kind": verdict.kind, "color": verdict.color, "visible": verdict.visible, "features": features,
+            "coverage_complete": verdict.coverage_complete,
+        },  # fmt: skip
     }
 
 

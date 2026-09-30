@@ -9,14 +9,14 @@ from __future__ import annotations
 import subprocess
 import sys
 
-from test_symmetry_dependency_direction import PACKAGE_ROOT, _imported_modules
+from _dependency_direction import PACKAGE_ROOT, imported_modules
 
 PURE = ["__init__.py", "cmf.py", "dispersion.py", "illuminant.py", "wl_pool.py", "data/__init__.py", "data/cie_1931_cmf.py", "data/cie_daylight_basis.py"]
 
 
 def _spectrum_imports(relative: str) -> set[str]:
     package = "lumice_integral.spectrum" + (".data" if relative.startswith("data/") else "")
-    return _imported_modules(PACKAGE_ROOT / "spectrum" / relative, package)
+    return imported_modules(PACKAGE_ROOT / "spectrum" / relative, package)
 
 
 def test_every_spectrum_module_is_classified() -> None:

@@ -44,31 +44,34 @@ instead; its power ratio is reported but gives no tint verdict (``kind =
 none``).  The sky position of
 the kink is not traced for oriented crystals (the task's scope).
 
-Both weights go through :func:`weighted_power`, the one ``A T`` kernel of
-this module.  Path classes are Lumice's filter orbits (``PBD``, L1:
+Both weights go through :func:`weighted_power` (:func:`.path_weight.weighted_power`,
+the one ``A T`` kernel of the library).  Path classes are Lumice's filter orbits (``PBD``, L1:
 :func:`.symmetry.reflection_group.pbd_orbit`), never the literal sequence
 (``3-5-6-8`` is geometrically impossible on the rhombic plate
 ``[1.5, 1, 1, 1.5, 1, 1]`` while four members of its class are lit).
 Member feasibility is decided per index by that kernel on the family's
-sample, not by the ``n = 1.31`` gates of :mod:`.geometry.feasibility`.
+sample (a plate: its poses; random orientation: a Fibonacci lattice of body sun
+directions, with the lattice's covering radius as the resolution), not by the
+``n = 1.31`` gates of :mod:`.geometry.feasibility`.
 """
 
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass, field
 from typing import Sequence
 
 import numpy as np
-from scipy.spatial import cKDTree
+from scipy.spatial import SphericalVoronoi, cKDTree
 
 from . import optics
 from .camera import incident_direction_from_sun, sun_direction
 from .dp_field import DPField, KinkCurve
 from .geometry import HexPrism, Polyhedron, halo_map_rank
-from .geometry.entry_measure import entry_measure_batch
 from .path_class import g_true_orbit
+from .path_weight import weighted_power
+from .pose_density import sample_plate_poses
 from .s2_store import align_rotations, fibonacci_sphere
-from .so3 import haar_rotations
 from .symmetry.reflection_group import pbd_orbit
 
 Faces = tuple[int, ...]
@@ -100,20 +103,8 @@ _PROBE_SUN = np.array([0.0, 0.0, 1.0])
 
 # ---- the weight kernel ------------------------------------------------------------------------------------
 
-
-def weighted_power(
-    rotations: np.ndarray, faces: Sequence[int], incident_direction: np.ndarray, index: float, *, crystal: Polyhedron
-) -> np.ndarray:
-    """``A T`` per pose: entry measure (at the same ``n``) times the path's power, ``0`` outside the domain.
-
-    The one weight of this module: plate tints sum it over a sample, random
-    orientation edges read it on a line of ``S^2``.  ``T`` includes every
-    internal ``R_k``.
-    """
-    faces = optics.normalize_faces(faces, crystal)
-    area = entry_measure_batch(rotations, faces, incident_direction, crystal, n_ice=float(index))
-    power = optics.fresnel_transmission_path_batch(rotations, faces, incident_direction, float(index), crystal=crystal)
-    return area * power
+# ``weighted_power`` is :func:`.path_weight.weighted_power` (re-exported): ``A T`` per pose, the one weight of this
+# module.  Plate tints sum it over a sample, random orientation edges read it on a line of ``S^2``.
 
 
 def _body_weight(points: np.ndarray, faces: Faces, index: float, crystal: Polyhedron) -> np.ndarray:
@@ -183,7 +174,11 @@ class ChromaticVerdict:
     of the ratio, ``none`` / ``white`` inside the threshold, or ``none`` /
     ``none`` for a class that disperses (a note says so).  ``position`` is ``delta`` of the
     dominant feature (radians, the blue one's for blue); ``None`` for a
-    tint (its sky point is not traced).
+    tint (its sky point is not traced).  ``coverage_complete`` is ``False``
+    when a line the verdict rests on was not fully analysed: a weight-kink
+    walk with failed seeds (:attr:`.dp_field.KinkCurve.complete`) or gates
+    that could not be walked; the notes say which.  For a class, it is the
+    conjunction over its member verdicts.
     """
 
     faces: Faces
@@ -196,6 +191,7 @@ class ChromaticVerdict:
     notes: tuple[str, ...] = ()
     n_red: float = N_RED
     n_blue: float = N_BLUE
+    coverage_complete: bool = True
 
 
 def diagnose(
@@ -216,10 +212,12 @@ def diagnose(
     notes: list[str] = []
     unresolved: list[str] = []
     features: list[ChromaticFeature] = []
+    complete = True
     for kink_red, kink_blue in zip(red.weight_kinks, blue.weight_kinks, strict=True):
         for kink in (kink_red, kink_blue):
             if kink.note:
                 notes.append(f"{kink.margin} at n = {kink.index}: {kink.note}")
+            complete = complete and kink.complete
         if kink_red.arcs and kink_blue.arcs:
             features.append(_kink_feature(red, blue, kink_red, kink_blue))
         elif kink_red.arcs or kink_blue.arcs:
@@ -229,7 +227,8 @@ def diagnose(
         features.extend(_gate_features(red, blue, unresolved))
     except (RuntimeError, ValueError) as error:  # a boundary walk that fails is reported, not hidden
         notes.append(f"gates not analysed: {error}")
-    return _verdict(faces, tuple(features), tuple(notes) + tuple(unresolved), n_red, n_blue, bool(unresolved))
+        complete = False
+    return _verdict(faces, tuple(features), tuple(notes) + tuple(unresolved), n_red, n_blue, bool(unresolved), complete)
 
 
 def _verdict(
@@ -239,13 +238,14 @@ def _verdict(
     n_red: float,
     n_blue: float,
     unresolved: bool = False,
+    coverage_complete: bool = True,
 ) -> ChromaticVerdict:
     if not features:
         kind = "unresolved" if unresolved else "none"
-        return ChromaticVerdict(faces, kind, "none", False, None, (), None, notes, n_red, n_blue)
+        return ChromaticVerdict(faces, kind, "none", False, None, (), None, notes, n_red, n_blue, coverage_complete)
     top = _dominant(features)
     position = top.delta_blue if top.color == "blue" else top.delta_red
-    return ChromaticVerdict(faces, top.kind, top.color, top.visible, position, features, None, notes, n_red, n_blue)
+    return ChromaticVerdict(faces, top.kind, top.color, top.visible, position, features, None, notes, n_red, n_blue, coverage_complete)
 
 
 def _dominant(features: Sequence[ChromaticFeature]) -> ChromaticFeature:
@@ -263,8 +263,9 @@ def _is_visible(shift: float, spread: float, lit_fraction: float) -> bool:
 
 
 def _kink_feature(red: DPField, blue: DPField, kink_red: KinkCurve, kink_blue: KinkCurve) -> ChromaticFeature:
-    k = optics.domain_margin_names(red.faces).index(kink_red.margin)
-    cosine = k - 1  # internal_{j}_incidence_cosine precedes its discriminant
+    names = optics.domain_margin_names(red.faces)
+    k = names.index(kink_red.margin)
+    cosine = names.index(f"internal_{kink_red.step}_incidence_cosine")
     d_dn, margin_dn = red.index_derivatives_batch(kink_red.points)
     positive = float(np.mean(margin_dn[:, k] > 0.0))
     color = "blue" if positive >= 0.5 else "red"
@@ -372,10 +373,14 @@ def _median_weight_inside(field_: DPField) -> float:
 
 @dataclass(frozen=True)
 class RandomOrientation:
-    """Random (Haar) orientation.  ``samples`` Haar poses (``seed``) decide which class members are lit at each index."""
+    """Random (Haar) orientation.
 
-    samples: int = 20000
-    seed: int = 0
+    ``A T`` of a pose depends on the body sun direction ``u = R^-1 s_hat``
+    only (``A`` is twist invariant), so a class member is lit at an index iff
+    ``A T > 0`` somewhere on ``S^2``; :func:`diagnose_class` decides it on the
+    ``lattice_n``-point Fibonacci lattice, with its covering radius as the
+    resolution (:attr:`ClassVerdict.feasibility_resolution_rad`).
+    """
 
 
 @dataclass(frozen=True)
@@ -384,10 +389,10 @@ class PlateFamily:
 
     Pose ``R = tilt * Rz(spin)`` (body to world), sun at ``sun_altitude_deg``
     and azimuth 180 deg; ``samples`` poses from ``numpy.random.default_rng(seed)``
-    drawn as spin, tilt, tilt direction (the sampler of the task's
-    ``probe_120_cls.py``).  A half-normal tilt with a uniform tilt direction,
-    not :class:`.pose_density.ZenithGaussianPoseDensity`'s density on the
-    sphere; at ``1`` deg the two differ far below the tint threshold.
+    drawn as spin, tilt, tilt direction (:func:`.pose_density.sample_plate_poses`).
+    A half-normal tilt with a uniform tilt direction, not
+    :class:`.pose_density.ZenithGaussianPoseDensity`'s density on the sphere;
+    at ``1`` deg the two differ far below the tint threshold.
     """
 
     sun_altitude_deg: float
@@ -396,32 +401,10 @@ class PlateFamily:
     seed: int = 3
 
     def poses(self) -> np.ndarray:
-        rng = np.random.default_rng(self.seed)
-        spin = rng.uniform(0.0, 2.0 * np.pi, self.samples)
-        tilt = np.abs(rng.normal(0.0, np.radians(self.zenith_std_deg), self.samples))
-        toward = rng.uniform(0.0, 2.0 * np.pi, self.samples)
-        return _rotvec_matrices(np.stack([-np.sin(toward) * tilt, np.cos(toward) * tilt, np.zeros_like(tilt)], axis=1)) @ _rz(spin)
+        return sample_plate_poses(self.samples, self.zenith_std_deg, self.seed)
 
     def incident_direction(self) -> np.ndarray:
         return incident_direction_from_sun(sun_direction(self.sun_altitude_deg, 180.0))
-
-
-def _rz(angle: np.ndarray) -> np.ndarray:
-    c, s = np.cos(angle), np.sin(angle)
-    out = np.zeros((len(angle), 3, 3))
-    out[:, 0, 0], out[:, 0, 1], out[:, 1, 0], out[:, 1, 1], out[:, 2, 2] = c, -s, s, c, 1.0
-    return out
-
-
-def _rotvec_matrices(rotvec: np.ndarray) -> np.ndarray:
-    """Rodrigues' formula per row (the rotation by ``|v|`` about ``v / |v|``; identity at ``v = 0``)."""
-    angle = np.linalg.norm(rotvec, axis=1)
-    axis = rotvec / np.where(angle > 0.0, angle, 1.0)[:, None]
-    k = np.zeros((len(rotvec), 3, 3))
-    k[:, 0, 1], k[:, 0, 2], k[:, 1, 2] = -axis[:, 2], axis[:, 1], -axis[:, 0]
-    k -= np.transpose(k, (0, 2, 1))
-    s, c = np.sin(angle)[:, None, None], (1.0 - np.cos(angle))[:, None, None]
-    return np.eye(3) + s * k + c * (k @ k)
 
 
 @dataclass(frozen=True)
@@ -450,10 +433,16 @@ class ClassVerdict:
 
     ``members``: the ``PBD`` orbit of ``representative`` (sorted);
     ``lit_members``: per index (``{"red": ..., "blue": ...}``) the members
-    with positive weighted power on the family sample (a sampled verdict, not
-    a certificate); ``member_verdicts``: random orientation only, one per
-    ``G_true`` orbit of lit members (members related by the crystal's own
-    symmetry have congruent fields).
+    with positive weighted power on the family sample (plate: the family's
+    poses) or lattice (random orientation: body sun directions); ``member_verdicts``:
+    random orientation only, one per ``G_true`` orbit of lit members
+    (members related by the crystal's own symmetry have congruent fields).
+    ``feasibility_resolution_rad`` (random orientation only): the covering
+    radius of that lattice, every point of ``S^2`` is within it of a lattice
+    point.  A member whose lit set ``{A T > 0}`` contains a disc of this
+    radius is lit on the lattice, so a member reported unlit has no lit
+    component wider than that.  It bounds what can be missed; it is not a
+    proof that an unlit member is impossible.
     """
 
     representative: Faces
@@ -461,6 +450,7 @@ class ClassVerdict:
     lit_members: dict[str, tuple[Faces, ...]]
     verdict: ChromaticVerdict
     member_verdicts: tuple[ChromaticVerdict, ...] = field(default=())
+    feasibility_resolution_rad: float | None = None
 
 
 def class_members(representative: Sequence[int]) -> tuple[Faces, ...]:
@@ -481,23 +471,25 @@ def diagnose_class(
     members = class_members(representative)
     if isinstance(family, PlateFamily):
         rotations, incident = family.poses(), family.incident_direction()
-    else:
-        rotations, incident = haar_rotations(family.samples, np.random.default_rng(family.seed)), incident_direction_from_sun(_PROBE_SUN)
-    weights: dict[str, dict[Faces, np.ndarray]] = {"red": {}, "blue": {}}
-    checks: dict[str, dict[Faces, optics.BatchDomainCheck]] = {"red": {}, "blue": {}}
-    for label, index in (("red", n_red), ("blue", n_blue)):
-        for member in members:
-            if not _has_faces(crystal, member):
-                continue
-            w = weighted_power(rotations, member, incident, index, crystal=crystal)
-            if np.any(w > 0.0):
-                weights[label][member] = w
-                checks[label][member] = optics.path_domain_batch(rotations, member, incident, index, crystal=crystal)
-    lit = {label: tuple(sorted(weights[label])) for label in weights}
-    if isinstance(family, PlateFamily):
+        weights: dict[str, dict[Faces, np.ndarray]] = {"red": {}, "blue": {}}
+        checks: dict[str, dict[Faces, optics.BatchDomainCheck]] = {"red": {}, "blue": {}}
+        for label, index in (("red", n_red), ("blue", n_blue)):
+            for member in members:
+                if not _has_faces(crystal, member):
+                    continue
+                w = weighted_power(rotations, member, incident, index, crystal=crystal)
+                if np.any(w > 0.0):
+                    weights[label][member] = w
+                    checks[label][member] = optics.path_domain_batch(rotations, member, incident, index, crystal=crystal)
+        lit = {label: tuple(sorted(weights[label])) for label in weights}
         tint = _tint(weights, checks)
         verdict = _tint_verdict(tuple(representative), tint, n_red, n_blue)
         return ClassVerdict(tuple(representative), members, lit, verdict)
+    lattice = fibonacci_sphere(lattice_n)  # members (sorted) lit somewhere on S^2, decided on the lattice
+    lit = {
+        label: tuple(m for m in members if _has_faces(crystal, m) and np.any(_body_weight(lattice, m, index, crystal) > 0.0))
+        for label, index in (("red", n_red), ("blue", n_blue))
+    }
     member_verdicts = []
     for member in _one_per_symmetry_orbit(crystal, sorted(set(lit["red"]) | set(lit["blue"]))):
         if halo_map_rank(crystal, member) == 0:
@@ -505,9 +497,17 @@ def diagnose_class(
         member_verdicts.append(diagnose(crystal, member, n_red=n_red, n_blue=n_blue, lattice_n=lattice_n))
     features = tuple(f for v in member_verdicts for f in v.features)
     notes = tuple(n for v in member_verdicts for n in v.notes)
-    return ClassVerdict(
-        tuple(representative), members, lit, _verdict(tuple(representative), features, notes, n_red, n_blue), tuple(member_verdicts)
-    )
+    complete = all(v.coverage_complete for v in member_verdicts)
+    verdict = _verdict(tuple(representative), features, notes, n_red, n_blue, coverage_complete=complete)
+    return ClassVerdict(tuple(representative), members, lit, verdict, tuple(member_verdicts), _covering_radius(lattice_n))
+
+
+@functools.lru_cache(maxsize=4)
+def _covering_radius(lattice_n: int) -> float:
+    """Covering radius (rad) of the ``lattice_n``-point Fibonacci lattice: the farthest Voronoi vertex from its generators."""
+    lattice = fibonacci_sphere(lattice_n)
+    chord = float(np.max(cKDTree(lattice).query(SphericalVoronoi(lattice).vertices)[0]))
+    return 2.0 * float(np.arcsin(0.5 * chord))
 
 
 def _has_faces(crystal: Polyhedron, faces: Faces) -> bool:

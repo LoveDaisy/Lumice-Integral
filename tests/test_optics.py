@@ -20,7 +20,7 @@ from lumice_integral.optics import (
 )
 from lumice_integral.so3 import haar_rotations
 from lumice_integral.so3 import exp
-from test_analytic_fiber import central_difference_jacobian
+from _numeric import central_difference_jacobian
 
 
 def test_symmetric_3_5_path_is_regular_and_unit_length():

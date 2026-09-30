@@ -96,8 +96,9 @@ from .canonical_scene import (
     canonical_sun_direction,
 )
 from .discovery import ComponentDiscoveryResult, discover_components
-from .geometry import HexPrism, Polyhedron, entry_measure_batch, fold_matrix, halo_map_rank, wedge_angle_deg
-from .optics import fresnel_transmission_path_batch, normalize_faces, path_domain_batch, path_id_of
+from .geometry import HexPrism, Polyhedron, fold_matrix, halo_map_rank, wedge_angle_deg
+from .optics import normalize_faces, path_domain_batch, path_id_of
+from .path_weight import entry_and_power
 from .pose_density import PoseDensity
 from .quadrature import HAAR_TO_DVOL_G_FACTOR
 from .s2_store import DEFAULT_SEED_STORE_N, S2EventStore, StoreSeeds
@@ -572,8 +573,7 @@ def estimate_rank0_contribution(
     Per pose the integrand is ``[path_domain valid] * rho_H * entry_measure *
     fresnel_transmission`` with the three factors read from their single
     authorities (:func:`.optics.path_domain_batch`,
-    :func:`.geometry.entry_measure_batch`,
-    :func:`.optics.fresnel_transmission_path_batch`, the pose density's
+    :func:`.path_weight.entry_and_power` for ``A`` and ``T``, the pose density's
     ``evaluate_batch``); the mean and its standard error are accumulated
     exactly over the batches (sum and sum of squares).
     """
@@ -589,11 +589,8 @@ def estimate_rank0_contribution(
         valid_count += len(valid)
         if len(valid) == 0:
             continue
-        integrand = (
-            np.asarray(pose_density.evaluate_batch(valid), dtype=np.float64)
-            * entry_measure_batch(valid, faces, incident, crystal, n_ice=index)
-            * fresnel_transmission_path_batch(valid, faces, incident, index)
-        )
+        area, power = entry_and_power(valid, faces, incident, index, crystal=crystal)
+        integrand = np.asarray(pose_density.evaluate_batch(valid), dtype=np.float64) * area * power
         total += float(integrand.sum())
         total_squares += float((integrand * integrand).sum())
     mean = total / sample_count

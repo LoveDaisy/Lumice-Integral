@@ -235,11 +235,11 @@ def identical_margins(faces: Faces, crystal: Polyhedron | None = None) -> dict[s
     the TIR discriminant of the third reflection of each such triple.  The
     triple is found by face number and kept only where ``crystal`` (default:
     the canonical hexagonal prism) bears the identity out: the two incidence
-    normals (:func:`_incidence_normals`) agree to ``IDENTITY_NORMAL_ATOL``.
+    normals (:func:`incidence_normals`) agree to ``IDENTITY_NORMAL_ATOL``.
     A side face off its regular azimuth breaks the identity and keeps both margins.
     """
     internal = faces[1:-1]
-    normals = _incidence_normals(crystal, faces)
+    normals = incidence_normals(crystal, faces)
     out: dict[str, str] = {}
     for j in range(len(internal) - 2):
         azimuths = [_side_azimuth(face) for face in internal[j : j + 3]]
@@ -261,7 +261,7 @@ def identical_margins(faces: Faces, crystal: Polyhedron | None = None) -> dict[s
     return out
 
 
-def _incidence_normals(crystal: Polyhedron | None, faces: Faces) -> dict[str, np.ndarray]:
+def incidence_normals(crystal: Polyhedron | None, faces: Faces) -> dict[str, np.ndarray]:
     """``m`` of every incidence cosine: ``n_a`` (entry), ``R_{k-1}^T n_k`` (step ``k``), ``M^T n_b`` (exit).
 
     Body normals and fold matrices are both ``crystal``'s (``None``: the canonical hexagonal prism).
@@ -284,7 +284,7 @@ def great_circle_margins(crystal: Polyhedron, faces: Faces, index: float, *, sam
     (run-time check of the derivation in the module docstring).
     """
     names = optics.domain_margin_names(faces)
-    incidence = _incidence_normals(crystal, faces)
+    incidence = incidence_normals(crystal, faces)
     n_a = incidence["entry_incidence_cosine"]
     normals = body_normals(crystal, faces)
     t = np.linspace(0.0, 2.0 * np.pi, samples, endpoint=False)
@@ -309,8 +309,14 @@ def great_circle_margins(crystal: Polyhedron, faces: Faces, index: float, *, sam
 # ---- walker -------------------------------------------------------------------------------------------
 
 
-class _Walker:
-    """Stateful helper holding the path, the margin bookkeeping and the curve steppers."""
+class Walker:
+    """The path, its margin bookkeeping and the curve steppers of one ``(crystal, faces, index)``.
+
+    Read only after construction: the steppers take any margin name
+    (:func:`walk_zero_set` walks the zero set of one, a gate of ``dU_P`` or
+    a TIR discriminant), and a walk's orientation is an argument of the
+    walk, never walker state.
+    """
 
     def __init__(self, crystal: Polyhedron, faces: Faces, index: float, slab: np.ndarray | None) -> None:
         self.crystal = crystal
@@ -344,6 +350,11 @@ class _Walker:
     def d_on_exit_tir(self, u: np.ndarray) -> float:
         """``D_P`` at a point of the exit TIR curve, the exit root dropped (:func:`.field.d_p_grazing`)."""
         return float(_d_grazing(jnp.asarray(u), self.faces, self._index, self._normals))
+
+    @property
+    def slab(self) -> np.ndarray | None:
+        """The fold matrix of a degenerate-fold path as given (``None`` otherwise), for the batch evaluators of :mod:`.field`."""
+        return None if self._slab is None else np.asarray(self._slab)
 
     @property
     def path_id(self) -> str:
@@ -385,8 +396,10 @@ class _Walker:
         return _unit(np.cross(self.tangent_gradient(u, name), u))
 
     def advance(self, u: np.ndarray, name: str, tangent: np.ndarray, step: float) -> np.ndarray:
+        """``step`` along the zero set of ``name`` from ``u``, the way ``tangent`` points."""
         if name in self.circles:
-            return _unit(np.cos(step) * u + np.sin(step) * _unit(np.cross(self.circles[name], u)))
+            along = _unit(np.cross(self.circles[name], u))
+            return _unit(np.cos(step) * u + np.sin(step) * (along if along @ tangent >= 0.0 else -along))
         return self.correct(_unit(u + step * tangent), name)
 
     # -- corners
@@ -451,7 +464,7 @@ class _Walker:
         return {n for n in self.active if n != name and abs(m[self.k(n)]) <= COINCIDENT_ATOL}
 
 
-def _start_point(walker: _Walker, lattice_n: int) -> tuple[np.ndarray, str]:
+def _start_point(walker: Walker, lattice_n: int) -> tuple[np.ndarray, str]:
     """A point of ``dU_P`` and its margin: bisect between a lattice point of ``U_P`` and an outside neighbour."""
     lattice = fibonacci_sphere(lattice_n)
     valid = valid_batch(lattice, walker.faces, walker.index, crystal=walker.crystal)
@@ -478,23 +491,33 @@ def _start_point(walker: _Walker, lattice_n: int) -> tuple[np.ndarray, str]:
     return walker.correct(inside, name), name
 
 
-def _walk_piece(
-    walker: _Walker, start: np.ndarray, name: str, *, stop_at: np.ndarray | None, step: float
+def walk_zero_set(
+    walker: Walker,
+    start: np.ndarray,
+    name: str,
+    *,
+    orientation: float = 1.0,
+    stop_at: np.ndarray | None = None,
+    step: float = WALK_STEP_RAD,
 ) -> tuple[list[np.ndarray], np.ndarray | None, set[str]]:
-    """March along ``name`` from ``start`` (a point inside the piece) to the next corner.
+    """March along the zero set of margin ``name`` from ``start`` (a point on it) until a gate of ``U_P`` stops it.
 
-    Returns the points (``start`` first, the corner last when one is met),
-    the corner (``None`` if ``stop_at`` -- a point of this piece -- is passed
-    first; it is then the last point) and the margins coincident with the
-    piece.
+    ``orientation = 1`` walks with the margin's positive side on the left
+    (:meth:`Walker.direction`, the way ``dU_P`` is walked), ``-1`` the other
+    way.  Returns the points (``start`` first, the corner last when one is
+    met), the corner (``None`` if ``stop_at`` -- a point of this zero set --
+    is passed first; it is then the last point) and the margins coincident
+    with the walked piece.  ``RuntimeError`` after ``MAX_WALK_STEPS`` steps.
     """
-    probe = walker.advance(start, name, walker.direction(start, name), min(step, 1e-3))
+    if orientation not in (1.0, -1.0):
+        raise ValueError(f"orientation must be 1 or -1, got {orientation}")
+    probe = walker.advance(start, name, orientation * walker.direction(start, name), min(step, 1e-3))
     coincident = walker.coincident_with(start, name) & walker.coincident_with(probe, name)
     excluded = coincident | {name}
     points = [start]
     u = start
     for _ in range(MAX_WALK_STEPS):
-        tangent = walker.direction(u, name)
+        tangent = orientation * walker.direction(u, name)
         if stop_at is not None and len(points) > 1 and _angle(u, stop_at) <= step and (stop_at - u) @ tangent > 0.0:
             points.append(stop_at)
             return points, None, coincident
@@ -522,7 +545,7 @@ def _walk_piece(
     raise RuntimeError(f"boundary walk of {walker.path_id} did not reach a corner in {MAX_WALK_STEPS} steps")
 
 
-def _outgoing(walker: _Walker, corner: np.ndarray, incoming: str, incoming_coincident: set[str]) -> str:
+def _outgoing(walker: Walker, corner: np.ndarray, incoming: str, incoming_coincident: set[str]) -> str:
     """The one vanishing margin at ``corner`` whose zero set continues ``dU_P`` (``U_P`` on its left)."""
     m, j = walker.margins_jacobian(corner)
     zero = [n for n in walker.active if abs(m[walker.k(n)]) <= ZERO_MARGIN_ATOL]
@@ -544,7 +567,7 @@ def _outgoing(walker: _Walker, corner: np.ndarray, incoming: str, incoming_coinc
     return accepted[0]
 
 
-def _corner_record(walker: _Walker, u: np.ndarray, incoming: str, outgoing: str, coincident: set[str]) -> Corner:
+def _corner_record(walker: Walker, u: np.ndarray, incoming: str, outgoing: str, coincident: set[str]) -> Corner:
     m, j = walker.margins_jacobian(u)
     zero = tuple(n for n in walker.active if abs(m[walker.k(n)]) <= ZERO_MARGIN_ATOL or n in (incoming, outgoing))
     edges = [_unit(_tangent(u, j[walker.k(n)])) for n in (incoming, outgoing)]
@@ -559,11 +582,11 @@ def _corner_record(walker: _Walker, u: np.ndarray, incoming: str, outgoing: str,
     return Corner(u, walker.d(u), zero, incoming, outgoing, tuple(tangent), tuple(transversal), coincident_here, residual)
 
 
-def _golden_extremum(walker: _Walker, piece: BoundaryPiece, i: int, kind: str) -> tuple[np.ndarray, float]:
+def _golden_extremum(walker: Walker, piece: BoundaryPiece, i: int, kind: str) -> tuple[np.ndarray, float]:
     """Refine the sample extremum ``piece.points[i]`` on the piece between its neighbours (golden section).
 
     On the exit TIR curve of a non-slab path the search and the returned value are
-    :meth:`_Walker.d_on_exit_tir` (module docstring); elsewhere ``D_P`` itself.
+    :meth:`Walker.d_on_exit_tir` (module docstring); elsewhere ``D_P`` itself.
     """
     # i == 0 only on a loop without corners, whose single piece ends where it starts
     a, b = (piece.points[-2] if i == 0 else piece.points[i - 1]), piece.points[i + 1]
@@ -632,10 +655,10 @@ def walk_boundary(
 
     ``slab`` is the fold matrix of a degenerate-fold path (:func:`.field.d_value`).
     """
-    walker = _Walker(crystal, faces, index, slab)
+    walker = Walker(crystal, faces, index, slab)
     start, name = _start_point(walker, lattice_n)
     # 1. find the first corner (or come back to the start: a smooth loop)
-    points, corner, coincident = _walk_piece(walker, start, name, stop_at=start, step=step)
+    points, corner, coincident = walk_zero_set(walker, start, name, stop_at=start, step=step)
     pieces: list[BoundaryPiece] = []
     corners: list[Corner] = []
     if corner is None:
@@ -647,7 +670,7 @@ def walk_boundary(
         for _ in range(1000):
             outgoing = _outgoing(walker, u, incoming, incoming_coincident)
             begin = walker.advance(u, outgoing, walker.direction(u, outgoing), CORNER_PROBE_RAD)
-            points, nxt, coincident = _walk_piece(walker, begin, outgoing, stop_at=None, step=step)
+            points, nxt, coincident = walk_zero_set(walker, begin, outgoing, stop_at=None, step=step)
             pieces.append(_piece(walker, outgoing, [u, *points], coincident))
             incoming, incoming_coincident, u = outgoing, coincident, nxt
             if _angle(nxt, first) <= CORNER_CLOSE_RAD:
@@ -665,14 +688,14 @@ def walk_boundary(
     return BoundaryLoop(tuple(pieces), tuple(corners), tuple(critical), dict(walker.identical), dict(walker.circles))
 
 
-def _piece(walker: _Walker, name: str, points: list[np.ndarray], coincident: set[str]) -> BoundaryPiece:
+def _piece(walker: Walker, name: str, points: list[np.ndarray], coincident: set[str]) -> BoundaryPiece:
     array = np.stack(points)
     values = np.array([walker.d(p) for p in array])
     kind = "great_circle" if name in walker.circles else "marched"
     return BoundaryPiece(name, kind, walker.circles.get(name), array, values, tuple(n for n in walker.active if n in coincident))
 
 
-def _replace_last_point(walker: _Walker, piece: BoundaryPiece, point: np.ndarray) -> BoundaryPiece:
+def _replace_last_point(walker: Walker, piece: BoundaryPiece, point: np.ndarray) -> BoundaryPiece:
     points = piece.points.copy()
     points[-1] = point
     values = piece.values.copy()
@@ -680,7 +703,7 @@ def _replace_last_point(walker: _Walker, piece: BoundaryPiece, point: np.ndarray
     return BoundaryPiece(piece.margin, piece.kind, piece.circle_normal, points, values, piece.coincident)
 
 
-def _loop_critical_points(walker: _Walker, pieces: list[BoundaryPiece], corners: list[Corner]) -> list[BoundaryCriticalPoint]:
+def _loop_critical_points(walker: Walker, pieces: list[BoundaryPiece], corners: list[Corner]) -> list[BoundaryCriticalPoint]:
     """Local extrema of ``D_P`` along the loop: corners as they are, piece samples refined by golden section."""
     # loop samples: each piece without its last point (the next piece starts there); remember owners
     owners: list[tuple[int, int]] = []

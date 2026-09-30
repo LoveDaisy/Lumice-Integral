@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import jax.numpy as jnp
 import numpy as np
+from _numeric import central_difference_jacobian
 
 from lumice_integral.analytic import BODY_AXIS, direction_map, tangent_basis
 from lumice_integral.continuation import (
@@ -14,13 +15,6 @@ from lumice_integral.continuation import (
     trace_fiber,
 )
 from lumice_integral.so3 import exp
-
-
-def central_difference_jacobian(function, point, step=1e-5):
-    columns = []
-    for axis in np.eye(point.size):
-        columns.append((function(point + step * axis) - function(point - step * axis)) / (2 * step))
-    return np.stack(columns, axis=1)
 
 
 def test_ad_jacobian_matches_central_difference():
