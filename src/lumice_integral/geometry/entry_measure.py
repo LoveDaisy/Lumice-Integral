@@ -33,7 +33,10 @@ Algorithm.  Everything is evaluated in the crystal body frame:
    the internal direction ``d_in`` and ``cos_t = -(n_a . d_in)``.
 3. Exit gate on the unfolded exit normal ``n_tilde_b`` from
    :func:`~.feasibility.corridor_polygons`: ``exit_ok(n_tilde_b, d_in)`` with
-   the default ``COS_CRITICAL``.  Failure -> ``status = "exit_critical_angle"``.
+   ``cos_tc = cos_critical(n_ice)``, the critical angle of the same index the
+   entry refraction uses (not the package ``COS_CRITICAL`` at ``N_ICE``: at
+   grazing incidence ``d_in`` sits right on the cone of ``n_ice``, between the
+   two cones when ``n_ice < N_ICE``).  Failure -> ``status = "exit_critical_angle"``.
 4. ``A_perp = corridor_intersection(polys, d_in).area()``: area of the
    corridor footprint projected perpendicular to ``d_in``.  ``A_perp <= eps``
    -> ``status = "corridor_empty"``.
@@ -60,6 +63,7 @@ from .feasibility import (
     area_eps,
     corridor_intersection,
     corridor_polygons,
+    cos_critical,
     entry_ok,
     exit_ok,
 )
@@ -142,7 +146,7 @@ def entry_measure(rotation: np.ndarray, path: Sequence[int], incident_direction:
 
     d_in, cos_i, cos_t = refract_into_crystal(s_body, n_a, n_ice)
     polys, n_tilde_b = corridor_polygons(crystal, faces)
-    if not bool(exit_ok(n_tilde_b, d_in[None, :])[0]):
+    if not bool(exit_ok(n_tilde_b, d_in[None, :], cos_tc=cos_critical(n_ice))[0]):
         return EntryMeasureResult(0.0, "exit_critical_angle", float("nan"), d_in, cos_i, cos_t)
 
     area_perp = float(corridor_intersection(polys, d_in[None, :]).area()[0])
@@ -185,7 +189,7 @@ def entry_measure_batch(rotations: np.ndarray, path: Sequence[int], incident_dir
     d_in = eta * s_body + (eta * cos_i - np.sqrt(discriminant))[:, None] * n_a
     cos_t = -(d_in @ n_a)
     polys, n_tilde_b = corridor_polygons(crystal, faces)
-    passed = entered & exit_ok(n_tilde_b, d_in)
+    passed = entered & exit_ok(n_tilde_b, d_in, cos_tc=cos_critical(n_ice))
 
     values = np.zeros(R.shape[0], dtype=float)
     rows = np.flatnonzero(passed)
