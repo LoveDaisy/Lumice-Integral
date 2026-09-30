@@ -9,7 +9,10 @@ $\\mathbf d$ 就得到整个**可行方向集**（它是方向映射 $\\Phi_P$ �
 
 光学约束用临界角判据（与写作系列 signature 分类的 $\\Phi$ 定义域同源）：
 入射 $-\\mathbf d\\cdot\\mathbf n_a \\ge \\cos\\theta_c$、出射 $\\mathbf d\\cdot\\tilde{\\mathbf n}_b \\ge \\cos\\theta_c$，
-$\\theta_c = \\arcsin(1/n)$，$n$ = :data:`lumice_integral.geometry.core.N_ICE`。
+$\\theta_c = \\arcsin(1/n)$，$n$ = :data:`lumice_integral.geometry.core.N_ICE`。本模块的掩码 / 可行方向集
+（以及 :mod:`~lumice_integral.geometry.enumerate` 的枚举）都是 canonical $n = 1.31$ 下的定义，没有折射率参数；
+需要随调用折射率变化的判定（:func:`~lumice_integral.geometry.entry_measure.entry_measure`）用
+:func:`cos_critical` 显式传 ``cos_tc``。
 
 两种掩码（``typing.NewType`` 区分，DFS 剪枝只能用前者）：
 
