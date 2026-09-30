@@ -9,6 +9,7 @@ sequence so that componentwise splines see a continuous curve.
 
 from __future__ import annotations
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array, lax
@@ -53,6 +54,17 @@ def exp(rotation_vector: Array) -> Array:
     return jnp.eye(3, dtype=rotation_vector.dtype) + a * generator + b * (
         generator @ generator
     )
+
+
+_exp_batch = jax.jit(jax.vmap(exp))
+
+
+def exp_batch(rotation_vectors: np.ndarray) -> np.ndarray:
+    """:func:`exp` of each row of ``(N, 3)`` rotation vectors, ``(N, 3, 3)`` host-side ``float64``."""
+    vectors = np.asarray(rotation_vectors, dtype=np.float64)
+    if len(vectors) == 0:
+        return np.zeros((0, 3, 3))
+    return np.asarray(_exp_batch(jnp.asarray(vectors)))
 
 
 def _log_taylor(theta_squared: Array) -> Array:

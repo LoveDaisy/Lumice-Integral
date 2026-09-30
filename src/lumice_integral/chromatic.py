@@ -67,6 +67,7 @@ from .dp_field import DPField, KinkCurve
 from .geometry import HexPrism, Polyhedron, halo_map_rank
 from .path_class import g_true_orbit
 from .path_weight import weighted_power
+from .pose_density import sample_plate_poses
 from .s2_store import align_rotations, fibonacci_sphere
 from .so3 import haar_rotations
 from .symmetry.reflection_group import pbd_orbit
@@ -372,10 +373,10 @@ class PlateFamily:
 
     Pose ``R = tilt * Rz(spin)`` (body to world), sun at ``sun_altitude_deg``
     and azimuth 180 deg; ``samples`` poses from ``numpy.random.default_rng(seed)``
-    drawn as spin, tilt, tilt direction (the sampler of the task's
-    ``probe_120_cls.py``).  A half-normal tilt with a uniform tilt direction,
-    not :class:`.pose_density.ZenithGaussianPoseDensity`'s density on the
-    sphere; at ``1`` deg the two differ far below the tint threshold.
+    drawn as spin, tilt, tilt direction (:func:`.pose_density.sample_plate_poses`).
+    A half-normal tilt with a uniform tilt direction, not
+    :class:`.pose_density.ZenithGaussianPoseDensity`'s density on the sphere;
+    at ``1`` deg the two differ far below the tint threshold.
     """
 
     sun_altitude_deg: float
@@ -384,32 +385,10 @@ class PlateFamily:
     seed: int = 3
 
     def poses(self) -> np.ndarray:
-        rng = np.random.default_rng(self.seed)
-        spin = rng.uniform(0.0, 2.0 * np.pi, self.samples)
-        tilt = np.abs(rng.normal(0.0, np.radians(self.zenith_std_deg), self.samples))
-        toward = rng.uniform(0.0, 2.0 * np.pi, self.samples)
-        return _rotvec_matrices(np.stack([-np.sin(toward) * tilt, np.cos(toward) * tilt, np.zeros_like(tilt)], axis=1)) @ _rz(spin)
+        return sample_plate_poses(self.samples, self.zenith_std_deg, self.seed)
 
     def incident_direction(self) -> np.ndarray:
         return incident_direction_from_sun(sun_direction(self.sun_altitude_deg, 180.0))
-
-
-def _rz(angle: np.ndarray) -> np.ndarray:
-    c, s = np.cos(angle), np.sin(angle)
-    out = np.zeros((len(angle), 3, 3))
-    out[:, 0, 0], out[:, 0, 1], out[:, 1, 0], out[:, 1, 1], out[:, 2, 2] = c, -s, s, c, 1.0
-    return out
-
-
-def _rotvec_matrices(rotvec: np.ndarray) -> np.ndarray:
-    """Rodrigues' formula per row (the rotation by ``|v|`` about ``v / |v|``; identity at ``v = 0``)."""
-    angle = np.linalg.norm(rotvec, axis=1)
-    axis = rotvec / np.where(angle > 0.0, angle, 1.0)[:, None]
-    k = np.zeros((len(rotvec), 3, 3))
-    k[:, 0, 1], k[:, 0, 2], k[:, 1, 2] = -axis[:, 2], axis[:, 1], -axis[:, 0]
-    k -= np.transpose(k, (0, 2, 1))
-    s, c = np.sin(angle)[:, None, None], (1.0 - np.cos(angle))[:, None, None]
-    return np.eye(3) + s * k + c * (k @ k)
 
 
 @dataclass(frozen=True)

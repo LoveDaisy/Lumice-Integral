@@ -523,3 +523,33 @@ def test_provenance_blocks_of_the_other_families_carry_only_their_own_parameters
         parameters = {key: value for key, value in block.items() if key not in ("model", "family")}
         assert parameters == resolve_pose_density_parameters(family, **kwargs)
         assert build_pose_density(family, **parameters) == build_pose_density(family, **kwargs)
+
+
+def test_plate_poses_match_an_independent_scipy_construction():
+    """``sample_plate_poses``: the draw order spin, tilt, toward and ``R = tilt . Rz(spin)``, rebuilt with scipy's ``Rotation``."""
+    from scipy.spatial.transform import Rotation
+
+    from lumice_integral.pose_density import sample_plate_poses
+
+    poses = sample_plate_poses(5000, 1.0, 3)
+    rng = np.random.default_rng(3)
+    spin = rng.uniform(0.0, 2.0 * np.pi, 5000)
+    tilt = np.abs(rng.normal(0.0, np.radians(1.0), 5000))
+    toward = rng.uniform(0.0, 2.0 * np.pi, 5000)
+    tilt_vectors = np.stack([-np.sin(toward) * tilt, np.cos(toward) * tilt, np.zeros(5000)], axis=1)
+    expected = (Rotation.from_rotvec(tilt_vectors) * Rotation.from_euler("z", spin[:, None])).as_matrix()
+    np.testing.assert_allclose(poses, expected, rtol=0.0, atol=1e-14)
+    np.testing.assert_allclose(np.arccos(np.clip(poses[:, 2, 2], -1.0, 1.0)), tilt, atol=1e-7)  # the c axis tilt
+    assert sample_plate_poses(0, 1.0, 3).shape == (0, 3, 3)
+
+
+def test_exp_batch_is_exp_per_row_including_the_taylor_branch():
+    from scipy.spatial.transform import Rotation
+
+    from lumice_integral.so3 import exp, exp_batch
+
+    vectors = np.array([[0.0, 0.0, 0.0], [1e-9, -2e-9, 3e-9], [1e-5, 0.0, -2e-5], [0.3, -0.2, 0.1], [0.0, 0.0, 6.0]])
+    batch = exp_batch(vectors)
+    np.testing.assert_allclose(batch, Rotation.from_rotvec(vectors).as_matrix(), rtol=0.0, atol=1e-15)
+    for vector, matrix in zip(vectors, batch, strict=True):
+        np.testing.assert_allclose(matrix, np.asarray(exp(vector)), rtol=0.0, atol=1e-16)

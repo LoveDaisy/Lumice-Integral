@@ -80,6 +80,8 @@ from typing import ClassVar, Literal, get_args
 
 import numpy as np
 
+from .so3 import exp_batch
+
 _GAUSS_LEGENDRE_NODES = 400
 _WINDOW_HALF_WIDTH_SIGMAS = 12.0
 
@@ -99,6 +101,25 @@ def c_axis_zenith(rotation: np.ndarray) -> float:
     if rotation.shape != (3, 3):
         raise ValueError("rotation must be a (3, 3) matrix")
     return float(np.arccos(np.clip(rotation[2, 2], -1.0, 1.0)))
+
+
+def sample_plate_poses(samples: int, zenith_std_deg: float, seed: int) -> np.ndarray:
+    """``samples`` plate poses ``R = tilt . Rz(spin)`` (body to world) from ``numpy.random.default_rng(seed)``.
+
+    Drawn as uniform spin, a half-normal tilt ``|N(0, zenith_std_deg)|`` of
+    the c axis from the zenith, and a uniform tilt direction (the sampler of
+    task ``chromatic-weight-kink-diagnostic``'s ``probe_120_cls.py``, in that
+    draw order); both rotations are :func:`.so3.exp_batch`.  A half-normal
+    tilt with a uniform direction, not :class:`ZenithGaussianPoseDensity`'s
+    density on the sphere (they differ by the ``sin theta`` area factor).
+    """
+    rng = np.random.default_rng(seed)
+    spin = rng.uniform(0.0, 2.0 * np.pi, samples)
+    tilt = np.abs(rng.normal(0.0, np.radians(zenith_std_deg), samples))
+    toward = rng.uniform(0.0, 2.0 * np.pi, samples)
+    zeros = np.zeros_like(tilt)
+    tilt_vectors = np.stack([-np.sin(toward) * tilt, np.cos(toward) * tilt, zeros], axis=1)
+    return exp_batch(tilt_vectors) @ exp_batch(np.stack([zeros, zeros, spin], axis=1))
 
 
 def c_axis_roll(rotation: np.ndarray) -> float:
