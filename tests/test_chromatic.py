@@ -210,7 +210,7 @@ def test_tint_threshold_calibration() -> None:
 
 def test_dependency_direction() -> None:
     """``chromatic`` sits on top of ``dp_field``; no module of the field layer (or below) imports it."""
-    from test_symmetry_dependency_direction import PACKAGE_ROOT, _imported_modules
+    from _dependency_direction import PACKAGE_ROOT, imported_modules
 
     offenders = {}
     for path in PACKAGE_ROOT.rglob("*.py"):
@@ -218,11 +218,11 @@ def test_dependency_direction() -> None:
             continue
         relative = path.relative_to(PACKAGE_ROOT).with_suffix("")
         package = ".".join(("lumice_integral", *relative.parts[:-1]))  # a module's (or an __init__'s) own package
-        hits = {m for m in _imported_modules(path, package) if m.startswith("lumice_integral.chromatic")}
+        hits = {m for m in imported_modules(path, package) if m.startswith("lumice_integral.chromatic")}
         if hits:
             offenders[str(relative)] = sorted(hits)
     assert offenders == {}
-    assert "lumice_integral.dp_field.DPField" in _imported_modules(PACKAGE_ROOT / "chromatic.py", "lumice_integral")
+    assert "lumice_integral.dp_field.DPField" in imported_modules(PACKAGE_ROOT / "chromatic.py", "lumice_integral")
 
 
 # ---- one-sided cases are reported, never "no colour" (owner, code-review Minor 4/6/8) ----------------------
