@@ -461,3 +461,23 @@ def test_family_pinned_cells_put_their_whole_sigma_zero_family_on_one_deviation(
         assert (spread < 1e-9) if name in pinned else (spread > 10.0), (name, spread)
     column = pe.Scene(PRISM, (1, 2, 1), CANONICAL_REFRACTIVE_INDEX, SUN)
     assert not (_sigma_zero_plate_ring(column)[1] > 0.0).any()
+
+
+# ------------------------------------------------------------------ an index other than 1.31
+def test_non_canonical_index_cell_lights_the_grazing_slab_spot(tmp_path: Path) -> None:
+    """``1-3-4-2__band_sum_plate_n1.307`` (task entry-measure-exit-gate-index): the only fixture at n != 1.31.  Its
+    internal ray sits between the critical cones of 1.307 and 1.31, so the entry measure's exit gate decides the
+    spot.  With the gate at the caller's index the streak at azimuth 120 deg is lit (centre ~8.6e-4, K = 132);
+    with the gate at the package index 1.31 (before the fix) the centre was 4.8e-10 from 18 non-grazing events."""
+    script = _export_script()
+    (cell,) = [cell for cell in script.BAND_SUM_CELLS if cell.name == "1-3-4-2__band_sum_plate_n1.307"]
+    assert cell.scene.refractive_index == 1.307
+    pe.export_matrix([], tmp_path, band_sum_cells=[cell])
+    fixture = pe.read_json(tmp_path / f"{cell.name}.json")
+    assert fixture["input"]["refractive_index"] == 1.307
+    pixels = {tuple(p["label"]): p for p in fixture["expected"]["pixels"]}
+    for label in ((0, 4), (1, 4), (2, 4), (3, 4), (4, 4)):
+        assert pixels[label]["status"] == "ok" and pixels[label]["value"] > 5e-5 and pixels[label]["K_eff"] > 20.0, label
+    assert pixels[(2, 3)]["K"] == 0 and pixels[(2, 3)]["value"] == 0.0  # the empty band beside the streak
+    (check,) = pe.verify_directory(tmp_path)
+    assert not check.failures, check.failures

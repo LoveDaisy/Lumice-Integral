@@ -272,6 +272,14 @@ PARHELION_120_VIEW = lambert(sun_direction(CANONICAL_SUN_ALTITUDE_DEG, CANONICAL
 SUBSUN_VIEW = lambert(sun_direction(-CANONICAL_SUN_ALTITUDE_DEG, CANONICAL_SUN_AZIMUTH_DEG), 5.0, 9)
 SUBPARHELION_120_VIEW = lambert(sun_direction(-CANONICAL_SUN_ALTITUDE_DEG, CANONICAL_SUN_AZIMUTH_DEG + 120.0), 5.0, 9)
 PINNED_SPOT_PIXELS = ((4, 4), (3, 4), (5, 4), (4, 3), (4, 5), (0, 4), (8, 4), (4, 1), (4, 7), (4, 0))
+# A refractive index other than the canonical 1.31 (task entry-measure-exit-gate-index): the grazing slab path
+# 1-3-4-2 (in through one basal face, two prism reflections, out through the parallel basal face) on a plate
+# with two long faces, the sun on the horizon.  The internal ray sits just inside the critical cone of n = 1.307,
+# outside that of 1.31; an exit gate at the package index 1.31 zeroes every event.  The spot (azimuth 120 deg,
+# elevation -0.5 to 2.6 deg) does not depend on n: parallel entry and exit faces.
+SLAB_CRYSTAL = prism_crystal(0.3, (1.5, 1.0, 1.0, 1.5, 1.0, 1.0))
+HORIZON_SUN = tuple(float(x) for x in sun_direction(0.0, CANONICAL_SUN_AZIMUTH_DEG))
+HORIZON_PARHELION_120_VIEW = lambert(sun_direction(0.0, CANONICAL_SUN_AZIMUTH_DEG + 120.0), 5.0, 9)
 
 BAND_SUM_CELLS = (
     BandSumCell(
@@ -387,6 +395,17 @@ BAND_SUM_CELLS = (
         20_000,
         "family pinned, element 5 on a thin plate: the 120 deg subparhelion at D = 122.242 deg, a pixel on the "
         "path's smallest deviation (120 deg) and an empty band beyond it",
+    ),
+    BandSumCell(
+        "plate_n1.307",
+        Scene(SLAB_CRYSTAL, (1, 3, 4, 2), 1.307, HORIZON_SUN),
+        {"family": "plate", "zenith_std_deg": 1.0},
+        HORIZON_PARHELION_120_VIEW,
+        ((2, 4), (1, 4), (3, 4), (0, 4), (4, 4), (6, 4), (8, 4), (2, 5), (2, 6), (2, 3)),
+        20_000,
+        "a refractive index other than 1.31 (n = 1.307): the grazing slab 1-3-4-2 on a plate with the sun on the "
+        "horizon, where the exit gate's critical angle must follow n (an exit gate at 1.31 zeroes every event); "
+        "the spot's vertical streak at azimuth 120 deg, its horizontal tails and an empty band beside it",
     ),
 )
 
