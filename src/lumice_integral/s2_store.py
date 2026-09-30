@@ -13,8 +13,8 @@ Roadmap section 4.1(a): validity, entry measure ``A``, Fresnel transmission
 through ``u``.  Section 4.2 discretises the level-set integral with
 a store of events on ``S^2``: ``N`` points (the antipodal Fibonacci lattice
 by default, :func:`store_lattice`, ``4 pi / N`` each), one rotation per point, the production batch evaluators
-(:func:`.optics.path_domain_batch`, :func:`.optics.fresnel_transmission_path_batch`,
-:func:`.geometry.entry_measure_batch`), only ``w = A T > 0`` events kept,
+(:func:`.optics.path_domain_batch` and :func:`.path_weight.entry_and_power`: ``A`` and ``T`` at the
+store's ``n``), only ``w = A T > 0`` events kept,
 sorted by ``D``.  ``T`` is the path's power factor, entry and exit
 transmittances times every internal reflectance (``1`` where total); since
 schema 4 a partial internal reflection gives ``0 < T < 1`` instead of an
@@ -128,6 +128,7 @@ from .camera import incident_direction_from_sun, sun_direction
 from .geometry import HexPrism, Polyhedron, Pyramid
 from .geometry.pyramid import PyramidShape
 from .optics import normalize_faces, path_id_of
+from .path_weight import entry_and_power
 from .provenance import git_commit, sha256_of
 from .so3 import haar_rotations
 
@@ -339,7 +340,7 @@ def evaluate_fields(
     """Production batch evaluators of the ``members`` at ``rotations``, for the sun direction ``s_hat``.
 
     Returns validity (any member), ``A`` and ``T`` per member (``(m, n)``;
-    ``T`` includes each internal reflectance, :func:`.optics.fresnel_transmission_path_batch`),
+    ``T`` includes each internal reflectance, :func:`.path_weight.entry_and_power`),
     ``w = sum_m A_m T_m``, body-frame ``phi = Phi_P(-u)``, ``D`` and
     ``u = R^-1 s_hat``.  The evaluators take the propagation direction
     ``s = -s_hat`` (:func:`.camera.incident_direction_from_sun`, the only
@@ -353,8 +354,9 @@ def evaluate_fields(
     valid, areas, transmissions = [], [], []
     for index_m, faces in enumerate(members):
         check = optics.path_domain_batch(rotations, faces, s, index, crystal=crystal)
-        transmissions.append(optics.fresnel_transmission_path_batch(rotations, faces, s, index, crystal=crystal))
-        areas.append(geometry.entry_measure_batch(rotations, faces, s, crystal, n_ice=index))
+        area, transmission = entry_and_power(rotations, faces, s, index, crystal=crystal)
+        areas.append(area)
+        transmissions.append(transmission)
         valid.append(check.valid)
         if index_m == 0:
             direction = check.direction

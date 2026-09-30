@@ -44,8 +44,8 @@ instead; its power ratio is reported but gives no tint verdict (``kind =
 none``).  The sky position of
 the kink is not traced for oriented crystals (the task's scope).
 
-Both weights go through :func:`weighted_power`, the one ``A T`` kernel of
-this module.  Path classes are Lumice's filter orbits (``PBD``, L1:
+Both weights go through :func:`weighted_power` (:func:`.path_weight.weighted_power`,
+the one ``A T`` kernel of the library).  Path classes are Lumice's filter orbits (``PBD``, L1:
 :func:`.symmetry.reflection_group.pbd_orbit`), never the literal sequence
 (``3-5-6-8`` is geometrically impossible on the rhombic plate
 ``[1.5, 1, 1, 1.5, 1, 1]`` while four members of its class are lit).
@@ -65,8 +65,8 @@ from . import optics
 from .camera import incident_direction_from_sun, sun_direction
 from .dp_field import DPField, KinkCurve
 from .geometry import HexPrism, Polyhedron, halo_map_rank
-from .geometry.entry_measure import entry_measure_batch
 from .path_class import g_true_orbit
+from .path_weight import weighted_power
 from .s2_store import align_rotations, fibonacci_sphere
 from .so3 import haar_rotations
 from .symmetry.reflection_group import pbd_orbit
@@ -100,20 +100,8 @@ _PROBE_SUN = np.array([0.0, 0.0, 1.0])
 
 # ---- the weight kernel ------------------------------------------------------------------------------------
 
-
-def weighted_power(
-    rotations: np.ndarray, faces: Sequence[int], incident_direction: np.ndarray, index: float, *, crystal: Polyhedron
-) -> np.ndarray:
-    """``A T`` per pose: entry measure (at the same ``n``) times the path's power, ``0`` outside the domain.
-
-    The one weight of this module: plate tints sum it over a sample, random
-    orientation edges read it on a line of ``S^2``.  ``T`` includes every
-    internal ``R_k``.
-    """
-    faces = optics.normalize_faces(faces, crystal)
-    area = entry_measure_batch(rotations, faces, incident_direction, crystal, n_ice=float(index))
-    power = optics.fresnel_transmission_path_batch(rotations, faces, incident_direction, float(index), crystal=crystal)
-    return area * power
+# ``weighted_power`` is :func:`.path_weight.weighted_power` (re-exported): ``A T`` per pose, the one weight of this
+# module.  Plate tints sum it over a sample, random orientation edges read it on a line of ``S^2``.
 
 
 def _body_weight(points: np.ndarray, faces: Faces, index: float, crystal: Polyhedron) -> np.ndarray:
