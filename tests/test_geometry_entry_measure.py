@@ -9,7 +9,10 @@ Coverage map (plan Step 6):
 3. optically feasible but geometrically empty corridor -> ``value == 0.0``, ``status == "corridor_empty"``;
 4. canonical 3-5 fixture: every pose of the traced fiber evaluates to a finite non-negative value;
 5. refraction cross-consistency with ``optics.refract_smooth`` / ``optics.path_3_5`` (the geometry
-   package cannot import JAX, so the Snell step is duplicated in numpy and pinned here).
+   package cannot import JAX, so the Snell step is duplicated in numpy and pinned here);
+6. batch form against the scalar form;
+7. the exit gate's critical angle follows ``n_ice`` (task entry-measure-exit-gate-index): a grazing
+   slab at n = 1.307 / 1.317, whose internal ray sits between the critical cones of n and of 1.31.
 
 The geometry package itself is pure numpy; this test file may import JAX-backed modules.
 """
@@ -21,11 +24,12 @@ import numpy as np
 import pytest
 
 from lumice_integral.continuation import trace_fiber
-from lumice_integral.geometry import (COS_CRITICAL, HexPrism, LatLonGrid, corridor_intersection, corridor_polygons,
-                                      entry_measure, entry_ok, exit_ok, external_directions)
+from lumice_integral.geometry import (COS_CRITICAL, N_ICE as GEOMETRY_N_ICE, HexPrism, LatLonGrid, area_eps,
+                                      corridor_intersection, corridor_polygons, cos_critical, entry_measure,
+                                      entry_measure_batch, entry_ok, exit_ok, external_directions)
 from lumice_integral.geometry.entry_measure import refract_into_crystal
 from lumice_integral.optics import (ICE_REFRACTIVE_INDEX, minimum_deviation_incident, path_3_5, path_3_5_problem,
-                                    refract_smooth)
+                                    path_domain_batch, refract_smooth)
 from lumice_integral.so3 import exp
 
 N_ICE = float(ICE_REFRACTIVE_INDEX)
@@ -229,8 +233,6 @@ def test_entry_measure_internal_direction_matches_optics_path_3_5_in_world_frame
 def test_entry_measure_batch_matches_the_scalar_form_pose_by_pose(canonical_fiber):
     """Elementwise agreement of ``entry_measure_batch`` with ``entry_measure``: fiber poses (open
     corridor), Haar-like random poses (every gate verdict) and a batch that is empty."""
-    from lumice_integral.geometry import entry_measure_batch
-
     rng = np.random.default_rng(11)
     random_poses = np.asarray([np.asarray(exp(jnp.asarray(rng.normal(size=3)))) for _ in range(500)])
     poses = np.concatenate([np.asarray(canonical_fiber.poses, dtype=np.float64), random_poses])
@@ -245,3 +247,73 @@ def test_entry_measure_batch_matches_the_scalar_form_pose_by_pose(canonical_fibe
     assert entry_measure_batch(np.zeros((0, 3, 3)), (3, 5), MIN_DEV_INCIDENT, CRYSTAL).shape == (0,)
     with pytest.raises(ValueError):
         entry_measure_batch(np.eye(3), (3, 5), MIN_DEV_INCIDENT, CRYSTAL)
+
+
+# ---- 7. the exit gate's critical angle follows n_ice ------------------------------------------------
+
+
+def test_cos_critical_at_the_package_index_is_the_default_constant():
+    """``COS_CRITICAL`` is ``cos_critical(N_ICE)`` bit for bit, so every n = 1.31 result is unchanged."""
+    assert cos_critical(GEOMETRY_N_ICE) == COS_CRITICAL
+    assert cos_critical(GEOMETRY_N_ICE) == math.sqrt(1.0 - 1.0 / (GEOMETRY_N_ICE * GEOMETRY_N_ICE))
+    assert cos_critical(1.307) < COS_CRITICAL < cos_critical(1.317)
+
+
+def test_grazing_basal_slab_exit_gate_uses_the_callers_index():
+    """White box of the mechanism.  Path (1, 2) through a thin plate, the sun 0.1 deg above face 1: the internal
+    ray leaves face 2 at cos_t just above cos_critical(n), the grazing limit of refraction into index n.  At
+    n = 1.307 that cos_t lies below the n = 1.31 cone (``COS_CRITICAL``), so a gate at the package index would
+    reject a ray that exits face 2 with a real transmission; the gate at the caller's index lets it through."""
+    slab = HexPrism(a=1.0, h=0.3)
+    theta = math.radians(89.9)
+    s = np.array([math.sin(theta), 0.0, -math.cos(theta)])        # face 1 is +z, face 2 is -z
+    for n in (1.307, 1.317):
+        res = entry_measure(EYE, (1, 2), s, slab, n_ice=n)
+        assert res.status == "ok" and res.value > 0.0
+        assert cos_critical(n) < res.cosine_internal
+        batch = entry_measure_batch(EYE[None], (1, 2), s, slab, n_ice=n)
+        np.testing.assert_allclose(batch, [res.value], rtol=0.0, atol=1e-15)
+    low = entry_measure(EYE, (1, 2), s, slab, n_ice=1.307)
+    assert low.cosine_internal < COS_CRITICAL                      # the n = 1.31 gate would have rejected it
+    assert not bool(exit_ok(slab.normal(slab.face(2)), low.internal_direction[None, :])[0])
+
+
+def _plate_poses() -> np.ndarray:
+    """Deterministic plate poses (zenith tilts 0.3 - 2.5 deg, every azimuth), body -> world."""
+    from scipy.spatial.transform import Rotation
+
+    n = 400
+    phi = np.linspace(0.0, 2.0 * np.pi, n, endpoint=False)
+    tilt = np.radians(np.tile([0.3, 0.8, 1.5, 2.5], n // 4))
+    tilt_axis = np.linspace(0.0, 14.0 * np.pi, n)
+    tilt_rot = Rotation.from_rotvec(np.stack([-np.sin(tilt_axis) * tilt, np.cos(tilt_axis) * tilt, 0.0 * tilt], 1))
+    return (tilt_rot * Rotation.from_euler("z", phi[:, None])).as_matrix()
+
+
+@pytest.mark.parametrize("n_ice", [1.307, 1.317])
+def test_grazing_slab_1_3_4_2_plate_with_horizontal_sun_is_not_gated_out(n_ice):
+    """Regression for the probe of 2026-09-30: plate ``HexPrism(h=0.6, face_distance=[1.5,1,1,1.5,1,1])``, sun on
+    the horizon, path 1-3-4-2 (in through a basal face at grazing incidence, out through the parallel one).
+    Before the fix every pose at n = 1.307 was ``exit_critical_angle`` (A = 0) while the Fresnel chain
+    ``path_domain_batch`` called the same poses valid.  Every pose that ``path_domain_batch`` accepts and whose
+    corridor is open must now carry a positive measure, and the batch form must agree with the scalar one."""
+    crystal = HexPrism(a=1.0, h=0.6, face_distance=[1.5, 1, 1, 1.5, 1, 1])
+    path = (1, 3, 4, 2)
+    s = np.array([1.0, 0.0, 0.0])
+    poses = _plate_poses()
+
+    valid = np.asarray(path_domain_batch(poses, path, s, n_ice, crystal=crystal).valid)
+    polys, _ = corridor_polygons(crystal, path)
+    eps = area_eps(crystal)
+    open_corridor = np.zeros(len(poses), dtype=bool)
+    for k in np.flatnonzero(valid):
+        n_a = crystal.normal(crystal.face(path[0]))
+        d_in, _, _ = refract_into_crystal(poses[k].T @ s, n_a, n_ice)
+        open_corridor[k] = corridor_intersection(polys, d_in[None, :]).area()[0] > eps
+    assert open_corridor.sum() >= 10
+
+    batch = entry_measure_batch(poses, path, s, crystal, n_ice=n_ice)
+    assert (batch[open_corridor] > 0.0).all()
+    assert (batch[~valid] == 0.0).all()
+    scalar = np.array([entry_measure(R, path, s, crystal, n_ice=n_ice).value for R in poses])
+    np.testing.assert_allclose(batch, scalar, rtol=0.0, atol=1e-15)

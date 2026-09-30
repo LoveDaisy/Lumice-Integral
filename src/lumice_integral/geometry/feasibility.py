@@ -47,8 +47,16 @@ docstring。"""
 AdmissibleMask = NewType("AdmissibleMask", np.ndarray)
 """在 :data:`CorridorMask` 之上再叠加出射光学约束的掩码：以 ``faces`` 为完整光路的可行方向集。"""
 
-COS_CRITICAL = math.sqrt(1.0 - 1.0 / (N_ICE * N_ICE))
-"""$\\cos\\theta_c$，$\\theta_c = \\arcsin(1/n) \\approx 49.8°$：内部方向与界面法向夹角不超过它才能折射出去。"""
+def cos_critical(n_ice: float) -> float:
+    """$\\cos\\theta_c = \\sqrt{1 - 1/n^2}$，$\\theta_c = \\arcsin(1/n)$：折射率 ``n_ice`` 下内部方向与界面法向夹角
+    不超过 $\\theta_c$ 才能折射出去。临界角随折射率走的唯一实现；:data:`COS_CRITICAL` 是它在 :data:`N_ICE` 处的值。"""
+    return math.sqrt(1.0 - 1.0 / (n_ice * n_ice))
+
+
+COS_CRITICAL = cos_critical(N_ICE)
+"""$\\cos\\theta_c$ 在 canonical $n = 1.31$ 处的值（$\\theta_c \\approx 49.8°$），``entry_ok`` / ``exit_ok`` 的默认参数。
+随调用折射率变化的场合（如 :func:`~lumice_integral.geometry.entry_measure.entry_measure`）必须显式传
+``cos_tc=cos_critical(n_ice)``。"""
 
 EPS_REL = 1e-6
 """走廊交集面积阈值的默认相对系数：``eps = EPS_REL × (晶体最短棱长)²``，与晶体尺度无关。"""
@@ -466,6 +474,6 @@ def external_directions(crystal: Polyhedron, faces: Sequence[int], directions: n
 
 
 __all__ = ["AdmissibleMask", "AdmissibleResult", "COS_CRITICAL", "CorridorMask", "EPS_REL", "LatLonGrid",
-           "admissible_directions", "area_eps", "corridor_intersection", "corridor_mask", "corridor_polygons",
+           "admissible_directions", "area_eps", "corridor_intersection", "corridor_mask", "corridor_polygons", "cos_critical",
            "entry_ok", "entry_points", "exit_ok", "external_directions", "geometric_ok", "incidence_objective_deg",
            "is_feasible", "min_edge_length", "perp_bases"]
