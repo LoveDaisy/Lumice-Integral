@@ -131,7 +131,14 @@ Owner 需求（权威记录在 Ice Halo 仓
 产品设计）：功能 2 = 带求和；功能 1 = 该像素对应的水平集
 $\{D_P(\mathbf u) = \delta\}$（带求和里落进该像素偏折角带内的事件即这条 fiber 的离散化，
 `band_sum.band_poses` 已能取出这些姿态）；功能 3 = $D_P$ 的临界结构加 $U_P$ 边界
-（`dp_field`、`focusing.classify`），波长临界即 $U_P$ 边界随 $n(\lambda)$ 移动。三者
+（`dp_field`、`focusing.classify`），波长临界即 $U_P$ 边界随 $n(\lambda)$ 移动。随
+$n(\lambda)$ 移动的不只有这条边界。功能三读的是**三类临界线**：$D_P$ 的临界点、$U_P$ 边界，
+以及**权重折线**，即内反射的全反射起点，Fresnel $R_k$ 在此处出现折点。权重折线不属于
+$\partial U_P$（task `chromatic-weight-kink-diagnostic`，2026-09-30，`DPField.weight_kinks`）。
+slab 光路的方向映射不色散，权重折线就是它唯一的颜色来源：`3-1-6` / `1-3-2` 反日点暗洞的蓝边，
+以及 plate 120° 幻日 `1-3-5-2` 类的偏蓝都来自这里。在它之上建立的彩色判据
+（`lumice_integral.chromatic`）与模块 C 规格草案见
+[chromatic-module-c.md](chromatic-module-c.md)（英文）。三项功能
 共享同一张按「晶体 × 光路 × 波长」预计算、与光源无关的 $S^2$ 场。「为什么冰晕长在这里」
 这一产品形态 = 功能 3 的预设点加机制标签——这是 Lumice 的 Monte Carlo 形态给不出的、
 LI 独有的价值。
@@ -299,4 +306,5 @@ $\delta \in [98^\circ, 120.3^\circ)$），`contour_quadrature` 现以 `gated_out
 | [conventions.md](conventions.md) | 每条坐标、符号与记号约定及其权威与检查（英文） |
 | [ch06-reference-fixture.md](ch06-reference-fixture.md) | 第 6 章 fixture、来源分级、验收阶段、与 Lumice 的对照（英文） |
 | [ch11-pose-density-families.md](ch11-pose-density-families.md) | 五个姿态密度族（英文） |
+| [chromatic-module-c.md](chromatic-module-c.md) | 权重折线（第三类临界线）与彩色判据；模块 C 规格草案（英文） |
 | [decisions/](decisions/) | 架构决策记录（英文） |

@@ -6,15 +6,17 @@ package evaluates the deviation ``D_P`` on the body-frame sphere in batches
 (``jax.vmap``, value / tangent gradient / Riemannian Hessian), finds its
 interior critical points, walks the boundary ``dU_P`` (pieces, corners with
 every vanishing margin, restricted extrema) and partitions the ``delta`` axis
-into intervals of constant level-set topology with their component counts.
+into intervals of constant level-set topology with their component counts,
+and traces the weight kinks (TIR onsets of internal reflections, :mod:`.weight_kink`).
 The field depends on the crystal's face normals, the face sequence and the
 refractive index only; there is no sun direction anywhere in it.
 
-The public surface is :class:`DPField` (and :class:`TopologyEscape`, the
+The public surface is :class:`DPField` (with :class:`KinkCurve` /
+:class:`KinkArc`, its weight kinks, and :class:`TopologyEscape`, the
 exception of its interval partition): its :meth:`DPField.build` is the
 one place a rank-0 path (``geometry.halo_map_rank == 0``, a point mass
 handled by ``path_class.estimate_rank0_contribution``) is refused, so the
-free functions of :mod:`.field`, :mod:`.boundary` and :mod:`.certificate`
+free functions of :mod:`.field`, :mod:`.boundary`, :mod:`.certificate` and :mod:`.weight_kink`
 are internal and not re-exported.
 """
 
@@ -30,6 +32,7 @@ import numpy as np
 from .. import optics
 from ..geometry import Polyhedron, halo_map_rank
 from .boundary import BoundaryCriticalPoint, BoundaryLoop, BoundaryPiece, Corner, walk_boundary
+from .weight_kink import KinkArc, KinkCurve, weight_kinks
 from .certificate import (
     CriticalSet,
     DeviationInterval,
@@ -48,13 +51,14 @@ from .field import (
     fold_screen,
     gradient_batch,
     hessian_tangent_batch,
+    index_derivatives_batch,
     interior_critical_points,
     margins_batch,
     valid_batch,
     validity_margins_batch,
 )
 
-__all__ = ["DPField", "TopologyEscape"]
+__all__ = ["DPField", "KinkArc", "KinkCurve", "TopologyEscape"]
 
 
 @dataclass(frozen=True, eq=False)
@@ -104,6 +108,10 @@ class DPField:
     def hessian_tangent_batch(self, u: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         return hessian_tangent_batch(u, self.faces, self.index, self.slab, crystal=self.crystal)
 
+    def index_derivatives_batch(self, u: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """``dD_P/dn`` and every ``d margin / dn`` at fixed ``u`` (:func:`.field.index_derivatives_batch`)."""
+        return index_derivatives_batch(u, self.faces, self.index, self.slab, crystal=self.crystal)
+
     def margins_batch(self, u: np.ndarray) -> np.ndarray:
         """Every margin of :func:`.optics.domain_margin_names` at each row of ``u`` (the gates: :meth:`validity_margins_batch`)."""
         return margins_batch(u, self.faces, self.index, crystal=self.crystal)
@@ -145,6 +153,17 @@ class DPField:
     @property
     def boundary_critical_points(self) -> tuple[BoundaryCriticalPoint, ...]:
         return self.boundary.critical_points
+
+    @cached_property
+    def weight_kinks(self) -> tuple[KinkCurve, ...]:
+        """The TIR onsets ``C_k`` of every internal reflection at this field's ``index`` (:mod:`.weight_kink`).
+
+        The third kind of critical line: a kink of the Fresnel weight ``R_k``,
+        not part of ``dU_P`` (:attr:`boundary`) nor of the topology
+        certificate.  One field is one ``n``; the chromatic shift of a kink
+        is the difference of two fields (:mod:`lumice_integral.chromatic`).
+        """
+        return weight_kinks(self.crystal, self.faces, self.index, slab=self.slab, lattice_n=self.lattice_n)
 
     @cached_property
     def domain_topology(self) -> DomainTopology:

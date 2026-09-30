@@ -195,6 +195,15 @@ def _hessian_batch(
 
 
 @partial(jax.jit, static_argnums=1)
+def _index_derivatives_batch(
+    u: jax.Array, faces: Faces, index: jax.Array, slab: jax.Array | None, normals: jax.Array
+) -> tuple[jax.Array, jax.Array]:
+    d = jax.vmap(jax.grad(d_value, argnums=2), in_axes=(0, None, None, None, None))(u, faces, index, slab, normals)
+    m = jax.vmap(jax.jacfwd(margin_vector, argnums=2), in_axes=(0, None, None, None))(u, faces, index, normals)
+    return d, m
+
+
+@partial(jax.jit, static_argnums=1)
 def _margins_batch(u: jax.Array, faces: Faces, index: jax.Array, normals: jax.Array) -> jax.Array:
     return jax.vmap(margin_vector, in_axes=(0, None, None, None))(u, faces, index, normals)
 
@@ -246,6 +255,19 @@ def hessian_tangent_batch(
         _as_points(u), faces, jnp.float64(index), _as_slab(slab), body_normals(crystal, faces)
     )
     return np.asarray(hessian), np.asarray(basis)
+
+
+def index_derivatives_batch(
+    u: np.ndarray, faces: Faces, index: float, slab: np.ndarray | None = None, *, crystal: Polyhedron | None = None
+) -> tuple[np.ndarray, np.ndarray]:
+    """``dD_P/dn`` ``(N,)`` and every ``d margin / dn`` ``(N, len(domain_margin_names(faces)))`` at fixed ``u`` (JAX AD).
+
+    ``dD_P/dn`` is the direction dispersion of the field (``0`` for a slab:
+    :func:`d_slab` does not see ``n``); the sign of ``d disc_k / dn`` on a
+    TIR onset says which wavelength reflects totally on which side of it.
+    """
+    d, m = _index_derivatives_batch(_as_points(u), faces, jnp.float64(index), _as_slab(slab), body_normals(crystal, faces))
+    return np.asarray(d), np.asarray(m)
 
 
 def margins_batch(u: np.ndarray, faces: Faces, index: float, *, crystal: Polyhedron | None = None) -> np.ndarray:

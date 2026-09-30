@@ -371,7 +371,17 @@ $\{D_P(\mathbf u) = \delta\}$ (the events the band sum lands in that pixel's
 band are the fiber's discretisation; `band_sum.band_poses` already extracts
 those poses); function 3 is $D_P$'s critical structure plus the $U_P$
 boundary (`dp_field`, `focusing.classify`), with wavelength criticality being
-the $U_P$ boundary moving with $n(\lambda)$. All three share one field
+the $U_P$ boundary moving with $n(\lambda)$. That boundary is not the only
+thing that moves with $n(\lambda)$. Function 3 reads **three kinds of
+critical line**: $D_P$'s critical points, the $U_P$ boundary, and the
+*weight kinks*, the TIR onsets of internal reflections, where the Fresnel
+$R_k$ kinks. The weight kinks are not part of $\partial U_P$ (task
+`chromatic-weight-kink-diagnostic`, 2026-09-30, `DPField.weight_kinks`).
+On a slab path, whose direction map does not disperse, the weight kinks are
+the only colour source: the blue rim of the `3-1-6` / `1-3-2` antisolar
+dark hole, and the blue tint of the plate 120° parhelion `1-3-5-2` class.
+The colour criterion built on them (`lumice_integral.chromatic`) and module
+C's spec draft are in [chromatic-module-c.md](chromatic-module-c.md). All three functions share one field
 precomputed by crystal × path × wavelength, independent of the light source.
 "Why the halo is here" as a product form is function 3's preset points plus
 its mechanism label — this is LI's value add that Lumice's Monte Carlo form
@@ -612,5 +622,6 @@ produce plausible but systematically wrong radiance.
 | [conventions.md](conventions.md) | every coordinate, sign and symbol convention with its authority and check |
 | [ch06-reference-fixture.md](ch06-reference-fixture.md) | chapter-6 fixture, provenance, acceptance stages, Lumice comparisons |
 | [ch11-pose-density-families.md](ch11-pose-density-families.md) | the five pose-density families |
+| [chromatic-module-c.md](chromatic-module-c.md) | weight kinks (the third kind of critical line) and the colour criterion; module C spec draft |
 | [decisions/](decisions/) | architecture decision records |
 

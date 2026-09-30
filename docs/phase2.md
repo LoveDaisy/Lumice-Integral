@@ -246,6 +246,19 @@ sequence, independent of the sun:
   `3-4-5-7` agree (`--lattice-n 50000` for `3-5-6-7`, whose $U_P$ has a neck
   the default 20000-point lattice splits); the measured values are in the
   appendix.
+- *Weight kinks* (task `chromatic-weight-kink-diagnostic`, 2026-09-30;
+  `DPField.weight_kinks`, `dp_field.weight_kink`). This is the third kind of
+  critical line: the TIR onset $C_k = \{\mathrm{disc}_k = 0\}$ of each
+  internal reflection, where $R_k$ kinks but the domain does not end. It is
+  traced beside the partition, never inside it. When the unfolded incidence
+  normal satisfies $\mathbf m_k\cdot\mathbf n_a = 0$, $C_k$ is the small
+  circle $\mathbf m_k\cdot\mathbf u = -\sqrt{n^2-1}$ clipped to $U_P$.
+  Otherwise it is marched with the walk's steppers, both ways from lattice
+  seeds, without a completeness claim. On a single-mirror slab (`3-1-6`,
+  `1-3-2`) the whole circle lies on $D = 2\arcsin\sqrt{n^2-1}$: the rim of
+  the antisolar dark hole, blue because the rim moves with $n$ while the
+  direction map does not. The colour criterion built on these curves and on
+  the gates that move with $n$ is [chromatic-module-c.md](chromatic-module-c.md).
 
 ### 3.2 Layered invariance: what a halo shares and what varies
 
