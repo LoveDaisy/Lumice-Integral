@@ -53,11 +53,13 @@ AdmissibleMask = NewType("AdmissibleMask", np.ndarray)
 def cos_critical(n_ice: float) -> float:
     """$\\cos\\theta_c = \\sqrt{1 - 1/n^2}$，$\\theta_c = \\arcsin(1/n)$：折射率 ``n_ice`` 下内部方向与界面法向夹角
     不超过 $\\theta_c$ 才能折射出去。临界角随折射率走的唯一实现；:data:`COS_CRITICAL` 是它在 :data:`N_ICE` 处的值。"""
+    if not (math.isfinite(n_ice) and n_ice > 1.0):
+        raise ValueError(f"n_ice must be a finite refractive index > 1, got {n_ice!r}")
     return math.sqrt(1.0 - 1.0 / (n_ice * n_ice))
 
 
 COS_CRITICAL = cos_critical(N_ICE)
-"""$\\cos\\theta_c$ 在 canonical $n = 1.31$ 处的值（$\\theta_c \\approx 49.8°$），``entry_ok`` / ``exit_ok`` 的默认参数。
+"""$\\cos\\theta_c$ 在 canonical $n = 1.31$ 处的值（$\\theta_c \\approx 49.8°$），``entry_ok`` / ``exit_ok`` 的 ``cos_tc`` 无默认值、必须显式传（隐式默认正是 #48 bug 的根因）。
 随调用折射率变化的场合（如 :func:`~lumice_integral.geometry.entry_measure.entry_measure`）必须显式传
 ``cos_tc=cos_critical(n_ice)``。"""
 
@@ -285,12 +287,12 @@ def geometric_ok(polys: Sequence[np.ndarray], directions: np.ndarray, eps: float
     return corridor_intersection(polys, d).area() > eps
 
 
-def entry_ok(n_a: Vec3, directions: np.ndarray, cos_tc: float = COS_CRITICAL) -> np.ndarray:
+def entry_ok(n_a: Vec3, directions: np.ndarray, *, cos_tc: float) -> np.ndarray:
     """入射光学约束 $-\\mathbf d\\cdot\\mathbf n_a \\ge \\cos\\theta_c$。"""
     return -(np.asarray(directions) @ n_a) >= cos_tc
 
 
-def exit_ok(n_tilde_b: Vec3, directions: np.ndarray, cos_tc: float = COS_CRITICAL) -> np.ndarray:
+def exit_ok(n_tilde_b: Vec3, directions: np.ndarray, *, cos_tc: float) -> np.ndarray:
     """出射光学约束 $\\mathbf d\\cdot\\tilde{\\mathbf n}_b \\ge \\cos\\theta_c$。"""
     return (np.asarray(directions) @ n_tilde_b) >= cos_tc
 
@@ -322,7 +324,7 @@ def corridor_mask(crystal: Polyhedron, faces: Sequence[int], grid: LatLonGrid, p
     if len(faces) == 1:
         mask[cand] = -(d @ n_a) > 0
         return CorridorMask(mask)
-    ok = entry_ok(n_a, d)
+    ok = entry_ok(n_a, d, cos_tc=COS_CRITICAL)
     if ok.any():
         polys, _ = corridor_polygons(crystal, faces)
         ok[ok] = geometric_ok(polys, d[ok], eps)
@@ -414,17 +416,17 @@ def admissible_directions(crystal: Polyhedron, faces: Sequence[int], grid: LatLo
         return incidence_objective_deg(n_a, n_tilde_b, d)
 
     def evaluate(d: np.ndarray) -> np.ndarray:
-        ok = entry_ok(n_a, d) & exit_ok(n_tilde_b, d)
+        ok = entry_ok(n_a, d, cos_tc=COS_CRITICAL) & exit_ok(n_tilde_b, d, cos_tc=COS_CRITICAL)
         if ok.any():
             ok[ok] = geometric(d[ok])
         return ok
 
     if corridor is None:
         geom = geometric(grid.directions)
-        corridor = CorridorMask(geom & entry_ok(n_a, grid.directions))
+        corridor = CorridorMask(geom & entry_ok(n_a, grid.directions, cos_tc=COS_CRITICAL))
     else:
         geom = np.asarray(corridor, dtype=bool)
-    mask = np.asarray(corridor, dtype=bool) & exit_ok(n_tilde_b, grid.directions)
+    mask = np.asarray(corridor, dtype=bool) & exit_ok(n_tilde_b, grid.directions, cos_tc=COS_CRITICAL)
     area = _refine_area(grid, mask, evaluate, refine_levels) if mask.any() else 0.0
     best, best_dir = _refine_min(grid, geom, objective, geometric, refine_levels)
     return AdmissibleResult(AdmissibleMask(mask), area, best, best_dir)

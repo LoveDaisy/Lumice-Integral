@@ -21,7 +21,7 @@ from typing import Callable, Iterable, Sequence
 import numpy as np
 
 from .core import Polyhedron, Vec3
-from .feasibility import (AdmissibleMask, CorridorMask, LatLonGrid, _clip_by_polygon, _ensure_ccw, _initial_batch,
+from .feasibility import (COS_CRITICAL, AdmissibleMask, CorridorMask, LatLonGrid, _clip_by_polygon, _ensure_ccw, _initial_batch,
                           _PolyBatch, _project, admissible_directions, area_eps, entry_ok, exit_ok,
                           incidence_objective_deg, perp_bases)
 
@@ -123,7 +123,7 @@ def corridor_index_for_path(crystal: Polyhedron, faces: Sequence[int], grid: Lat
         # 与 corridor_mask 的单面分支一致：外反射没有临界角约束，可行集是半球，不是 entry_ok。
         return np.flatnonzero(-(all_dirs @ n_a) > 0)
     u_all, w_all = perp_bases(all_dirs)
-    index = np.flatnonzero(entry_ok(n_a, all_dirs))
+    index = np.flatnonzero(entry_ok(n_a, all_dirs, cos_tc=COS_CRITICAL))
     poly = _ensure_ccw(_project(crystal.face_vertices(face0), u_all[index], w_all[index]))
     node = _Node((faces[0],), crystal, index, _initial_batch(poly))
     for f in faces[1:]:
@@ -163,7 +163,7 @@ def enumerate_raypaths_with_stats(crystal: Polyhedron, max_len: int, grid: LatLo
 
     def emit(faces: tuple[int, ...], n_a: Vec3, n_tilde_b: Vec3, index: np.ndarray) -> None:
         d = all_dirs[index]
-        ok = exit_ok(n_tilde_b, d)
+        ok = exit_ok(n_tilde_b, d, cos_tc=COS_CRITICAL)
         if not ok.any():
             return
         mask = np.zeros(grid.size, dtype=bool)
@@ -209,7 +209,7 @@ def enumerate_raypaths_with_stats(crystal: Polyhedron, max_len: int, grid: LatLo
         stats.feasible_by_length[1] = stats.feasible_by_length.get(1, 0) + 1
         if max_len < 2:
             continue
-        root_index = np.flatnonzero(entry_ok(n_a, all_dirs))
+        root_index = np.flatnonzero(entry_ok(n_a, all_dirs, cos_tc=COS_CRITICAL))
         root_poly = _ensure_ccw(_project(crystal.face_vertices(face), u_all[root_index], w_all[root_index]))
         dfs(_Node((a,), crystal, root_index, _initial_batch(root_poly)), n_a)
 

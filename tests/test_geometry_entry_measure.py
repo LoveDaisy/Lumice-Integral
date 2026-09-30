@@ -134,7 +134,7 @@ def _find_empty_corridor_direction(crystal: HexPrism, path: tuple[int, ...]) -> 
     polys, n_tilde_b = corridor_polygons(crystal, path)
     for grid in (LatLonGrid(24, 36), LatLonGrid(48, 72)):
         d = grid.directions
-        ok = entry_ok(n_a, d) & exit_ok(n_tilde_b, d)
+        ok = entry_ok(n_a, d, cos_tc=COS_CRITICAL) & exit_ok(n_tilde_b, d, cos_tc=COS_CRITICAL)
         if not ok.any():
             continue
         batch = corridor_intersection(polys, d[ok])
@@ -275,7 +275,7 @@ def test_grazing_basal_slab_exit_gate_uses_the_callers_index():
         np.testing.assert_allclose(batch, [res.value], rtol=0.0, atol=1e-15)
     low = entry_measure(EYE, (1, 2), s, slab, n_ice=1.307)
     assert low.cosine_internal < COS_CRITICAL                      # the n = 1.31 gate would have rejected it
-    assert not bool(exit_ok(slab.normal(slab.face(2)), low.internal_direction[None, :])[0])
+    assert not bool(exit_ok(slab.normal(slab.face(2)), low.internal_direction[None, :], cos_tc=COS_CRITICAL)[0])
 
 
 def _plate_poses() -> np.ndarray:
@@ -317,3 +317,19 @@ def test_grazing_slab_1_3_4_2_plate_with_horizontal_sun_is_not_gated_out(n_ice):
     assert (batch[~valid] == 0.0).all()
     scalar = np.array([entry_measure(R, path, s, crystal, n_ice=n_ice).value for R in poses])
     np.testing.assert_allclose(batch, scalar, rtol=0.0, atol=1e-15)
+
+
+def test_gates_have_no_implicit_critical_angle():
+    """``cos_tc`` is keyword-required: a caller that forgets it fails loudly instead of silently gating at n = 1.31 (#48)."""
+    n = np.array([0.0, 0.0, 1.0])
+    d = np.array([[0.0, 0.0, 1.0]])
+    with pytest.raises(TypeError):
+        exit_ok(n, d)
+    with pytest.raises(TypeError):
+        entry_ok(n, -d)
+
+
+@pytest.mark.parametrize("bad", [1.0, 0.9, float("nan"), float("inf")])
+def test_cos_critical_rejects_non_physical_index(bad):
+    with pytest.raises(ValueError):
+        cos_critical(bad)

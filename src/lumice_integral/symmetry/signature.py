@@ -39,7 +39,7 @@ from typing import Sequence
 import numpy as np
 
 from ..geometry.core import N_ICE, Polyhedron
-from ..geometry.feasibility import entry_ok, exit_ok
+from ..geometry.feasibility import COS_CRITICAL, entry_ok, exit_ok
 from ..geometry.unfold import _wedge_angle_deg_from_normals
 from . import reflection_group as rg
 
@@ -147,7 +147,7 @@ def phi_batch(crystal: Polyhedron, M: np.ndarray, a: int, b: int, d: np.ndarray)
     if not outside.any():
         return out
     d1 = _refract(d[outside], n_a, 1.0 / N_ICE)             # 晶体内方向
-    ok = entry_ok(n_a, d1) & exit_ok(M.T @ n_b, d1)         # 与可行性判定同一份光学判据（作用在晶体内方向上）
+    ok = entry_ok(n_a, d1, cos_tc=COS_CRITICAL) & exit_ok(M.T @ n_b, d1, cos_tc=COS_CRITICAL)         # 与可行性判定同一份光学判据（作用在晶体内方向上）
     d3 = _refract((M @ d1[ok].T).T, -n_b, N_ICE)            # 从内侧出射：法向取指向内部的 -n_b
     rows = np.flatnonzero(outside)[ok]
     out[rows] = d3
