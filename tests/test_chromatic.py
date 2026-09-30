@@ -223,3 +223,34 @@ def test_dependency_direction() -> None:
             offenders[str(relative)] = sorted(hits)
     assert offenders == {}
     assert "lumice_integral.dp_field.DPField" in _imported_modules(PACKAGE_ROOT / "chromatic.py", "lumice_integral")
+
+
+# ---- one-sided cases are reported, never "no colour" (owner, code-review Minor 4/6/8) ----------------------
+
+
+def _tint(red: float, blue: float):
+    from dataclasses import fields
+
+    from lumice_integral.chromatic import TintMetrics
+
+    values = {"energy_red": red, "energy_blue": blue}
+    for f in fields(TintMetrics):
+        values.setdefault(f.name, float("nan") if f.name == "ratio" else 0.0)
+    return TintMetrics(**values)
+
+
+@pytest.mark.parametrize("red, blue, kind, color", [(0.0, 1.0, "tint", "blue"), (1.0, 0.0, "tint", "red"), (0.0, 0.0, "none", "none")])
+def test_class_lit_at_one_index_is_the_extreme_tint(red, blue, kind, color):
+    from lumice_integral.chromatic import _tint_verdict
+
+    verdict = _tint_verdict((1, 3, 5, 2), _tint(red, blue), 1.307, 1.317)
+    assert (verdict.kind, verdict.color) == (kind, color)
+    assert verdict.notes
+
+
+def test_one_sided_line_without_features_is_unresolved_not_none():
+    from lumice_integral.chromatic import _verdict
+
+    verdict = _verdict((3, 1, 5), (), ("internal_1_tir_discriminant: weight kink at n = 1.317 only (not assessed)",), 1.307, 1.317, True)
+    assert (verdict.kind, verdict.color, verdict.visible) == ("unresolved", "none", False)
+    assert _verdict((3, 1, 5), (), (), 1.307, 1.317).kind == "none"

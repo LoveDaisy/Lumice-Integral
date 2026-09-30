@@ -173,11 +173,13 @@ class ChromaticFeature:
 class ChromaticVerdict:
     """The colour verdict of one face sequence or of a path class.
 
-    ``kind`` in ``{"edge", "gate_edge", "tint", "none"}``; ``color`` in
+    ``kind`` in ``{"edge", "gate_edge", "tint", "unresolved", "none"}``; ``color`` in
     ``{"blue", "red", "white", "none"}``: a random-orientation verdict takes
     both from its dominant feature (visible features first, then the largest
     :attr:`ChromaticFeature.score`) and ``visible`` from it; ``none`` /
-    ``none`` without features.  A plate verdict is ``tint`` with the colour
+    ``none`` without features.  ``unresolved`` / ``none``: no assessed feature, but a kink or
+    gate exists at one index only (an onset between ``n_red`` and ``n_blue``, the strongest colour
+    shape, which the two-index metrics cannot measure); the notes name it.  A plate verdict is ``tint`` with the colour
     of the ratio, ``none`` / ``white`` inside the threshold, or ``none`` /
     ``none`` for a class that disperses (a note says so).  ``position`` is ``delta`` of the
     dominant feature (radians, the blue one's for blue); ``None`` for a
@@ -212,6 +214,7 @@ def diagnose(
     red = DPField.build(crystal, faces, n_red, lattice_n=lattice_n)
     blue = DPField.build(crystal, faces, n_blue, lattice_n=lattice_n)
     notes: list[str] = []
+    unresolved: list[str] = []
     features: list[ChromaticFeature] = []
     for kink_red, kink_blue in zip(red.weight_kinks, blue.weight_kinks, strict=True):
         for kink in (kink_red, kink_blue):
@@ -219,16 +222,27 @@ def diagnose(
                 notes.append(f"{kink.margin} at n = {kink.index}: {kink.note}")
         if kink_red.arcs and kink_blue.arcs:
             features.append(_kink_feature(red, blue, kink_red, kink_blue))
+        elif kink_red.arcs or kink_blue.arcs:
+            present = kink_red if kink_red.arcs else kink_blue
+            unresolved.append(f"{present.margin}: weight kink at n = {present.index} only (not assessed)")
     try:
-        features.extend(_gate_features(red, blue))
+        features.extend(_gate_features(red, blue, unresolved))
     except (RuntimeError, ValueError) as error:  # a boundary walk that fails is reported, not hidden
         notes.append(f"gates not analysed: {error}")
-    return _verdict(faces, tuple(features), tuple(notes), n_red, n_blue)
+    return _verdict(faces, tuple(features), tuple(notes) + tuple(unresolved), n_red, n_blue, bool(unresolved))
 
 
-def _verdict(faces: Faces, features: tuple[ChromaticFeature, ...], notes: tuple[str, ...], n_red: float, n_blue: float) -> ChromaticVerdict:
+def _verdict(
+    faces: Faces,
+    features: tuple[ChromaticFeature, ...],
+    notes: tuple[str, ...],
+    n_red: float,
+    n_blue: float,
+    unresolved: bool = False,
+) -> ChromaticVerdict:
     if not features:
-        return ChromaticVerdict(faces, "none", "none", False, None, (), None, notes, n_red, n_blue)
+        kind = "unresolved" if unresolved else "none"
+        return ChromaticVerdict(faces, kind, "none", False, None, (), None, notes, n_red, n_blue)
     top = _dominant(features)
     position = top.delta_blue if top.color == "blue" else top.delta_red
     return ChromaticVerdict(faces, top.kind, top.color, top.visible, position, features, None, notes, n_red, n_blue)
@@ -279,12 +293,18 @@ def _kink_feature(red: DPField, blue: DPField, kink_red: KinkCurve, kink_blue: K
     )
 
 
-def _gate_features(red: DPField, blue: DPField) -> list[ChromaticFeature]:
-    """One feature per gate that bounds ``U_P`` at both indices and moves with ``n``."""
+def _gate_features(red: DPField, blue: DPField, unresolved: list[str]) -> list[ChromaticFeature]:
+    """One feature per gate that bounds ``U_P`` at both indices and moves with ``n``.
+
+    A gate that bounds ``U_P`` at one index only is appended to ``unresolved`` (not assessed).
+    """
     names = optics.domain_margin_names(red.faces)
     out = []
     pieces_red = _pieces_by_margin(red)
     pieces_blue = _pieces_by_margin(blue)
+    for margin in sorted(set(pieces_red) ^ set(pieces_blue), key=names.index):
+        index = red.index if margin in pieces_red else blue.index
+        unresolved.append(f"{margin}: bounds U_P at n = {index} only (not assessed)")
     for margin in sorted(set(pieces_red) & set(pieces_blue), key=names.index):
         k = names.index(margin)
         points_red, values_red = pieces_red[margin]
@@ -541,8 +561,12 @@ def _tint(weights: dict[str, dict[Faces, np.ndarray]], checks: dict[str, dict[Fa
 
 
 def _tint_verdict(representative: Faces, tint: TintMetrics, n_red: float, n_blue: float) -> ChromaticVerdict:
-    if not np.isfinite(tint.ratio):
-        return ChromaticVerdict(representative, "none", "none", False, None, (), tint, ("class not lit at the red index",), n_red, n_blue)
+    if tint.energy_red <= 0.0 and tint.energy_blue <= 0.0:
+        return ChromaticVerdict(representative, "none", "none", False, None, (), tint, ("class not lit at either index",), n_red, n_blue)
+    if tint.energy_red <= 0.0 or tint.energy_blue <= 0.0:  # lit at one index only: the extreme tint, not "no colour"
+        color, lit = ("blue", n_blue) if tint.energy_red <= 0.0 else ("red", n_red)
+        note = f"class lit at n = {lit} only"
+        return ChromaticVerdict(representative, "tint", color, True, None, (), tint, (note,), n_red, n_blue)
     if tint.direction_dispersion >= EDGE_MIN_SHIFT_RAD:
         note = (
             f"red and blue land {np.degrees(tint.direction_dispersion):.2f} deg apart: the ordinary dispersion of the "

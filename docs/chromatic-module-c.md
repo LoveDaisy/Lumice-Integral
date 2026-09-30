@@ -120,9 +120,13 @@ follow-up).
 |---|---|---|
 | `edge` | `blue` (`red` is allowed by the code, never found) | a kink feature dominates (visible or not) |
 | `gate_edge` | `red` / `blue` | a moving gate dominates |
-| `tint` | `blue` / `red` | plate class, non-dispersive, ratio outside $[1/1.1, 1.1]$ |
+| `tint` | `blue` / `red` | plate class, non-dispersive, ratio outside $[1/1.1, 1.1]$; also a class lit at one index only (the extreme tint, with a note) |
+| `unresolved` | `none` | no assessed feature, but a kink or gate exists at one index only (an onset between the two indices, not measurable by $\Delta$ / $\sigma$; the notes name it) |
 | `none` | `white` | plate class, non-dispersive, ratio inside |
-| `none` | `none` | no feature / not lit / dispersive class (with a note) |
+| `none` | `none` | no feature / not lit at either index / dispersive class (with a note) |
+
+A one-sided line or a class lit at one index is never reported as `none`:
+that is the strongest colour shape, and a silent `none` would read as "no colour".
 
 **Classes** (`diagnose_class`). The input is a representative. Its class is
 Lumice's filter orbit (`PBD`, L1: `symmetry.reflection_group.pbd_orbit`,
