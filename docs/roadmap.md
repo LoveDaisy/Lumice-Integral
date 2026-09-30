@@ -33,6 +33,7 @@ Queue (tasks in `scratchpad/tasks.md`; dispatched 20 ∥ 21, then 22 ∥ 24, 23 
 | 42 | scrum `multi-wavelength`: `spectral-conventions` → `spectrum-wl-pool-store` → `xyz-band-sum-render` / `wavelength-critical-api` — `spectral-conventions` **done 2026-09-27** (explore; Lumice Sellmeier n(λ), M-slot pool and CMF machinery white-boxed, [overview.md](overview.md) §5.3, backlog); `spectrum-wl-pool-store` **done 2026-09-27** (`lumice_integral.spectrum`: `dispersion`/`cmf`/`illuminant`/`wl_pool`/`store`, per-wavelength `S^2` stores reuse `s2_store`'s existing cache key with zero changes to `S2StoreSpec`; [conventions.md](conventions.md) #20; commit `7d03f02`); `xyz-band-sum-render` **done 2026-09-27** (`spectrum.xyz_band_sum`: one monochrome band sum per distinct n(λ) summed to linear XYZ with Lumice's slot-average / emitted-weight normalisation, `render_band_sum.py --illuminant` / `--discrete-wavelength-nm`, `compare_lumice_family.py` per channel; the `[3, 5]` class under D65, `M = 5`, against Lumice Metal at 1e9 rays: X / Y / Z flux ratios 1.0000–1.0002, chromaticity within 2e-5; [conventions.md](conventions.md) #20); `wavelength-critical-api` **done 2026-09-27** (`focusing.wavelength_critical_table`: `classify` per n(λ), onsets paired by rank with a topology check that refuses rather than mis-pairs; `3-5` plate at 450 / 550 / 650 nm shifts 0.581 / 0.631 / 0.604 / 0.748°, [phase2.md](phase2.md) §10; commit `7cfc9a2`) | 29 |
 | 45 | scrum `analytic-lib-wave1-spec` (wave 1 of the shared-library rollout, [overview.md](overview.md) §5.3 "Rollout in waves"; requirement source: 2026-09-28 owner+author cross-repo ruling): `chore-wave-plan-docs` / `chore-rename-pbd-orbit-hexprism` / `task-discovery-contract` / `explore-fiber-diagnostics-contract` run independently; `task-parity-fixture-export` depends on the rename and the discovery contract — `chore-wave-plan-docs` **done 2026-09-28** (this row and the §9 entry below, [overview.md](overview.md) §5.3); `task-parity-fixture-export` **done 2026-09-28** (`lumice_integral.parity_export`, `scripts/export_analytic_parity.py`: `evaluate_path` / `trace_fiber` / `seed_search` JSON fixtures over `3-5` / `3-5-6-7` / `13-15-26-28` × random / critical / near-boundary, 32 fixtures, byte-deterministic, read back by `--verify`; [analytic-parity-fixtures.md](analytic-parity-fixtures.md)) | — |
 | 46 | scrum `analytic-lib-wave2-spec` (wave 2 of the shared-library rollout, [overview.md](overview.md) §5.3 "Wave 2 certification standard"; requirement source: 2026-09-29 author ruling): `chore-certification-ruling-docs` first, then `task-output-level-conformance` / `task-band-sum-module-spec`; explore `degenerate-path-family-coverage` independent — `chore-certification-ruling-docs` **done 2026-09-29** (this row and the §9 entry below, [overview.md](overview.md) §5.3, [phase1-math-contract.md](phase1-math-contract.md) §11); `task-output-level-conformance` landed 2026-09-29 (contract §11.1: output-level certification of C01–C21 with red-state evidence; fixtures gain per-point `J_perp` and branch margins and ten edge cells, [analytic-parity-fixtures.md](analytic-parity-fixtures.md) §6.1, 82 fixtures); `task-band-sum-module-spec` landed 2026-09-29 (module B spec [band-sum-contract.md](band-sum-contract.md): v1 = one concrete path, one index, no transport, pixel tables as directions, five densities, rank-0 point masses; seven `band_sum` fixtures in two layers, [analytic-parity-fixtures.md](analytic-parity-fixtures.md) §3.4 / §6.2, 89 fixtures); `task-focusing-family-pinned-label` landed 2026-09-29 (`focusing.family_pinned`: plate / Lowitz family inside one level set iff rank 2, wedge 0 and $M_P$ commuting with $R_z$, [phase2.md](phase2.md) §10); `task-degenerate-family-parity-cells` landed 2026-09-29 (four family-pinned `band_sum` cells: 3-6-4-8 at plate 1° and 0.5°, 1-2-1 and 1-2-3-4-1 on a thin plate, with `3-5__band_sum_plate` as the control; [analytic-parity-fixtures.md](analytic-parity-fixtures.md) §6.2, 93 fixtures); `task-lumice-radiometric-check-degenerate-plate` landed 2026-09-29 (3-6-4-8 plate class at `σ = 0.5–4°` against Lumice `4.7.0-dev`, `2e9` rays × 2 seeds: flux ratio 0.9998–0.9999, deviation spread Lumice / LI 0.9991–1.0000, `3-5` control 1.0000 (its bright-pixel rel. std 1.33 % misses the 0.81 % criterion, pixel-area averaging, see phase2 §10); the one shape difference, a one-pixel hole with a ring at the pinned image point, is Lumice's zenith table starting at its first 0.0439° bin's upper edge, predicted with nothing fitted; [phase2.md](phase2.md) §10) | 45 |
+| 49 | `chromatic-weight-kink-diagnostic`: the third kind of critical line (weight kinks, the TIR onsets of internal reflections, `DPField.weight_kinks`) and the colour criterion on it (`lumice_integral.chromatic`: edges under random orientation, tints of plate classes, Lumice `PBD` classes); module C spec draft [chromatic-module-c.md](chromatic-module-c.md) — landed 2026-09-30 (`3-1-6` hole rim and `3-1-5` colour steps checked on a band-sum render; #42's D65 comparison re-run, §9) | 48 |
 
 Deferred: the chapter-11 table (path classes × pose families) after 22 and
 M2; divergent light ([phase2.md](phase2.md) §9, backlog); finite solar disk;
@@ -884,4 +885,42 @@ Moved to [overview.md](overview.md) §3.
   700 nm, and the 660 nm slot carries roughly a seventh of X), X should move by
   `1e-4` or less, about the size of that comparison's `2e-4` agreement. This is
   an estimate, not a re-run. The comparison is re-run with the
-  multi-wavelength check of #49.
+  multi-wavelength check of #49. Re-run 2026-09-30 (#49, schema-6 stores, the
+  same Lumice exports): LI's X rises by `1.2e-4`, Y by `4e-5`, Z is unchanged.
+  Against Lumice, X / Y / Z are now `1.00011` / `1.00010` / `1.00008` (they
+  were `1.00019` / `1.00013` / `1.00008`), and the chromaticity differs by
+  `4e-6` (it was `2e-5`).
+- **2026-09-30**: a third kind of critical line, and a colour criterion
+  built on it (task `chromatic-weight-kink-diagnostic`, #49;
+  [chromatic-module-c.md](chromatic-module-c.md)). The TIR onset $C_k$ of
+  each internal reflection is a *weight kink*: $R_k$ kinks there, the
+  domain goes on. It is traced beside $\partial U_P$ and never inside it
+  (`DPField.weight_kinks`):
+  - A closed-form small circle when $\mathbf m_k\cdot\mathbf n_a = 0$,
+    marched otherwise. The walk reuses the boundary walker's steppers
+    without changing them, so the planned fallback to "closed form only"
+    was not needed.
+  - On a slab path it is the only thing that moves with $n$. The
+    random-orientation `3-1-6` / `1-3-2` antisolar dark hole has its rim at
+    $2\arcsin\sqrt{n^2-1}$, and the rim is blue. A band-sum render puts
+    the red and blue rims within half a pixel (0.17°) of the prediction.
+  - An internal-reflection kink only ever favours blue (AD sign and a
+    direction count agree). A gate that moves with $n$ can go either way;
+    the exit gate of `3-1-5` is red but spreads over 109° of $\delta$, and
+    the render shows no red edge.
+  - `lumice_integral.chromatic` gives each kink and each moving gate $\Delta$
+    (red/blue shift), $\sigma$ (the line's own spread in $D$), sign,
+    contrast and weight. A colour edge needs $|\Delta| \ge 0.5°$ (the
+    solar disc) and $\sigma \le |\Delta|$.
+  - Plate classes are judged by the blue/red ratio of $\sum A\,T$ over
+    the Lumice `PBD` class, and only when the class does not disperse. The
+    threshold is 1.10, calibrated on classes that are not acceptance
+    fixtures. The user's 120° parhelion (`[1.5, 1, 1, 1.5, 1, 1]`, sun 9°)
+    reproduces: `1-3-5-2` is blue (1.49–1.53), `1-3-4-2` and `3-5-6-8`
+    are white.
+  - One finding differs from the task's expectation. `3-1-5`'s own kink
+    moves 7.3° against a 4.9° spread and renders as a blue band at
+    $\delta \approx 130$–$142°$. The issue had expected no visible colour
+    for `3-1-5`; that expectation is kept for the red gate only.
+  - Not traced yet: the sky curve of a kink for oriented crystals.
+  - Modules A and B are unchanged.

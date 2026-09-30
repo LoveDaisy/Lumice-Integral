@@ -120,6 +120,9 @@ uv run python scripts/regress_band_sum.py --stage contour --band-dir artifacts/b
   --coarse-dir artifacts/band-sum-full-N1e7 --contour-dir artifacts/contour-quadrature-band \
   --contour-point-dir artifacts/contour-quadrature-full --reference-dir artifacts/strip-full --output /tmp/regression_contour.json
 uv run python benchmarks/benchmark_contour_quadrature.py
+# colour criterion (lumice_integral.chromatic, docs/chromatic-module-c.md) against the band sum: 3-1-6 hole rim and 3-1-5
+# colour steps, red / blue monochrome + D65 (~15 min on 4 workers with a fresh store cache, M2 Max)
+uv run python scripts/verify_chromatic_kink.py --output-dir /tmp/chromatic-kink
 # chapter-10 numerical verdicts as figure data (lumice_integral.ch10_verdicts on the contour quadrature: 22 deg inner
 # edge, Liljequist, parhelic circle, focusing labels; one metadata.json + arrays.npz per verdict)
 uv run python scripts/ch10_numerical_verdicts.py --output-dir /tmp/ch10-verdicts
@@ -197,10 +200,11 @@ The design is `docs/overview.md` (entry), `docs/phase1.md` and `docs/phase2.md`
 │   │                      # per n(lambda) via s2_store.build_or_load; xyz_band_sum.py: colour band
 │   │                      # sums to CIE XYZ (the other modules pure Python)
 │   ├── dp_field/          # Phase II D_P field layer: evaluation, critical points, dU_P walk,
-│   │                      # delta-interval partition (public: DPField)
+│   │                      # delta-interval partition, weight kinks (TIR onsets) (public: DPField)
 │   ├── contour.py         # level sets {D_P = delta} in U_P, certified against the partition
 │   ├── contour_quadrature.py  # line integrals on them: Phase II pixel values, the precision authority
 │   ├── focusing.py        # explicit label: Jacobian focusing (D_P critical set) vs dimension collapse (rho)
+│   ├── chromatic.py       # colour criterion: weight kinks (dp_field.weight_kink) and moving gates -> edge / tint
 │   └── ch10_verdicts.py   # the chapter-10 numerical verdicts, measured on the chains above
 ├── tests/                 # Analytic and optical regression fixtures
 ├── benchmarks/            # Reproducible CPU/GPU probes
@@ -209,6 +213,7 @@ The design is `docs/overview.md` (entry), `docs/phase1.md` and `docs/phase2.md`
 │   ├── phase1.md          # Phase I design, pipeline, key turns; measured record (+ _zh)
 │   ├── phase2.md          # Phase II design: S^2 integral, band sum, contours, event store (+ _zh)
 │   ├── band-sum-contract.md  # Module B: the band sum as a backend-independent spec (wave 2)
+│   ├── chromatic-module-c.md # weight kinks and the colour criterion; module C spec draft (wave 3)
 │   ├── roadmap.md         # Status, near-term queue, writing coupling, decisions log
 │   ├── conventions.md     # Every coordinate / sign / symbol convention and its check
 │   └── decisions/         # Accepted architecture decisions
