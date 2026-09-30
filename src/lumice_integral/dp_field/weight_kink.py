@@ -45,7 +45,14 @@ from scipy.spatial import cKDTree
 from .. import optics
 from ..geometry import Polyhedron
 from ..s2_store import fibonacci_sphere
-from .boundary import GREAT_CIRCLE_ATOL, WALK_STEP_RAD, _angle, _incidence_normals, _unit, _walk_piece, _Walker
+from .boundary import (
+    GREAT_CIRCLE_ATOL,
+    WALK_STEP_RAD,
+    _incidence_normals,
+    _unit,
+    _walk_piece,
+    _Walker,
+)
 from .field import d_p_batch, margins_batch, validity_margins_batch
 
 Faces = tuple[int, ...]

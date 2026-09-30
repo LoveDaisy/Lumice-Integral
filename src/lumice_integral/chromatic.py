@@ -190,7 +190,7 @@ class ChromaticVerdict:
     visible: bool
     position: float | None
     features: tuple[ChromaticFeature, ...] = ()
-    tint: "TintMetrics | None" = None
+    tint: TintMetrics | None = None
     notes: tuple[str, ...] = ()
     n_red: float = N_RED
     n_blue: float = N_BLUE
