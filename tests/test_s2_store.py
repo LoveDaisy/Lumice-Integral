@@ -478,13 +478,13 @@ def test_cache_refuses_mismatched_recorded_parameters(tmp_path) -> None:
         _cached(tmp_path)
 
 
-@pytest.mark.parametrize("schema", [1, 2, 3, 4])
+@pytest.mark.parametrize("schema", [1, 2, 3, 4, 5])
 def test_cache_refuses_an_older_schema(tmp_path, schema: int) -> None:
     """Schema 1 (``u = R^-1 s``, propagation), schema 2 (sun direction in the key), schema 3 (internal
-    reflections admitted only when total) and schema 4 (no ``face_distance`` in the crystal) are refused,
-    never converted."""
+    reflections admitted only when total), schema 4 (no ``face_distance`` in the crystal) and schema 5 (the entry
+    measure's exit gate at n = 1.31 whatever the store's index) are refused, never converted."""
     built = _cached(tmp_path)
-    assert s2_store.SCHEMA_VERSION == 5
+    assert s2_store.SCHEMA_VERSION == 6
     directory = tmp_path / built.spec.cache_key()
     provenance_path = directory / "provenance.json"
     provenance = json.loads(provenance_path.read_text())
@@ -529,7 +529,9 @@ def test_crystal_must_be_an_untransformed_hexprism(crystal) -> None:
 def test_hexprism_description_and_cache_key_are_unchanged_by_the_pyramid_branch() -> None:
     """The pyramid branch is additive: a prism's description (hence every cached prism store) keeps its key.
 
-    The key was computed on the commit before the pyramid branch (``df7b8ba``), schema 5.
+    The key was computed on the commit before the pyramid branch (``df7b8ba``), schema 5
+    (``3-5_N100000000_883210565b10``); schema 6 (task entry-measure-exit-gate-index) changes only the version
+    in the hashed parameters.
     """
     spec = S2StoreSpec(
         members=((3, 5),),
@@ -538,7 +540,7 @@ def test_hexprism_description_and_cache_key_are_unchanged_by_the_pyramid_branch(
         n=100_000_000,
     )
     assert spec.crystal == {"type": "HexPrism", "a": 1.0, "h": 2.0, "face_distance": [1.0] * 6}
-    assert spec.cache_key() == "3-5_N100000000_883210565b10"
+    assert spec.cache_key() == "3-5_N100000000_5e4da17c42f2"
 
 
 PYRAMIDS = [

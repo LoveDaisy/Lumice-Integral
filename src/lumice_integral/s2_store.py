@@ -131,14 +131,17 @@ from .optics import normalize_faces, path_id_of
 from .provenance import git_commit, sha256_of
 from .so3 import haar_rotations
 
+# 6: the entry measure's exit gate takes the critical angle of the store's index (geometry.cos_critical), not of
+#    N_ICE = 1.31, task entry-measure-exit-gate-index; arrays of stores at n >= 1.31 unchanged bit for bit, below
+#    1.31 schema 5 dropped the events whose exit direction lies between the two critical cones;
 # 5: the crystal description records face_distance (any closed-form HexPrism; the reduction cluster's candidate
 #    group is the crystal's own G_true, not a fixed D6h), task reduction-cluster-g-true; arrays unchanged;
 # 4: T = entry T x each internal reflectance R_k x exit T (partial internal reflections are weights, not
 #    gaps; task optics-partial-reflection), arrays of paths without internal reflections unchanged bit for bit;
 # 3: no sun direction in the spec (the arrays do not depend on it), one .npy per array, task s2-store-schema-3;
 # 2: u = R^-1 s_hat (toward the sun) with the sun direction recorded, task notation-alignment;
-# 1: u = R^-1 s (propagation).  Schemas 1 to 4 are refused on load.
-SCHEMA_VERSION = 5
+# 1: u = R^-1 s (propagation).  Schemas 1 to 5 are refused on load.
+SCHEMA_VERSION = 6
 CHUNK = 250_000  # rotations per batch call: ~0.5 GB transient in the eager jax.vmap (task 13/14 value)
 DEFAULT_CACHE_DIR = Path("artifacts/s2-store")
 DEFAULT_BUCKET_COUNT = 1024  # equal-width D buckets of the build (0.18 deg on [0, pi]); an I/O knob, not in the key
@@ -780,7 +783,8 @@ def _read_provenance(directory: Path) -> dict[str, Any]:
             "schema 3 is independent of the sun, one .npy per array, with internal reflections admitted only when "
             "total; schema 4 weights partial internal reflections by their reflectance; schema 5 records face_distance "
             "in the crystal description, the reduction cluster's default candidate group being G_true, not a fixed "
-            "D6h); rebuild the store, it is "
+            "D6h; schema 6 gates the entry measure's exit at the store's own index, where schema 5 used 1.31 and "
+            "lost events at n < 1.31); rebuild the store, it is "
             "not converted"
         )
     return provenance
