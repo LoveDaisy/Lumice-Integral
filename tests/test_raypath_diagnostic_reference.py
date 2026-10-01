@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from lumice_integral import raypath_diagnostic_reference as reference
+from lumice_integral.provenance import sha256_of
 
 
 @pytest.fixture(scope="module")
@@ -166,3 +167,40 @@ def test_exporter_writes_json_npz_and_provenance(tmp_path, random_case, plate_ca
     assert payload["schema_version"] == reference.SCHEMA_VERSION
     assert payload["cases"]["plate_rhombic_9"]["classes"]["blue"]["target_energy"] == plate_case.metadata["classes"]["blue"]["target_energy"]
     assert provenance["test"] and len(provenance["files"]["arrays.npz"]["sha256"]) == 64
+
+
+def test_recorded_fixture_pins_semantic_scalars_and_arrays() -> None:
+    fixture = Path(__file__).parent / "data" / "raypath-diagnostic-reference"
+    payload = json.loads((fixture / "reference.json").read_text())
+    provenance = json.loads((fixture / "provenance.json").read_text())
+    assert payload["schema_version"] == reference.SCHEMA_VERSION
+    assert not provenance["sources_modified_in_worktree"]
+    for filename in ("reference.json", "arrays.npz"):
+        assert provenance["files"][filename]["sha256"] == sha256_of(fixture / filename)
+
+    features = {feature["id"]: feature for feature in payload["cases"]["random_regular"]["features"]}
+    inner = features["random_regular.3-5.inner_edge"]
+    for label, index in reference.INDEX_ENDPOINTS.items():
+        assert inner["position_deg"][label] == pytest.approx(reference.minimum_deviation_deg(index), abs=2e-8)
+    assert features["random_regular.3-1-5.solar_caustic_candidate"]["evidence_status"] == "candidate"
+    counterfactual = payload["cases"]["random_regular"]["internal_reflection_counterfactual"]["blue_red_ratio"]
+    assert counterfactual["production"] == pytest.approx(2.072278481972593, abs=1e-12)
+    assert counterfactual["without_internal_R"] == pytest.approx(0.753492919873792, abs=1e-12)
+
+    classes = payload["cases"]["plate_rhombic_9"]["classes"]
+    expected_ratios = {"white": 1.0098063886104218, "blue": 1.525349437614488}
+    for class_label, expected in expected_ratios.items():
+        for target in ("plus", "minus"):
+            energy = classes[class_label]["target_energy"]
+            coarse_ratio = energy[target]["blue"]["coarse"] / energy[target]["red"]["coarse"]
+            fine_ratio = energy["target_ratios"][target]["blue_red"]
+            assert fine_ratio == pytest.approx(expected, abs=max(2.0 * abs(fine_ratio - coarse_ratio), 1e-12))
+        assert len(classes[class_label]["lit_members"]["red"]) == 12
+        assert len(classes[class_label]["lit_members"]["blue"]) == 12
+
+    with np.load(fixture / "arrays.npz", allow_pickle=False) as arrays:
+        assert sorted(arrays.files) == sorted(payload["array_store"]["arrays"])
+        for label in ("white", "blue"):
+            rotations = arrays[f"plate_{label}_snapshots_rotations"]
+            assert rotations.shape == (5, 3, 3)
+            assert np.max(np.abs(rotations @ np.swapaxes(rotations, 1, 2) - np.eye(3))) < 5e-16
