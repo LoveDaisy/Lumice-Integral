@@ -2,10 +2,10 @@
   "command": "export_raypath_diagnostic_reference.py --output-dir tests/data/raypath-diagnostic-reference",
   "files": {
     "arrays.npz": {
-      "sha256": "38bf3345e9f11f913d797173d62d9fcad841f2e1f07a7717608b4bd38fddc35b"
+      "sha256": "3439cfc8ed9aa7f502017c3ebdc3dc30e37709f51609d730dbd599e0eb3b6ee1"
     },
     "reference.json": {
-      "sha256": "93e88220f77bf7058eeb1fb9b460529bc43c8dad2c57eded23eeffbc6eb07469"
+      "sha256": "02c11eaaa80688743ff1717269e68500e8d4364dd357dcb472382ca5847650f3"
     }
   },
   "parameters": {
@@ -16,19 +16,19 @@
   },
   "platform": "macOS-14.7-arm64-arm-64bit",
   "python": "3.12.11",
-  "repository_commit": "ad67a4b0fb222019a5f16374078a70f03d6974bd",
+  "repository_commit": "52e380caea9f91908959611404d38243a0ae5ff5",
   "schema": "lumice-integral.raypath-diagnostic-reference-provenance/v1",
   "source_commits": {
-    "scripts/export_raypath_diagnostic_reference.py": "ad67a4b0fb222019a5f16374078a70f03d6974bd",
+    "scripts/export_raypath_diagnostic_reference.py": "52e380caea9f91908959611404d38243a0ae5ff5",
     "src/lumice_integral/chromatic.py": "93bafb152c2c72d73f894d5c63dbe86478775db4",
     "src/lumice_integral/dp_field": "77d9ae4d1d8a245295ae7a4c12632e65dbdc5b74",
     "src/lumice_integral/focusing.py": "f32f412fff7b4a0c27e9481eb3d30c7407f37dad",
     "src/lumice_integral/geometry": "72ab4dc0ae15c8ef1e2262aca40602e4f01d3ea0",
     "src/lumice_integral/optics.py": "6160a96d72bf4bffab10be369c5201bcdbf91862",
     "src/lumice_integral/path_weight.py": "c6d4789dda824682459d977a8e239bc6cc33a351",
-    "src/lumice_integral/raypath_diagnostic_reference.py": "4f17d141b576316351990de79977e987860d428e",
+    "src/lumice_integral/raypath_diagnostic_reference.py": "52e380caea9f91908959611404d38243a0ae5ff5",
     "src/lumice_integral/symmetry": "72ab4dc0ae15c8ef1e2262aca40602e4f01d3ea0"
   },
   "sources_modified_in_worktree": false,
-  "wall_clock_s": 23.58303791610524
+  "wall_clock_s": 24.553635000018403
 }

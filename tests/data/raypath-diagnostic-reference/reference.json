@@ -193,6 +193,38 @@
           200
         ]
       },
+      "random_315_counterfactual_outgoing_blue": {
+        "dtype": "float64",
+        "semantics": "world propagation directions after the fixed path",
+        "shape": [
+          200,
+          3
+        ]
+      },
+      "random_315_counterfactual_outgoing_red": {
+        "dtype": "float64",
+        "semantics": "world propagation directions after the fixed path",
+        "shape": [
+          200,
+          3
+        ]
+      },
+      "random_315_counterfactual_outgoing_without_internal_R_blue": {
+        "dtype": "float64",
+        "semantics": "world propagation directions after the fixed path",
+        "shape": [
+          200,
+          3
+        ]
+      },
+      "random_315_counterfactual_outgoing_without_internal_R_red": {
+        "dtype": "float64",
+        "semantics": "world propagation directions after the fixed path",
+        "shape": [
+          200,
+          3
+        ]
+      },
       "random_315_counterfactual_rotations": {
         "dtype": "float64",
         "semantics": "body-to-world SO(3) rotation matrices",
@@ -5933,6 +5965,10 @@
         "blue_red_ratio": {
           "production": 2.072278481972593,
           "without_internal_R": 0.753492919873792
+        },
+        "geometry": {
+          "direction_change_max": 0.0,
+          "direction_map": "production path_domain_batch; identical before and after removing scalar internal R"
         },
         "indices": {
           "blue": {
