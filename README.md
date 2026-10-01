@@ -25,4 +25,6 @@ how direct integration differs from Monte Carlo rendering, what Phases I and
 II are, and the plan. Design details: [docs/phase1.md](docs/phase1.md),
 [docs/phase2.md](docs/phase2.md). Status, queue and decisions:
 [docs/roadmap.md](docs/roadmap.md). The accepted Phase I stack is
-[ADR 0001](docs/decisions/0001-phase-i-python-jax.md).
+[ADR 0001](docs/decisions/0001-phase-i-python-jax.md). The fixed multi-feature
+reference for `3-5`, `3-1-5`, and the two 120° plate targets is
+[docs/raypath-diagnostic-reference.md](docs/raypath-diagnostic-reference.md).

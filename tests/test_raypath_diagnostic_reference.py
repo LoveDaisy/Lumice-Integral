@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import importlib.util
+import json
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -138,3 +142,27 @@ def test_plate_pose_constraint_mutation_is_detected(plate_case) -> None:
         negative = class_record["snapshots"]["negative_pose"]
         assert negative["body_sun_projection_residual"] < 5e-16
         assert min(negative["target_residual"].values()) > reference.TARGET_RESIDUAL_TOLERANCE
+
+
+def test_exporter_writes_json_npz_and_provenance(tmp_path, random_case, plate_case) -> None:
+    script_path = Path(__file__).parents[1] / "scripts" / "export_raypath_diagnostic_reference.py"
+    spec = importlib.util.spec_from_file_location("export_raypath_diagnostic_reference", script_path)
+    assert spec is not None and spec.loader is not None
+    exporter = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(exporter)
+    assembled = reference.DiagnosticReference(
+        {
+            "schema_version": reference.SCHEMA_VERSION,
+            "cases": {"random_regular": random_case.metadata, "plate_rhombic_9": plate_case.metadata},
+        },
+        {**random_case.arrays, **plate_case.arrays},
+    )
+    files = exporter.write_reference(assembled, tmp_path, {"test": True})
+    payload = json.loads(files["reference"].read_text())
+    provenance = json.loads(files["provenance"].read_text())
+    with np.load(files["arrays"], allow_pickle=False) as arrays:
+        assert sorted(arrays.files) == sorted(assembled.arrays)
+        assert arrays["plate_blue_snapshots_rotations"].shape == (5, 3, 3)
+    assert payload["schema_version"] == reference.SCHEMA_VERSION
+    assert payload["cases"]["plate_rhombic_9"]["classes"]["blue"]["target_energy"] == plate_case.metadata["classes"]["blue"]["target_energy"]
+    assert provenance["test"] and len(provenance["files"]["arrays.npz"]["sha256"]) == 64
