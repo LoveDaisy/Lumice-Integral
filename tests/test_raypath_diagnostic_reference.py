@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import importlib.util
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -58,6 +59,12 @@ def test_removing_only_internal_R_destroys_the_blue_counterfactual(random_case) 
         random_case.arrays["random_315_counterfactual_valid_red"],
         random_case.arrays["random_315_counterfactual_valid_blue"],
     )
+    for label in reference.INDEX_ENDPOINTS:
+        assert np.array_equal(
+            random_case.arrays[f"random_315_counterfactual_outgoing_{label}"],
+            random_case.arrays[f"random_315_counterfactual_outgoing_without_internal_R_{label}"],
+        )
+        assert np.allclose(np.linalg.norm(random_case.arrays[f"random_315_counterfactual_outgoing_{label}"], axis=1), 1.0)
 
 
 def test_index_mutation_moves_the_analytic_edge() -> None:
@@ -146,11 +153,6 @@ def test_plate_pose_constraint_mutation_is_detected(plate_case) -> None:
 
 
 def test_exporter_writes_json_npz_and_provenance(tmp_path, random_case, plate_case) -> None:
-    script_path = Path(__file__).parents[1] / "scripts" / "export_raypath_diagnostic_reference.py"
-    spec = importlib.util.spec_from_file_location("export_raypath_diagnostic_reference", script_path)
-    assert spec is not None and spec.loader is not None
-    exporter = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(exporter)
     assembled = reference.DiagnosticReference(
         {
             "schema_version": reference.SCHEMA_VERSION,
@@ -158,7 +160,7 @@ def test_exporter_writes_json_npz_and_provenance(tmp_path, random_case, plate_ca
         },
         {**random_case.arrays, **plate_case.arrays},
     )
-    files = exporter.write_reference(assembled, tmp_path, {"test": True})
+    files = reference.write_reference(assembled, tmp_path, {"test": True})
     payload = json.loads(files["reference"].read_text())
     provenance = json.loads(files["provenance"].read_text())
     with np.load(files["arrays"], allow_pickle=False) as arrays:
@@ -204,3 +206,55 @@ def test_recorded_fixture_pins_semantic_scalars_and_arrays() -> None:
             rotations = arrays[f"plate_{label}_snapshots_rotations"]
             assert rotations.shape == (5, 3, 3)
             assert np.max(np.abs(rotations @ np.swapaxes(rotations, 1, 2) - np.eye(3))) < 5e-16
+
+
+@pytest.mark.slow  # slow: regenerates the production-resolution optical and support reference through the CLI.
+def test_production_cli_regenerates_recorded_semantics(tmp_path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    fixture = repository / "tests" / "data" / "raypath-diagnostic-reference"
+    result = subprocess.run(
+        [sys.executable, str(repository / "scripts" / "export_raypath_diagnostic_reference.py"),
+         "--output-dir", str(tmp_path)],
+        cwd=repository, capture_output=True, text=True, timeout=180, check=True,
+    )
+    assert "wrote" in result.stdout
+    expected = json.loads((fixture / "reference.json").read_text())
+    actual = json.loads((tmp_path / "reference.json").read_text())
+    assert actual["schema_version"] == expected["schema_version"]
+    assert actual["array_store"] == expected["array_store"]
+    generated_provenance = json.loads((tmp_path / "provenance.json").read_text())
+    assert generated_provenance["parameters"] == json.loads((fixture / "provenance.json").read_text())["parameters"]
+    random_expected = expected["cases"]["random_regular"]
+    random_actual = actual["cases"]["random_regular"]
+    assert [f["id"] for f in random_actual["features"]] == [f["id"] for f in random_expected["features"]]
+    for new, old in zip(random_actual["features"], random_expected["features"], strict=True):
+        assert new["evidence_status"] == old["evidence_status"]
+        for key in ("position_deg", "delta_red_deg", "delta_blue_deg", "shift_deg", "spread_deg"):
+            if key in old:
+                assert new[key] == pytest.approx(old[key], abs=2e-8)
+    for label in ("white", "blue"):
+        new = actual["cases"]["plate_rhombic_9"]["classes"][label]
+        old = expected["cases"]["plate_rhombic_9"]["classes"][label]
+        assert new["lit_members"] == old["lit_members"]
+        for target in ("plus", "minus", "other", "class_total"):
+            for index in reference.INDEX_ENDPOINTS:
+                assert new["target_energy"][target][index] == pytest.approx(old["target_energy"][target][index], abs=1e-12)
+        for target in ("plus", "minus"):
+            assert new["target_energy"]["target_ratios"][target]["blue_red"] == pytest.approx(
+                old["target_energy"]["target_ratios"][target]["blue_red"], abs=1e-10)
+        for new_member, old_member in zip(new["members"], old["members"], strict=True):
+            assert new_member["faces"] == old_member["faces"]
+            assert new_member["target_assignment"] == old_member["target_assignment"]
+            for index in reference.INDEX_ENDPOINTS:
+                new_intervals = new_member["support_intervals"][index]
+                old_intervals = old_member["support_intervals"][index]
+                assert len(new_intervals) == len(old_intervals)
+                for new_interval, old_interval in zip(new_intervals, old_intervals, strict=True):
+                    assert new_interval["wraps_period"] == old_interval["wraps_period"]
+                    for new_edge, old_edge in zip(new_interval["transition_brackets"], old_interval["transition_brackets"], strict=True):
+                        assert new_edge["bracket"] == pytest.approx(old_edge["bracket"], abs=reference.SUPPORT_ENDPOINT_TOLERANCE_RAD)
+                        assert (new_edge["left_active"], new_edge["right_active"]) == (old_edge["left_active"], old_edge["right_active"])
+    with np.load(tmp_path / "arrays.npz", allow_pickle=False) as new, np.load(fixture / "arrays.npz", allow_pickle=False) as old:
+        assert new.files == old.files
+        for name in old.files:
+            np.testing.assert_allclose(new[name], old[name], rtol=1e-12, atol=1e-12, err_msg=name)

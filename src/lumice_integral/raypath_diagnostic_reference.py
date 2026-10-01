@@ -23,6 +23,8 @@ links, or invokes Lumice.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import json
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 import numpy as np
@@ -33,6 +35,7 @@ from .dp_field import DPField
 from .geometry import HexPrism, Polyhedron, fold_matrix, halo_map_rank, wedge_angle_deg
 from .path_weight import entry_and_power, weighted_power
 from .pose_density import build_pose_density
+from .provenance import sha256_of
 from .s2_store import align_rotations
 from .symmetry.reflection_group import commutes_with_rz
 
@@ -133,6 +136,10 @@ def _internal_reflection_counterfactual(
         "sample_count": int(len(points)),
         "removed_factor": "internal_1_reflectance",
         "unchanged": ["path_domain", "entry_measure_A", "entry_transmission", "exit_transmission", "sample_poses"],
+        "geometry": {
+            "direction_map": "production path_domain_batch; identical before and after removing scalar internal R",
+            "direction_change_max": 0.0,
+        },
         "indices": {},
     }
     for label, index in INDEX_ENDPOINTS.items():
@@ -159,6 +166,9 @@ def _internal_reflection_counterfactual(
         arrays[f"random_315_counterfactual_AT_{label}"] = production
         arrays[f"random_315_counterfactual_AT_without_internal_R_{label}"] = without_internal_r
         arrays[f"random_315_counterfactual_valid_{label}"] = valid
+        # Reflectance is a scalar factor; removing it retains this direction map.
+        arrays[f"random_315_counterfactual_outgoing_{label}"] = np.asarray(check.direction)
+        arrays[f"random_315_counterfactual_outgoing_without_internal_R_{label}"] = np.asarray(check.direction).copy()
         summary["indices"][label] = {
             "n": index,
             "valid_count": int(np.count_nonzero(valid)),
@@ -709,6 +719,59 @@ def build_reference(
     )
 
 
+def _array_semantics(name: str) -> str:
+    if name.endswith("_rotations"):
+        return "body-to-world SO(3) rotation matrices"
+    if name.endswith("_u"):
+        return "body-frame directions toward the sun, u = R^T s_hat"
+    if "_outgoing_" in name:
+        return "world propagation directions after the fixed path"
+    if "_A_" in name:
+        return "finite-crystal entry measure A in units of a^2"
+    if "_T_" in name:
+        return "dimensionless path power T, including every internal Fresnel R"
+    if "_AT_" in name:
+        return "finite-crystal weighted power A*T in units of a^2"
+    if name.endswith("_theta_rad"):
+        return "ideal horizontal-plate spin angles in radians"
+    if name.endswith("_valid_red") or name.endswith("_valid_blue"):
+        return "physical smooth-branch validity mask"
+    return "numerical evidence array; see docs/raypath-diagnostic-reference.md"
+
+
+def write_reference(reference: DiagnosticReference, output_dir: Path, provenance: dict[str, Any]) -> dict[str, Path]:
+    """Write one assembled reference and return its three output paths."""
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    arrays_path = output_dir / "arrays.npz"
+    np.savez_compressed(arrays_path, **reference.arrays)
+    array_index = {
+        name: {
+            "shape": list(np.asarray(value).shape),
+            "dtype": str(np.asarray(value).dtype),
+            "semantics": _array_semantics(name),
+        }
+        for name, value in sorted(reference.arrays.items())
+    }
+    payload = {**reference.metadata, "array_store": {"file": arrays_path.name, "arrays": array_index}}
+    reference_path = output_dir / "reference.json"
+    reference_path.write_text(json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8")
+    provenance_path = output_dir / "provenance.json"
+    provenance_payload = {
+        **provenance,
+        "files": {
+            "reference.json": {"sha256": sha256_of(reference_path)},
+            "arrays.npz": {"sha256": sha256_of(arrays_path)},
+        },
+    }
+    provenance_path.write_text(
+        json.dumps(provenance_payload, indent=2, sort_keys=True, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
+    return {"reference": reference_path, "arrays": arrays_path, "provenance": provenance_path}
+
+
+
 __all__ = [
     "DiagnosticReference",
     "INDEX_ENDPOINTS",
@@ -726,4 +789,5 @@ __all__ = [
     "minimum_deviation_deg",
     "plate_reference",
     "random_orientation_reference",
+    "write_reference",
 ]
