@@ -1,0 +1,6013 @@
+{
+  "array_store": {
+    "arrays": {
+      "plate_blue_snapshots_A_blue": {
+        "dtype": "float64",
+        "semantics": "finite-crystal entry measure A in units of a^2",
+        "shape": [
+          5
+        ]
+      },
+      "plate_blue_snapshots_A_red": {
+        "dtype": "float64",
+        "semantics": "finite-crystal entry measure A in units of a^2",
+        "shape": [
+          5
+        ]
+      },
+      "plate_blue_snapshots_T_blue": {
+        "dtype": "float64",
+        "semantics": "dimensionless path power T, including every internal Fresnel R",
+        "shape": [
+          5
+        ]
+      },
+      "plate_blue_snapshots_T_red": {
+        "dtype": "float64",
+        "semantics": "dimensionless path power T, including every internal Fresnel R",
+        "shape": [
+          5
+        ]
+      },
+      "plate_blue_snapshots_outgoing_blue": {
+        "dtype": "float64",
+        "semantics": "world propagation directions after the fixed path",
+        "shape": [
+          5,
+          3
+        ]
+      },
+      "plate_blue_snapshots_outgoing_red": {
+        "dtype": "float64",
+        "semantics": "world propagation directions after the fixed path",
+        "shape": [
+          5,
+          3
+        ]
+      },
+      "plate_blue_snapshots_rotations": {
+        "dtype": "float64",
+        "semantics": "body-to-world SO(3) rotation matrices",
+        "shape": [
+          5,
+          3,
+          3
+        ]
+      },
+      "plate_blue_snapshots_theta_rad": {
+        "dtype": "float64",
+        "semantics": "ideal horizontal-plate spin angles in radians",
+        "shape": [
+          5
+        ]
+      },
+      "plate_blue_snapshots_u": {
+        "dtype": "float64",
+        "semantics": "body-frame directions toward the sun, u = R^T s_hat",
+        "shape": [
+          5,
+          3
+        ]
+      },
+      "plate_white_snapshots_A_blue": {
+        "dtype": "float64",
+        "semantics": "finite-crystal entry measure A in units of a^2",
+        "shape": [
+          5
+        ]
+      },
+      "plate_white_snapshots_A_red": {
+        "dtype": "float64",
+        "semantics": "finite-crystal entry measure A in units of a^2",
+        "shape": [
+          5
+        ]
+      },
+      "plate_white_snapshots_T_blue": {
+        "dtype": "float64",
+        "semantics": "dimensionless path power T, including every internal Fresnel R",
+        "shape": [
+          5
+        ]
+      },
+      "plate_white_snapshots_T_red": {
+        "dtype": "float64",
+        "semantics": "dimensionless path power T, including every internal Fresnel R",
+        "shape": [
+          5
+        ]
+      },
+      "plate_white_snapshots_outgoing_blue": {
+        "dtype": "float64",
+        "semantics": "world propagation directions after the fixed path",
+        "shape": [
+          5,
+          3
+        ]
+      },
+      "plate_white_snapshots_outgoing_red": {
+        "dtype": "float64",
+        "semantics": "world propagation directions after the fixed path",
+        "shape": [
+          5,
+          3
+        ]
+      },
+      "plate_white_snapshots_rotations": {
+        "dtype": "float64",
+        "semantics": "body-to-world SO(3) rotation matrices",
+        "shape": [
+          5,
+          3,
+          3
+        ]
+      },
+      "plate_white_snapshots_theta_rad": {
+        "dtype": "float64",
+        "semantics": "ideal horizontal-plate spin angles in radians",
+        "shape": [
+          5
+        ]
+      },
+      "plate_white_snapshots_u": {
+        "dtype": "float64",
+        "semantics": "body-frame directions toward the sun, u = R^T s_hat",
+        "shape": [
+          5,
+          3
+        ]
+      },
+      "random_315_counterfactual_AT_blue": {
+        "dtype": "float64",
+        "semantics": "finite-crystal weighted power A*T in units of a^2",
+        "shape": [
+          200
+        ]
+      },
+      "random_315_counterfactual_AT_red": {
+        "dtype": "float64",
+        "semantics": "finite-crystal weighted power A*T in units of a^2",
+        "shape": [
+          200
+        ]
+      },
+      "random_315_counterfactual_AT_without_internal_R_blue": {
+        "dtype": "float64",
+        "semantics": "finite-crystal weighted power A*T in units of a^2",
+        "shape": [
+          200
+        ]
+      },
+      "random_315_counterfactual_AT_without_internal_R_red": {
+        "dtype": "float64",
+        "semantics": "finite-crystal weighted power A*T in units of a^2",
+        "shape": [
+          200
+        ]
+      },
+      "random_315_counterfactual_A_blue": {
+        "dtype": "float64",
+        "semantics": "finite-crystal entry measure A in units of a^2",
+        "shape": [
+          200
+        ]
+      },
+      "random_315_counterfactual_A_red": {
+        "dtype": "float64",
+        "semantics": "finite-crystal entry measure A in units of a^2",
+        "shape": [
+          200
+        ]
+      },
+      "random_315_counterfactual_T_blue": {
+        "dtype": "float64",
+        "semantics": "dimensionless path power T, including every internal Fresnel R",
+        "shape": [
+          200
+        ]
+      },
+      "random_315_counterfactual_T_red": {
+        "dtype": "float64",
+        "semantics": "dimensionless path power T, including every internal Fresnel R",
+        "shape": [
+          200
+        ]
+      },
+      "random_315_counterfactual_outgoing_blue": {
+        "dtype": "float64",
+        "semantics": "world propagation directions after the fixed path",
+        "shape": [
+          200,
+          3
+        ]
+      },
+      "random_315_counterfactual_outgoing_red": {
+        "dtype": "float64",
+        "semantics": "world propagation directions after the fixed path",
+        "shape": [
+          200,
+          3
+        ]
+      },
+      "random_315_counterfactual_outgoing_without_internal_R_blue": {
+        "dtype": "float64",
+        "semantics": "world propagation directions after the fixed path",
+        "shape": [
+          200,
+          3
+        ]
+      },
+      "random_315_counterfactual_outgoing_without_internal_R_red": {
+        "dtype": "float64",
+        "semantics": "world propagation directions after the fixed path",
+        "shape": [
+          200,
+          3
+        ]
+      },
+      "random_315_counterfactual_rotations": {
+        "dtype": "float64",
+        "semantics": "body-to-world SO(3) rotation matrices",
+        "shape": [
+          200,
+          3,
+          3
+        ]
+      },
+      "random_315_counterfactual_u": {
+        "dtype": "float64",
+        "semantics": "body-frame directions toward the sun, u = R^T s_hat",
+        "shape": [
+          200,
+          3
+        ]
+      },
+      "random_315_counterfactual_valid_blue": {
+        "dtype": "bool",
+        "semantics": "physical smooth-branch validity mask",
+        "shape": [
+          200
+        ]
+      },
+      "random_315_counterfactual_valid_red": {
+        "dtype": "bool",
+        "semantics": "physical smooth-branch validity mask",
+        "shape": [
+          200
+        ]
+      }
+    },
+    "file": "arrays.npz"
+  },
+  "cases": {
+    "plate_rhombic_9": {
+      "case_id": "plate_rhombic_9",
+      "classes": {
+        "blue": {
+          "auxiliary_diagnose_class": {
+            "color": "blue",
+            "kind": "tint",
+            "lit_members": {
+              "blue": [
+                [
+                  1,
+                  3,
+                  5,
+                  2
+                ],
+                [
+                  1,
+                  3,
+                  7,
+                  2
+                ],
+                [
+                  1,
+                  4,
+                  6,
+                  2
+                ],
+                [
+                  1,
+                  4,
+                  8,
+                  2
+                ],
+                [
+                  1,
+                  5,
+                  3,
+                  2
+                ],
+                [
+                  1,
+                  5,
+                  7,
+                  2
+                ],
+                [
+                  1,
+                  6,
+                  4,
+                  2
+                ],
+                [
+                  1,
+                  6,
+                  8,
+                  2
+                ],
+                [
+                  1,
+                  7,
+                  3,
+                  2
+                ],
+                [
+                  1,
+                  7,
+                  5,
+                  2
+                ],
+                [
+                  1,
+                  8,
+                  4,
+                  2
+                ],
+                [
+                  1,
+                  8,
+                  6,
+                  2
+                ]
+              ],
+              "red": [
+                [
+                  1,
+                  3,
+                  5,
+                  2
+                ],
+                [
+                  1,
+                  3,
+                  7,
+                  2
+                ],
+                [
+                  1,
+                  4,
+                  6,
+                  2
+                ],
+                [
+                  1,
+                  4,
+                  8,
+                  2
+                ],
+                [
+                  1,
+                  5,
+                  3,
+                  2
+                ],
+                [
+                  1,
+                  5,
+                  7,
+                  2
+                ],
+                [
+                  1,
+                  6,
+                  4,
+                  2
+                ],
+                [
+                  1,
+                  6,
+                  8,
+                  2
+                ],
+                [
+                  1,
+                  7,
+                  3,
+                  2
+                ],
+                [
+                  1,
+                  7,
+                  5,
+                  2
+                ],
+                [
+                  1,
+                  8,
+                  4,
+                  2
+                ],
+                [
+                  1,
+                  8,
+                  6,
+                  2
+                ]
+              ]
+            },
+            "ratio": 1.5059706834667395,
+            "role": "qualitative class-level cross-check, not the per-target energy authority",
+            "samples": 4096
+          },
+          "lit_members": {
+            "blue": [
+              [
+                1,
+                3,
+                5,
+                2
+              ],
+              [
+                1,
+                3,
+                7,
+                2
+              ],
+              [
+                1,
+                4,
+                6,
+                2
+              ],
+              [
+                1,
+                4,
+                8,
+                2
+              ],
+              [
+                1,
+                5,
+                3,
+                2
+              ],
+              [
+                1,
+                5,
+                7,
+                2
+              ],
+              [
+                1,
+                6,
+                4,
+                2
+              ],
+              [
+                1,
+                6,
+                8,
+                2
+              ],
+              [
+                1,
+                7,
+                3,
+                2
+              ],
+              [
+                1,
+                7,
+                5,
+                2
+              ],
+              [
+                1,
+                8,
+                4,
+                2
+              ],
+              [
+                1,
+                8,
+                6,
+                2
+              ]
+            ],
+            "red": [
+              [
+                1,
+                3,
+                5,
+                2
+              ],
+              [
+                1,
+                3,
+                7,
+                2
+              ],
+              [
+                1,
+                4,
+                6,
+                2
+              ],
+              [
+                1,
+                4,
+                8,
+                2
+              ],
+              [
+                1,
+                5,
+                3,
+                2
+              ],
+              [
+                1,
+                5,
+                7,
+                2
+              ],
+              [
+                1,
+                6,
+                4,
+                2
+              ],
+              [
+                1,
+                6,
+                8,
+                2
+              ],
+              [
+                1,
+                7,
+                3,
+                2
+              ],
+              [
+                1,
+                7,
+                5,
+                2
+              ],
+              [
+                1,
+                8,
+                4,
+                2
+              ],
+              [
+                1,
+                8,
+                6,
+                2
+              ]
+            ]
+          },
+          "members": [
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 1.5700924586837752e-16,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 1.3140366844199142e-07,
+                  "coarse": 0.0001804322431486223,
+                  "fine": 0.00018030083948018032
+                },
+                "red": {
+                  "absolute_difference": 3.6114296408869305e-08,
+                  "coarse": 0.00011048978982087925,
+                  "fine": 0.00011045367552447038
+                }
+              },
+              "faces": [
+                1,
+                3,
+                5,
+                2
+              ],
+              "fixed_outgoing_direction": [
+                -0.493844170297569,
+                -0.8553631939770863,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.5,
+                  0.8660254037844387,
+                  0.0
+                ],
+                [
+                  -0.8660254037844387,
+                  -0.5000000000000002,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": 1.2228213315207787e-15,
+                "red": 5.828670879282072e-16
+              },
+              "production_probe_valid_count": {
+                "blue": 3,
+                "red": 3
+              },
+              "support_intervals": {
+                "blue": [
+                  {
+                    "end_rad": 6.196409620761081,
+                    "start_rad": 5.51723818156165,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          5.517238178635814,
+                          5.517238184487486
+                        ],
+                        "bracket_width_rad": 5.851672035817046e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 2.0579723477346604e-09,
+                        "theta_rad": 5.51723818156165
+                      },
+                      {
+                        "bracket": [
+                          6.196409617835244,
+                          6.196409623686916
+                        ],
+                        "bracket_width_rad": 5.851672035817046e-09,
+                        "left_active": true,
+                        "left_weight": 1.3958023850962574e-09,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 6.196409620761081
+                      }
+                    ],
+                    "wraps_period": false
+                  }
+                ],
+                "red": [
+                  {
+                    "end_rad": 6.208557768563055,
+                    "start_rad": 5.517239258269357,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          5.5172392553435206,
+                          5.5172392611951935
+                        ],
+                        "bracket_width_rad": 5.851672923995466e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 1.7358921716793762e-09,
+                        "theta_rad": 5.517239258269357
+                      },
+                      {
+                        "bracket": [
+                          6.208557765637218,
+                          6.208557771488891
+                        ],
+                        "bracket_width_rad": 5.851672923995466e-09,
+                        "left_active": true,
+                        "left_weight": 1.203162293994278e-09,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 6.208557768563055
+                      }
+                    ],
+                    "wraps_period": false
+                  }
+                ]
+              },
+              "target_assignment": "minus",
+              "target_residuals": {
+                "minus": 0.0,
+                "plus": 1.7107263879541725
+              },
+              "wedge_deg": 1.6962958301138756e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 7.850462293418876e-17,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 1.3140366844218115e-07,
+                  "coarse": 0.0001804322431486213,
+                  "fine": 0.00018030083948017913
+                },
+                "red": {
+                  "absolute_difference": 3.611429640890996e-08,
+                  "coarse": 0.00011048978982087864,
+                  "fine": 0.00011045367552446973
+                }
+              },
+              "faces": [
+                1,
+                3,
+                7,
+                2
+              ],
+              "fixed_outgoing_direction": [
+                -0.49384417029756855,
+                0.8553631939770866,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.4999999999999998,
+                  -0.8660254037844388,
+                  0.0
+                ],
+                [
+                  0.8660254037844388,
+                  -0.4999999999999998,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": 1.2076067877790415e-15,
+                "red": 4.783309287441108e-16
+              },
+              "production_probe_valid_count": {
+                "blue": 3,
+                "red": 3
+              },
+              "support_intervals": {
+                "blue": [
+                  {
+                    "end_rad": 0.7659471256179358,
+                    "start_rad": 0.08677568641850589,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          0.08677568349266973,
+                          0.08677568934434206
+                        ],
+                        "bracket_width_rad": 5.85167232725059e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 1.395802385018776e-09,
+                        "theta_rad": 0.08677568641850589
+                      },
+                      {
+                        "bracket": [
+                          0.7659471226920996,
+                          0.765947128543772
+                        ],
+                        "bracket_width_rad": 5.851672368883953e-09,
+                        "left_active": true,
+                        "left_weight": 2.057972347734678e-09,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 0.7659471256179358
+                      }
+                    ],
+                    "wraps_period": false
+                  }
+                ],
+                "red": [
+                  {
+                    "end_rad": 0.7659460489102294,
+                    "start_rad": 0.07462753861653126,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          0.07462753569069511,
+                          0.07462754154236742
+                        ],
+                        "bracket_width_rad": 5.851672313372802e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 1.2031622939274894e-09,
+                        "theta_rad": 0.07462753861653126
+                      },
+                      {
+                        "bracket": [
+                          0.7659460459843933,
+                          0.7659460518360657
+                        ],
+                        "bracket_width_rad": 5.851672368883953e-09,
+                        "left_active": true,
+                        "left_weight": 1.7358921709085103e-09,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 0.7659460489102294
+                      }
+                    ],
+                    "wraps_period": false
+                  }
+                ]
+              },
+              "target_assignment": "plus",
+              "target_residuals": {
+                "minus": 1.710726387954173,
+                "plus": 5.551115123125783e-16
+              },
+              "wedge_deg": 1.6962958301138756e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 1.5700924586837752e-16,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 1.1604950102004686e-07,
+                  "coarse": 0.0001801677957298312,
+                  "fine": 0.00018028384523085123
+                },
+                "red": {
+                  "absolute_difference": 3.705028945840197e-08,
+                  "coarse": 0.00011041961458134803,
+                  "fine": 0.00011045666487080643
+                }
+              },
+              "faces": [
+                1,
+                4,
+                6,
+                2
+              ],
+              "fixed_outgoing_direction": [
+                -0.493844170297569,
+                -0.8553631939770863,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.5,
+                  0.8660254037844387,
+                  0.0
+                ],
+                [
+                  -0.8660254037844387,
+                  -0.5000000000000002,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": 1.2477667117865589e-15,
+                "red": 3.973993651728112e-16
+              },
+              "production_probe_valid_count": {
+                "blue": 3,
+                "red": 3
+              },
+              "support_intervals": {
+                "blue": [
+                  {
+                    "end_rad": 4.954737332354886,
+                    "start_rad": 4.275565893155454,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          4.275565890229618,
+                          4.27556589608129
+                        ],
+                        "bracket_width_rad": 5.851672035817046e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 1.395818869017934e-09,
+                        "theta_rad": 4.275565893155454
+                      },
+                      {
+                        "bracket": [
+                          4.954737329429049,
+                          4.954737335280722
+                        ],
+                        "bracket_width_rad": 5.851672923995466e-09,
+                        "left_active": true,
+                        "left_weight": 2.057935071818276e-09,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 4.954737332354886
+                      }
+                    ],
+                    "wraps_period": false
+                  }
+                ],
+                "red": [
+                  {
+                    "end_rad": 4.954736255647179,
+                    "start_rad": 4.263417745353481,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          4.263417742427644,
+                          4.263417748279316
+                        ],
+                        "bracket_width_rad": 5.851672035817046e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 1.203176939597514e-09,
+                        "theta_rad": 4.263417745353481
+                      },
+                      {
+                        "bracket": [
+                          4.954736252721343,
+                          4.954736258573015
+                        ],
+                        "bracket_width_rad": 5.851672035817046e-09,
+                        "left_active": true,
+                        "left_weight": 1.7358608862420203e-09,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 4.954736255647179
+                      }
+                    ],
+                    "wraps_period": false
+                  }
+                ]
+              },
+              "target_assignment": "minus",
+              "target_residuals": {
+                "minus": 0.0,
+                "plus": 1.7107263879541725
+              },
+              "wedge_deg": 1.6962958301138756e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 7.850462293418876e-17,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 7.840969391034302e-07,
+                  "coarse": 0.0016003171548417518,
+                  "fine": 0.0015995330579026484
+                },
+                "red": {
+                  "absolute_difference": 2.067228233883743e-07,
+                  "coarse": 0.0010643250416179234,
+                  "fine": 0.001064118318794535
+                }
+              },
+              "faces": [
+                1,
+                4,
+                8,
+                2
+              ],
+              "fixed_outgoing_direction": [
+                -0.4938441702975689,
+                0.8553631939770867,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.5000000000000001,
+                  -0.8660254037844389,
+                  0.0
+                ],
+                [
+                  0.8660254037844389,
+                  -0.4999999999999999,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": 1.3371736463036914e-15,
+                "red": 6.13768602261588e-16
+              },
+              "production_probe_valid_count": {
+                "blue": 3,
+                "red": 3
+              },
+              "support_intervals": {
+                "blue": [
+                  {
+                    "end_rad": 6.564004542530778,
+                    "start_rad": 4.955168518681241,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          4.955168515755404,
+                          4.955168521607076
+                        ],
+                        "bracket_width_rad": 5.851672035817046e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 2.054915702117912e-09,
+                        "theta_rad": 4.955168518681241
+                      },
+                      {
+                        "bracket": [
+                          0.2808192324253554,
+                          0.2808192382770277
+                        ],
+                        "bracket_width_rad": 5.851672313372802e-09,
+                        "left_active": true,
+                        "left_weight": 2.054952846627959e-09,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 0.2808192353511916
+                      }
+                    ],
+                    "wraps_period": true
+                  }
+                ],
+                "red": [
+                  {
+                    "end_rad": 6.564003465823071,
+                    "start_rad": 4.955169595388946,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          4.955169592463109,
+                          4.955169598314782
+                        ],
+                        "bracket_width_rad": 5.851672923995466e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 1.7334949901230833e-09,
+                        "theta_rad": 4.955169595388946
+                      },
+                      {
+                        "bracket": [
+                          0.28081815571764895,
+                          0.28081816156932127
+                        ],
+                        "bracket_width_rad": 5.851672313372802e-09,
+                        "left_active": true,
+                        "left_weight": 1.733526170176609e-09,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 0.28081815864348514
+                      }
+                    ],
+                    "wraps_period": true
+                  }
+                ]
+              },
+              "target_assignment": "plus",
+              "target_residuals": {
+                "minus": 1.710726387954173,
+                "plus": 4.577566798522237e-16
+              },
+              "wedge_deg": 1.696295830113876e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 7.850462293418876e-17,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 1.1604950101934213e-07,
+                  "coarse": 0.00018016779572983035,
+                  "fine": 0.0001802838452308497
+                },
+                "red": {
+                  "absolute_difference": 3.705028945818513e-08,
+                  "coarse": 0.00011041961458134767,
+                  "fine": 0.00011045666487080586
+                }
+              },
+              "faces": [
+                1,
+                5,
+                3,
+                2
+              ],
+              "fixed_outgoing_direction": [
+                -0.4938441702975688,
+                0.8553631939770865,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.5,
+                  -0.8660254037844387,
+                  0.0
+                ],
+                [
+                  0.8660254037844387,
+                  -0.5000000000000002,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": 1.266153263119412e-15,
+                "red": 3.1031676915590914e-16
+              },
+              "production_probe_valid_count": {
+                "blue": 3,
+                "red": 3
+              },
+              "support_intervals": {
+                "blue": [
+                  {
+                    "end_rad": 5.1492120676139255,
+                    "start_rad": 4.470040628414494,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          4.470040625488657,
+                          4.47004063134033
+                        ],
+                        "bracket_width_rad": 5.851672923995466e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 2.057935071818276e-09,
+                        "theta_rad": 4.470040628414494
+                      },
+                      {
+                        "bracket": [
+                          5.149212064688089,
+                          5.149212070539761
+                        ],
+                        "bracket_width_rad": 5.851672035817046e-09,
+                        "left_active": true,
+                        "left_weight": 1.3958188696377852e-09,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 5.1492120676139255
+                      }
+                    ],
+                    "wraps_period": false
+                  }
+                ],
+                "red": [
+                  {
+                    "end_rad": 5.161360215415899,
+                    "start_rad": 4.470041705122201,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          4.470041702196364,
+                          4.470041708048036
+                        ],
+                        "bracket_width_rad": 5.851672035817046e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 1.7358608864347315e-09,
+                        "theta_rad": 4.470041705122201
+                      },
+                      {
+                        "bracket": [
+                          5.161360212490063,
+                          5.161360218341735
+                        ],
+                        "bracket_width_rad": 5.851672035817046e-09,
+                        "left_active": true,
+                        "left_weight": 1.2031769395975113e-09,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 5.161360215415899
+                      }
+                    ],
+                    "wraps_period": false
+                  }
+                ]
+              },
+              "target_assignment": "plus",
+              "target_residuals": {
+                "minus": 1.7107263879541728,
+                "plus": 3.1401849173675503e-16
+              },
+              "wedge_deg": 1.6962958301138756e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 2.3714374201337736e-16,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 7.840969390993102e-07,
+                  "coarse": 0.0016003171548417527,
+                  "fine": 0.0015995330579026534
+                },
+                "red": {
+                  "absolute_difference": 2.0672282338750694e-07,
+                  "coarse": 0.001064325041617925,
+                  "fine": 0.0010641183187945374
+                }
+              },
+              "faces": [
+                1,
+                5,
+                7,
+                2
+              ],
+              "fixed_outgoing_direction": [
+                -0.49384417029756933,
+                -0.8553631939770862,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.5000000000000003,
+                  0.8660254037844388,
+                  0.0
+                ],
+                [
+                  -0.8660254037844386,
+                  -0.5000000000000002,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": 1.2818749660365435e-15,
+                "red": 5.302695275805846e-16
+              },
+              "production_probe_valid_count": {
+                "blue": 3,
+                "red": 3
+              },
+              "support_intervals": {
+                "blue": [
+                  {
+                    "end_rad": 4.469609442088139,
+                    "start_rad": 2.860773418238602,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          2.860773415312766,
+                          2.8607734211644384
+                        ],
+                        "bracket_width_rad": 5.851672479906256e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 2.054952847084229e-09,
+                        "theta_rad": 2.860773418238602
+                      },
+                      {
+                        "bracket": [
+                          4.469609439162303,
+                          4.469609445013975
+                        ],
+                        "bracket_width_rad": 5.851672035817046e-09,
+                        "left_active": true,
+                        "left_weight": 2.0549157021179096e-09,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 4.469609442088139
+                      }
+                    ],
+                    "wraps_period": false
+                  }
+                ],
+                "red": [
+                  {
+                    "end_rad": 4.4696083653804335,
+                    "start_rad": 2.860774494946308,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          2.8607744920204716,
+                          2.860774497872144
+                        ],
+                        "bracket_width_rad": 5.851672479906256e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 1.7335261701766082e-09,
+                        "theta_rad": 2.860774494946308
+                      },
+                      {
+                        "bracket": [
+                          4.469608362454597,
+                          4.46960836830627
+                        ],
+                        "bracket_width_rad": 5.851672923995466e-09,
+                        "left_active": true,
+                        "left_weight": 1.7334949901230757e-09,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 4.4696083653804335
+                      }
+                    ],
+                    "wraps_period": false
+                  }
+                ]
+              },
+              "target_assignment": "minus",
+              "target_residuals": {
+                "minus": 3.510833468576701e-16,
+                "plus": 1.7107263879541725
+              },
+              "wedge_deg": 1.696295830113876e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 7.850462293418876e-17,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 1.3140366844215405e-07,
+                  "coarse": 0.00018043224314862117,
+                  "fine": 0.00018030083948017902
+                },
+                "red": {
+                  "absolute_difference": 3.61142964088422e-08,
+                  "coarse": 0.00011048978982087872,
+                  "fine": 0.00011045367552446988
+                }
+              },
+              "faces": [
+                1,
+                6,
+                4,
+                2
+              ],
+              "fixed_outgoing_direction": [
+                -0.4938441702975688,
+                0.8553631939770865,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.5,
+                  -0.8660254037844387,
+                  0.0
+                ],
+                [
+                  0.8660254037844387,
+                  -0.5000000000000002,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": 1.1909050386352223e-15,
+                "red": 7.575797802392804e-16
+              },
+              "production_probe_valid_count": {
+                "blue": 3,
+                "red": 3
+              },
+              "support_intervals": {
+                "blue": [
+                  {
+                    "end_rad": 3.9075397792077284,
+                    "start_rad": 3.2283683400082985,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          3.2283683370824625,
+                          3.228368342934135
+                        ],
+                        "bracket_width_rad": 5.851672479906256e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 1.395802385018775e-09,
+                        "theta_rad": 3.2283683400082985
+                      },
+                      {
+                        "bracket": [
+                          3.9075397762818924,
+                          3.907539782133565
+                        ],
+                        "bracket_width_rad": 5.851672479906256e-09,
+                        "left_active": true,
+                        "left_weight": 2.05797234773467e-09,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 3.9075397792077284
+                      }
+                    ],
+                    "wraps_period": false
+                  }
+                ],
+                "red": [
+                  {
+                    "end_rad": 3.9075387025000223,
+                    "start_rad": 3.2162201922063245,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          3.2162201892804885,
+                          3.216220195132161
+                        ],
+                        "bracket_width_rad": 5.851672479906256e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 1.2031622939942778e-09,
+                        "theta_rad": 3.2162201922063245
+                      },
+                      {
+                        "bracket": [
+                          3.907538699574186,
+                          3.9075387054258583
+                        ],
+                        "bracket_width_rad": 5.851672479906256e-09,
+                        "left_active": true,
+                        "left_weight": 1.7358921724502209e-09,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 3.9075387025000223
+                      }
+                    ],
+                    "wraps_period": false
+                  }
+                ]
+              },
+              "target_assignment": "plus",
+              "target_residuals": {
+                "minus": 1.7107263879541728,
+                "plus": 3.1401849173675503e-16
+              },
+              "wedge_deg": 1.6962958301138756e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 1.5700924586837752e-16,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 1.3140366844161195e-07,
+                  "coarse": 0.00018043224314862201,
+                  "fine": 0.0001803008394801804
+                },
+                "red": {
+                  "absolute_difference": 3.6114296408815095e-08,
+                  "coarse": 0.00011048978982087929,
+                  "fine": 0.00011045367552447048
+                }
+              },
+              "faces": [
+                1,
+                6,
+                8,
+                2
+              ],
+              "fixed_outgoing_direction": [
+                -0.493844170297569,
+                -0.8553631939770863,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.5,
+                  0.8660254037844387,
+                  0.0
+                ],
+                [
+                  -0.8660254037844387,
+                  -0.5000000000000002,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": 1.197356359068535e-15,
+                "red": 4.783309287441108e-16
+              },
+              "production_probe_valid_count": {
+                "blue": 3,
+                "red": 3
+              },
+              "support_intervals": {
+                "blue": [
+                  {
+                    "end_rad": 3.0548169671712877,
+                    "start_rad": 2.375645527971858,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          2.3756455250460213,
+                          2.375645530897694
+                        ],
+                        "bracket_width_rad": 5.851672479906256e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 2.05797234773467e-09,
+                        "theta_rad": 2.375645527971858
+                      },
+                      {
+                        "bracket": [
+                          3.0548169642454512,
+                          3.0548169700971237
+                        ],
+                        "bracket_width_rad": 5.851672479906256e-09,
+                        "left_active": true,
+                        "left_weight": 1.395802385018775e-09,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 3.0548169671712877
+                      }
+                    ],
+                    "wraps_period": false
+                  }
+                ],
+                "red": [
+                  {
+                    "end_rad": 3.0669651149732617,
+                    "start_rad": 2.375646604679564,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          2.375646601753728,
+                          2.3756466076054004
+                        ],
+                        "bracket_width_rad": 5.851672479906256e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 1.735892171679371e-09,
+                        "theta_rad": 2.375646604679564
+                      },
+                      {
+                        "bracket": [
+                          3.0669651120474253,
+                          3.0669651178990978
+                        ],
+                        "bracket_width_rad": 5.851672479906256e-09,
+                        "left_active": true,
+                        "left_weight": 1.2031622938607002e-09,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 3.0669651149732617
+                      }
+                    ],
+                    "wraps_period": false
+                  }
+                ]
+              },
+              "target_assignment": "minus",
+              "target_residuals": {
+                "minus": 0.0,
+                "plus": 1.7107263879541725
+              },
+              "wedge_deg": 1.6962958301138756e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 0.0,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 1.1604950101947765e-07,
+                  "coarse": 0.00018016779572983132,
+                  "fine": 0.0001802838452308508
+                },
+                "red": {
+                  "absolute_difference": 3.705028945823934e-08,
+                  "coarse": 0.00011041961458134808,
+                  "fine": 0.00011045666487080632
+                }
+              },
+              "faces": [
+                1,
+                7,
+                3,
+                2
+              ],
+              "fixed_outgoing_direction": [
+                -0.4938441702975688,
+                -0.8553631939770864,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.4999999999999998,
+                  0.8660254037844388,
+                  0.0
+                ],
+                [
+                  -0.8660254037844388,
+                  -0.4999999999999998,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": 1.2962180694171118e-15,
+                "red": 7.005190574351762e-16
+              },
+              "production_probe_valid_count": {
+                "blue": 3,
+                "red": 3
+              },
+              "support_intervals": {
+                "blue": [
+                  {
+                    "end_rad": 1.8131446787650907,
+                    "start_rad": 1.1339732395656612,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          1.133973236639825,
+                          1.1339732424914972
+                        ],
+                        "bracket_width_rad": 5.851672257861651e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 1.3958188690179366e-09,
+                        "theta_rad": 1.1339732395656612
+                      },
+                      {
+                        "bracket": [
+                          1.8131446758392544,
+                          1.8131446816909267
+                        ],
+                        "bracket_width_rad": 5.851672257861651e-09,
+                        "left_active": true,
+                        "left_weight": 2.0579350718182863e-09,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 1.8131446787650907
+                      }
+                    ],
+                    "wraps_period": false
+                  }
+                ],
+                "red": [
+                  {
+                    "end_rad": 1.8131436020573843,
+                    "start_rad": 1.1218250917636863,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          1.12182508883785,
+                          1.1218250946895223
+                        ],
+                        "bracket_width_rad": 5.851672257861651e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 1.2031769398646687e-09,
+                        "theta_rad": 1.1218250917636863
+                      },
+                      {
+                        "bracket": [
+                          1.813143599131548,
+                          1.8131436049832206
+                        ],
+                        "bracket_width_rad": 5.851672479906256e-09,
+                        "left_active": true,
+                        "left_weight": 1.7358608864347391e-09,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 1.8131436020573843
+                      }
+                    ],
+                    "wraps_period": false
+                  }
+                ]
+              },
+              "target_assignment": "minus",
+              "target_residuals": {
+                "minus": 2.482534153247273e-16,
+                "plus": 1.7107263879541725
+              },
+              "wedge_deg": 1.6962958301138756e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 2.5438405243138006e-16,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 7.840969391008281e-07,
+                  "coarse": 0.0016003171548417488,
+                  "fine": 0.001599533057902648
+                },
+                "red": {
+                  "absolute_difference": 2.0672282338815746e-07,
+                  "coarse": 0.0010643250416179225,
+                  "fine": 0.0010641183187945344
+                }
+              },
+              "faces": [
+                1,
+                7,
+                5,
+                2
+              ],
+              "fixed_outgoing_direction": [
+                -0.4938441702975691,
+                0.8553631939770866,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.5000000000000003,
+                  -0.8660254037844386,
+                  0.0
+                ],
+                [
+                  0.8660254037844388,
+                  -0.5000000000000002,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": 1.2997791147793086e-15,
+                "red": 5.721958498152797e-16
+              },
+              "production_probe_valid_count": {
+                "blue": 3,
+                "red": 3
+              },
+              "support_intervals": {
+                "blue": [
+                  {
+                    "end_rad": 3.4224118889409842,
+                    "start_rad": 1.8135758650914462,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          1.8135758621656102,
+                          1.8135758680172824
+                        ],
+                        "bracket_width_rad": 5.851672257861651e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 2.054915701661638e-09,
+                        "theta_rad": 1.8135758650914462
+                      },
+                      {
+                        "bracket": [
+                          3.422411886015148,
+                          3.4224118918668203
+                        ],
+                        "bracket_width_rad": 5.851672479906256e-09,
+                        "left_active": true,
+                        "left_weight": 2.0549528470842217e-09,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 3.4224118889409842
+                      }
+                    ],
+                    "wraps_period": false
+                  }
+                ],
+                "red": [
+                  {
+                    "end_rad": 3.422410812233278,
+                    "start_rad": 1.8135769417991527,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          1.8135769388733167,
+                          1.813576944724989
+                        ],
+                        "bracket_width_rad": 5.851672257861651e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 1.7334949901230833e-09,
+                        "theta_rad": 1.8135769417991527
+                      },
+                      {
+                        "bracket": [
+                          3.422410809307442,
+                          3.4224108151591146
+                        ],
+                        "bracket_width_rad": 5.851672479906256e-09,
+                        "left_active": true,
+                        "left_weight": 1.733526170176603e-09,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 3.422410812233278
+                      }
+                    ],
+                    "wraps_period": false
+                  }
+                ]
+              },
+              "target_assignment": "plus",
+              "target_residuals": {
+                "minus": 1.710726387954173,
+                "plus": 3.510833468576701e-16
+              },
+              "wedge_deg": 1.696295830113876e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 3.1401849173675503e-16,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 7.840969391014786e-07,
+                  "coarse": 0.0016003171548417557,
+                  "fine": 0.0015995330579026542
+                },
+                "red": {
+                  "absolute_difference": 2.0672282338772378e-07,
+                  "coarse": 0.0010643250416179255,
+                  "fine": 0.0010641183187945378
+                }
+              },
+              "faces": [
+                1,
+                8,
+                4,
+                2
+              ],
+              "fixed_outgoing_direction": [
+                -0.4938441702975691,
+                -0.8553631939770865,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.5000000000000001,
+                  0.8660254037844389,
+                  0.0
+                ],
+                [
+                  -0.8660254037844389,
+                  -0.4999999999999999,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": 1.388056308787576e-15,
+                "red": 6.826968921430001e-16
+              },
+              "production_probe_valid_count": {
+                "blue": 3,
+                "red": 3
+              },
+              "support_intervals": {
+                "blue": [
+                  {
+                    "end_rad": 7.611202095677934,
+                    "start_rad": 6.002366071828394,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          6.002366068902559,
+                          6.002366074754231
+                        ],
+                        "bracket_width_rad": 5.851672035817046e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 2.054952847084233e-09,
+                        "theta_rad": 6.002366071828394
+                      },
+                      {
+                        "bracket": [
+                          1.3280167855725107,
+                          1.328016791424183
+                        ],
+                        "bracket_width_rad": 5.851672257861651e-09,
+                        "left_active": true,
+                        "left_weight": 2.054915701661638e-09,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 1.328016788498347
+                      }
+                    ],
+                    "wraps_period": true
+                  }
+                ],
+                "red": [
+                  {
+                    "end_rad": 7.611201018970227,
+                    "start_rad": 6.002367148536102,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          6.002367145610266,
+                          6.002367151461938
+                        ],
+                        "bracket_width_rad": 5.851672035817046e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 1.733526170561515e-09,
+                        "theta_rad": 6.002367148536102
+                      },
+                      {
+                        "bracket": [
+                          1.3280157088648041,
+                          1.3280157147164764
+                        ],
+                        "bracket_width_rad": 5.851672257861651e-09,
+                        "left_active": true,
+                        "left_weight": 1.7334949905079942e-09,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 1.3280157117906404
+                      }
+                    ],
+                    "wraps_period": true
+                  }
+                ]
+              },
+              "target_assignment": "minus",
+              "target_residuals": {
+                "minus": 2.482534153247273e-16,
+                "plus": 1.7107263879541728
+              },
+              "wedge_deg": 1.696295830113876e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 7.850462293418876e-17,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 1.1604950101934213e-07,
+                  "coarse": 0.00018016779572983064,
+                  "fine": 0.00018028384523085
+                },
+                "red": {
+                  "absolute_difference": 3.705028945825289e-08,
+                  "coarse": 0.00011041961458134771,
+                  "fine": 0.00011045666487080597
+                }
+              },
+              "faces": [
+                1,
+                8,
+                6,
+                2
+              ],
+              "fixed_outgoing_direction": [
+                -0.4938441702975688,
+                0.8553631939770865,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.5,
+                  -0.8660254037844387,
+                  0.0
+                ],
+                [
+                  0.8660254037844387,
+                  -0.5000000000000002,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": 1.2063302474774457e-15,
+                "red": 5.155369359468229e-16
+              },
+              "production_probe_valid_count": {
+                "blue": 3,
+                "red": 3
+              },
+              "support_intervals": {
+                "blue": [
+                  {
+                    "end_rad": 2.007619414024133,
+                    "start_rad": 1.3284479748247024,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          1.3284479718988664,
+                          1.3284479777505387
+                        ],
+                        "bracket_width_rad": 5.851672257861651e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 2.0579350718182863e-09,
+                        "theta_rad": 1.3284479748247024
+                      },
+                      {
+                        "bracket": [
+                          2.007619411098297,
+                          2.007619416949969
+                        ],
+                        "bracket_width_rad": 5.851672035817046e-09,
+                        "left_active": true,
+                        "left_weight": 1.395818869017934e-09,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 2.007619414024133
+                      }
+                    ],
+                    "wraps_period": false
+                  }
+                ],
+                "red": [
+                  {
+                    "end_rad": 2.019767561826107,
+                    "start_rad": 1.3284490515324088,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          1.3284490486065725,
+                          1.328449054458245
+                        ],
+                        "bracket_width_rad": 5.851672479906256e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 1.7358608864347391e-09,
+                        "theta_rad": 1.3284490515324088
+                      },
+                      {
+                        "bracket": [
+                          2.019767558900271,
+                          2.019767564751943
+                        ],
+                        "bracket_width_rad": 5.851672035817046e-09,
+                        "left_active": true,
+                        "left_weight": 1.2031769393303561e-09,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 2.019767561826107
+                      }
+                    ],
+                    "wraps_period": false
+                  }
+                ]
+              },
+              "target_assignment": "plus",
+              "target_residuals": {
+                "minus": 1.7107263879541728,
+                "plus": 3.1401849173675503e-16
+              },
+              "wedge_deg": 1.6962958301138756e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 1.5700924586837752e-16,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                },
+                "red": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                }
+              },
+              "faces": [
+                2,
+                3,
+                5,
+                1
+              ],
+              "fixed_outgoing_direction": [
+                -0.493844170297569,
+                -0.8553631939770863,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.5,
+                  0.8660254037844387,
+                  0.0
+                ],
+                [
+                  -0.8660254037844387,
+                  -0.5000000000000002,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": null,
+                "red": null
+              },
+              "production_probe_valid_count": {
+                "blue": 0,
+                "red": 0
+              },
+              "support_intervals": {
+                "blue": [],
+                "red": []
+              },
+              "target_assignment": "minus",
+              "target_residuals": {
+                "minus": 0.0,
+                "plus": 1.7107263879541725
+              },
+              "wedge_deg": 1.6962958301138756e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 7.850462293418876e-17,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                },
+                "red": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                }
+              },
+              "faces": [
+                2,
+                3,
+                7,
+                1
+              ],
+              "fixed_outgoing_direction": [
+                -0.49384417029756855,
+                0.8553631939770866,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.4999999999999998,
+                  -0.8660254037844388,
+                  0.0
+                ],
+                [
+                  0.8660254037844388,
+                  -0.4999999999999998,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": null,
+                "red": null
+              },
+              "production_probe_valid_count": {
+                "blue": 0,
+                "red": 0
+              },
+              "support_intervals": {
+                "blue": [],
+                "red": []
+              },
+              "target_assignment": "plus",
+              "target_residuals": {
+                "minus": 1.710726387954173,
+                "plus": 5.551115123125783e-16
+              },
+              "wedge_deg": 1.6962958301138756e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 1.5700924586837752e-16,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                },
+                "red": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                }
+              },
+              "faces": [
+                2,
+                4,
+                6,
+                1
+              ],
+              "fixed_outgoing_direction": [
+                -0.493844170297569,
+                -0.8553631939770863,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.5,
+                  0.8660254037844387,
+                  0.0
+                ],
+                [
+                  -0.8660254037844387,
+                  -0.5000000000000002,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": null,
+                "red": null
+              },
+              "production_probe_valid_count": {
+                "blue": 0,
+                "red": 0
+              },
+              "support_intervals": {
+                "blue": [],
+                "red": []
+              },
+              "target_assignment": "minus",
+              "target_residuals": {
+                "minus": 0.0,
+                "plus": 1.7107263879541725
+              },
+              "wedge_deg": 1.6962958301138756e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 7.850462293418876e-17,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                },
+                "red": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                }
+              },
+              "faces": [
+                2,
+                4,
+                8,
+                1
+              ],
+              "fixed_outgoing_direction": [
+                -0.4938441702975689,
+                0.8553631939770867,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.5000000000000001,
+                  -0.8660254037844389,
+                  0.0
+                ],
+                [
+                  0.8660254037844389,
+                  -0.4999999999999999,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": null,
+                "red": null
+              },
+              "production_probe_valid_count": {
+                "blue": 0,
+                "red": 0
+              },
+              "support_intervals": {
+                "blue": [],
+                "red": []
+              },
+              "target_assignment": "plus",
+              "target_residuals": {
+                "minus": 1.710726387954173,
+                "plus": 4.577566798522237e-16
+              },
+              "wedge_deg": 1.696295830113876e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 7.850462293418876e-17,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                },
+                "red": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                }
+              },
+              "faces": [
+                2,
+                5,
+                3,
+                1
+              ],
+              "fixed_outgoing_direction": [
+                -0.4938441702975688,
+                0.8553631939770865,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.5,
+                  -0.8660254037844387,
+                  0.0
+                ],
+                [
+                  0.8660254037844387,
+                  -0.5000000000000002,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": null,
+                "red": null
+              },
+              "production_probe_valid_count": {
+                "blue": 0,
+                "red": 0
+              },
+              "support_intervals": {
+                "blue": [],
+                "red": []
+              },
+              "target_assignment": "plus",
+              "target_residuals": {
+                "minus": 1.7107263879541728,
+                "plus": 3.1401849173675503e-16
+              },
+              "wedge_deg": 1.6962958301138756e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 2.3714374201337736e-16,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                },
+                "red": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                }
+              },
+              "faces": [
+                2,
+                5,
+                7,
+                1
+              ],
+              "fixed_outgoing_direction": [
+                -0.49384417029756933,
+                -0.8553631939770862,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.5000000000000003,
+                  0.8660254037844388,
+                  0.0
+                ],
+                [
+                  -0.8660254037844386,
+                  -0.5000000000000002,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": null,
+                "red": null
+              },
+              "production_probe_valid_count": {
+                "blue": 0,
+                "red": 0
+              },
+              "support_intervals": {
+                "blue": [],
+                "red": []
+              },
+              "target_assignment": "minus",
+              "target_residuals": {
+                "minus": 3.510833468576701e-16,
+                "plus": 1.7107263879541725
+              },
+              "wedge_deg": 1.696295830113876e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 7.850462293418876e-17,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                },
+                "red": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                }
+              },
+              "faces": [
+                2,
+                6,
+                4,
+                1
+              ],
+              "fixed_outgoing_direction": [
+                -0.4938441702975688,
+                0.8553631939770865,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.5,
+                  -0.8660254037844387,
+                  0.0
+                ],
+                [
+                  0.8660254037844387,
+                  -0.5000000000000002,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": null,
+                "red": null
+              },
+              "production_probe_valid_count": {
+                "blue": 0,
+                "red": 0
+              },
+              "support_intervals": {
+                "blue": [],
+                "red": []
+              },
+              "target_assignment": "plus",
+              "target_residuals": {
+                "minus": 1.7107263879541728,
+                "plus": 3.1401849173675503e-16
+              },
+              "wedge_deg": 1.6962958301138756e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 1.5700924586837752e-16,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                },
+                "red": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                }
+              },
+              "faces": [
+                2,
+                6,
+                8,
+                1
+              ],
+              "fixed_outgoing_direction": [
+                -0.493844170297569,
+                -0.8553631939770863,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.5,
+                  0.8660254037844387,
+                  0.0
+                ],
+                [
+                  -0.8660254037844387,
+                  -0.5000000000000002,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": null,
+                "red": null
+              },
+              "production_probe_valid_count": {
+                "blue": 0,
+                "red": 0
+              },
+              "support_intervals": {
+                "blue": [],
+                "red": []
+              },
+              "target_assignment": "minus",
+              "target_residuals": {
+                "minus": 0.0,
+                "plus": 1.7107263879541725
+              },
+              "wedge_deg": 1.6962958301138756e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 0.0,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                },
+                "red": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                }
+              },
+              "faces": [
+                2,
+                7,
+                3,
+                1
+              ],
+              "fixed_outgoing_direction": [
+                -0.4938441702975688,
+                -0.8553631939770864,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.4999999999999998,
+                  0.8660254037844388,
+                  0.0
+                ],
+                [
+                  -0.8660254037844388,
+                  -0.4999999999999998,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": null,
+                "red": null
+              },
+              "production_probe_valid_count": {
+                "blue": 0,
+                "red": 0
+              },
+              "support_intervals": {
+                "blue": [],
+                "red": []
+              },
+              "target_assignment": "minus",
+              "target_residuals": {
+                "minus": 2.482534153247273e-16,
+                "plus": 1.7107263879541725
+              },
+              "wedge_deg": 1.6962958301138756e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 2.5438405243138006e-16,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                },
+                "red": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                }
+              },
+              "faces": [
+                2,
+                7,
+                5,
+                1
+              ],
+              "fixed_outgoing_direction": [
+                -0.4938441702975691,
+                0.8553631939770866,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.5000000000000003,
+                  -0.8660254037844386,
+                  0.0
+                ],
+                [
+                  0.8660254037844388,
+                  -0.5000000000000002,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": null,
+                "red": null
+              },
+              "production_probe_valid_count": {
+                "blue": 0,
+                "red": 0
+              },
+              "support_intervals": {
+                "blue": [],
+                "red": []
+              },
+              "target_assignment": "plus",
+              "target_residuals": {
+                "minus": 1.710726387954173,
+                "plus": 3.510833468576701e-16
+              },
+              "wedge_deg": 1.696295830113876e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 3.1401849173675503e-16,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                },
+                "red": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                }
+              },
+              "faces": [
+                2,
+                8,
+                4,
+                1
+              ],
+              "fixed_outgoing_direction": [
+                -0.4938441702975691,
+                -0.8553631939770865,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.5000000000000001,
+                  0.8660254037844389,
+                  0.0
+                ],
+                [
+                  -0.8660254037844389,
+                  -0.4999999999999999,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": null,
+                "red": null
+              },
+              "production_probe_valid_count": {
+                "blue": 0,
+                "red": 0
+              },
+              "support_intervals": {
+                "blue": [],
+                "red": []
+              },
+              "target_assignment": "minus",
+              "target_residuals": {
+                "minus": 2.482534153247273e-16,
+                "plus": 1.7107263879541728
+              },
+              "wedge_deg": 1.696295830113876e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 7.850462293418876e-17,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                },
+                "red": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                }
+              },
+              "faces": [
+                2,
+                8,
+                6,
+                1
+              ],
+              "fixed_outgoing_direction": [
+                -0.4938441702975688,
+                0.8553631939770865,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.5,
+                  -0.8660254037844387,
+                  0.0
+                ],
+                [
+                  0.8660254037844387,
+                  -0.5000000000000002,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": null,
+                "red": null
+              },
+              "production_probe_valid_count": {
+                "blue": 0,
+                "red": 0
+              },
+              "support_intervals": {
+                "blue": [],
+                "red": []
+              },
+              "target_assignment": "plus",
+              "target_residuals": {
+                "minus": 1.7107263879541728,
+                "plus": 3.1401849173675503e-16
+              },
+              "wedge_deg": 1.6962958301138756e-15
+            }
+          ],
+          "orbit_kind": "L1/PBD label orbit; no L2 physical-equivalence claim",
+          "representative": [
+            1,
+            3,
+            5,
+            2
+          ],
+          "snapshots": {
+            "array_prefix": "plate_blue_snapshots",
+            "max_R_ez_minus_ez": 0.0,
+            "max_R_u_minus_sun": 2.2667383064010313e-16,
+            "max_target_residual": {
+              "blue": 1.2228213315207787e-15,
+              "red": 4.685680459230494e-16
+            },
+            "member": [
+              1,
+              3,
+              5,
+              2
+            ],
+            "negative_pose": {
+              "body_sun_projection_residual": 1.5700924586837752e-16,
+              "horizontal_family_residual": 0.1721654218555424,
+              "left_world_sun_axis_rotation_deg": 10.0,
+              "target_residual": {
+                "blue": 0.15447579477051446,
+                "red": 0.15447579477051213
+              },
+              "valid": {
+                "blue": true,
+                "red": true
+              }
+            },
+            "pose_count": 5,
+            "target_assignment": "minus"
+          },
+          "target_energy": {
+            "class_total": {
+              "blue": {
+                "absolute_difference": 3.197804426095102e-06,
+                "coarse": 0.00784366877488082,
+                "fine": 0.007840470970454726
+              },
+              "red": {
+                "absolute_difference": 8.231473213543908e-07,
+                "coarse": 0.005140937784080604,
+                "fine": 0.00514011463675925
+              }
+            },
+            "minus": {
+              "blue": {
+                "absolute_difference": 1.598902213044949e-06,
+                "coarse": 0.003921834387440416,
+                "fine": 0.003920235485227371
+              },
+              "red": {
+                "absolute_difference": 4.1157366067632803e-07,
+                "coarse": 0.002570468892040305,
+                "fine": 0.002570057318379629
+              }
+            },
+            "other": {
+              "blue": {
+                "absolute_difference": 0,
+                "coarse": 0,
+                "fine": 0
+              },
+              "red": {
+                "absolute_difference": 0,
+                "coarse": 0,
+                "fine": 0
+              }
+            },
+            "plus": {
+              "blue": {
+                "absolute_difference": 1.5989022130501532e-06,
+                "coarse": 0.003921834387440404,
+                "fine": 0.003920235485227354
+              },
+              "red": {
+                "absolute_difference": 4.1157366067762907e-07,
+                "coarse": 0.0025704688920402986,
+                "fine": 0.002570057318379621
+              }
+            },
+            "target_ratios": {
+              "minus": {
+                "blue_red": 1.5253494376144898,
+                "status": "available"
+              },
+              "other": {
+                "blue_red": null,
+                "status": "unavailable"
+              },
+              "plus": {
+                "blue_red": 1.525349437614488,
+                "status": "available"
+              }
+            }
+          }
+        },
+        "white": {
+          "auxiliary_diagnose_class": {
+            "color": "white",
+            "kind": "none",
+            "lit_members": {
+              "blue": [
+                [
+                  1,
+                  3,
+                  4,
+                  2
+                ],
+                [
+                  1,
+                  3,
+                  8,
+                  2
+                ],
+                [
+                  1,
+                  4,
+                  3,
+                  2
+                ],
+                [
+                  1,
+                  4,
+                  5,
+                  2
+                ],
+                [
+                  1,
+                  5,
+                  4,
+                  2
+                ],
+                [
+                  1,
+                  5,
+                  6,
+                  2
+                ],
+                [
+                  1,
+                  6,
+                  5,
+                  2
+                ],
+                [
+                  1,
+                  6,
+                  7,
+                  2
+                ],
+                [
+                  1,
+                  7,
+                  6,
+                  2
+                ],
+                [
+                  1,
+                  7,
+                  8,
+                  2
+                ],
+                [
+                  1,
+                  8,
+                  3,
+                  2
+                ],
+                [
+                  1,
+                  8,
+                  7,
+                  2
+                ]
+              ],
+              "red": [
+                [
+                  1,
+                  3,
+                  4,
+                  2
+                ],
+                [
+                  1,
+                  3,
+                  8,
+                  2
+                ],
+                [
+                  1,
+                  4,
+                  3,
+                  2
+                ],
+                [
+                  1,
+                  4,
+                  5,
+                  2
+                ],
+                [
+                  1,
+                  5,
+                  4,
+                  2
+                ],
+                [
+                  1,
+                  5,
+                  6,
+                  2
+                ],
+                [
+                  1,
+                  6,
+                  5,
+                  2
+                ],
+                [
+                  1,
+                  6,
+                  7,
+                  2
+                ],
+                [
+                  1,
+                  7,
+                  6,
+                  2
+                ],
+                [
+                  1,
+                  7,
+                  8,
+                  2
+                ],
+                [
+                  1,
+                  8,
+                  3,
+                  2
+                ],
+                [
+                  1,
+                  8,
+                  7,
+                  2
+                ]
+              ]
+            },
+            "ratio": 1.0102373432618068,
+            "role": "qualitative class-level cross-check, not the per-target energy authority",
+            "samples": 4096
+          },
+          "lit_members": {
+            "blue": [
+              [
+                1,
+                3,
+                4,
+                2
+              ],
+              [
+                1,
+                3,
+                8,
+                2
+              ],
+              [
+                1,
+                4,
+                3,
+                2
+              ],
+              [
+                1,
+                4,
+                5,
+                2
+              ],
+              [
+                1,
+                5,
+                4,
+                2
+              ],
+              [
+                1,
+                5,
+                6,
+                2
+              ],
+              [
+                1,
+                6,
+                5,
+                2
+              ],
+              [
+                1,
+                6,
+                7,
+                2
+              ],
+              [
+                1,
+                7,
+                6,
+                2
+              ],
+              [
+                1,
+                7,
+                8,
+                2
+              ],
+              [
+                1,
+                8,
+                3,
+                2
+              ],
+              [
+                1,
+                8,
+                7,
+                2
+              ]
+            ],
+            "red": [
+              [
+                1,
+                3,
+                4,
+                2
+              ],
+              [
+                1,
+                3,
+                8,
+                2
+              ],
+              [
+                1,
+                4,
+                3,
+                2
+              ],
+              [
+                1,
+                4,
+                5,
+                2
+              ],
+              [
+                1,
+                5,
+                4,
+                2
+              ],
+              [
+                1,
+                5,
+                6,
+                2
+              ],
+              [
+                1,
+                6,
+                5,
+                2
+              ],
+              [
+                1,
+                6,
+                7,
+                2
+              ],
+              [
+                1,
+                7,
+                6,
+                2
+              ],
+              [
+                1,
+                7,
+                8,
+                2
+              ],
+              [
+                1,
+                8,
+                3,
+                2
+              ],
+              [
+                1,
+                8,
+                7,
+                2
+              ]
+            ]
+          },
+          "members": [
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 7.850462293418876e-17,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 2.2032043251428435e-09,
+                  "coarse": 0.0008910062690005703,
+                  "fine": 0.0008910040657962451
+                },
+                "red": {
+                  "absolute_difference": 2.4990928345833274e-09,
+                  "coarse": 0.0008701190164447229,
+                  "fine": 0.0008701215155375575
+                }
+              },
+              "faces": [
+                1,
+                3,
+                4,
+                2
+              ],
+              "fixed_outgoing_direction": [
+                -0.4938441702975688,
+                0.8553631939770865,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.5,
+                  -0.8660254037844387,
+                  0.0
+                ],
+                [
+                  0.8660254037844387,
+                  -0.5000000000000002,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": 1.1500994243130258e-15,
+                "red": 3.2957919968262575e-16
+              },
+              "production_probe_valid_count": {
+                "blue": 3,
+                "red": 3
+              },
+              "support_intervals": {
+                "blue": [
+                  {
+                    "end_rad": 5.759586185357341,
+                    "start_rad": 4.7123932140696105,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          4.712393211143774,
+                          4.712393216995446
+                        ],
+                        "bracket_width_rad": 5.851672035817046e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 2.275430860895787e-08,
+                        "theta_rad": 4.7123932140696105
+                      },
+                      {
+                        "bracket": [
+                          5.759586182431505,
+                          5.759586188283177
+                        ],
+                        "bracket_width_rad": 5.851672035817046e-09,
+                        "left_active": true,
+                        "left_weight": 2.289020917413191e-08,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 5.759586185357341
+                      }
+                    ],
+                    "wraps_period": false
+                  }
+                ],
+                "red": [
+                  {
+                    "end_rad": 5.759586179505669,
+                    "start_rad": 4.7123938928636,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          4.712393889937764,
+                          4.712393895789436
+                        ],
+                        "bracket_width_rad": 5.851672035817046e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 8.929967856534229e-09,
+                        "theta_rad": 4.7123938928636
+                      },
+                      {
+                        "bracket": [
+                          5.759586176579832,
+                          5.759586182431505
+                        ],
+                        "bracket_width_rad": 5.851672923995466e-09,
+                        "left_active": true,
+                        "left_weight": 8.948881492912941e-09,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 5.759586179505669
+                      }
+                    ],
+                    "wraps_period": false
+                  }
+                ]
+              },
+              "target_assignment": "plus",
+              "target_residuals": {
+                "minus": 1.7107263879541728,
+                "plus": 3.1401849173675503e-16
+              },
+              "wedge_deg": 1.6962958301138756e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 1.5700924586837752e-16,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 2.2032043251428435e-09,
+                  "coarse": 0.0008910062690005713,
+                  "fine": 0.0008910040657962462
+                },
+                "red": {
+                  "absolute_difference": 2.4990928345833274e-09,
+                  "coarse": 0.000870119016444724,
+                  "fine": 0.0008701215155375586
+                }
+              },
+              "faces": [
+                1,
+                3,
+                8,
+                2
+              ],
+              "fixed_outgoing_direction": [
+                -0.493844170297569,
+                -0.8553631939770863,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.5,
+                  0.8660254037844387,
+                  0.0
+                ],
+                [
+                  -0.8660254037844387,
+                  -0.5000000000000002,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": 1.1857187100668868e-15,
+                "red": 3.973993651728112e-16
+              },
+              "production_probe_valid_count": {
+                "blue": 3,
+                "red": 3
+              },
+              "support_intervals": {
+                "blue": [
+                  {
+                    "end_rad": 1.5707920931099753,
+                    "start_rad": 0.5235991218222441,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          0.523599118896408,
+                          0.5235991247480802
+                        ],
+                        "bracket_width_rad": 5.851672257861651e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 2.2890209134986965e-08,
+                        "theta_rad": 0.5235991218222441
+                      },
+                      {
+                        "bracket": [
+                          1.570792090184139,
+                          1.5707920960358113
+                        ],
+                        "bracket_width_rad": 5.851672257861651e-09,
+                        "left_active": true,
+                        "left_weight": 2.2754308619059792e-08,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 1.5707920931099753
+                      }
+                    ],
+                    "wraps_period": false
+                  }
+                ],
+                "red": [
+                  {
+                    "end_rad": 1.5707914143159865,
+                    "start_rad": 0.5235991276739165,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          0.5235991247480802,
+                          0.5235991305997526
+                        ],
+                        "bracket_width_rad": 5.851672368883953e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 8.948881463173105e-09,
+                        "theta_rad": 0.5235991276739165
+                      },
+                      {
+                        "bracket": [
+                          1.5707914113901502,
+                          1.5707914172418227
+                        ],
+                        "bracket_width_rad": 5.851672479906256e-09,
+                        "left_active": true,
+                        "left_weight": 8.929967854551495e-09,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 1.5707914143159865
+                      }
+                    ],
+                    "wraps_period": false
+                  }
+                ]
+              },
+              "target_assignment": "minus",
+              "target_residuals": {
+                "minus": 0.0,
+                "plus": 1.7107263879541725
+              },
+              "wedge_deg": 1.6962958301138756e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 1.5700924586837752e-16,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 1.4493411369057713e-09,
+                  "coarse": 0.0008910023518252496,
+                  "fine": 0.0008910038011663865
+                },
+                "red": {
+                  "absolute_difference": 2.2140566872616042e-08,
+                  "coarse": 0.0008701393177534138,
+                  "fine": 0.0008701171771865412
+                }
+              },
+              "faces": [
+                1,
+                4,
+                3,
+                2
+              ],
+              "fixed_outgoing_direction": [
+                -0.493844170297569,
+                -0.8553631939770863,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.5,
+                  0.8660254037844387,
+                  0.0
+                ],
+                [
+                  -0.8660254037844387,
+                  -0.5000000000000002,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": 1.1647424834813783e-15,
+                "red": 3.608224830031759e-16
+              },
+              "production_probe_valid_count": {
+                "blue": 3,
+                "red": 3
+              },
+              "support_intervals": {
+                "blue": [
+                  {
+                    "end_rad": 6.806783738504497,
+                    "start_rad": 5.759590767216766,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          5.75959076429093,
+                          5.759590770142602
+                        ],
+                        "bracket_width_rad": 5.851672035817046e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 2.2764785015771323e-08,
+                        "theta_rad": 5.759590767216766
+                      },
+                      {
+                        "bracket": [
+                          0.5235984283990746,
+                          0.5235984342507469
+                        ],
+                        "bracket_width_rad": 5.851672368883953e-09,
+                        "left_active": true,
+                        "left_weight": 2.2762330843417137e-08,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 0.5235984313249107
+                      }
+                    ],
+                    "wraps_period": true
+                  }
+                ],
+                "red": [
+                  {
+                    "end_rad": 6.806783726801152,
+                    "start_rad": 5.759591446010754,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          5.759591443084918,
+                          5.7595914489365905
+                        ],
+                        "bracket_width_rad": 5.851672035817046e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 8.933511885838108e-09,
+                        "theta_rad": 5.759591446010754
+                      },
+                      {
+                        "bracket": [
+                          0.5235984166957299,
+                          0.5235984225474022
+                        ],
+                        "bracket_width_rad": 5.851672257861651e-09,
+                        "left_active": true,
+                        "left_weight": 9.0472214194008e-09,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 0.5235984196215661
+                      }
+                    ],
+                    "wraps_period": true
+                  }
+                ]
+              },
+              "target_assignment": "minus",
+              "target_residuals": {
+                "minus": 0.0,
+                "plus": 1.7107263879541725
+              },
+              "wedge_deg": 1.6962958301138756e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 7.850462293418876e-17,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 1.3562059504937385e-10,
+                  "coarse": 0.0032038847037932482,
+                  "fine": 0.0032038848394138433
+                },
+                "red": {
+                  "absolute_difference": 1.3204212438288482e-08,
+                  "coarse": 0.0031972220214424914,
+                  "fine": 0.0031972352256549297
+                }
+              },
+              "faces": [
+                1,
+                4,
+                5,
+                2
+              ],
+              "fixed_outgoing_direction": [
+                -0.4938441702975689,
+                0.8553631939770867,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.5000000000000001,
+                  -0.8660254037844389,
+                  0.0
+                ],
+                [
+                  0.8660254037844389,
+                  -0.4999999999999999,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": 1.2228213315207787e-15,
+                "red": 5.959374814064025e-16
+              },
+              "production_probe_valid_count": {
+                "blue": 3,
+                "red": 3
+              },
+              "support_intervals": {
+                "blue": [
+                  {
+                    "end_rad": 4.712388632210187,
+                    "start_rad": 3.6651917754120373,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          3.6651917724862013,
+                          3.6651917783378734
+                        ],
+                        "bracket_width_rad": 5.851672035817046e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 2.2890209122359543e-08,
+                        "theta_rad": 3.6651917754120373
+                      },
+                      {
+                        "bracket": [
+                          4.712388629284351,
+                          4.712388635136023
+                        ],
+                        "bracket_width_rad": 5.851672035817046e-09,
+                        "left_active": true,
+                        "left_weight": 2.301808740738401e-08,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 4.712388632210187
+                      }
+                    ],
+                    "wraps_period": false
+                  }
+                ],
+                "red": [
+                  {
+                    "end_rad": 4.712388626358514,
+                    "start_rad": 3.66519178126371,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          3.6651917783378734,
+                          3.665191784189546
+                        ],
+                        "bracket_width_rad": 5.851672479906256e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 8.94888146119046e-09,
+                        "theta_rad": 3.66519178126371
+                      },
+                      {
+                        "bracket": [
+                          4.712388623432679,
+                          4.712388629284351
+                        ],
+                        "bracket_width_rad": 5.851672035817046e-09,
+                        "left_active": true,
+                        "left_weight": 8.998051432139385e-09,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 4.712388626358514
+                      }
+                    ],
+                    "wraps_period": false
+                  }
+                ]
+              },
+              "target_assignment": "plus",
+              "target_residuals": {
+                "minus": 1.710726387954173,
+                "plus": 4.577566798522237e-16
+              },
+              "wedge_deg": 1.696295830113876e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 3.1401849173675503e-16,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 1.3562059504937385e-10,
+                  "coarse": 0.0032038847037932482,
+                  "fine": 0.0032038848394138433
+                },
+                "red": {
+                  "absolute_difference": 1.3204212438722163e-08,
+                  "coarse": 0.003197222021442491,
+                  "fine": 0.0031972352256549297
+                }
+              },
+              "faces": [
+                1,
+                5,
+                4,
+                2
+              ],
+              "fixed_outgoing_direction": [
+                -0.4938441702975691,
+                -0.8553631939770865,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.5000000000000001,
+                  0.8660254037844389,
+                  0.0
+                ],
+                [
+                  -0.8660254037844389,
+                  -0.4999999999999999,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": 1.2316096882532984e-15,
+                "red": 5.748822300757345e-16
+              },
+              "production_probe_valid_count": {
+                "blue": 3,
+                "red": 3
+              },
+              "support_intervals": {
+                "blue": [
+                  {
+                    "end_rad": 5.759586185357341,
+                    "start_rad": 4.712389328559192,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          4.712389325633357,
+                          4.712389331485029
+                        ],
+                        "bracket_width_rad": 5.851672035817046e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 2.301808740632963e-08,
+                        "theta_rad": 4.712389328559192
+                      },
+                      {
+                        "bracket": [
+                          5.759586182431505,
+                          5.759586188283177
+                        ],
+                        "bracket_width_rad": 5.851672035817046e-09,
+                        "left_active": true,
+                        "left_weight": 2.289020918802205e-08,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 5.759586185357341
+                      }
+                    ],
+                    "wraps_period": false
+                  }
+                ],
+                "red": [
+                  {
+                    "end_rad": 5.759586179505669,
+                    "start_rad": 4.712389334410865,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          4.712389331485029,
+                          4.712389337336701
+                        ],
+                        "bracket_width_rad": 5.851672035817046e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 8.9980514317207e-09,
+                        "theta_rad": 4.712389334410865
+                      },
+                      {
+                        "bracket": [
+                          5.759586176579832,
+                          5.759586182431505
+                        ],
+                        "bracket_width_rad": 5.851672923995466e-09,
+                        "left_active": true,
+                        "left_weight": 8.948881494895582e-09,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 5.759586179505669
+                      }
+                    ],
+                    "wraps_period": false
+                  }
+                ]
+              },
+              "target_assignment": "minus",
+              "target_residuals": {
+                "minus": 2.482534153247273e-16,
+                "plus": 1.7107263879541728
+              },
+              "wedge_deg": 1.696295830113876e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 7.850462293418876e-17,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 1.4493411369057713e-09,
+                  "coarse": 0.0008910023518252518,
+                  "fine": 0.0008910038011663887
+                },
+                "red": {
+                  "absolute_difference": 2.2140566872616042e-08,
+                  "coarse": 0.0008701393177534155,
+                  "fine": 0.0008701171771865429
+                }
+              },
+              "faces": [
+                1,
+                5,
+                6,
+                2
+              ],
+              "fixed_outgoing_direction": [
+                -0.4938441702975688,
+                0.8553631939770865,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.5,
+                  -0.8660254037844387,
+                  0.0
+                ],
+                [
+                  0.8660254037844387,
+                  -0.5000000000000002,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": 1.1909050386352223e-15,
+                "red": 3.775166431889533e-16
+              },
+              "production_probe_valid_count": {
+                "blue": 3,
+                "red": 3
+              },
+              "support_intervals": {
+                "blue": [
+                  {
+                    "end_rad": 3.665187193552613,
+                    "start_rad": 2.6179942222648824,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          2.6179942193390464,
+                          2.617994225190719
+                        ],
+                        "bracket_width_rad": 5.851672479906256e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 2.2762330904028654e-08,
+                        "theta_rad": 2.6179942222648824
+                      },
+                      {
+                        "bracket": [
+                          3.665187190626777,
+                          3.665187196478449
+                        ],
+                        "bracket_width_rad": 5.851672035817046e-09,
+                        "left_active": true,
+                        "left_weight": 2.276478501577131e-08,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 3.665187193552613
+                      }
+                    ],
+                    "wraps_period": false
+                  }
+                ],
+                "red": [
+                  {
+                    "end_rad": 3.6651865147586244,
+                    "start_rad": 2.6179942339682274,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          2.617994231042391,
+                          2.6179942368940634
+                        ],
+                        "bracket_width_rad": 5.851672479906256e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 9.047221425348782e-09,
+                        "theta_rad": 2.6179942339682274
+                      },
+                      {
+                        "bracket": [
+                          3.665186511832788,
+                          3.6651865176844605
+                        ],
+                        "bracket_width_rad": 5.851672479906256e-09,
+                        "left_active": true,
+                        "left_weight": 8.933511888564586e-09,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 3.6651865147586244
+                      }
+                    ],
+                    "wraps_period": false
+                  }
+                ]
+              },
+              "target_assignment": "plus",
+              "target_residuals": {
+                "minus": 1.7107263879541728,
+                "plus": 3.1401849173675503e-16
+              },
+              "wedge_deg": 1.6962958301138756e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 1.5700924586837752e-16,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 2.203204324817583e-09,
+                  "coarse": 0.0008910062690005707,
+                  "fine": 0.0008910040657962459
+                },
+                "red": {
+                  "absolute_difference": 2.4990928344749072e-09,
+                  "coarse": 0.0008701190164447234,
+                  "fine": 0.0008701215155375579
+                }
+              },
+              "faces": [
+                1,
+                6,
+                5,
+                2
+              ],
+              "fixed_outgoing_direction": [
+                -0.493844170297569,
+                -0.8553631939770863,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.5,
+                  0.8660254037844387,
+                  0.0
+                ],
+                [
+                  -0.8660254037844387,
+                  -0.5000000000000002,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": 1.2228213315207787e-15,
+                "red": 4.685680459230494e-16
+              },
+              "production_probe_valid_count": {
+                "blue": 3,
+                "red": 3
+              },
+              "support_intervals": {
+                "blue": [
+                  {
+                    "end_rad": 4.712384746699769,
+                    "start_rad": 3.6651917754120373,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          3.6651917724862013,
+                          3.6651917783378734
+                        ],
+                        "bracket_width_rad": 5.851672035817046e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 2.28902091147831e-08,
+                        "theta_rad": 3.6651917754120373
+                      },
+                      {
+                        "bracket": [
+                          4.712384743773933,
+                          4.712384749625605
+                        ],
+                        "bracket_width_rad": 5.851672035817046e-09,
+                        "left_active": true,
+                        "left_weight": 2.275430860390691e-08,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 4.712384746699769
+                      }
+                    ],
+                    "wraps_period": false
+                  }
+                ],
+                "red": [
+                  {
+                    "end_rad": 4.712384067905779,
+                    "start_rad": 3.66519178126371,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          3.6651917783378734,
+                          3.665191784189546
+                        ],
+                        "bracket_width_rad": 5.851672479906256e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 8.94888145920782e-09,
+                        "theta_rad": 3.66519178126371
+                      },
+                      {
+                        "bracket": [
+                          4.712384064979943,
+                          4.712384070831615
+                        ],
+                        "bracket_width_rad": 5.851672035817046e-09,
+                        "left_active": true,
+                        "left_weight": 8.929967850585907e-09,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 4.712384067905779
+                      }
+                    ],
+                    "wraps_period": false
+                  }
+                ]
+              },
+              "target_assignment": "minus",
+              "target_residuals": {
+                "minus": 0.0,
+                "plus": 1.7107263879541725
+              },
+              "wedge_deg": 1.6962958301138756e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 7.850462293418876e-17,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 2.203204324926003e-09,
+                  "coarse": 0.0008910062690005696,
+                  "fine": 0.0008910040657962447
+                },
+                "red": {
+                  "absolute_difference": 2.4990928345833274e-09,
+                  "coarse": 0.0008701190164447224,
+                  "fine": 0.0008701215155375569
+                }
+              },
+              "faces": [
+                1,
+                6,
+                7,
+                2
+              ],
+              "fixed_outgoing_direction": [
+                -0.49384417029756855,
+                0.8553631939770866,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.4999999999999998,
+                  -0.8660254037844388,
+                  0.0
+                ],
+                [
+                  0.8660254037844388,
+                  -0.4999999999999998,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": 1.155445644523892e-15,
+                "red": 3.815760786470701e-16
+              },
+              "production_probe_valid_count": {
+                "blue": 3,
+                "red": 3
+              },
+              "support_intervals": {
+                "blue": [
+                  {
+                    "end_rad": 2.617993531767549,
+                    "start_rad": 1.5708005604798179,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          1.5708005575539818,
+                          1.570800563405654
+                        ],
+                        "bracket_width_rad": 5.851672257861651e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 2.2754308619059792e-08,
+                        "theta_rad": 1.5708005604798179
+                      },
+                      {
+                        "bracket": [
+                          2.617993528841713,
+                          2.617993534693385
+                        ],
+                        "bracket_width_rad": 5.851672035817046e-09,
+                        "left_active": true,
+                        "left_weight": 2.2890209089528298e-08,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 2.617993531767549
+                      }
+                    ],
+                    "wraps_period": false
+                  }
+                ],
+                "red": [
+                  {
+                    "end_rad": 2.6179935259158764,
+                    "start_rad": 1.5708012392738067,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          1.5708012363479704,
+                          1.570801242199643
+                        ],
+                        "bracket_width_rad": 5.851672479906256e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 8.929967854551495e-09,
+                        "theta_rad": 1.5708012392738067
+                      },
+                      {
+                        "bracket": [
+                          2.6179935229900404,
+                          2.617993528841713
+                        ],
+                        "bracket_width_rad": 5.851672479906256e-09,
+                        "left_active": true,
+                        "left_weight": 8.948881453259896e-09,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 2.6179935259158764
+                      }
+                    ],
+                    "wraps_period": false
+                  }
+                ]
+              },
+              "target_assignment": "plus",
+              "target_residuals": {
+                "minus": 1.710726387954173,
+                "plus": 5.551115123125783e-16
+              },
+              "wedge_deg": 1.6962958301138756e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 0.0,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 1.4493411369057713e-09,
+                  "coarse": 0.0008910023518252466,
+                  "fine": 0.0008910038011663835
+                },
+                "red": {
+                  "absolute_difference": 2.2140566872724463e-08,
+                  "coarse": 0.0008701393177534104,
+                  "fine": 0.0008701171771865377
+                }
+              },
+              "faces": [
+                1,
+                7,
+                6,
+                2
+              ],
+              "fixed_outgoing_direction": [
+                -0.4938441702975688,
+                -0.8553631939770864,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.4999999999999998,
+                  0.8660254037844388,
+                  0.0
+                ],
+                [
+                  -0.8660254037844388,
+                  -0.4999999999999998,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": 1.1647424834813783e-15,
+                "red": 2.0955000055363631e-16
+              },
+              "production_probe_valid_count": {
+                "blue": 3,
+                "red": 3
+              },
+              "support_intervals": {
+                "blue": [
+                  {
+                    "end_rad": 3.665191084914704,
+                    "start_rad": 2.617998113626973,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          2.617998110701137,
+                          2.6179981165528092
+                        ],
+                        "bracket_width_rad": 5.851672035817046e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 2.27647850138772e-08,
+                        "theta_rad": 2.617998113626973
+                      },
+                      {
+                        "bracket": [
+                          3.6651910819888673,
+                          3.66519108784054
+                        ],
+                        "bracket_width_rad": 5.851672479906256e-09,
+                        "left_active": true,
+                        "left_weight": 2.276233089645221e-08,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 3.665191084914704
+                      }
+                    ],
+                    "wraps_period": false
+                  }
+                ],
+                "red": [
+                  {
+                    "end_rad": 3.665191073211359,
+                    "start_rad": 2.617998792420962,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          2.6179987894951258,
+                          2.6179987953467982
+                        ],
+                        "bracket_width_rad": 5.851672479906256e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 8.93351188757319e-09,
+                        "theta_rad": 2.617998792420962
+                      },
+                      {
+                        "bracket": [
+                          3.665191070285523,
+                          3.6651910761371953
+                        ],
+                        "bracket_width_rad": 5.851672479906256e-09,
+                        "left_active": true,
+                        "left_weight": 9.04722143327935e-09,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 3.665191073211359
+                      }
+                    ],
+                    "wraps_period": false
+                  }
+                ]
+              },
+              "target_assignment": "minus",
+              "target_residuals": {
+                "minus": 2.482534153247273e-16,
+                "plus": 1.7107263879541725
+              },
+              "wedge_deg": 1.6962958301138756e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 2.5438405243138006e-16,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 1.3562059504937385e-10,
+                  "coarse": 0.0032038847037932482,
+                  "fine": 0.0032038848394138433
+                },
+                "red": {
+                  "absolute_difference": 1.3204212438288482e-08,
+                  "coarse": 0.0031972220214424914,
+                  "fine": 0.0031972352256549297
+                }
+              },
+              "faces": [
+                1,
+                7,
+                8,
+                2
+              ],
+              "fixed_outgoing_direction": [
+                -0.4938441702975691,
+                0.8553631939770866,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.5000000000000003,
+                  -0.8660254037844386,
+                  0.0
+                ],
+                [
+                  0.8660254037844388,
+                  -0.5000000000000002,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": 1.2316096882532984e-15,
+                "red": 7.676812899781355e-16
+              },
+              "production_probe_valid_count": {
+                "blue": 3,
+                "red": 3
+              },
+              "support_intervals": {
+                "blue": [
+                  {
+                    "end_rad": 1.5707959786203938,
+                    "start_rad": 0.5235991218222441,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          0.523599118896408,
+                          0.5235991247480802
+                        ],
+                        "bracket_width_rad": 5.851672257861651e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 2.28902091173086e-08,
+                        "theta_rad": 0.5235991218222441
+                      },
+                      {
+                        "bracket": [
+                          1.5707959756945575,
+                          1.57079598154623
+                        ],
+                        "bracket_width_rad": 5.851672479906256e-09,
+                        "left_active": true,
+                        "left_weight": 2.3018087419886662e-08,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 1.5707959786203938
+                      }
+                    ],
+                    "wraps_period": false
+                  }
+                ],
+                "red": [
+                  {
+                    "end_rad": 1.5707959727687215,
+                    "start_rad": 0.5235991276739165,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          0.5235991247480802,
+                          0.5235991305997526
+                        ],
+                        "bracket_width_rad": 5.851672368883953e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 8.948881453259898e-09,
+                        "theta_rad": 0.5235991276739165
+                      },
+                      {
+                        "bracket": [
+                          1.5707959698428853,
+                          1.5707959756945575
+                        ],
+                        "bracket_width_rad": 5.851672257861651e-09,
+                        "left_active": true,
+                        "left_weight": 8.998051442530759e-09,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 1.5707959727687215
+                      }
+                    ],
+                    "wraps_period": false
+                  }
+                ]
+              },
+              "target_assignment": "plus",
+              "target_residuals": {
+                "minus": 1.710726387954173,
+                "plus": 3.510833468576701e-16
+              },
+              "wedge_deg": 1.696295830113876e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 7.850462293418876e-17,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 1.4493411369057713e-09,
+                  "coarse": 0.0008910023518252522,
+                  "fine": 0.0008910038011663891
+                },
+                "red": {
+                  "absolute_difference": 2.2140566872507622e-08,
+                  "coarse": 0.0008701393177534164,
+                  "fine": 0.0008701171771865439
+                }
+              },
+              "faces": [
+                1,
+                8,
+                3,
+                2
+              ],
+              "fixed_outgoing_direction": [
+                -0.4938441702975688,
+                0.8553631939770865,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.5,
+                  -0.8660254037844387,
+                  0.0
+                ],
+                [
+                  0.8660254037844387,
+                  -0.5000000000000002,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": 1.3290834981264242e-15,
+                "red": 6.894341957538586e-16
+              },
+              "production_probe_valid_count": {
+                "blue": 3,
+                "red": 3
+              },
+              "support_intervals": {
+                "blue": [
+                  {
+                    "end_rad": 6.806779847142407,
+                    "start_rad": 5.759586875854675,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          5.759586872928838,
+                          5.75958687878051
+                        ],
+                        "bracket_width_rad": 5.851672035817046e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 2.2762330762601757e-08,
+                        "theta_rad": 5.759586875854675
+                      },
+                      {
+                        "bracket": [
+                          0.5235945370369839,
+                          0.5235945428886563
+                        ],
+                        "bracket_width_rad": 5.851672368883953e-09,
+                        "left_active": true,
+                        "left_weight": 2.2764785017665435e-08,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 0.5235945399628201
+                      }
+                    ],
+                    "wraps_period": true
+                  }
+                ],
+                "red": [
+                  {
+                    "end_rad": 6.806779168348418,
+                    "start_rad": 5.759586887558019,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          5.759586884632183,
+                          5.759586890483855
+                        ],
+                        "bracket_width_rad": 5.851672035817046e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 9.047221397591546e-09,
+                        "theta_rad": 5.759586887558019
+                      },
+                      {
+                        "bracket": [
+                          0.5235938582429951,
+                          0.5235938640946675
+                        ],
+                        "bracket_width_rad": 5.851672368883953e-09,
+                        "left_active": true,
+                        "left_weight": 8.933511887821045e-09,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 0.5235938611688313
+                      }
+                    ],
+                    "wraps_period": true
+                  }
+                ]
+              },
+              "target_assignment": "plus",
+              "target_residuals": {
+                "minus": 1.7107263879541728,
+                "plus": 3.1401849173675503e-16
+              },
+              "wedge_deg": 1.6962958301138756e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 2.3714374201337736e-16,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 1.3562059548305472e-10,
+                  "coarse": 0.0032038847037932465,
+                  "fine": 0.003203884839413842
+                },
+                "red": {
+                  "absolute_difference": 1.3204212438722163e-08,
+                  "coarse": 0.0031972220214424897,
+                  "fine": 0.0031972352256549284
+                }
+              },
+              "faces": [
+                1,
+                8,
+                7,
+                2
+              ],
+              "fixed_outgoing_direction": [
+                -0.49384417029756933,
+                -0.8553631939770862,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.5000000000000003,
+                  0.8660254037844388,
+                  0.0
+                ],
+                [
+                  -0.8660254037844386,
+                  -0.5000000000000002,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": 1.232860053741059e-15,
+                "red": 5.155369359468229e-16
+              },
+              "production_probe_valid_count": {
+                "blue": 3,
+                "red": 3
+              },
+              "support_intervals": {
+                "blue": [
+                  {
+                    "end_rad": 2.617993531767549,
+                    "start_rad": 1.5707966749693993,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          1.570796672043563,
+                          1.5707966778952356
+                        ],
+                        "bracket_width_rad": 5.851672479906256e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 2.3018087406471404e-08,
+                        "theta_rad": 1.5707966749693993
+                      },
+                      {
+                        "bracket": [
+                          2.617993528841713,
+                          2.617993534693385
+                        ],
+                        "bracket_width_rad": 5.851672035817046e-09,
+                        "left_active": true,
+                        "left_weight": 2.289020911225762e-08,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 2.617993531767549
+                      }
+                    ],
+                    "wraps_period": false
+                  }
+                ],
+                "red": [
+                  {
+                    "end_rad": 2.6179935259158764,
+                    "start_rad": 1.5707966808210716,
+                    "transition_brackets": [
+                      {
+                        "bracket": [
+                          1.5707966778952356,
+                          1.5707966837469078
+                        ],
+                        "bracket_width_rad": 5.851672257861651e-09,
+                        "left_active": false,
+                        "left_weight": 0.0,
+                        "right_active": true,
+                        "right_weight": 8.998051438121279e-09,
+                        "theta_rad": 1.5707966808210716
+                      },
+                      {
+                        "bracket": [
+                          2.6179935229900404,
+                          2.617993528841713
+                        ],
+                        "bracket_width_rad": 5.851672479906256e-09,
+                        "left_active": true,
+                        "left_weight": 8.948881455242537e-09,
+                        "right_active": false,
+                        "right_weight": 0.0,
+                        "theta_rad": 2.6179935259158764
+                      }
+                    ],
+                    "wraps_period": false
+                  }
+                ]
+              },
+              "target_assignment": "minus",
+              "target_residuals": {
+                "minus": 3.510833468576701e-16,
+                "plus": 1.7107263879541725
+              },
+              "wedge_deg": 1.696295830113876e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 7.850462293418876e-17,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                },
+                "red": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                }
+              },
+              "faces": [
+                2,
+                3,
+                4,
+                1
+              ],
+              "fixed_outgoing_direction": [
+                -0.4938441702975688,
+                0.8553631939770865,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.5,
+                  -0.8660254037844387,
+                  0.0
+                ],
+                [
+                  0.8660254037844387,
+                  -0.5000000000000002,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": null,
+                "red": null
+              },
+              "production_probe_valid_count": {
+                "blue": 0,
+                "red": 0
+              },
+              "support_intervals": {
+                "blue": [],
+                "red": []
+              },
+              "target_assignment": "plus",
+              "target_residuals": {
+                "minus": 1.7107263879541728,
+                "plus": 3.1401849173675503e-16
+              },
+              "wedge_deg": 1.6962958301138756e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 1.5700924586837752e-16,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                },
+                "red": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                }
+              },
+              "faces": [
+                2,
+                3,
+                8,
+                1
+              ],
+              "fixed_outgoing_direction": [
+                -0.493844170297569,
+                -0.8553631939770863,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.5,
+                  0.8660254037844387,
+                  0.0
+                ],
+                [
+                  -0.8660254037844387,
+                  -0.5000000000000002,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": null,
+                "red": null
+              },
+              "production_probe_valid_count": {
+                "blue": 0,
+                "red": 0
+              },
+              "support_intervals": {
+                "blue": [],
+                "red": []
+              },
+              "target_assignment": "minus",
+              "target_residuals": {
+                "minus": 0.0,
+                "plus": 1.7107263879541725
+              },
+              "wedge_deg": 1.6962958301138756e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 1.5700924586837752e-16,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                },
+                "red": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                }
+              },
+              "faces": [
+                2,
+                4,
+                3,
+                1
+              ],
+              "fixed_outgoing_direction": [
+                -0.493844170297569,
+                -0.8553631939770863,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.5,
+                  0.8660254037844387,
+                  0.0
+                ],
+                [
+                  -0.8660254037844387,
+                  -0.5000000000000002,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": null,
+                "red": null
+              },
+              "production_probe_valid_count": {
+                "blue": 0,
+                "red": 0
+              },
+              "support_intervals": {
+                "blue": [],
+                "red": []
+              },
+              "target_assignment": "minus",
+              "target_residuals": {
+                "minus": 0.0,
+                "plus": 1.7107263879541725
+              },
+              "wedge_deg": 1.6962958301138756e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 7.850462293418876e-17,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                },
+                "red": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                }
+              },
+              "faces": [
+                2,
+                4,
+                5,
+                1
+              ],
+              "fixed_outgoing_direction": [
+                -0.4938441702975689,
+                0.8553631939770867,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.5000000000000001,
+                  -0.8660254037844389,
+                  0.0
+                ],
+                [
+                  0.8660254037844389,
+                  -0.4999999999999999,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": null,
+                "red": null
+              },
+              "production_probe_valid_count": {
+                "blue": 0,
+                "red": 0
+              },
+              "support_intervals": {
+                "blue": [],
+                "red": []
+              },
+              "target_assignment": "plus",
+              "target_residuals": {
+                "minus": 1.710726387954173,
+                "plus": 4.577566798522237e-16
+              },
+              "wedge_deg": 1.696295830113876e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 3.1401849173675503e-16,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                },
+                "red": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                }
+              },
+              "faces": [
+                2,
+                5,
+                4,
+                1
+              ],
+              "fixed_outgoing_direction": [
+                -0.4938441702975691,
+                -0.8553631939770865,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.5000000000000001,
+                  0.8660254037844389,
+                  0.0
+                ],
+                [
+                  -0.8660254037844389,
+                  -0.4999999999999999,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": null,
+                "red": null
+              },
+              "production_probe_valid_count": {
+                "blue": 0,
+                "red": 0
+              },
+              "support_intervals": {
+                "blue": [],
+                "red": []
+              },
+              "target_assignment": "minus",
+              "target_residuals": {
+                "minus": 2.482534153247273e-16,
+                "plus": 1.7107263879541728
+              },
+              "wedge_deg": 1.696295830113876e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 7.850462293418876e-17,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                },
+                "red": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                }
+              },
+              "faces": [
+                2,
+                5,
+                6,
+                1
+              ],
+              "fixed_outgoing_direction": [
+                -0.4938441702975688,
+                0.8553631939770865,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.5,
+                  -0.8660254037844387,
+                  0.0
+                ],
+                [
+                  0.8660254037844387,
+                  -0.5000000000000002,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": null,
+                "red": null
+              },
+              "production_probe_valid_count": {
+                "blue": 0,
+                "red": 0
+              },
+              "support_intervals": {
+                "blue": [],
+                "red": []
+              },
+              "target_assignment": "plus",
+              "target_residuals": {
+                "minus": 1.7107263879541728,
+                "plus": 3.1401849173675503e-16
+              },
+              "wedge_deg": 1.6962958301138756e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 1.5700924586837752e-16,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                },
+                "red": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                }
+              },
+              "faces": [
+                2,
+                6,
+                5,
+                1
+              ],
+              "fixed_outgoing_direction": [
+                -0.493844170297569,
+                -0.8553631939770863,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.5,
+                  0.8660254037844387,
+                  0.0
+                ],
+                [
+                  -0.8660254037844387,
+                  -0.5000000000000002,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": null,
+                "red": null
+              },
+              "production_probe_valid_count": {
+                "blue": 0,
+                "red": 0
+              },
+              "support_intervals": {
+                "blue": [],
+                "red": []
+              },
+              "target_assignment": "minus",
+              "target_residuals": {
+                "minus": 0.0,
+                "plus": 1.7107263879541725
+              },
+              "wedge_deg": 1.6962958301138756e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 7.850462293418876e-17,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                },
+                "red": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                }
+              },
+              "faces": [
+                2,
+                6,
+                7,
+                1
+              ],
+              "fixed_outgoing_direction": [
+                -0.49384417029756855,
+                0.8553631939770866,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.4999999999999998,
+                  -0.8660254037844388,
+                  0.0
+                ],
+                [
+                  0.8660254037844388,
+                  -0.4999999999999998,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": null,
+                "red": null
+              },
+              "production_probe_valid_count": {
+                "blue": 0,
+                "red": 0
+              },
+              "support_intervals": {
+                "blue": [],
+                "red": []
+              },
+              "target_assignment": "plus",
+              "target_residuals": {
+                "minus": 1.710726387954173,
+                "plus": 5.551115123125783e-16
+              },
+              "wedge_deg": 1.6962958301138756e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 0.0,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                },
+                "red": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                }
+              },
+              "faces": [
+                2,
+                7,
+                6,
+                1
+              ],
+              "fixed_outgoing_direction": [
+                -0.4938441702975688,
+                -0.8553631939770864,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.4999999999999998,
+                  0.8660254037844388,
+                  0.0
+                ],
+                [
+                  -0.8660254037844388,
+                  -0.4999999999999998,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": null,
+                "red": null
+              },
+              "production_probe_valid_count": {
+                "blue": 0,
+                "red": 0
+              },
+              "support_intervals": {
+                "blue": [],
+                "red": []
+              },
+              "target_assignment": "minus",
+              "target_residuals": {
+                "minus": 2.482534153247273e-16,
+                "plus": 1.7107263879541725
+              },
+              "wedge_deg": 1.6962958301138756e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 2.5438405243138006e-16,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                },
+                "red": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                }
+              },
+              "faces": [
+                2,
+                7,
+                8,
+                1
+              ],
+              "fixed_outgoing_direction": [
+                -0.4938441702975691,
+                0.8553631939770866,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.5000000000000003,
+                  -0.8660254037844386,
+                  0.0
+                ],
+                [
+                  0.8660254037844388,
+                  -0.5000000000000002,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": null,
+                "red": null
+              },
+              "production_probe_valid_count": {
+                "blue": 0,
+                "red": 0
+              },
+              "support_intervals": {
+                "blue": [],
+                "red": []
+              },
+              "target_assignment": "plus",
+              "target_residuals": {
+                "minus": 1.710726387954173,
+                "plus": 3.510833468576701e-16
+              },
+              "wedge_deg": 1.696295830113876e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 7.850462293418876e-17,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                },
+                "red": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                }
+              },
+              "faces": [
+                2,
+                8,
+                3,
+                1
+              ],
+              "fixed_outgoing_direction": [
+                -0.4938441702975688,
+                0.8553631939770865,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.5,
+                  -0.8660254037844387,
+                  0.0
+                ],
+                [
+                  0.8660254037844387,
+                  -0.5000000000000002,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": null,
+                "red": null
+              },
+              "production_probe_valid_count": {
+                "blue": 0,
+                "red": 0
+              },
+              "support_intervals": {
+                "blue": [],
+                "red": []
+              },
+              "target_assignment": "plus",
+              "target_residuals": {
+                "minus": 1.7107263879541728,
+                "plus": 3.1401849173675503e-16
+              },
+              "wedge_deg": 1.6962958301138756e-15
+            },
+            {
+              "algorithm_status": "covered_constant_direction",
+              "commutator_norm_at_37deg": 2.3714374201337736e-16,
+              "commutes_with_rz": true,
+              "energy": {
+                "blue": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                },
+                "red": {
+                  "absolute_difference": 0.0,
+                  "coarse": 0.0,
+                  "fine": 0.0
+                }
+              },
+              "faces": [
+                2,
+                8,
+                7,
+                1
+              ],
+              "fixed_outgoing_direction": [
+                -0.49384417029756933,
+                -0.8553631939770862,
+                -0.15643446504023087
+              ],
+              "fold_matrix": [
+                [
+                  -0.5000000000000003,
+                  0.8660254037844388,
+                  0.0
+                ],
+                [
+                  -0.8660254037844386,
+                  -0.5000000000000002,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              "halo_map_rank": 2,
+              "orbit_kind": "L1/PBD",
+              "production_direction_residual_max": {
+                "blue": null,
+                "red": null
+              },
+              "production_probe_valid_count": {
+                "blue": 0,
+                "red": 0
+              },
+              "support_intervals": {
+                "blue": [],
+                "red": []
+              },
+              "target_assignment": "minus",
+              "target_residuals": {
+                "minus": 3.510833468576701e-16,
+                "plus": 1.7107263879541725
+              },
+              "wedge_deg": 1.696295830113876e-15
+            }
+          ],
+          "orbit_kind": "L1/PBD label orbit; no L2 physical-equivalence claim",
+          "representative": [
+            1,
+            3,
+            4,
+            2
+          ],
+          "snapshots": {
+            "array_prefix": "plate_white_snapshots",
+            "max_R_ez_minus_ez": 0.0,
+            "max_R_u_minus_sun": 1.2001320995966753e-16,
+            "max_target_residual": {
+              "blue": 1.3371736463036914e-15,
+              "red": 6.261943282059023e-16
+            },
+            "member": [
+              1,
+              3,
+              4,
+              2
+            ],
+            "negative_pose": {
+              "body_sun_projection_residual": 1.4094628242311558e-18,
+              "horizontal_family_residual": 0.1721654218555424,
+              "left_world_sun_axis_rotation_deg": 10.0,
+              "target_residual": {
+                "blue": 0.154475794770511,
+                "red": 0.154475794770512
+              },
+              "valid": {
+                "blue": true,
+                "red": true
+              }
+            },
+            "pose_count": 5,
+            "target_assignment": "plus"
+          },
+          "target_energy": {
+            "class_total": {
+              "blue": {
+                "absolute_difference": 2.472970373618155e-09,
+                "coarse": 0.019943573298476274,
+                "fine": 0.0199435708255059
+              },
+              "red": {
+                "absolute_difference": 2.574904639854325e-08,
+                "coarse": 0.019749921422562513,
+                "fine": 0.019749895673516114
+              }
+            },
+            "minus": {
+              "blue": {
+                "absolute_difference": 1.2364851868090776e-09,
+                "coarse": 0.009971786649238134,
+                "fine": 0.009971785412752947
+              },
+              "red": {
+                "absolute_difference": 1.2874523199271626e-08,
+                "coarse": 0.009874960711281253,
+                "fine": 0.009874947836758054
+              }
+            },
+            "other": {
+              "blue": {
+                "absolute_difference": 0,
+                "coarse": 0,
+                "fine": 0
+              },
+              "red": {
+                "absolute_difference": 0,
+                "coarse": 0,
+                "fine": 0
+              }
+            },
+            "plus": {
+              "blue": {
+                "absolute_difference": 1.2364851868090776e-09,
+                "coarse": 0.00997178664923814,
+                "fine": 0.009971785412752954
+              },
+              "red": {
+                "absolute_difference": 1.2874523199271626e-08,
+                "coarse": 0.00987496071128126,
+                "fine": 0.00987494783675806
+              }
+            },
+            "target_ratios": {
+              "minus": {
+                "blue_red": 1.0098063886104218,
+                "status": "available"
+              },
+              "other": {
+                "blue_red": null,
+                "status": "unavailable"
+              },
+              "plus": {
+                "blue_red": 1.0098063886104218,
+                "status": "available"
+              }
+            }
+          }
+        }
+      },
+      "configuration": {
+        "crystal": {
+          "a": 1.0,
+          "face_distance": [
+            1.5,
+            1.0,
+            1.0,
+            1.5,
+            1.0,
+            1.0
+          ],
+          "h": 2.0,
+          "kind": "HexPrism"
+        },
+        "indices": {
+          "blue": 1.317,
+          "red": 1.307
+        },
+        "pose_measure": "Rz(theta), theta uniform under dtheta/(2*pi); c axis exactly vertical",
+        "quadrature": {
+          "coarse_midpoints": 4096,
+          "fine_midpoints": 8192
+        },
+        "sun": {
+          "altitude_deg": 9.0,
+          "azimuth_deg": 180.0
+        },
+        "support_endpoint_tolerance_rad": 1e-08,
+        "target_residual_tolerance": 1e-10
+      },
+      "coverage": {
+        "endpoint_bracket_max_width_rad": 1e-08,
+        "grid_step_rad": 0.0007669903939428206,
+        "not_claimed": [
+          "absence of support intervals narrower than one grid step",
+          "general SO(3) target relation",
+          "L2 physical equivalence of the L1/PBD orbit",
+          "rank-0 collapse"
+        ],
+        "statement": "bisection refines only support transitions found on the periodic fine grid",
+        "status": "resolution_limited"
+      },
+      "schema_version": "lumice-integral.raypath-diagnostic-reference/v1",
+      "targets": {
+        "minus": {
+          "propagation_direction": [
+            -0.493844170297569,
+            -0.8553631939770863,
+            -0.15643446504023087
+          ],
+          "relative_solar_azimuth_deg": -120.0,
+          "sky_azimuth_deg": 60.0,
+          "sky_direction": [
+            0.493844170297569,
+            0.8553631939770863,
+            0.15643446504023087
+          ],
+          "spherical_separation_from_sun_deg": 117.59976415242734
+        },
+        "plus": {
+          "propagation_direction": [
+            -0.493844170297569,
+            0.8553631939770863,
+            -0.15643446504023087
+          ],
+          "relative_solar_azimuth_deg": 120.0,
+          "sky_azimuth_deg": 300.0,
+          "sky_direction": [
+            0.493844170297569,
+            -0.8553631939770863,
+            0.15643446504023087
+          ],
+          "spherical_separation_from_sun_deg": 117.59976415242734
+        }
+      }
+    },
+    "random_regular": {
+      "case_id": "random_regular",
+      "configuration": {
+        "crystal": {
+          "a": 1.0,
+          "face_distance": [
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "h": 1.0,
+          "kind": "HexPrism"
+        },
+        "indices": {
+          "blue": 1.317,
+          "red": 1.307
+        },
+        "lattice_n": 20000,
+        "pose_measure": "normalised Haar on SO(3)"
+      },
+      "coverage": {
+        "complete_for": [
+          "3-5 minimum-deviation endpoint pair",
+          "reported 3-1-5 DPField kink and moving gates"
+        ],
+        "kink_walk_complete": true,
+        "not_evaluated": [
+          "finite solar disc convolution",
+          "absolute visual prominence of the candidate caustic",
+          "all-sky feature enumeration"
+        ],
+        "status": "finite numerical reference"
+      },
+      "features": [
+        {
+          "analytic_minus_field_residual_deg": {
+            "blue": -7.105427357601002e-15,
+            "red": 3.552713678800501e-15
+          },
+          "evidence_status": "confirmed",
+          "field_position_deg": {
+            "blue": 22.371148713329625,
+            "red": 21.6120192653553
+          },
+          "focusing_profile": "finite_jump",
+          "id": "random_regular.3-5.inner_edge",
+          "indices": {
+            "blue": 1.317,
+            "red": 1.307
+          },
+          "interpretation": "finite jump at a non-degenerate minimum; not a divergent Jacobian caustic",
+          "jacobian_focusing": false,
+          "location": "solar-side circular inner edge",
+          "mechanism": "ordinary minimum-deviation dispersion",
+          "path": "3-5",
+          "position_deg": {
+            "blue": 22.371148713329617,
+            "red": 21.612019265355304
+          },
+          "tolerance": {
+            "absolute_deg": 2e-08,
+            "source": "float64 analytic formula versus independently evaluated DPField critical point"
+          }
+        },
+        {
+          "evidence_status": "confirmed",
+          "id": "random_regular.3-1-5.solar_dispersion_edge",
+          "indices": {
+            "blue": 1.317,
+            "red": 1.307
+          },
+          "interpretation": "the path retains a solar-side red-to-blue dispersion edge; this is separate from the antisolar TIR band",
+          "location": "solar side",
+          "mechanism": "ordinary minimum-deviation dispersion",
+          "path": "3-1-5",
+          "position_deg": {
+            "blue": 22.371148713329617,
+            "red": 21.612019265355304
+          }
+        },
+        {
+          "evidence_status": "candidate",
+          "focusing_profile": "degenerate",
+          "id": "random_regular.3-1-5.solar_caustic_candidate",
+          "interpretation": "field classification alone is insufficient evidence of a visible caustic",
+          "jacobian_focusing": true,
+          "location": "solar side",
+          "mechanism": "DPField boundary critical record",
+          "path": "3-1-5",
+          "position_deg": {
+            "blue": 22.371148713329625,
+            "red": 21.612019265355315
+          }
+        },
+        {
+          "color": "blue",
+          "contrast": 0.63639400815124,
+          "delta_blue_deg": 138.77467664492394,
+          "delta_red_deg": 130.45331291210604,
+          "direction_dispersion_deg": 1.1387351201732099,
+          "evidence_status": "confirmed",
+          "id": "random_regular.3-1-5.antisolar_tir_blue_band",
+          "kind": "edge",
+          "lit_fraction": 1.0,
+          "location": "antisolar side",
+          "mechanism": "internal-reflection Fresnel TIR kink",
+          "path": "3-1-5",
+          "positive_fraction": 1.0,
+          "score": 1.5018349978528929,
+          "shift_deg": 7.325350091395554,
+          "source": "internal_1_tir_discriminant",
+          "spread_deg": 4.877599804151776,
+          "visible": true,
+          "weight": 0.014752368381158194
+        },
+        {
+          "color": "red",
+          "contrast": 0.9581256195650196,
+          "delta_blue_deg": 96.01177525979476,
+          "delta_red_deg": 96.13567714804904,
+          "direction_dispersion_deg": 24332012.81617572,
+          "evidence_status": "confirmed",
+          "id": "random_regular.3-1-5.exit_gate",
+          "interpretation": "red candidate assessed as not visible because its D spread overwhelms its shift",
+          "kind": "gate_edge",
+          "lit_fraction": 0.7819767441860465,
+          "location": "assessed moving exit gate",
+          "mechanism": "exit Snell gate",
+          "path": "3-1-5",
+          "positive_fraction": 0.0,
+          "score": 0.0030080368929372445,
+          "shift_deg": -0.3268279810844595,
+          "source": "exit_snell_discriminant",
+          "spread_deg": 108.65158663839497,
+          "visible": false,
+          "weight": 7.928274648552483e-09
+        }
+      ],
+      "internal_reflection_counterfactual": {
+        "blue_red_ratio": {
+          "production": 2.072278481972593,
+          "without_internal_R": 0.753492919873792
+        },
+        "geometry": {
+          "direction_change_max": 0.0,
+          "direction_map": "production path_domain_batch; identical before and after removing scalar internal R"
+        },
+        "indices": {
+          "blue": {
+            "n": 1.317,
+            "production_mean_AT": 0.01423196770222856,
+            "valid_count": 200,
+            "without_internal_R_mean_AT": 0.014231968590895499
+          },
+          "red": {
+            "n": 1.307,
+            "production_mean_AT": 0.006867787233249274,
+            "valid_count": 200,
+            "without_internal_R_mean_AT": 0.018887992462197675
+          }
+        },
+        "removed_factor": "internal_1_reflectance",
+        "sample": "blue-index internal_1_tir_discriminant curve",
+        "sample_count": 200,
+        "unchanged": [
+          "path_domain",
+          "entry_measure_A",
+          "entry_transmission",
+          "exit_transmission",
+          "sample_poses"
+        ]
+      },
+      "schema_version": "lumice-integral.raypath-diagnostic-reference/v1"
+    }
+  },
+  "configuration": {
+    "index_endpoints": {
+      "blue": 1.317,
+      "red": 1.307
+    }
+  },
+  "limitations": [
+    "fixed diagnostic cases, not a general feature enumerator",
+    "numerical convergence evidence and residuals, never exact numerical results",
+    "no Lumice runtime or production dependency"
+  ],
+  "schema_version": "lumice-integral.raypath-diagnostic-reference/v1"
+}
