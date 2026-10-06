@@ -52,19 +52,26 @@ labelled ``point_mass`` here and nothing else.
 
 *Family pinned* (:func:`family_pinned`) is a third, orthogonal label, not a
 ``mechanism`` token: a dimension collapse whose whole family lies in one level
-set.  A plate or Lowitz density with its c-axis zenith mean at a pole
-confines the pose, as ``sigma -> 0``, to rotations about the c axis (body
-``z`` in LI's convention), so ``u`` runs round a latitude circle about body
-``z``.  When the path's refractions cancel (wedge ``0``: the outgoing
-direction is ``M_P u``) and ``M_P`` commutes with ``R_z``, ``D_P(R_z u) =
-angle(R_z u, M_P R_z u) = D_P(u)``: the circle is inside one level set and
-the family's image is one deviation.  ``3-6-4-8`` and ``1-2-1`` (elements 6
-and 11 of :mod:`.symmetry.reflection_group`) are pinned under a plate
-density; ``3-5`` collapses too (``dimension_collapse``) but its fold matrix
-is ``I`` with wedge 60 deg, ``D_P`` varies round the circle, and it is not.
-The label is the ``sigma -> 0`` support: at ``sigma > 0`` a pinned family's
-deviation spread is proportional to ``sigma`` rather than finite as
-``sigma -> 0``, it is not zero.
+set.  The ``sigma -> 0`` support of the density must be a single circle of
+poses, which runs ``u`` round a circle about a fixed body axis ``a``: a zenith
+Gaussian at a pole (plate, Lowitz) gives ``a = e3``; a roll-locked density
+gives ``a = (sin zeta cos rho, -sin zeta sin rho, cos zeta)``, the body
+image of the world zenith on the support (Parry at ``(90, 0)`` deg: ``a =
+e1``, body ``x``).  A zenith Gaussian off a pole (column) leaves the spin
+free: no circle, no label.  When the path's refractions cancel (wedge ``0``:
+the outgoing direction is ``M_P u``) and ``M_P`` commutes with the rotations
+about ``a``, ``D_P(R_a u) = angle(R_a u, M_P R_a u) = D_P(u)``: the circle is
+inside one level set and the family's image is one deviation.  A mirror
+``S_a`` commutes with the rotations about its own normal, so mirror-fold
+paths pin on the axis the family locks.  ``3-6-4-8`` and ``1-2-1`` (elements
+6 and 11 of :mod:`.symmetry.reflection_group`) are pinned under a plate
+density; ``1-6-2`` (the vertical-face mirror ``S_x``) is pinned under Parry
+(``D = 2h``, the subsun; Lumice corpus C13).  ``3-5`` collapses too
+(``dimension_collapse``) but its fold matrix is ``I`` with wedge 60 deg,
+``D_P`` varies round the circle, and it is not — the wedge guard is what
+keeps a commuting-with-everything ``I`` out.  The label is the ``sigma -> 0``
+support: at ``sigma > 0`` a pinned family's deviation spread is proportional
+to ``sigma`` rather than finite as ``sigma -> 0``, it is not zero.
 
 Nothing here changes a value the quadratures compute; the labels are read
 from the same critical data (:class:`.dp_field.DPField`) and density
@@ -91,7 +98,7 @@ from .dp_field.field import tangent_basis
 from .geometry import WEDGE_ZERO_TOLERANCE_DEG, Polyhedron, fold_matrix, halo_map_rank, wedge_angle_deg
 from .pose_density import HaarUniformPoseDensity, PoseDensity, ZenithGaussianPoseDensity, ZenithRollGaussianPoseDensity
 from .s2_store import fibonacci_sphere
-from .symmetry.reflection_group import commutes_with_rz
+from .symmetry.reflection_group import commutes_with_rotation_about
 
 PROFILES = (
     "finite_jump",
@@ -226,26 +233,55 @@ def confined_dimensions(density: PoseDensity) -> tuple[int, tuple[float, ...]]:
     raise TypeError(f"no confinement rule for pose density {type(density).__name__}")
 
 
+def _family_axis(density: PoseDensity) -> np.ndarray | None:
+    """Body axis the ``sigma -> 0`` support of ``density`` runs one circle about; ``None`` when it is no circle.
+
+    A zenith Gaussian at a pole (``0`` or ``pi``) leaves only the spin about
+    the c axis free: ``e3``.  Off a pole (column) the c-axis azimuth and the
+    spin are both free: no single circle, no label.  A roll-locked density
+    fixes zenith and roll, so the free azimuth runs one circle about the body
+    image of the world zenith on the support, ``a = R_base^T e_z`` with
+    ``R_base = Rz(-rho) . Ry(zeta)`` the fixed leg of the ZYZ chain
+    (:mod:`.pose_density` module docstring): ``a = (sin zeta cos rho,
+    -sin zeta sin rho, cos zeta)`` from the density's means.  At a pole this
+    is ``e3`` whatever the roll (Lowitz); at Parry's ``(pi/2, 0)`` it is
+    ``e1`` (body ``x``, whether or not a face is there — conventions #3).
+    Dispatch is on the density's type, not on a family name, like
+    :func:`confined_dimensions`.
+    """
+    if isinstance(density, ZenithGaussianPoseDensity):
+        if min(density.zenith_mean_rad, np.pi - density.zenith_mean_rad) != 0.0:
+            return None
+        return np.array([0.0, 0.0, 1.0])
+    if isinstance(density, ZenithRollGaussianPoseDensity):
+        zeta = density.zenith_mean_rad
+        rho = density.roll_mean_rad
+        return np.array([np.sin(zeta) * np.cos(rho), -np.sin(zeta) * np.sin(rho), np.cos(zeta)])
+    return None
+
+
 def family_pinned(crystal: Polyhedron, faces: Sequence[int], density: PoseDensity) -> bool:
     """Whether the ``sigma -> 0`` family of ``density`` lies in one level set of ``D_P`` (module docstring).
 
     True iff the path has rank ``2``, its wedge is ``0`` (within
     :data:`.geometry.WEDGE_ZERO_TOLERANCE_DEG`, the tolerance of
-    :func:`.geometry.halo_map_rank`), its fold matrix commutes with ``R_z``
-    (:func:`.symmetry.reflection_group.commutes_with_rz`) and ``density``
-    holds the c axis at a pole (a zenith Gaussian, with or without roll, whose
-    mean is ``0`` or ``pi``: plate and Lowitz, not column or Parry).  The
-    density test is on its type and mean, not its family name, like
-    :func:`confined_dimensions`.
+    :func:`.geometry.halo_map_rank`) and its fold matrix commutes with the
+    rotations about ``a``, the body axis of the density's ``sigma -> 0``
+    support (:func:`.symmetry.reflection_group.commutes_with_rotation_about`;
+    ``a = e3`` is the plate / Lowitz case the label started from, ``a = e1``
+    the Parry one).  ``a`` per density type is :func:`_family_axis`'s: a
+    zenith Gaussian at a pole pins ``e3``, off a pole (column) there is no
+    circle and the answer is ``False``, a roll-locked density pins the axis
+    from its zenith and roll means.  The density test is on its type and
+    means, not its family name, like :func:`confined_dimensions`.
     """
     faces = optics.normalize_faces(faces, crystal)
-    if not isinstance(density, (ZenithGaussianPoseDensity, ZenithRollGaussianPoseDensity)):
-        return False
-    if min(density.zenith_mean_rad, np.pi - density.zenith_mean_rad) != 0.0:
+    axis = _family_axis(density)
+    if axis is None:
         return False
     if halo_map_rank(crystal, faces) == 0 or wedge_angle_deg(crystal, faces) > WEDGE_ZERO_TOLERANCE_DEG:
         return False
-    return commutes_with_rz(fold_matrix(crystal, faces))
+    return commutes_with_rotation_about(fold_matrix(crystal, faces), axis)
 
 
 def interior_onset(value: float, kind: str, hessian_eigenvalues: np.ndarray, gradient_norm: float) -> CriticalOnset:

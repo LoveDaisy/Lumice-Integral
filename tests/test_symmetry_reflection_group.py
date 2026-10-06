@@ -64,6 +64,47 @@ def test_commuting_with_rz_is_3_4_5_6_11_12():
     assert rg.wedge_cosines() == [-1.0, -0.5, 0.0, 0.5, 1.0]
 
 
+def test_commutes_with_rotation_about_covers_rotations_and_mirrors():
+    """绕轴对易判据（任务 family-pinned-parry-axis）：镜 $S_a$ 与绕 $a$ 的旋转对易（$S_x$↔$R_x$ 真，
+    $S_y$/$S_z$↔$R_x$ 假），旋转 $R_z(120°)$↔$R_x$ 假；轴不必归一化。"""
+    sx = np.diag([-1.0, 1.0, 1.0])          # 1-6-2 的折叠矩阵（竖直面镜）
+    assert rg.commutes_with_rotation_about(sx, [1.0, 0.0, 0.0])
+    assert not rg.commutes_with_rotation_about(np.diag([1.0, -1.0, 1.0]), [1.0, 0.0, 0.0])
+    assert not rg.commutes_with_rotation_about(np.diag([1.0, 1.0, -1.0]), [1.0, 0.0, 0.0])
+    assert not rg.commutes_with_rotation_about(rg.Rz(120.0), [1.0, 0.0, 0.0])
+    assert rg.commutes_with_rotation_about(rg.Rz(120.0), [0.0, 0.0, 1.0])
+    assert rg.commutes_with_rotation_about(sx, [2.0, 0.0, 0.0])   # 轴在函数内归一化
+    with pytest.raises(ValueError):
+        rg.commutes_with_rotation_about(sx, [0.0, 0.0, 0.0])
+
+
+@pytest.mark.parametrize("probe_deg", [37.0, 23.0, 11.0])
+def test_commutes_with_rotation_about_probe_angle_invariance(probe_deg):
+    """真对易在任何非特殊探针角下同为真，非对易同为假——钉死「探针角不得取特殊角」的判据。
+
+    180° 探针正是反例：$S_b$（$b \\perp a$）与 $R_a(\\pi)$ 可交换（在 $(a, b, a{\\times}b)$ 基下同为
+    对角阵），会在特殊角下被误判对易，所以默认值写死 37°，不留给调用方取特殊角的自由度。
+    """
+    assert rg.commutes_with_rotation_about(np.diag([1.0, -1.0, 1.0]), [1.0, 0.0, 0.0], probe_deg=180.0)  # 特殊角的假阳性
+    for M in (np.diag([-1.0, 1.0, 1.0]), np.eye(3)):        # 真对易：任何非特殊角下同为真
+        assert rg.commutes_with_rotation_about(M, [1.0, 0.0, 0.0], probe_deg=probe_deg)
+    for M in (np.diag([1.0, -1.0, 1.0]), np.diag([1.0, 1.0, -1.0]), rg.Rz(120.0), rg.sxy(30.0)):  # 非对易：同为假
+        assert not rg.commutes_with_rotation_about(M, [1.0, 0.0, 0.0], probe_deg=probe_deg)
+
+
+def test_commutes_with_rz_delegates_to_the_axis_general_predicate():
+    """``commutes_with_rz`` 委托通用轴版后逐元素等值，元素表 {3,4,5,6,11,12} 不变（单一权威，a56）。
+
+    $S_x$ 与 $R_z$ 不对易却与绕 $x$ 的旋转对易：对易按轴取值，不是矩阵的固有属性。
+    """
+    for element in rg.ELEMENTS:
+        assert element.commutes_with_rz == rg.commutes_with_rotation_about(element.matrix, [0.0, 0.0, 1.0])
+    assert rg.commuting_with_rz() == [3, 4, 5, 6, 11, 12]
+    sx = np.diag([-1.0, 1.0, 1.0])
+    assert not rg.commutes_with_rz(sx) and rg.commutes_with_rotation_about(sx, [1.0, 0.0, 0.0])
+    assert rg.commutes_with_rz(rg.Rz(120.0)) and not rg.commutes_with_rotation_about(rg.Rz(120.0), [1.0, 0.0, 0.0])
+
+
 def test_sxy_is_the_vertical_mirror_at_phi_minus_90():
     """$S_\\phi$（不变线方位角 φ）= 法向方位角 φ−90° 的镜面；三条反射列对应的相对面对由此而来。"""
     for phi in (90.0, 30.0, -30.0, 12.5):

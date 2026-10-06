@@ -302,10 +302,29 @@ def eigenvalue_classes() -> list[list[int]]:
     return sorted(ev.values())
 
 
-def commutes_with_rz(M: np.ndarray, probe_deg: float = 37.0) -> bool:
-    """与 $R_z(\\theta)$ 对易（用一个非特殊角探针：对易性对所有 θ 同时成立或同时不成立）。"""
-    R = Rz(probe_deg)
+def commutes_with_rotation_about(M: np.ndarray, axis: Sequence[float], probe_deg: float = 37.0) -> bool:
+    """与绕 ``axis`` 的旋转对易（Rodrigues 闭式构造探针旋转 $R_a(\\theta)$）。
+
+    探针角必须是非特殊角（默认 37°）：真对易对**所有** θ 同时成立，而特殊角会命中
+    $\{I, R_a(\\pi)\}$ 这类更大的中心化子——例如 $S_b$（$b \\perp a$）在 180° 探针下被误判
+    对易（$S_b R_a(\\pi) = R_a(\\pi) S_b$），90° 探针对 $\{I, R_a(\\pm90°)\\}$ 同理。反射类
+    $M$ 的「不变轴」由对易性本身定义（$S_a$ 与绕 $a$ 的旋转对易），无需另取特征向量判据。
+    """
+    v = np.asarray(axis, dtype=float)
+    norm = float(np.linalg.norm(v))
+    if norm == 0.0:
+        raise ValueError("axis must be a non-zero vector")
+    k = v / norm
+    K = np.array([[0.0, -k[2], k[1]], [k[2], 0.0, -k[0]], [-k[1], k[0], 0.0]])
+    t = np.radians(probe_deg)
+    R = np.eye(3) + np.sin(t) * K + (1.0 - np.cos(t)) * (K @ K)
+    M = np.asarray(M, dtype=float)
     return bool(np.allclose(M @ R, R @ M))
+
+
+def commutes_with_rz(M: np.ndarray, probe_deg: float = 37.0) -> bool:
+    """与 $R_z(\\theta)$ 对易（:func:`commutes_with_rotation_about` 在 z 轴上的特化，探针角论证见该函数）。"""
+    return commutes_with_rotation_about(M, (0.0, 0.0, 1.0), probe_deg)
 
 
 def commuting_with_rz() -> list[int]:
@@ -324,6 +343,6 @@ def wedge_cosines(group: Sequence[np.ndarray] = GROUP) -> list[float]:
 
 __all__ = ["B", "BY_NUMBER", "ELEMENTS", "Element", "GROUP", "GROWTH", "HALO_NAMES", "MATRICES", "MIRRORS",
            "MIRROR_FACES", "NORMALS", "PUBLISHED", "XY_LATEX", "XY_MATRIX", "XY_ORDER", "Rz", "by_number",
-           "by_xy_z", "class_of", "closure", "commutes_with_rz", "commuting_with_rz", "conjugacy_classes",
-           "eigenvalue_classes", "identify", "key", "path_matrix", "pbd_orbit", "published_classes", "raypaths_of_class",
+           "by_xy_z", "class_of", "closure", "commutes_with_rz", "commutes_with_rotation_about", "commuting_with_rz",
+           "conjugacy_classes", "eigenvalue_classes", "identify", "key", "path_matrix", "pbd_orbit", "published_classes", "raypaths_of_class",
            "refl", "refraction_cancels", "representatives_under_pbd", "sxy", "wedge_cosines"]
