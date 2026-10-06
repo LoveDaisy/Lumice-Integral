@@ -1094,7 +1094,8 @@ needs street-lamp halos (backlog).
   `dp-field-partial-reflection-boundaries`). Across the parhelic circle of `1-3-2`
   under plates, halving $\sigma$ doubles the peak at a fixed cross integral:
   dimension collapse. Tests: `tests/test_focusing.py`.
-- **Family pinned** (task `focusing-family-pinned-label`, 2026-09-29).
+- **Family pinned** (task `focusing-family-pinned-label`, 2026-09-29; generalized from the
+  c-axis pole to the family's support axis, task `family-pinned-parry-axis`, 2026-10-07).
   Two dimension collapses can behave oppositely: under plates `3-6-4-8`
   lands in one deviation, `3-5` keeps a std of $5.67°$ at every $\sigma$
   (the exploration's sampling convention, not re-measured at the rendering density; explore `degenerate-path-family-coverage` #2, #5). The deviation std of
@@ -1105,18 +1106,26 @@ needs street-lamp halos (backlog).
   $\sin\theta$ factor, which halves the tilt variance, hence the factor
   $\sqrt 2$ (task `lumice-radiometric-check-degenerate-plate`). `focusing.family_pinned`, carried as
   `FocusingClassification.family_pinned` (an orthogonal flag; `mechanism` is
-  unchanged), is true iff the density holds the c axis at a pole (plate,
-  Lowitz), the path has rank 2 and wedge 0 (refractions cancel, the
-  outgoing direction is $M_P\mathbf u$) and $M_P$ commutes with $R_z$: then
-  $D_P$ is constant on every latitude circle about the c axis, the
-  $\sigma \to 0$ support. On $G$ these are elements 3, 4, 5, 6, 11
-  (`symmetry.reflection_group`; 12 is rank 0). The wedge condition is not
-  implied: `3-5` and `1-3` have $M_P = I$ and are not pinned. The label is
-  the $\sigma \to 0$ limit: at $\sigma > 0$ a pinned family's spread is
-  $\propto \sigma$, not zero. Parry is not claimed (its roll convention
-  against Lumice is unchecked). Tests: `tests/test_focusing.py`
-  (`test_family_pinned_*`, including $D_P$ measured on latitude circles:
-  $\le 10^{-9}$° pinned, $\ge 1°$ for `3-5` / `1-3`).
+  unchanged), is true iff the density's $\sigma \to 0$ support is a single
+  circle of poses about a body axis $a = R_0^T \hat z$ (a zenith Gaussian at
+  a pole — plate, Lowitz — pins $a = e_3$; off a pole, column, there is no
+  circle; a roll-locked density pins $a = (\sin\zeta\cos\rho, -\sin\zeta\sin\rho,
+  \cos\zeta)$ from its zenith and roll means $\zeta, \rho$), the path has
+  rank 2 and wedge 0 (refractions cancel, the outgoing direction is
+  $M_P\mathbf u$) and $M_P$ commutes with the rotations about $a$: then
+  $D_P$ is constant on every circle about $a$ the support runs. Under
+  plates on $G$ these are elements 3, 4, 5, 6, 11
+  (`symmetry.reflection_group`; 12 is rank 0). A mirror $S_a$ commutes with
+  the rotations about its own normal, so under Parry ($a = e_1$, body $x$;
+  the roll-0 convention is checked against Lumice `73b0f697`, task
+  `parry-roll-convention-check`) the pinned wedge-0 paths are the $S_x$
+  folds: `1-6-2`, the whole family at $D = 2h$ (the subsun; Lumice corpus
+  C13). The wedge condition is not implied: `3-5` and `1-3` have
+  $M_P = I$ and are not pinned. The label is the $\sigma \to 0$ limit: at
+  $\sigma > 0$ a pinned family's spread is $\propto \sigma$, not zero.
+  Tests: `tests/test_focusing.py` (`test_family_pinned_*`, including
+  $D_P$ measured on latitude circles about $e_3$ and on circles about body
+  $x$: $\le 10^{-9}$° pinned, $\ge 1°$ for `3-5` / `1-3` / `1-4-2`).
 - *Lumice, absolute and shape, on a pinned family* (task
   `lumice-radiometric-check-degenerate-plate`, 2026-09-29). The `3-6-4-8`
   class (12 members) under plates, $\sigma = 0.5, 1, 2, 4°$, against a Lumice
