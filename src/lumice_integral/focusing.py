@@ -240,10 +240,11 @@ def _family_axis(density: PoseDensity) -> np.ndarray | None:
     the c axis free: ``e3``.  Off a pole (column) the c-axis azimuth and the
     spin are both free: no single circle, no label.  A roll-locked density
     fixes zenith and roll, so the free azimuth runs one circle about the body
-    image of the world zenith on the support, ``a = R_base^T e_z`` with
-    ``R_base = Rz(-rho) . Ry(zeta)`` the fixed leg of the ZYZ chain
-    (:mod:`.pose_density` module docstring): ``a = (sin zeta cos rho,
-    -sin zeta sin rho, cos zeta)`` from the density's means.  At a pole this
+    image of the world zenith on the support: with ``R_0 = Ry(-zeta) .
+    Rz(rho)`` the fixed leg of the ZYZ chain (:mod:`.pose_density` module
+    docstring) the support is ``{Rz(alpha) . R_0}`` and ``a = R_0^T e_z =
+    Rz(-rho) . Ry(zeta) . e_z = (sin zeta cos rho, -sin zeta sin rho,
+    cos zeta)`` from the density's means.  At a pole this
     is ``e3`` whatever the roll (Lowitz); at Parry's ``(pi/2, 0)`` it is
     ``e1`` (body ``x``, whether or not a face is there — conventions #3).
     Dispatch is on the density's type, not on a family name, like
