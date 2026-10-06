@@ -941,3 +941,10 @@ Moved to [overview.md](overview.md) §3.
   exported as parity fixtures LI → Lumice; LI's switch rhythm untouched.
   This repository's first batch is scrum `wave3-pull-forward`; the wave
   table carries the annotation in [overview.md](overview.md) §5.3.
+  Both JAX-first backlog fixes have landed: `family_pinned` on the Parry
+  family (2026-10-07, tasks `focusing-family-pinned-label` /
+  `family-pinned-parry-axis`) and the `1-2-1` boundary walk (2026-10-07,
+  task `boundary-corner-1-2-1`: closure on distance + arc — a heading test
+  rejects the exact return a perimeter-commensurate great-circle loop makes
+  every lap — and a constant-$D_P$ loop as a legal terminal state,
+  [phase2.md](phase2.md) §3.1).

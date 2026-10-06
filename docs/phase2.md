@@ -213,7 +213,17 @@ sequence, independent of the sun:
   negative (bisection, then a two-margin Newton, residual `<= 2.3e-16`),
   continuing along the one margin through the corner that keeps the
   boundary, until the walk is back at its first corner — closing the walk
-  is the completeness statement for the loop. An incidence cosine is walked
+  is the completeness statement for the loop. A loop with no corner closes
+  on itself as one piece: closure is credited on distance alone — back
+  within one step of the seed after at least two steps of arc, since a
+  heading test would reject the exact return, which a great-circle loop
+  with perimeter an integer multiple of the step (`1-2-1`: $2\pi/\text{step}
+  = 1440$) makes every lap (task `boundary-corner-1-2-1`). And when $D_P$
+  is constant along the whole loop (the `1-2-1` crease circle, where the
+  mirror fold acts as the identity), the loop has no isolated extremum:
+  `critical_points` is empty and the constant is recorded as
+  `BoundaryLoop.plateau_value`, entering `focusing` as the `slab_circle`
+  onset rather than an invented boundary extremum. An incidence cosine is walked
   as a great circle when its normal $\mathbf m = R_{k-1}^{\mathsf T}\mathbf n_k$
   satisfies $\mathbf m\cdot\mathbf n_a = 0$ (then the margin is linear in
   $\mathbf u$; checked per path at run time), otherwise marched like every
@@ -228,7 +238,8 @@ sequence, independent of the sun:
   nudged onto its closed side, as the corrector does on a piece, so that
   $D_P$ is finite there.
 - *Partition.* Critical values are the interior ones, the extrema of $D_P$
-  along the loop, and the corner values. On each interval the number of
+  along the loop, the corner values, and the value of a loop of constant
+  $D_P$ (the whole boundary is one level). On each interval the number of
   open arcs is half the number of crossings of $\delta$ along the loop
   (exact for any topology); closed loops need an interior extremum, and with
   at most one (a non-degenerate minimum or a slab cone point) there is one
