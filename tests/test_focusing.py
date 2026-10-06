@@ -18,7 +18,7 @@ COLUMN = build_pose_density("column", zenith_std_deg=0.5)
 PLATE = build_pose_density("plate", zenith_std_deg=0.5)
 PARRY = build_pose_density("parry", zenith_std_deg=0.5, roll_std_deg=1.0)
 LOWITZ = build_pose_density("lowitz", zenith_std_deg=0.5, roll_std_deg=1.0)
-SLABS = ((1, 3, 2), (3, 5, 6, 7, 3), (3, 1, 6), (1, 3, 5, 2))
+SLABS = ((1, 3, 2), (3, 5, 6, 7, 3), (3, 1, 6), (1, 3, 5, 2), (1, 2, 1))
 
 
 @pytest.fixture(scope="module")
@@ -317,3 +317,24 @@ def test_family_pinned_against_d_p_on_circles_about_body_x(faces) -> None:
         assert max(spreads) <= 1e-9
     else:
         assert min(spreads) >= 1.0
+
+
+def test_mirror_slab_1_2_1_labels_its_creuse_not_a_boundary_extremum(labels) -> None:
+    """``1-2-1``: the boundary loop is the crease circle of the mirror fold, a constant ``D_P = 0``.
+
+    ``exit_snell_discriminant = entry_incidence_cosine^2`` on the whole
+    domain, so ``dU_P`` is the single entry great circle (corner-free,
+    constant): the crease enters as the ``slab_circle`` onset and the axis
+    cone point as the ``slab_axis`` one -- no ``boundary_extremum`` is
+    invented for a loop that has no isolated extremum
+    (``BoundaryLoop.plateau_value``; task ``boundary-corner-1-2-1``).
+    """
+    label = labels[(1, 2, 1)]
+    assert label.mechanism == "none" and not label.jacobian_focusing
+    assert [o.source for o in label.onsets] == ["slab_circle", "slab_axis"]
+    (crease,) = [o for o in label.onsets if o.source == "slab_circle"]
+    assert crease.location == "boundary" and crease.profile == "crease" and crease.value == pytest.approx(0.0, abs=1e-9)
+    (axis,) = [o for o in label.onsets if o.source == "slab_axis"]
+    assert axis.location == "interior" and axis.profile == "cone_point"
+    assert np.degrees(axis.value) == pytest.approx(180.0, abs=1e-9)
+    assert not [o for o in label.onsets if o.source == "boundary_extremum" or o.source == "corner"]

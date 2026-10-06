@@ -11,6 +11,7 @@ from lumice_integral.canonical_scene import canonical_crystal
 from lumice_integral.dp_field import DPField
 from lumice_integral.dp_field import boundary as B
 from lumice_integral.dp_field import field as F
+from lumice_integral.geometry import fold_matrix
 from lumice_integral.s2_store import fibonacci_sphere
 
 N = 1.31
@@ -245,3 +246,54 @@ def test_walk_zero_set_rejects_other_orientations(fields) -> None:
     piece = field.boundary_curves[0]
     with pytest.raises(ValueError, match="orientation"):
         B.walk_zero_set(walker, piece.points[1], piece.margin, orientation=0.5)
+
+
+def test_mirror_slab_1_2_1_is_one_constant_creuse_loop() -> None:
+    """``1-2-1``: ``dU_P`` is the entry great circle alone, a corner-free loop of constant ``D_P = 0``.
+
+    ``exit_snell_discriminant = entry_incidence_cosine^2`` on the whole
+    domain (the slab identity), so every other gate stays positive and the
+    equator closes on itself: one great-circle piece with that margin
+    coincident, no corners, no isolated extremum and the constant ``0`` as
+    ``plateau_value`` (the crease circle of the mirror fold, where ``M u =
+    u``).  The loop's perimeter is an integer multiple of the step (``2 pi /
+    WALK_STEP_RAD = 1440``): the walk returns to its seed exactly, which
+    only a distance criterion without a heading test credits.
+    """
+    loop = DPField.build(canonical_crystal(), (1, 2, 1), N).boundary
+    assert 2.0 * np.pi / B.WALK_STEP_RAD == 1440.0
+    (piece,) = loop.pieces
+    assert len(piece.points) == 1441  # 1440 advances + the seed: the exact return adds no duplicate
+    assert piece.margin == "entry_incidence_cosine" and piece.kind == "great_circle"
+    assert piece.circle_normal is not None and np.allclose(piece.circle_normal, [0.0, 0.0, 1.0])
+    assert piece.coincident == ("exit_snell_discriminant",)
+    assert loop.corners == () and loop.critical_points == ()
+    assert loop.plateau_value == pytest.approx(0.0, abs=B.EXTREMUM_ATOL)
+    assert np.array_equal(piece.points[0], piece.points[-1])  # the exact return is the closure
+    assert np.max(np.abs(piece.values)) <= B.EXTREMUM_ATOL
+    # completeness spot check (test_walk_accounts_for_every_lattice_edge_point's pattern)
+    lattice = fibonacci_sphere(20000)
+    valid = F.valid_batch(lattice, (1, 2, 1), N)
+    _, neighbours = cKDTree(lattice).query(lattice, k=7)
+    edge = lattice[valid & np.any(~valid[neighbours[:, 1:]], axis=1)]
+    distances, _ = cKDTree(piece.points).query(edge)
+    assert np.max(distances) <= 1.5 * np.sqrt(4.0 * np.pi / 20000)
+
+
+def test_closure_needs_two_steps_of_arc_and_credits_the_exact_return() -> None:
+    """The closure criterion (module docstring): distance within one step, arc at least two steps.
+
+    On the ``1-2-1`` equator with a half-circle step the first advance lands
+    on the antipode -- within one step of the seed, where only the arc bound
+    holds the walk back -- and the second lands back on it an ulp off (sin pi
+    in the closed-form rotation): the closure is credited and the exact seed
+    glued as the endpoint.
+    """
+    walker = B.Walker(canonical_crystal(), (1, 2, 1), N, fold_matrix(canonical_crystal(), (1, 2, 1)))
+    start = np.array([1.0, 0.0, 0.0])  # a point of the entry equator, u . c = 0
+    points, corner, coincident = B.walk_zero_set(walker, start, "entry_incidence_cosine", stop_at=start, step=np.pi)
+    assert corner is None
+    assert len(points) == 4  # seed, antipode, return an ulp off, seed glued
+    assert np.array_equal(points[0], points[-1])
+    assert _angle(points[1], -start) < 1e-15 and _angle(points[2], start) < 1e-15
+    assert coincident == {"exit_snell_discriminant"}

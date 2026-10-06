@@ -14,7 +14,7 @@ from lumice_integral.dp_field import DPField, TopologyEscape
 from lumice_integral.dp_field import certificate as C
 
 N = 1.31
-FIXTURES = ((3, 5), (1, 3), (3, 1, 6), (1, 3, 2), (3, 5, 6, 7, 3))
+FIXTURES = ((3, 5), (1, 3), (3, 1, 6), (1, 3, 2), (3, 5, 6, 7, 3), (1, 2, 1))
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "verify_dp_field_intervals.py"
 
 # (lower deg, upper deg, n_components, n_closed, n_open), checked by scripts/verify_dp_field_intervals.py
@@ -23,6 +23,9 @@ EXPECTED = {
     (1, 3): [(45.73342, 57.80363, 1, 1, 0), (57.80363, 73.50689, 2, 0, 2)],
     (3, 1, 6): [(0.0, 180.0, 1, 0, 1)],
     (1, 3, 2): [(0.0, 180.0, 1, 0, 1)],
+    # the crease circle is dU_P itself (a constant loop, no corners): every level set a closed
+    # circle around the axis cone point, none of them touching the boundary
+    (1, 2, 1): [(0.0, 180.0, 1, 1, 0)],
     (3, 5, 6, 7, 3): [(0.0, 98.16070, 2, 0, 2), (98.16070, 180.0, 1, 1, 0)],
 }
 # The A60-10 members (two internal reflections, no slab): the loop maximum 141.8393 = 120 + 21.8393 degrees sits
