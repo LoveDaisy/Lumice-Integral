@@ -266,3 +266,54 @@ def test_family_pinned_against_d_p_on_latitude_circles(faces) -> None:
         assert max(spreads) <= 1e-9
     else:
         assert min(spreads) >= 1.0
+
+
+def test_family_pinned_covers_parry() -> None:
+    """Task family-pinned-parry-axis (Lumice corpus C13): the Parry family pins the ``S_x``-fold wedge-0 paths.
+
+    Parry's ``sigma -> 0`` support runs ``u`` round a circle about body ``x``
+    (conventions #3), so the pinned paths are those whose fold matrix commutes
+    with the rotations about ``x``: the vertical-face mirror ``S_x``, e.g.
+    ``1-6-2`` (``D = 2h``, the subsun).  ``1-4-2`` (the mirror of a tilted
+    face) and ``3-5`` (wedge 60 deg, the guard's counterexample again) stay
+    unpinned.  ``1-3-2``, the roll-180 label-swap partner with the same fold,
+    carries the label too: the criterion is algebraic and does not ask which
+    poses are valid (that split is
+    ``test_conventions.py::test_parry_roll_zero_pins_the_face_6_mirror_path_not_1_3_2``).
+    """
+    crystal = canonical_crystal()
+    assert focusing.family_pinned(crystal, (1, 6, 2), PARRY)
+    assert focusing.family_pinned(crystal, (1, 3, 2), PARRY)
+    assert not focusing.family_pinned(crystal, (1, 4, 2), PARRY)
+    assert not focusing.family_pinned(crystal, (3, 5), PARRY)
+    label = focusing.classify(crystal, (1, 6, 2), PARRY, INDEX)
+    assert label.family_pinned and label.as_json()["family_pinned"] is True
+    assert "dimension_collapse" in label.mechanism
+
+
+@pytest.mark.parametrize("faces", ((1, 6, 2), (1, 4, 2), (3, 5)))
+def test_family_pinned_against_d_p_on_circles_about_body_x(faces) -> None:
+    """Independent of the criterion: ``D_P`` round the circles about body ``x`` that a Parry (roll 0) family's ``u`` runs.
+
+    ``u`` at 5, 25, 60, 85 deg off body ``x`` (721 azimuths), points outside
+    ``U_P`` dropped; a pinned path's ``D_P`` is constant on every circle
+    (wedge 0: ``D_P = angle(u, S_x u)`` depends on ``u . x`` alone), the
+    others vary by degrees.  ``1-4-2``'s ``U_P`` misses the two tightest
+    circles entirely, hence the fourth level.  At least two circles with 50
+    valid points each, so an empty ``U_P`` cannot pass.
+    """
+    field = DPField.build(canonical_crystal(), faces, INDEX)
+    phi = np.linspace(0.0, 2.0 * np.pi, 721, endpoint=False)
+    spreads = []
+    for eta in np.radians([5.0, 25.0, 60.0, 85.0]):
+        c, s = np.cos(eta), np.sin(eta)
+        u = np.stack([c * np.ones_like(phi), s * np.cos(phi), s * np.sin(phi)], axis=1)
+        inside = u[field.valid_batch(u)]
+        if len(inside) >= 50:
+            d = np.degrees(field.d_p_batch(inside))
+            spreads.append(float(d.max() - d.min()))
+    assert len(spreads) >= 2
+    if faces == (1, 6, 2):
+        assert max(spreads) <= 1e-9
+    else:
+        assert min(spreads) >= 1.0
