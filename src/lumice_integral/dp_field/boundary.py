@@ -14,7 +14,18 @@ two-margin tangent-plane Newton), pick the one margin through the corner
 whose own zero set continues the boundary, and go on until the walk is back
 at its first corner.  A closed walk is the certificate that the loop is
 complete; that ``U_P`` has a single boundary loop is the disk check of
-:mod:`.certificate`.  Walking subsumes the explore-stage corner enumerations
+:mod:`.certificate`.  Closure is credited on distance alone -- the walk is
+back within one step of its seed after at least two steps of accumulated
+arc (out of the seed's step-radius and back).  A heading test would reject
+the exact return, chord and dot both zero, which a great-circle loop whose
+perimeter is an integer multiple of the step (``1-2-1``: ``2 pi / step =
+1440``) makes every lap; the arc bound rules out the departure transient
+instead.  A loop without corners is closed this way as one piece.  When ``D_P`` is
+constant along the whole loop (a mirror slab's crease circle, where the fold
+acts as the identity), the loop has no isolated extremum: ``critical_points``
+is empty and the constant value is recorded as ``BoundaryLoop.plateau_value``
+(in :mod:`.focusing` it enters as the ``slab_circle`` onset, not a boundary
+extremum).  Walking subsumes the explore-stage corner enumerations
 (the entry-great-circle scan of ``dp-field-boundary-corners`` finds only the
 corners on that circle; corners between two marched curves and of deeper reflections
 are met by the walk in order).
@@ -207,13 +218,20 @@ class BoundaryCriticalPoint:
 
 @dataclass(frozen=True)
 class BoundaryLoop:
-    """``dU_P`` as one closed walk: pieces and corners in walk order (``pieces[i]`` runs from ``corners[i - 1]`` to ``corners[i]``)."""
+    """``dU_P`` as one closed walk: pieces and corners in walk order (``pieces[i]`` runs from ``corners[i - 1]`` to ``corners[i]``).
+
+    ``plateau_value`` is the constant ``D_P`` of a loop that is one single
+    plateau (``None`` otherwise): a constant loop (a mirror slab's crease
+    circle) has no isolated extremum, so ``critical_points`` is empty and the
+    value itself is the record.
+    """
 
     pieces: tuple[BoundaryPiece, ...]
     corners: tuple[Corner, ...]
     critical_points: tuple[BoundaryCriticalPoint, ...]
     identical_margins: dict[str, str] = field(default_factory=dict)
     great_circle_margins: dict[str, np.ndarray] = field(default_factory=dict)
+    plateau_value: float | None = None
 
     @property
     def values(self) -> np.ndarray:
@@ -505,9 +523,12 @@ def walk_zero_set(
     ``orientation = 1`` walks with the margin's positive side on the left
     (:meth:`Walker.direction`, the way ``dU_P`` is walked), ``-1`` the other
     way.  Returns the points (``start`` first, the corner last when one is
-    met), the corner (``None`` if ``stop_at`` -- a point of this zero set --
-    is passed first; it is then the last point) and the margins coincident
-    with the walked piece.  ``RuntimeError`` after ``MAX_WALK_STEPS`` steps.
+    met), the corner (``None`` when the walk returns to ``stop_at`` -- a
+    point of this zero set -- first: back within one step of it after at
+    least two steps of accumulated arc; ``stop_at`` is then the last point,
+    or already is it when the return is exact) and the margins coincident
+    with the walked piece.  ``RuntimeError`` after ``MAX_WALK_STEPS`` steps
+    without either.
     """
     if orientation not in (1.0, -1.0):
         raise ValueError(f"orientation must be 1 or -1, got {orientation}")
@@ -516,14 +537,21 @@ def walk_zero_set(
     excluded = coincident | {name}
     points = [start]
     u = start
+    arc = 0.0
     for _ in range(MAX_WALK_STEPS):
         tangent = orientation * walker.direction(u, name)
-        if stop_at is not None and len(points) > 1 and _angle(u, stop_at) <= step and (stop_at - u) @ tangent > 0.0:
-            points.append(stop_at)
+        # Closure on distance alone (module docstring): within one step of the seed after at least two steps
+        # of arc.  A heading test would reject the exact return (chord 0, dot 0), which a great-circle loop
+        # whose perimeter is an integer multiple of the step hits every lap; the arc bound rules out the
+        # departure transient in its place.
+        if stop_at is not None and len(points) > 1 and arc >= 2.0 * step and _angle(u, stop_at) <= step:
+            if _angle(u, stop_at) > 0.0:
+                points.append(stop_at)
             return points, None, coincident
         nxt = walker.advance(u, name, tangent, step)
         bad = walker.violated(nxt, excluded)
         if not bad:
+            arc += _angle(u, nxt)
             points.append(nxt)
             u = nxt
             continue
@@ -618,8 +646,14 @@ def _golden_extremum(walker: Walker, piece: BoundaryPiece, i: int, kind: str) ->
     return best, d(best)
 
 
-def _plateau_extrema(values: np.ndarray, atol: float = EXTREMUM_ATOL) -> list[tuple[int, str]]:
-    """Indices of local extrema of a cyclic sequence, runs of equal values (plateaus) counted once."""
+def _plateau_extrema(values: np.ndarray, atol: float = EXTREMUM_ATOL) -> tuple[list[tuple[int, str]], float | None]:
+    """Indices of local extrema of a cyclic sequence, runs of equal values (plateaus) counted once.
+
+    Returns the extrema and, for a loop that is one single plateau, its
+    constant value (``None`` otherwise): a constant loop has no isolated
+    extremum -- the value is the loop's own (a mirror slab's crease circle,
+    the ``slab_circle`` onset of :mod:`.focusing`), not a boundary one.
+    """
     n = len(values)
     # compress runs of equal values
     runs: list[tuple[int, float]] = []
@@ -631,7 +665,7 @@ def _plateau_extrema(values: np.ndarray, atol: float = EXTREMUM_ATOL) -> list[tu
         runs.pop()
     r = len(runs)
     if r == 1:
-        raise RuntimeError("D_P is constant along the whole boundary loop")
+        return [], runs[0][1]
     out = []
     for j in range(r):
         prev_v, v, next_v = runs[j - 1][1], runs[j][1], runs[(j + 1) % r][1]
@@ -639,7 +673,7 @@ def _plateau_extrema(values: np.ndarray, atol: float = EXTREMUM_ATOL) -> list[tu
             out.append((runs[j][0], "minimum"))
         elif v > prev_v and v > next_v:
             out.append((runs[j][0], "maximum"))
-    return out
+    return out, None
 
 
 def walk_boundary(
@@ -654,6 +688,9 @@ def walk_boundary(
     """Walk ``dU_P`` once around (module docstring) and collect pieces, corners and restricted extrema of ``D_P``.
 
     ``slab`` is the fold matrix of a degenerate-fold path (:func:`.field.d_value`).
+    A loop without corners comes back as one piece and no corners; a loop of
+    constant ``D_P`` additionally comes back with empty ``critical_points`` and
+    its value as ``plateau_value``.
     """
     walker = Walker(crystal, faces, index, slab)
     start, name = _start_point(walker, lattice_n)
@@ -684,8 +721,8 @@ def walk_boundary(
             corners.append(
                 _corner_record(walker, piece.points[-1], piece.margin, after.margin, set(piece.coincident) | set(after.coincident))
             )
-    critical = _loop_critical_points(walker, pieces, corners)
-    return BoundaryLoop(tuple(pieces), tuple(corners), tuple(critical), dict(walker.identical), dict(walker.circles))
+    critical, plateau = _loop_critical_points(walker, pieces, corners)
+    return BoundaryLoop(tuple(pieces), tuple(corners), tuple(critical), dict(walker.identical), dict(walker.circles), plateau)
 
 
 def _piece(walker: Walker, name: str, points: list[np.ndarray], coincident: set[str]) -> BoundaryPiece:
@@ -703,8 +740,12 @@ def _replace_last_point(walker: Walker, piece: BoundaryPiece, point: np.ndarray)
     return BoundaryPiece(piece.margin, piece.kind, piece.circle_normal, points, values, piece.coincident)
 
 
-def _loop_critical_points(walker: Walker, pieces: list[BoundaryPiece], corners: list[Corner]) -> list[BoundaryCriticalPoint]:
-    """Local extrema of ``D_P`` along the loop: corners as they are, piece samples refined by golden section."""
+def _loop_critical_points(walker: Walker, pieces: list[BoundaryPiece], corners: list[Corner]) -> tuple[list[BoundaryCriticalPoint], float | None]:
+    """Local extrema of ``D_P`` along the loop (corners as they are, piece samples refined by golden section) and a constant loop's value.
+
+    The value is not ``None`` only when the whole loop is one plateau
+    (:func:`_plateau_extrema`): the extrema list is then empty by construction.
+    """
     # loop samples: each piece without its last point (the next piece starts there); remember owners
     owners: list[tuple[int, int]] = []
     values: list[float] = []
@@ -712,8 +753,9 @@ def _loop_critical_points(walker: Walker, pieces: list[BoundaryPiece], corners: 
         for i in range(len(piece.points) - 1):
             owners.append((p_index, i))
             values.append(float(piece.values[i]))
+    extrema, plateau = _plateau_extrema(np.array(values))
     out = []
-    for flat, kind in _plateau_extrema(np.array(values)):
+    for flat, kind in extrema:
         p_index, i = owners[flat]
         piece = pieces[p_index]
         if i == 0 and corners:
@@ -722,4 +764,4 @@ def _loop_critical_points(walker: Walker, pieces: list[BoundaryPiece], corners: 
             continue
         position, value = _golden_extremum(walker, piece, i, kind)
         out.append(BoundaryCriticalPoint(position, value, kind, piece.margin, False))
-    return out
+    return out, plateau

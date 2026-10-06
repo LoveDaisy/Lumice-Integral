@@ -28,7 +28,11 @@ critical data alone:
   points below ``L`` next to it belong to a component whose minimum is
   interior, i.e. ``v``'s); this is checked on a small ring around every
   loop minimum at ``L``.  So ``n_closed = 1`` on ``(v, L)``, else ``0``;
-  a maximum is the mirror image.
+  a maximum is the mirror image.  A loop of constant ``D_P`` (a slab's
+  crease circle as ``dU_P`` itself, :attr:`.boundary.BoundaryLoop.plateau_value`)
+  has every point both its minimum and its maximum at that value: ``L`` is
+  the constant, the ring check is taken at any one point of the loop, and
+  ``D_P`` restricted to the boundary never crosses any ``delta`` off it.
 
 Everything outside that reasoning is the explicit escape hatch
 (:class:`TopologyEscape`, issue ``dp-field-layer``, explore
@@ -144,8 +148,18 @@ def _loop_crossings(extrema_values: np.ndarray, delta: float) -> int:
 
 
 def critical_values(interior: tuple[InteriorCriticalPoint, ...], loop: BoundaryLoop) -> np.ndarray:
-    """Sorted critical values (rad): interior, restricted to pieces, and corners; merged within ``EXTREMUM_ATOL``."""
-    raw = sorted([p.value for p in interior] + [c.value for c in loop.critical_points] + [c.value for c in loop.corners])
+    """Sorted critical values (rad): interior, restricted to pieces, and corners; merged within ``EXTREMUM_ATOL``.
+
+    A loop of constant ``D_P`` (:attr:`.boundary.BoundaryLoop.plateau_value`)
+    contributes that value: it is a critical value of the restricted ``D_P``
+    (the whole boundary is one level), carried by no isolated extremum.
+    """
+    raw = sorted(
+        [p.value for p in interior]
+        + [c.value for c in loop.critical_points]
+        + [c.value for c in loop.corners]
+        + ([] if loop.plateau_value is None else [loop.plateau_value])
+    )
     merged: list[float] = []
     for value in raw:
         if not merged or value - merged[-1] > EXTREMUM_ATOL:
@@ -186,10 +200,18 @@ def interval_partition(
     if interior:
         kind = _interior_extremum(interior[0], faces, index, slab, crystal)
         v = interior[0].value
-        edge = values.min() if kind == "minimum" else values.max()
-        touching = [p for p in extrema if p.kind == kind and abs(p.value - edge) <= EXTREMUM_ATOL]
+        if loop.plateau_value is not None:
+            # a constant loop: every point of dU_P is both its minimum and its maximum, at the plateau
+            edge = loop.plateau_value
+            touching_positions = [loop.pieces[0].points[0]]
+        else:
+            edge = values.min() if kind == "minimum" else values.max()
+            touching_positions = [p.position for p in extrema if p.kind == kind and abs(p.value - edge) <= EXTREMUM_ATOL]
         sign = 1.0 if kind == "minimum" else -1.0
-        reaches = any(np.any(sign * (_side_values(p.position, faces, index, slab, crystal) - edge) < -1e-12) for p in touching)
+        reaches = any(
+            np.any(sign * (_side_values(position, faces, index, slab, crystal) - edge) < -1e-12)
+            for position in touching_positions
+        )
         if not reaches or sign * (edge - v) <= 0.0:
             raise TopologyEscape(
                 f"interior {kind} D = {v} and loop {kind} {edge}: the sublevel component of the interior extremum "
