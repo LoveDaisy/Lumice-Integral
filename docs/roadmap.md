@@ -925,3 +925,19 @@ Moved to [overview.md](overview.md) §3.
     for `3-1-5`; that expectation is kept for the red gate only.
   - Not traced yet: the sky curve of a kink for oriented crystals.
   - Modules A and B are unchanged.
+- **2026-10-07**: module C is pulled forward (owner ruling across
+  repositories; Lumice `scratchpad/schema2-redesign-discussion/conclusions.md`
+  §4). Clause clarification: the wave table's ch12/12.1 condition sits in the
+  LI-side column — it governs when LI retires JAX (switch), not when Lumice
+  builds C++ (build). Lumice's schema3 raypath report is a terminal-user
+  computation, so under the 2026-09-28 repository-roles ruling its geometry
+  layer already belongs in Lumice C++, and it is module C's first consumer:
+  Lumice's build is pulled ahead while LI's own switch rhythm is unchanged
+  (the wave-2 hold of 2026-09-30 stands; wave 3 still switches B then C on
+  the original trigger). Three conditions: the two JAX-first backlog fixes
+  land first (`family_pinned` on the Parry family, the `1-2-1` boundary
+  walk); the schema3 structure objects (family-restricted `S1`/`S2` curves,
+  corridor-closure $A_P = 0$, `S6` junctions) are prototyped here in JAX and
+  exported as parity fixtures LI → Lumice; LI's switch rhythm untouched.
+  This repository's first batch is scrum `wave3-pull-forward`; the wave
+  table carries the annotation in [overview.md](overview.md) §5.3.

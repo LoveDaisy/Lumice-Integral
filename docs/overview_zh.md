@@ -226,7 +226,7 @@ $\le 10^{-11}$；单点 C++ $193\,\mathrm{ns}$ vs JAX $104\,\mu\mathrm{s}$。功
 |---|---|---|---|
 | 1 | 模块 A v0：`EvaluatePath` + **seed 搜索** + `TraceFiber[Batch]`，只返回点列 | 功能 1 光路详情 | 写 seed 搜索（discovery）契约（`docs/phase1-math-contract.md` §9.5）；导出 parity fixture；研究并稳定诊断/权重契约。**不切换** |
 | 2 | 模块 A v1：加逐点 `J_perp` 与逐点边界余量（`struct_size` 兼容扩展）；模块 B：单光路 S² 仓库 + 带求和 | 功能 2 单光路全天图 | **只看输出对照**认证 A v1（作者裁定 2026-09-29，见下）→ 切换 fiber 求解、退役 JAX continuation；写作仓传递依赖按 `.lumice` release 拉取模式接入；B 只做 parity 不切换 |
-| 3 | 模块 C：`dp_field`/`contour`/`focusing`（C++ 用 `Jet2` 前向 hyper-dual） | 功能 3 预设点与机制标签 | ch12/12.1 用完、不再研究后，先切 B 再切 C |
+| 3 | 模块 C：`dp_field`/`contour`/`focusing`（C++ 用 `Jet2` 前向 hyper-dual） | 功能 3 预设点与机制标签 | ch12/12.1 用完、不再研究后，先切 B 再切 C。**模块 C 提前拉动（owner 裁定 2026-10-07，Lumice `scratchpad/schema2-redesign-discussion/conclusions.md` §4）：** Lumice 的 schema3 report 是模块 C 的首个消费者，其 **build** 提前；LI 自身的 **switch** 节奏不变——wave-2 暂缓维持，前面的切换仍按原触发 |
 
 1. **v0 含 seed 搜索**（作者判断：合理）；不需要 Lumice MC 记录光线姿态——Analyze
    全天图低分辨率，seed 密度可先低后渐进加密，交互上不构成 blocker。
@@ -278,6 +278,14 @@ $\delta \in [98^\circ, 120.3^\circ)$），`contour_quadrature` 现以 `gated_out
 `1-4-5-2` / `3-6-4-8`，机械判据 `focusing.family_pinned`）。柱晶 / Parry / Lowitz 族与纤维
 的交，Lumice 侧只在 `3-5` 上验过（位姿空间的离散点）；LI 46.9 发现 Parry 族对折叠矩阵为
 `S_x` 的光路（如 `1-6-2`）会整族坍缩。
+
+**波次 3 提前拉动，LI 侧（owner 裁定 2026-10-07，Lumice
+`scratchpad/schema2-redesign-discussion/conclusions.md` §4）：** 拉动的第一批 LI 侧
+工作见 scrum `wave3-pull-forward`（本仓 `scratchpad/`）：先于任何 C++ 表面冻结落地的
+两个 JAX-first 修复（`family_pinned` 推广到 Parry 族、`1-2-1` 边界行走缺陷）、u 空间
+溶解探针（Lumice schema3 几何层的 prototype 闸）与写作仓 ch12.1 需要的 Liljequist
+定量复现。schema3 特有的新结构对象（族受限 `S1`/`S2` 曲线、走廊关闭曲线 $A_P = 0$、
+`S6` junction）为第二批，待探针 verdict。
 
 ## 6. 验证策略
 
