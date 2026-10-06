@@ -20,7 +20,11 @@ arc (out of the seed's step-radius and back).  A heading test would reject
 the exact return, chord and dot both zero, which a great-circle loop whose
 perimeter is an integer multiple of the step (``1-2-1``: ``2 pi / step =
 1440``) makes every lap; the arc bound rules out the departure transient
-instead.  A loop without corners is closed this way as one piece.  When ``D_P`` is
+instead.  This distance-only credit presumes the loop does not approach its
+seed from elsewhere before its first corner (a theoretical false-closure
+window for a cornered loop that self-approaches within a step); pathological
+cases are caught downstream by the certificate disk check and dense-grid
+verification, not at runtime.  A loop without corners is closed this way as one piece.  When ``D_P`` is
 constant along the whole loop (a mirror slab's crease circle, where the fold
 acts as the identity), the loop has no isolated extremum: ``critical_points``
 is empty and the constant value is recorded as ``BoundaryLoop.plateau_value``
@@ -544,7 +548,7 @@ def walk_zero_set(
         # of arc.  A heading test would reject the exact return (chord 0, dot 0), which a great-circle loop
         # whose perimeter is an integer multiple of the step hits every lap; the arc bound rules out the
         # departure transient in its place.
-        if stop_at is not None and len(points) > 1 and arc >= 2.0 * step and _angle(u, stop_at) <= step:
+        if stop_at is not None and arc >= 2.0 * step and _angle(u, stop_at) <= step:
             if _angle(u, stop_at) > 0.0:
                 points.append(stop_at)
             return points, None, coincident
@@ -570,7 +574,12 @@ def walk_zero_set(
         corner = walker.refine_corner(walker.advance(u, name, tangent, lo), name, crossing)
         points.append(corner)
         return points, corner, coincident
-    raise RuntimeError(f"boundary walk of {walker.path_id} did not reach a corner in {MAX_WALK_STEPS} steps")
+    reach = start if stop_at is None else stop_at
+    raise RuntimeError(
+        f"boundary walk of {walker.path_id} did not reach a corner in {MAX_WALK_STEPS} steps "
+        f"(gate {name}, arc {arc:.6f} rad, end-to-seed angle {_angle(u, reach):.6f} rad, "
+        f"seed {np.round(reach, 6).tolist()}, end {np.round(u, 6).tolist()})"
+    )
 
 
 def _outgoing(walker: Walker, corner: np.ndarray, incoming: str, incoming_coincident: set[str]) -> str:

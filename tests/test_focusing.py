@@ -319,7 +319,7 @@ def test_family_pinned_against_d_p_on_circles_about_body_x(faces) -> None:
         assert min(spreads) >= 1.0
 
 
-def test_mirror_slab_1_2_1_labels_its_creuse_not_a_boundary_extremum(labels) -> None:
+def test_mirror_slab_1_2_1_labels_its_crease_not_a_boundary_extremum(labels) -> None:
     """``1-2-1``: the boundary loop is the crease circle of the mirror fold, a constant ``D_P = 0``.
 
     ``exit_snell_discriminant = entry_incidence_cosine^2`` on the whole

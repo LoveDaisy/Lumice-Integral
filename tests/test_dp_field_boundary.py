@@ -248,7 +248,7 @@ def test_walk_zero_set_rejects_other_orientations(fields) -> None:
         B.walk_zero_set(walker, piece.points[1], piece.margin, orientation=0.5)
 
 
-def test_mirror_slab_1_2_1_is_one_constant_creuse_loop() -> None:
+def test_mirror_slab_1_2_1_is_one_constant_crease_loop() -> None:
     """``1-2-1``: ``dU_P`` is the entry great circle alone, a corner-free loop of constant ``D_P = 0``.
 
     ``exit_snell_discriminant = entry_incidence_cosine^2`` on the whole
