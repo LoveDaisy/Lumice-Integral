@@ -14,7 +14,9 @@ check between the fiber layer and the store, not a one-to-one contour check.
 resolves (task ``dp-thin-neck-topology``): the k-NN count says two
 components and the chart-grid audit corrects it to one, so the path
 partitions on the default lattice too and its contour layer is compared
-one to one: below the support its two open arcs are ``gated_out`` where the
+one to one (``test_3_5_6_7_contour_layer_matches_the_fiber_layer`` below
+stays on the 50000-point lattice, where the lattice itself resolves the
+neck): below the support its two open arcs are ``gated_out`` where the
 fiber layer finds nothing, inside it both layers have two arcs.
 
 Targets are ``cos d prop + sin d perp`` (``perp = prop x z``), ``N = 1e6``

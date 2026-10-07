@@ -292,6 +292,23 @@ def test_3_5_6_7_partitions_on_the_default_lattice() -> None:
         assert np.degrees(interval.upper) == pytest.approx(e[1], abs=5e-6)
 
 
+def test_empty_ladder_is_the_rollback_switch(monkeypatch) -> None:
+    """``AUDIT_LADDER = ()`` turns the audit off: the plural path raises the legacy escape, ``grid_audit is None``.
+
+    The trigger gate must short-circuit on the empty ladder instead of entering ``chart_audit``
+    (whose roll-up would crash on the empty counts): the rollback path is the old "on the
+    N-point lattice" escape with no audit record -- the degraded-to-status-quo semantics the
+    constant's comment and the plan's rollback clause promise.
+    """
+    monkeypatch.setattr(C, "AUDIT_LADDER", ())
+    field = DPField.build(canonical_crystal(), (3, 5, 6, 7), N)
+    topology = field.domain_topology
+    assert topology.grid_audit is None
+    assert not topology.is_disk
+    with pytest.raises(TopologyEscape, match=r"U_P is not a disk on the 20000-point lattice: 2 component\(s\), complement 1"):
+        field.interval_partition()
+
+
 def test_escape_text_reports_the_audit_branches(fields) -> None:
     """The disk escape says what the two chains said: agreed, corrected but still not a disk, or not converged."""
     field = fields[(3, 5)]

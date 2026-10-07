@@ -90,6 +90,8 @@ SIDE_RING_DIRECTIONS = 64
 
 # The chart resolutions of the component-count audit (task ``dp-thin-neck-topology``), coarse to fine,
 # and the chart evaluation chunk.  An empty ladder turns the audit off (the rollback switch).
+# (801, 1601) settled 2026-10-07 on 3-5-6-7: both levels adjudicate one component, the full audited
+# chain costs ~2.3 s, and 3201 is not needed.
 AUDIT_LADDER: tuple[int, ...] = (801, 1601)
 CHART_CHUNK = 200_000
 
@@ -244,11 +246,13 @@ def chart_audit(
     lattice_complement: int,
     *,
     crystal: Polyhedron | None = None,
-    ladder: tuple[int, ...] = AUDIT_LADDER,
+    ladder: tuple[int, ...] | None = None,
 ) -> ChartAudit:
     """Audit the lattice component counts against a ladder of orthographic charts (module docstring).
 
-    One chart per resolution of ``ladder`` (each grid's nodes are the next finer grid's
+    ``ladder`` defaults to the module constant ``AUDIT_LADDER``, read at call time so a runtime
+    change of the constant (empty = the rollback switch) takes effect on the next call.  One chart
+    per resolution of ``ladder`` (each grid's nodes are the next finer grid's
     even-indexed subset: ``linspace(-1, 1, g)`` sits on half the spacing), its ``U_P`` mask from
     :func:`valid_batch`, its counts from :func:`_chart_component_counts`.  A count every grid
     agrees on is the audited count -- a ``"correction"`` of the lattice or a ``"confirmation"``
@@ -257,6 +261,8 @@ def chart_audit(
     connectivity, resolution) agreeing and converging -- an arrangement-exact certificate would
     need more.
     """
+    if ladder is None:
+        ladder = AUDIT_LADDER
     n_a = optics.face_normals(crystal, faces)[0]
     domain_counts: list[int] = []
     complement_counts: list[int] = []
@@ -277,7 +283,7 @@ def domain_topology(
     valid = valid_batch(lattice, faces, index, crystal=crystal)
     domain, complement = _component_count(lattice[valid]), _component_count(lattice[~valid])
     audit = None
-    if domain > 1 or complement > 1:  # the trigger gate: the audit's cost is paid only here
+    if AUDIT_LADDER and (domain > 1 or complement > 1):  # the trigger gate: the audit's cost is paid only here
         audit = chart_audit(faces, index, domain, complement, crystal=crystal)
         if audit.verdict != "unconverged":
             domain, complement = audit.domain_counts[0], audit.complement_counts[0]
@@ -372,6 +378,7 @@ def interval_partition(
                 f"(lattice {topology.lattice_n} and chart grids {audit.grids} agree)"
             )
         # corrected: the grids agree on a count the lattice got wrong, and the adjudicated counts still fail is_disk
+        assert audit.verdict == "corrected"
         raise TopologyEscape(
             f"U_P is not a disk: {topology.domain_components} component(s), complement {topology.complement_components} "
             f"(chart grids {audit.grids} agree, correcting the lattice {topology.lattice_n} counts "
