@@ -449,8 +449,15 @@ DETECTS = {
     "x Fresnel through one kernel on a plate family sample)",
 }
 
+
+def mc_cell(*args, **kwargs) -> MCCell:
+    """An :class:`MCCell` whose ``detects`` defaults to the shared per-kind texts (DETECTS below)."""
+    kwargs.setdefault("detects", DETECTS)
+    return MCCell(*args, **kwargs)
+
+
 MODULE_C_CELLS = (
-    MCCell(
+    mc_cell(
         "mc_field",
         PRISM,
         (3, 5),
@@ -461,7 +468,7 @@ MODULE_C_CELLS = (
         "closed form 2 asin(n sin 30 deg) - 60 deg (21.916127 deg at n(550)); the wavelength table moves it "
         "0.581 deg across 450/550/650 nm (task 42.4's caliber)",
     ),
-    MCCell(
+    mc_cell(
         "mc_field",
         PRISM,
         (3, 1, 5),
@@ -472,7 +479,7 @@ MODULE_C_CELLS = (
         "extremum 21.916127 deg (the exit-TIR curve's minimum, the same closed form as 3-5's interior minimum); "
         "classify pins the kind-2 attribution against 4-8-7-5's jacobian@blade",
     ),
-    MCCell(
+    mc_cell(
         "mc_kinks",
         PRISM,
         (3, 1, 5),
@@ -483,7 +490,7 @@ MODULE_C_CELLS = (
         "550 nm and [141.004, 143.652] at 400 nm (the explore's red/blue ends are n(700)/n(400), read from this "
         "sweep); the corpus anchor 131.030 deg lies inside the 700 nm span",
     ),
-    MCCell(
+    mc_cell(
         "mc_field",
         PRISM,
         (3, 1, 6),
@@ -493,7 +500,7 @@ MODULE_C_CELLS = (
         "a single-mirror slab between opposite side faces: the partition is the whole range [0, 180] deg, one "
         "component open at both ends",
     ),
-    MCCell(
+    mc_cell(
         "mc_kinks",
         PRISM,
         (3, 1, 6),
@@ -503,7 +510,7 @@ MODULE_C_CELLS = (
         "the constant kink: the whole onset circle sits on D = 2 asin sqrt(n^2 - 1) = 115.945100 deg at n(550) "
         "(the 52 SUMMARY's 115.945094 was the truncated n = 1.3110129 caliber), spread < 1e-12 rad",
     ),
-    MCCell(
+    mc_cell(
         "mc_field",
         PRISM,
         (3, 1, 4, 5),
@@ -513,7 +520,7 @@ MODULE_C_CELLS = (
         "the basal-reflection circle as a domain gate: the partition splits exactly at 120.000000 deg (the "
         "complementary circle of C05/C06, isomorphic across crystals) and the kink reaches up to 149.246753 deg",
     ),
-    MCCell(
+    mc_cell(
         "mc_field",
         PRISM,
         (3, 4, 1, 5),
@@ -523,7 +530,7 @@ MODULE_C_CELLS = (
         "the complementary-circle twin of 3-1-4-5: the same split at 120.000000 deg with the kink on the second "
         "reflection instead of the first",
     ),
-    MCCell(
+    mc_cell(
         "mc_field",
         PRISM,
         (3, 5, 6, 7),
@@ -534,7 +541,7 @@ MODULE_C_CELLS = (
         "dp-slab-partition-completion): the partition completes from the D limit 50.161742 deg, the domain is "
         "one component (chart-audit corrected), and the marched kink arcs carry no NaN",
     ),
-    MCCell(
+    mc_cell(
         "mc_field",
         BETA,
         (4, 8, 7, 5),
@@ -546,7 +553,7 @@ MODULE_C_CELLS = (
         "critical value 120 deg (the corpus' 119.99999999 is this value at grid resolution) and classify "
         "jacobian@blade (boundary_extremum/degenerate plus the slab circle)",
     ),
-    MCCell(
+    mc_cell(
         "mc_kinks",
         BETA,
         (4, 8, 1, 7, 5),
@@ -557,7 +564,7 @@ MODULE_C_CELLS = (
         "(550 nm) with dispersion +1.850629 deg from 400 to 700 nm (the corpus anchor +1.87 deg); the two side "
         "reflection onsets march from the 120 deg gate",
     ),
-    MCCell(
+    mc_cell(
         "mc_chromatic",
         PRISM_H1,
         (3, 1, 6),
@@ -567,7 +574,7 @@ MODULE_C_CELLS = (
         "the dark hole's rim: edge/blue/visible at delta = 2 asin sqrt(n_blue^2 - 1), shift 3.354 deg, spread 0 "
         "(chromatic-module-c.md section 3; the crystal is that fixture's HexPrism() = from_lumice(0.5))",
     ),
-    MCCell(
+    mc_cell(
         "mc_chromatic",
         PRISM_H1,
         (3, 1, 5),
@@ -578,7 +585,7 @@ MODULE_C_CELLS = (
         "108.7 deg against |Delta| 0.33 deg), the divergence from the issue's expected red gate recorded in "
         "chromatic-module-c.md section 3",
     ),
-    MCCell(
+    mc_cell(
         "mc_chromatic_class",
         RHOMBIC_PLATE,
         (1, 3, 5, 2),
@@ -588,7 +595,7 @@ MODULE_C_CELLS = (
         "the 120 deg parhelion tint on the rhombic plate (h/a = 1, sun 9 deg): tint blue, ratio 1.492, four lit "
         "members of the twelve (the printed digits of chromatic-module-c.md section 3)",
     ),
-    MCCell(
+    mc_cell(
         "mc_chromatic_class",
         RHOMBIC_PLATE,
         (1, 3, 4, 2),
@@ -598,7 +605,7 @@ MODULE_C_CELLS = (
         "the white control: ratio 0.965 on the same plate and family (a class whose reflections stay partial "
         "across the index pair; the TINT_RATIO_MIN calibration neighbour)",
     ),
-    MCCell(
+    mc_cell(
         "mc_chromatic_class",
         RHOMBIC_PLATE,
         (3, 5, 6, 8),

@@ -2982,6 +2982,7 @@ def export_module_c_cell(cell: MCCell, output_dir: Path, provenance: Mapping[str
         "serves": list(cell.serves),
         "rationale": cell.rationale,
         "indices": {label: float(index) for label, index in cell.indices},
+        "detects": {kind: str(cell.detects.get(kind, "")) for kind in cell.kinds},
         "files": [],
         "skipped": [],
     }
