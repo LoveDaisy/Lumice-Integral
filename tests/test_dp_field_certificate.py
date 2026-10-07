@@ -198,6 +198,68 @@ def test_escape_hatch_minimum_that_never_reaches_the_boundary_first(fields) -> N
         C.interval_partition(field.faces, N, (high,), None, field.boundary, field.domain_topology, None)
 
 
+# ---- the chart-grid audit on synthetic masks (task ``dp-thin-neck-topology``; no physical field here) --
+
+
+def _chart_geometry(grid: int) -> tuple[np.ndarray, np.ndarray]:
+    """The chart's index coordinates and off-chart mask of a ``grid``-point side (:func:`C._chart_grid`)."""
+    m = (grid - 1) // 2
+    i, j = np.meshgrid(np.arange(-m, m + 1), np.arange(-m, m + 1), indexing="ij")
+    off_chart = i**2 + j**2 >= m**2
+    return i, j, off_chart
+
+
+def _two_islands(i: np.ndarray, j: np.ndarray) -> np.ndarray:
+    """Two valid blobs a 1-node corridor could join; on an 81-point side they sit clear of the rim."""
+    return ((i + 22) ** 2 + j**2 <= 100) | ((i - 22) ** 2 + j**2 <= 100)
+
+
+def test_chart_counts_dumbbell_and_two_islands() -> None:
+    """A neck the coarse view splits and the corridor view joins; a genuine two-island mask."""
+    i, j, off_chart = _chart_geometry(81)
+    islands = _two_islands(i, j)
+    joined = islands | ((j == 0) & (np.abs(i) <= 13))
+    assert C._chart_component_counts(islands, off_chart) == (2, 1)
+    assert C._chart_component_counts(joined, off_chart) == (1, 1)
+
+
+def test_chart_counts_complement_islands_and_rim_merge() -> None:
+    """An interior invalid hole is a second complement island; an invalid band reaching the rim merges into one."""
+    i, j, off_chart = _chart_geometry(81)
+    on_chart = ~off_chart
+    holed = on_chart & ~(i**2 + j**2 <= 9)
+    rim_band = on_chart & (i < 20)
+    assert C._chart_component_counts(holed, off_chart) == (1, 2)
+    assert C._chart_component_counts(rim_band, off_chart) == (1, 1)
+
+
+def test_chart_counts_valid_on_the_rim_voids_the_counts() -> None:
+    """A valid node on the pushed rim breaches the chart premise: ``None``, not counts merged through it."""
+    i, j, off_chart = _chart_geometry(81)
+    breached = _two_islands(i, j)
+    breached[0, 0] = True  # a grid corner is off-chart
+    assert off_chart[0, 0]
+    assert C._chart_component_counts(breached, off_chart) is None
+
+
+def test_audit_verdict_three_states_and_rollup() -> None:
+    """Grids agreeing against the lattice correct, agreeing with it confirm, disagreeing establish nothing."""
+    assert C._audit_verdict((1, 1), (1, 1), 2, 1) == "corrected"
+    assert C._audit_verdict((2, 2), (1, 1), 2, 1) == "confirmed"
+    assert C._audit_verdict((1, 2), (1, 1), 2, 1) == "unconverged"
+    assert C._audit_verdict((-1, 1), (1, 1), 2, 1) == "unconverged"
+    # one count corrected, the other confirmed (or not converged): the roll-up takes the worst
+    assert C._audit_verdict((1, 1), (2, 2), 2, 1) == "corrected"
+    assert C._audit_verdict((2, 2), (1, 2), 2, 1) == "unconverged"
+
+
+def test_chart_audit_record_keeps_the_lattice_counts_visible() -> None:
+    """``ChartAudit`` carries the audited lattice counts next to the verdict (no silent correction)."""
+    audit = C.ChartAudit((801, 1601), (1, 1), (1, 1), 2, 1, "corrected")
+    assert (audit.lattice_domain_count, audit.lattice_complement_count) == (2, 1)
+    assert audit.grids == (801, 1601)
+
+
 @pytest.mark.slow
 def test_partition_agrees_with_the_independent_grid() -> None:
     """``scripts/verify_dp_field_intervals.py`` on the five fixtures and the A60-10 members (~2.5 min on an M2 Max)."""

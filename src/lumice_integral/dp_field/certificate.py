@@ -49,10 +49,12 @@ from dataclasses import dataclass
 from typing import NamedTuple
 
 import numpy as np
+from scipy import ndimage
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 from scipy.spatial import cKDTree
 
+from .. import optics
 from ..geometry import Polyhedron
 from ..s2_store import fibonacci_sphere
 from .boundary import EXTREMUM_ATOL, BoundaryLoop
@@ -61,6 +63,11 @@ from .field import DegenerateFoldSet, Faces, InteriorCriticalPoint, d_p_batch, t
 # Radius of the ring that decides on which side of a boundary extremum D_P is lower (rad), and its directions.
 SIDE_RING_RAD = 1e-5
 SIDE_RING_DIRECTIONS = 64
+
+# The chart resolutions of the component-count audit (task ``dp-thin-neck-topology``), coarse to fine,
+# and the chart evaluation chunk.  An empty ladder turns the audit off (the rollback switch).
+AUDIT_LADDER: tuple[int, ...] = (801, 1601)
+CHART_CHUNK = 200_000
 
 
 class TopologyEscape(RuntimeError):
@@ -102,6 +109,133 @@ def _component_count(points: np.ndarray) -> int:
     keep = lengths <= 3.0 * np.median(lengths)
     graph = coo_matrix((np.ones(int(keep.sum())), (rows[keep], cols[keep])), shape=(n, n))
     return int(connected_components(graph, directed=False)[0])
+
+
+# ---- the chart-grid audit of the lattice component counts (task ``dp-thin-neck-topology``) ------------
+
+
+@dataclass(frozen=True)
+class ChartAudit:
+    """The chart-grid audit of the lattice component counts: its evidence, per grid (module docstring).
+
+    ``grids`` are the audit chart resolutions; ``domain_counts`` / ``complement_counts`` hold one
+    count per grid (``-1``: not counted, that grid's mask breached the chart premise).  The
+    ``lattice_*`` fields keep the audited k-NN counts next to the verdict, so a correction stays
+    visible instead of silent.  ``verdict`` rolls the two counts' statuses up worst-first:
+    ``"unconverged"`` (the grids disagree, or a mask breached the premise) over ``"corrected"``
+    (the grids agree on a count the lattice got wrong) over ``"confirmed"`` (the grids agree with
+    the lattice).  It is an audit trail only: what escapes is decided by the audited counts
+    through :attr:`DomainTopology.is_disk`.
+    """
+
+    grids: tuple[int, ...]
+    domain_counts: tuple[int, ...]
+    complement_counts: tuple[int, ...]
+    lattice_domain_count: int
+    lattice_complement_count: int
+    verdict: str
+
+
+def _chart_grid(grid: int, n_a: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """The ``grid x grid`` orthographic chart of the entry hemisphere: its nodes and the off-chart mask.
+
+    On the chart ``u = x e1 + y e2 + sqrt(1 - x^2 - y^2) n_a``; off-chart nodes (``r >= 1``) are
+    pushed radially onto the rim ``u . n_a = 0``.  This is the chart construction of
+    ``scripts/verify_dp_field_intervals.py``, deliberately re-implemented here: the production
+    audit and the independent verifier must not share code (module docstring).
+    """
+    e1 = np.cross(n_a, np.eye(3)[int(np.argmin(np.abs(n_a)))])
+    e1 /= np.linalg.norm(e1)
+    e2 = np.cross(n_a, e1)
+    xs = np.linspace(-1.0, 1.0, grid)
+    x, y = np.meshgrid(xs, xs, indexing="ij")
+    r = np.sqrt(x**2 + y**2)
+    off_chart = r >= 1.0
+    scale = np.where(~off_chart, 1.0, 1.0 / np.maximum(r, 1e-300))
+    height = np.sqrt(np.clip(1.0 - r**2, 0.0, None))
+    u = (x * scale)[..., None] * e1 + (y * scale)[..., None] * e2 + height[..., None] * n_a
+    u /= np.linalg.norm(u, axis=-1, keepdims=True)
+    return u, off_chart
+
+
+def _chart_valid(u: np.ndarray, faces: Faces, index: float, crystal: Polyhedron | None) -> np.ndarray:
+    """The ``U_P`` mask on the chart nodes, chunked :func:`valid_batch` (the gates' single authority)."""
+    flat = u.reshape(-1, 3)
+    valid = np.zeros(len(flat), dtype=bool)
+    for start in range(0, len(flat), CHART_CHUNK):
+        valid[start : start + CHART_CHUNK] = valid_batch(flat[start : start + CHART_CHUNK], faces, index, crystal=crystal)
+    return valid.reshape(u.shape[:-1])
+
+
+def _chart_component_counts(valid: np.ndarray, off_chart: np.ndarray) -> tuple[int, int] | None:
+    """4-connected ``(domain, complement)`` counts of a chart mask, or ``None`` on a rim breach.
+
+    The domain count labels the valid mask.  The complement count labels the invalid mask with
+    every component holding an off-chart node merged into one: ``U_P`` lies in the open
+    hemisphere ``u . n_a > 0`` (the entry incidence gate), so the pushed rim ring is invalid and
+    connected, and an invalid region of the chart that reaches it joins the one far-hemisphere
+    component of ``S^2 \\ U_P``; an invalid component with no off-chart node is an island of the
+    complement inside the chart, counted separately.  A valid node on the pushed rim breaches
+    that premise (valid already requires ``u . n_a > 0``) and voids the counts -- the rim would
+    merge what it touches -- rather than counting through it (fail closed).
+    """
+    if valid[off_chart].any():
+        return None
+    four = ndimage.generate_binary_structure(2, 1)
+    _, domain = ndimage.label(valid, structure=four)
+    labels, count = ndimage.label(~valid, structure=four)
+    rim_labels = set(np.unique(labels[off_chart]).tolist()) - {0}
+    complement = 1 + sum(1 for label in range(1, count + 1) if label not in rim_labels)
+    return int(domain), int(complement)
+
+
+def _audit_verdict(
+    domain_counts: tuple[int, ...], complement_counts: tuple[int, ...], lattice_domain: int, lattice_complement: int
+) -> str:
+    """The roll-up verdict of the two counts' audit statuses, worst first (``ChartAudit.verdict``)."""
+    statuses = []
+    for counts, lattice in ((domain_counts, lattice_domain), (complement_counts, lattice_complement)):
+        if -1 in counts or len(set(counts)) > 1:
+            statuses.append("unconverged")
+        elif counts[0] == lattice:
+            statuses.append("confirmed")
+        else:
+            statuses.append("corrected")
+    if "unconverged" in statuses:
+        return "unconverged"
+    return "corrected" if "corrected" in statuses else "confirmed"
+
+
+def chart_audit(
+    faces: Faces,
+    index: float,
+    lattice_domain: int,
+    lattice_complement: int,
+    *,
+    crystal: Polyhedron | None = None,
+    ladder: tuple[int, ...] = AUDIT_LADDER,
+) -> ChartAudit:
+    """Audit the lattice component counts against a ladder of orthographic charts (module docstring).
+
+    One chart per resolution of ``ladder`` (each grid's nodes are the next finer grid's
+    even-indexed subset: ``linspace(-1, 1, g)`` sits on half the spacing), its ``U_P`` mask from
+    :func:`valid_batch`, its counts from :func:`_chart_component_counts`.  A count every grid
+    agrees on is the audited count -- a ``"correction"`` of the lattice or a ``"confirmation"``
+    of it; any disagreement or rim breach is ``"unconverged"`` and establishes nothing.  The
+    audit is evidence, not a proof: two chains that share no failure mode (sampling geometry,
+    connectivity, resolution) agreeing and converging -- an arrangement-exact certificate would
+    need more.
+    """
+    n_a = optics.face_normals(crystal, faces)[0]
+    domain_counts: list[int] = []
+    complement_counts: list[int] = []
+    for grid in ladder:
+        u, off_chart = _chart_grid(grid, n_a)
+        counts = _chart_component_counts(_chart_valid(u, faces, index, crystal), off_chart)
+        domain_counts.append(-1 if counts is None else counts[0])
+        complement_counts.append(-1 if counts is None else counts[1])
+    verdict = _audit_verdict(tuple(domain_counts), tuple(complement_counts), lattice_domain, lattice_complement)
+    return ChartAudit(tuple(ladder), tuple(domain_counts), tuple(complement_counts), lattice_domain, lattice_complement, verdict)
 
 
 def domain_topology(
