@@ -120,6 +120,53 @@ def test_hessian_needs_the_curvature_term_at_the_3_5_minimum(fields) -> None:
     assert naive["atan2"][0] < 0.0 < naive["atan2"][1]
 
 
+def test_d_p_exit_limit_at_the_3_5_6_7_corner() -> None:
+    """The exit-Snell convention's value half: finite where the exit square root goes ``NaN`` by rounding.
+
+    ``u`` is the triple-gate corner of ``3-5-6-7`` at Lumice's ``n(550)``
+    (explore ``u-space-dissolution-probe`` round 3b): the two-margin Newton
+    leaves ``exit_snell_discriminant`` at ``-5.1e-17``, and whether the plain
+    chain goes ``NaN`` there is a per-compilation rounding coin toss (the
+    jitted ``Walker.d`` kernel read it negative -- the walk raised exactly
+    here; the eager chain rounds positive).  The limit kernel has no square
+    root, so it is rounding-determined either way.  It matches the U_P-side
+    probe value (taken ``1e-7`` into ``U_P``, ``50.16174445450327`` deg) to
+    ``~ sqrt(disc) ~ 8e-8`` rad: ``D_P`` is Hoelder-1/2 across the exit-Snell
+    curve, and the limit is the exact side of that comparison.
+    """
+    faces, index = (3, 5, 6, 7), 1.3110129
+    u = np.array([0.0, -0.48947414775668885, 0.8720178086930698])
+    value = F.d_p_exit_limit(jnp.asarray(u), faces, index)
+    assert np.isfinite(value)
+    assert np.degrees(float(value)) == pytest.approx(50.16174445450327, abs=2e-5)
+    batch = F.d_p_exit_limit_batch(u[None, :], faces, index)
+    assert batch.shape == (1,)
+    assert float(batch[0]) == pytest.approx(float(value), abs=1e-15)  # jitted vmap vs eager: last-ulp fusion noise
+
+
+def test_d_p_exit_limit_is_d_p_grazing_where_the_root_is_real() -> None:
+    """Both are the transmitted direction's ``disc -> 0+`` limit (the root dropped), two float paths; equal where ``disc >= 0``.
+
+    The grazing form starts from the chain's direction -- ``NaN`` on the
+    rounding-negative side -- while the limit form recomputes without the
+    root and stays finite: same mathematics on their common domain.
+    """
+    faces = (3, 5)
+    inside = _random_valid(faces, 64, seed=13)
+    grazing = np.array([float(F.d_p_grazing(jnp.asarray(p), faces, N)) for p in inside])
+    limit = F.d_p_exit_limit_batch(inside, faces, N)
+    assert np.max(np.abs(grazing - limit)) <= 1e-12
+
+
+def test_d_p_exit_limit_is_not_a_general_d_replacement() -> None:
+    """Deep inside ``U_P`` (``disc = O(1)``) the dropped root moves ``D_P`` by ``~ sqrt(disc)``: closure points only."""
+    faces = (3, 5)
+    inside = _random_valid(faces, 64, seed=17)
+    plain = F.d_p_batch(inside, faces, N)
+    limit = F.d_p_exit_limit_batch(inside, faces, N)
+    assert np.max(np.abs(plain - limit)) > 0.1
+
+
 def test_fold_screen_on_the_fixtures() -> None:
     """``n_a . M^T n_b``: ``-1/2`` for 3-5 and ``0`` for the 90 degree wedge (interior folds), ``-1`` for the three slabs."""
     crystal = canonical_crystal()

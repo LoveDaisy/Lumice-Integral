@@ -82,7 +82,14 @@ curve's own value with that root dropped (``~1e-14``): searched on ``D_P``,
 the ``1e-8`` noise on a flat loop extremum (``3-5``: curvature ``0.043`` per
 rad^2) moved its position by up to ``sqrt(2e-8 / 0.043) ~ 7e-4`` rad, and
 by a different amount under each BLAS kernel (task ``home-wsl-dp-field-diffs``).
-Corners (two-margin Newton) are exact.
+Corners (two-margin Newton) are exact.  Evaluated on the closure of ``U_P``
+(a gate left rounding-negative, ``>= -VIOLATION_ATOL``, by the Newton), the
+exit refraction's square root can read a negative discriminant and go ``NaN``:
+the value there is the closure limit :func:`.field.d_p_exit_limit` (the
+exit-Snell convention, ``disc -> 0+`` with the root dropped; every consumer
+of :meth:`Walker.d` -- corner records, piece samples, the golden section --
+inherits it, and :mod:`.weight_kink` shares it for its arcs).  A point off
+the closure still raises.
 Slab paths are evaluated in closed form (:func:`.field.d_value`).
 """
 
@@ -99,7 +106,7 @@ from scipy.spatial import cKDTree
 from .. import optics
 from ..geometry import HexPrism, Polyhedron, fold_matrix
 from ..s2_store import fibonacci_sphere
-from .field import Faces, body_normals, d_p_grazing, d_value, margin_vector, valid_batch
+from .field import Faces, body_normals, d_p_exit_limit, d_p_grazing, d_value, margin_vector, valid_batch
 
 # March step along a boundary piece (rad).
 WALK_STEP_RAD = np.radians(0.25)
@@ -148,6 +155,11 @@ def _d(u: jax.Array, faces: Faces, index: jax.Array, slab: jax.Array | None, nor
 @partial(jax.jit, static_argnums=1)
 def _d_grazing(u: jax.Array, faces: Faces, index: jax.Array, normals: jax.Array) -> jax.Array:
     return d_p_grazing(u, faces, index, normals)
+
+
+@partial(jax.jit, static_argnums=1)
+def _d_exit_limit(u: jax.Array, faces: Faces, index: jax.Array, normals: jax.Array) -> jax.Array:
+    return d_p_exit_limit(u, faces, index, normals)
 
 
 def _unit(v: np.ndarray) -> np.ndarray:
@@ -363,11 +375,25 @@ class Walker:
         return np.asarray(m), np.asarray(j)
 
     def d(self, u: np.ndarray) -> float:
-        """``D_P`` at a point of the closure of ``U_P`` (``RuntimeError`` if not finite: the point is outside)."""
+        """``D_P`` at a point of the closure of ``U_P``: the exit-Snell convention where the plain chain is not finite.
+
+        On the closure (every gate of :attr:`active` at or above
+        ``-VIOLATION_ATOL``, the complement of :meth:`violated`) the exit
+        refraction's square root may sit on the rounding-negative side of
+        ``exit_snell_discriminant`` -- the exact situation of a two-margin
+        Newton corner of a triple gate and of a kink arc coincident with the
+        exit-Snell zero set -- and the value there is the closure limit
+        :func:`.field.d_p_exit_limit` (``disc -> 0+``, the square root
+        dropped).  A point off the closure is outside ``U_P`` and raises
+        ``RuntimeError`` (fail closed); a slab path's :func:`.field.d_slab`
+        has no square root, so a non-finite value there raises outright.
+        """
         value = float(_d(jnp.asarray(u), self.faces, self._index, self._slab, self._normals))
-        if not np.isfinite(value):
-            raise RuntimeError(f"D_P is not finite at {u} on {self.path_id}")
-        return value
+        if np.isfinite(value):
+            return value
+        if self._slab is None and not self.violated(u, set()):
+            return float(_d_exit_limit(jnp.asarray(u), self.faces, self._index, self._normals))
+        raise RuntimeError(f"D_P is not finite at {u} on {self.path_id}")
 
     def d_on_exit_tir(self, u: np.ndarray) -> float:
         """``D_P`` at a point of the exit TIR curve, the exit root dropped (:func:`.field.d_p_grazing`)."""
@@ -447,26 +473,7 @@ class Walker:
                 best, best_residual = u, residual
             if residual <= 1e-16:
                 break
-        return self._settle(best)
-
-    def _settle(self, u: np.ndarray) -> np.ndarray:
-        """Nudge a corner whose ``D_P`` is ``NaN`` onto the non-negative side of the gate it violates by rounding.
-
-        At the corners of ``3-5-6-7`` / ``3-4-5-7`` three gates vanish, ``exit_snell_discriminant`` among them;
-        left at ``-2e-16`` by the two-margin Newton, the exit square root is ``NaN`` although the corner is a
-        point of the closure.  The step is the one of :meth:`correct`; a corner with a finite ``D_P`` is kept.
-        """
-        for _ in range(8):
-            if np.isfinite(float(_d(jnp.asarray(u), self.faces, self._index, self._slab, self._normals))):
-                break
-            m, j = self.margins_jacobian(u)
-            rounding = [n for n in self.active if -VIOLATION_ATOL <= m[self.k(n)] < 0.0]
-            if not rounding:
-                break
-            k = self.k(min(rounding, key=lambda n: m[self.k(n)]))
-            g = _tangent(u, j[k])
-            u = _unit(u + ((-m[k]) / (g @ g) + 1e-16 / np.linalg.norm(g)) * g)
-        return u
+        return best
 
     def _residual(self, u: np.ndarray, names: tuple[str, ...]) -> float:
         m = self.margins(u)

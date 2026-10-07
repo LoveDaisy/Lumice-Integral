@@ -110,6 +110,36 @@ def d_p_grazing(u: jax.Array, faces: Faces, index: jax.Array, normals: jax.Array
     return _deviation(evaluation.direction - root * jnp.asarray(normals)[-1], u)
 
 
+def d_p_exit_limit(u: jax.Array, faces: Faces, index: jax.Array, normals: jax.Array | None = None) -> jax.Array:
+    """:func:`d_p` at the ``disc -> 0+`` limit of the exit refraction: the closure value of the exit-Snell convention.
+
+    The exit direction is ``n d_int + (n c - sqrt(disc)) N_t``
+    (:func:`.optics.refract_smooth`, ``N_t = -normals[-1]`` toward the incident
+    medium, ``d_int`` the last internal direction -- of :attr:`.optics.PathEvaluation`
+    ``internal[-1]``, or ``entry`` with no internal reflection -- and ``c`` the exit
+    ``incidence_cosine``); this kernel *recomputes* the direction with the root
+    dropped, ``n d_int + n c N_t``, instead of subtracting it after the fact.  Same
+    mathematics as :func:`d_p_grazing` (both are the transmitted direction's limit
+    as ``disc -> 0+``), two float paths: the grazing form starts from
+    ``evaluation.direction`` -- already ``NaN`` wherever ``disc < 0``, the exact rounding
+    situation of a two-margin Newton corner or of a coincident kink arc -- while this
+    one has no square root anywhere, so it stays finite as long as the chain up to the
+    exit does (reflections have no root).  It is the value half of the exit-Snell
+    closure convention of :mod:`.dp_field.boundary` / :mod:`.dp_field.weight_kink`
+    (member decision: every gate ``>= -VIOLATION_ATOL``); use it only there -- at a
+    deep interior point (``disc = O(1)``) it is off :func:`d_p` by ``~ sqrt(disc)``,
+    it is not a general ``D_P`` replacement.  Not for slab paths (:func:`d_slab`
+    has no NaN).  The scale ``n`` cancels in the ``atan2`` deviation.
+    """
+    if normals is None:
+        normals = body_normals(None, faces)
+    evaluation = _evaluation(u, faces, index, normals)
+    d_int = evaluation.internal[-1].direction if evaluation.internal else evaluation.entry.direction
+    normal_t = -jnp.asarray(normals)[-1]
+    d_exit = index * d_int + index * evaluation.exit.incidence_cosine * normal_t
+    return _deviation(d_exit, u)
+
+
 def _deviation(phi: jax.Array, u: jax.Array) -> jax.Array:
     return jnp.arctan2(jnp.linalg.norm(jnp.cross(phi, -u)), jnp.dot(phi, -u))
 
@@ -213,6 +243,11 @@ def _validity_margins_batch(u: jax.Array, faces: Faces, index: jax.Array, normal
     return jax.vmap(validity_margin_vector, in_axes=(0, None, None, None))(u, faces, index, normals)
 
 
+@partial(jax.jit, static_argnums=1)
+def _d_exit_limit_batch(u: jax.Array, faces: Faces, index: jax.Array, normals: jax.Array) -> jax.Array:
+    return jax.vmap(d_p_exit_limit, in_axes=(0, None, None, None))(u, faces, index, normals)
+
+
 def _as_points(u: np.ndarray | jax.Array) -> jax.Array:
     points = jnp.asarray(u, dtype=jnp.float64)
     if points.ndim != 2 or points.shape[1] != 3:
@@ -280,6 +315,13 @@ def validity_margins_batch(
 ) -> np.ndarray:
     """:func:`validity_margin_vector` at each row of ``u``, ``(N, len(validity_margin_names(faces)))``."""
     return np.asarray(_validity_margins_batch(_as_points(u), faces, jnp.float64(index), body_normals(crystal, faces)))
+
+
+def d_p_exit_limit_batch(
+    u: np.ndarray, faces: Faces, index: float, *, crystal: Polyhedron | None = None
+) -> np.ndarray:
+    """The closure-limit value (:func:`d_p_exit_limit`) at each row of ``u``; the batch half of the exit-Snell convention."""
+    return np.asarray(_d_exit_limit_batch(_as_points(u), faces, jnp.float64(index), body_normals(crystal, faces)))
 
 
 def valid_batch(u: np.ndarray, faces: Faces, index: float, *, crystal: Polyhedron | None = None) -> np.ndarray:

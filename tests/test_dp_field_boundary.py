@@ -158,6 +158,61 @@ def test_corners_on_the_entry_circle_match_a_1d_scan_with_path_domain() -> None:
         assert min(_angle(corner.position, f) for f in found) <= 1e-10
 
 
+def test_walker_d_serves_the_closure_limit_at_the_3_5_6_7_corner() -> None:
+    """The exit-Snell convention (module docstring) on ``3-5-6-7`` at Lumice's ``n(550)``: the walk completes.
+
+    Before the convention the two-margin Newton landed this triple-gate corner
+    on the rounding-negative side of ``exit_snell_discriminant`` and ``_piece``
+    raised through :meth:`Walker.d` (explore ``u-space-dissolution-probe``
+    round 3b; the pre-fix certification run captured the raise at exactly this
+    point).  Which side a given landing rounds to is a coin toss, so the test
+    accepts either branch serving the value and checks it against the limit
+    kernel; the corner value (and the loop minimum) is the U_P-side probe's
+    ``50.16174445450327`` deg up to the Hoelder-1/2 ``sqrt(disc)`` scale.
+    """
+    faces, index = (3, 5, 6, 7), 1.3110129
+    u = np.array([0.0, -0.48947414775668885, 0.8720178086930698])
+    walker = B.Walker(canonical_crystal(), faces, index, None)
+    value = walker.d(u)
+    limit = float(F.d_p_exit_limit(u, faces, index))
+    assert np.isfinite(value)
+    assert abs(value - limit) <= 1e-7  # a finite plain branch is off the limit by ~ sqrt(disc)
+    loop = B.walk_boundary(canonical_crystal(), faces, index)
+    assert {p.margin for p in loop.pieces} == {"internal_2_incidence_cosine", "exit_snell_discriminant"}
+    assert len(loop.corners) == 2
+    for corner in loop.corners:
+        assert set(corner.margins) == {"entry_incidence_cosine", "internal_2_incidence_cosine", "exit_snell_discriminant"}
+        assert np.degrees(corner.value) == pytest.approx(50.16174445450327, abs=2e-5)
+    assert np.isfinite(loop.values).all()
+    assert np.degrees(loop.values.min()) == pytest.approx(50.16174445450327, abs=2e-5)
+
+
+def test_walker_d_off_the_closure_still_raises() -> None:
+    """Fail-closed undiluted: outside ``U_P`` through the exit gate alone (every other gate positive) still raises.
+
+    Pushed ``1e-4`` off the middle of the walked exit-Snell piece, on the far
+    side of the curve: the discriminant is ``-1.3e-4``, three orders past
+    ``VIOLATION_ATOL``, so this is genuinely outside, not closure rounding.
+    """
+    faces, index = (3, 5, 6, 7), 1.3110129
+    loop = B.walk_boundary(canonical_crystal(), faces, index)
+    walker = B.Walker(canonical_crystal(), faces, index, None)
+    piece = next(p for p in loop.pieces if p.margin == "exit_snell_discriminant")
+    mid = piece.points[len(piece.points) // 2]
+    g = walker.tangent_gradient(mid, "exit_snell_discriminant")
+    g = g / np.linalg.norm(g)
+    step = next(
+        s for s in (1.0, -1.0)
+        if walker.margins((mid + s * 1e-6 * g) / np.linalg.norm(mid + s * 1e-6 * g))[walker.k("exit_snell_discriminant")] < 0.0
+    )
+    out = (mid + step * 1e-4 * g) / np.linalg.norm(mid + step * 1e-4 * g)
+    margins = walker.margins(out)
+    assert float(margins[walker.k("exit_snell_discriminant")]) < -1000.0 * B.VIOLATION_ATOL
+    assert all(float(margins[walker.k(n)]) > 0.0 for n in walker.active if n != "exit_snell_discriminant")
+    with pytest.raises(RuntimeError, match="not finite"):
+        walker.d(out)
+
+
 def test_liljequist_corners_carry_every_vanishing_margin(fields) -> None:
     """``3-5-6-7-3``: three gates vanish at every corner, two bound ``U_P``, ``exit_snell`` is coincident.
 
