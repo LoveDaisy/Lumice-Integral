@@ -12,6 +12,7 @@ import pytest
 from lumice_integral.canonical_scene import canonical_crystal
 from lumice_integral.dp_field import DPField, TopologyEscape
 from lumice_integral.dp_field import certificate as C
+from lumice_integral.focusing import field_onsets
 
 N = 1.31
 FIXTURES = ((3, 5), (1, 3), (3, 1, 6), (1, 3, 2), (3, 5, 6, 7, 3), (1, 2, 1))
@@ -70,6 +71,46 @@ def test_a60_10_members_partition(faces) -> None:
     for interval, e in zip(partition, expected):
         assert np.degrees(interval.lower) == pytest.approx(e[0], abs=5e-6)
         assert np.degrees(interval.upper) == pytest.approx(e[1], abs=5e-6)
+
+
+def test_3_5_6_7_at_lumice_n550_walks_the_full_stack() -> None:
+    """The exit-Snell closure convention end to end on ``3-5-6-7`` at Lumice's ``n(550)`` (1.3110129).
+
+    Pre-convention the boundary walk raised at the triple-gate corner (the
+    pre-fix certification run captured ``D_P is not finite`` at exactly that
+    point, evidence/ in the task directory).  Now every layer completes with
+    finite values: the walk, the weight kinks (the internal-1 onset coincides
+    with the exit-Snell boundary piece), the partition and the focusing
+    onsets; the closure limit ``50.16174`` deg is the corner value, the loop
+    minimum, the first interval's lower end and the kink range's minimum.
+    Component counts are not asserted: at this ``n`` the thin neck of
+    ``U_P`` splits on the lattice in a non-monotone way (50000: 2
+    components, 100000: 1, 200000: 2 again) -- the k-NN resolution artifact
+    of task ``dp-thin-neck-topology`` -- so the lattice density is merely
+    chosen where the disk check passes.  A corner's ``gradient_batch`` is
+    ``NaN`` by design (an exit-TIR end: profile ``boundary_onset``, norm
+    ``inf``, ``focusing.field_onsets``).
+    """
+    field = DPField.build(canonical_crystal(), (3, 5, 6, 7), 1.3110129, lattice_n=100000)
+    assert field.domain_topology.is_disk
+    assert field.interior_critical_points == ()
+    assert np.isfinite(field.boundary.values).all()
+    for corner in field.corners:
+        assert np.degrees(corner.value) == pytest.approx(50.16174445450327, abs=2e-5)
+    kink_values = np.concatenate([curve.values for curve in field.weight_kinks if curve.arcs])
+    assert np.isfinite(kink_values).all()
+    assert np.degrees(kink_values.min()) == pytest.approx(50.16174445450327, abs=2e-5)
+    partition = field.interval_partition()
+    assert len(partition) == 2
+    assert np.degrees(partition[0].lower) == pytest.approx(50.16174445450327, abs=2e-5)
+    assert np.degrees(partition[0].upper) == pytest.approx(141.916126, abs=1e-3)
+    assert np.degrees(partition[1].upper) == pytest.approx(163.545132, abs=1e-3)
+    onsets = field_onsets(field)
+    assert all(np.isfinite(onset.value) for onset in onsets)
+    (corner_onset,) = [onset for onset in onsets if onset.source == "corner"]
+    assert corner_onset.profile == "boundary_onset" and corner_onset.gradient_norm == float("inf")
+    assert corner_onset.multiplicity == 2
+    assert np.degrees(corner_onset.value) == pytest.approx(50.16174445450327, abs=2e-5)
 
 
 def test_3_5_has_one_closed_loop_from_the_minimum_to_the_boundary(fields) -> None:

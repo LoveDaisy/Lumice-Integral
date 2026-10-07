@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from lumice_integral import optics
+from lumice_integral.canonical_scene import canonical_crystal
 from lumice_integral.dp_field import DPField
 from lumice_integral.dp_field import weight_kink as W
 from lumice_integral.geometry import HexPrism
@@ -102,6 +103,31 @@ def test_liljequist_onset_maximum_is_on_the_marched_kinks() -> None:
         assert np.max(np.abs(_discriminant(field, curve))) < 1e-12
         top = np.degrees(np.max(curve.values))
         assert 153.0697 - 5e-3 < top <= 153.0697 + 1e-4
+
+
+def test_marched_kink_values_on_the_exit_snell_coincident_arc() -> None:
+    """``3-5-6-7`` at Lumice's ``n(550)``: the internal-1 onset coincides with the exit-Snell boundary piece.
+
+    Pre-convention 88% of the arc's values were ``NaN`` -- the walk rides the
+    exit-Snell zero set, whose rounding-negative side NaNs the plain chain's
+    square root (explore ``u-space-dissolution-probe``); now every value is
+    the closure limit, the range still contains the explore record's finite
+    segment ``[50.16174, 162.36675]`` deg, and the arc carries the same
+    values as the boundary walk's own exit-Snell piece.  The internal-2
+    onset never enters ``U_P`` and has no arcs.
+    """
+    field = DPField.build(canonical_crystal(), (3, 5, 6, 7), 1.3110129, lattice_n=50000)
+    curve1, curve2 = field.weight_kinks
+    assert curve1.margin == "internal_1_tir_discriminant" and curve1.method == "marched"
+    assert curve1.arcs and curve1.complete and curve1.note == ""
+    assert np.isfinite(curve1.values).all()
+    assert np.degrees(curve1.values.min()) == pytest.approx(50.16174, abs=2e-5)
+    assert np.degrees(curve1.values.max()) >= 162.3667
+    (arc,) = curve1.arcs
+    assert not arc.closed and arc.ends == ("entry_incidence_cosine", "entry_incidence_cosine")
+    piece = next(p for p in field.boundary_curves if p.margin == "exit_snell_discriminant")
+    assert np.degrees(curve1.values.max()) == pytest.approx(np.degrees(piece.values.max()), abs=2e-3)  # 0.25 deg samples
+    assert curve2.arcs == ()
 
 
 def test_a_b_path_has_no_kink() -> None:
