@@ -2278,21 +2278,23 @@ def mc_point_observables(field, u: np.ndarray) -> dict[str, Any]:
     :func:`.path_weight.weighted_power` (observable separately before their product, conventions #18).
     """
     from .camera import incident_direction_from_sun
-    from .geometry import entry_measure_batch
-    from .optics import fresnel_transmission_path_batch
-    from .path_weight import weighted_power
+    from .path_weight import entry_and_power, weighted_power
     from .s2_store import align_rotations
 
     u = np.asarray(u, dtype=np.float64).reshape(-1, 3)
     crystal, faces, index = field.crystal, field.faces, field.index
     incident = np.asarray(incident_direction_from_sun(MC_PROBE_SUN), dtype=np.float64)
     rotations = align_rotations(u, MC_PROBE_SUN)
+    # the factors come from the one kernel (path_weight.entry_and_power binds A and T to the same
+    # faces and n; a56: no production module calls the two factor authorities side by side), the
+    # product from the kernel's own weighted_power
+    a_p, t_p = entry_and_power(rotations, faces, incident, index, crystal=crystal)
     values = {
         "d_p": np.asarray(field.d_p_batch(u), dtype=np.float64),
         "gradient_norm": np.linalg.norm(np.asarray(field.gradient_batch(u), dtype=np.float64), axis=1),
         "valid": np.asarray(field.valid_batch(u), dtype=bool),
-        "a_p": np.asarray(entry_measure_batch(rotations, faces, incident, crystal, n_ice=index), dtype=np.float64),
-        "t_p": np.asarray(fresnel_transmission_path_batch(rotations, faces, incident, index, crystal=crystal), dtype=np.float64),
+        "a_p": np.asarray(a_p, dtype=np.float64),
+        "t_p": np.asarray(t_p, dtype=np.float64),
         "w": np.asarray(weighted_power(rotations, faces, incident, index, crystal=crystal), dtype=np.float64),
     }
     bad = {key: int(np.count_nonzero(~np.isfinite(np.asarray(value, dtype=np.float64)))) for key, value in values.items() if key != "valid"}
