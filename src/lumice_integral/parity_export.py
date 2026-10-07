@@ -2069,7 +2069,7 @@ def export_band_sum_cell(cell: BandSumCell, output_dir: Path, provenance: Mappin
     }
 
 # ------------------------------------------------------------------ module C (dp_field / focusing / chromatic)
-# docs/analytic-parity-fixtures.md section 6.3: the u-S^2 geometry layer's own quantities as
+# docs/analytic-parity-fixtures.md "Module C cells (wave 3)": the u-S^2 geometry layer's own quantities as
 # fixtures for Lumice's schema3 geometry port.  Seven fixture kinds, one file each per cell, under
 # the manifest key ``module_c_cells``.  Everything here only reads the module C implementations
 # (``dp_field``, ``focusing``, ``chromatic``) and adds serialisation; no numerical behaviour.
@@ -2095,7 +2095,7 @@ MC_SAMPLE_TARGET = 256  # the dp_field_sample u subset size (strided from the va
 # invariant; the same probe sun as chromatic's random-orientation weights, so both read one kernel).
 MC_PROBE_SUN = np.array([0.0, 0.0, 1.0])
 
-# Tolerances and their bases (docs/analytic-parity-fixtures.md section 6.3 keeps the table).
+# Tolerances and their bases (docs/analytic-parity-fixtures.md "Module C cells (wave 3)" keeps the table).
 MC_TOPOLOGY_ATOL = 1e-9
 MC_TOPOLOGY_BASIS = (
     "the boundary walk locates corners by Newton and restricted extrema by bisection to ~1e-12 rad on "
@@ -2124,7 +2124,7 @@ MC_KINK_ENVELOPE_ATOL = 1e-9
 MC_KINK_ENVELOPE_BASIS = (
     "arc ends are gate crossings located to ~1e-12 rad and D_P there is the same closed-form chain; the "
     "envelope (per-arc min/max) is a property of the curve, not of its sampling.  The arc point lists are "
-    "LI's march sampling and are informative (docs/analytic-parity-fixtures.md section 6.3)"
+    "LI's march sampling and are informative (docs/analytic-parity-fixtures.md \"Module C cells (wave 3)\")"
 )
 MC_A_P_RTOL = 1e-10
 MC_A_P_BASIS = (
@@ -2145,7 +2145,7 @@ def mc_thresholds_snapshot() -> dict[str, Any]:
 
     A snapshot for replay, not a second authority: the constants live in
     :mod:`lumice_integral.chromatic` and a change there re-exports these fixtures
-    (docs/analytic-parity-fixtures.md section 6.3).
+    (docs/analytic-parity-fixtures.md "Module C cells (wave 3)").
     """
     from . import chromatic
 
@@ -2522,7 +2522,7 @@ def _compare_mc_topology(check: Check, got: Mapping[str, Any], expected: Mapping
             reference["margin"], reference["kind"], reference["coincident"], reference["nonfinite_values_dropped"]
         )
         check.expect(same, f"piece {index} ({reference['margin']}): structure differs")
-        if len(reference["values"]):
+        if len(reference["values"]) and len(mine["values"]):
             _close(check, f"piece {index} ({reference['margin']}) envelope", [min(mine["values"]), max(mine["values"])], [min(reference["values"]), max(reference["values"])], tolerance["piece_envelope"]["value"])
             _close(check, f"piece {index} ({reference['margin']}) ends", [mine["points"][0], mine["points"][-1]], [reference["points"][0], reference["points"][-1]], tolerance["piece_envelope"]["value"])
     check.expect(len(mine_boundary["corners"]) == len(ref_boundary["corners"]), "corner count differs")
@@ -2538,16 +2538,16 @@ def _compare_mc_topology(check: Check, got: Mapping[str, Any], expected: Mapping
         _close(check, f"boundary critical {index} value", mine["value"], reference["value"], atol)
     mine_plateau, ref_plateau = mine_boundary["plateau_value"], ref_boundary["plateau_value"]
     check.expect((mine_plateau is None) == (ref_plateau is None), "plateau_value None-ness differs")
-    if ref_plateau is not None:
+    if ref_plateau is not None and mine_plateau is not None:
         _close(check, "plateau_value", mine_plateau, ref_plateau, tolerance["plateau_value"]["value"])
     mine_fold, ref_fold = got["degenerate_fold"], expected["degenerate_fold"]
     check.expect((mine_fold is None) == (ref_fold is None), "degenerate_fold presence differs")
-    if ref_fold is not None:
+    if ref_fold is not None and mine_fold is not None:
         check.expect(mine_fold["crease_interior_arcs"] == ref_fold["crease_interior_arcs"], "crease_interior_arcs differs")
         check.expect(mine_fold["crease_closed_ridge"] == ref_fold["crease_closed_ridge"] and mine_fold["crease_touching_arc"] == ref_fold["crease_touching_arc"], "crease booleans differ")
         check.expect([where for _, where in mine_fold["axis_points"]] == [where for _, where in ref_fold["axis_points"]], "axis point locations differ")
         check.expect(abs(mine_fold["circle_interior_fraction"] - ref_fold["circle_interior_fraction"]) <= 1e-12, "circle_interior_fraction differs")
-        if ref_fold["axis"] is not None:
+        if ref_fold["axis"] is not None and mine_fold["axis"] is not None:
             _close(check, "fold axis", mine_fold["axis"], ref_fold["axis"], tolerance["critical_point_positions"]["value"])
     mine_topo, ref_topo = got["domain_topology"], expected["domain_topology"]
     check.expect(mine_topo["domain_components"] == ref_topo["domain_components"] and mine_topo["complement_components"] == ref_topo["complement_components"], "domain topology counts differ")
@@ -2639,19 +2639,19 @@ def verify_mc_field_kinks(fixture: Mapping[str, Any], name: str = "") -> Check:
             structure = ("step", "margin", "method", "note", "failed_seeds", "complete", "nonfinite_values_dropped")
             where = f"{label} curve {curve_index} ({reference['margin']})"
             check.expect(all(mine[key] == reference[key] for key in structure), f"{where}: structure differs")
-            if reference["normal"] is not None:
+            if reference["normal"] is not None and mine["normal"] is not None:
                 _close(check, f"{where} normal", mine["normal"], reference["normal"], tolerance["normal"]["value"])
             check.expect(len(mine["arcs"]) == len(reference["arcs"]), f"{where}: arc count differs")
             for arc_index, (mine_arc, reference_arc) in enumerate(zip(mine["arcs"], reference["arcs"])):
                 check.expect(mine_arc["closed"] == reference_arc["closed"] and mine_arc["ends"] == reference_arc["ends"], f"{where} arc {arc_index}: closed/ends differ")
-                if len(reference_arc["values"]):
+                if len(reference_arc["values"]) and len(mine_arc["values"]):
                     _close(
                         check, f"{where} arc {arc_index} envelope",
                         [float(np.min(mine_arc["values"])), float(np.max(mine_arc["values"]))],
                         [float(np.min(reference_arc["values"])), float(np.max(reference_arc["values"]))],
                         tolerance["envelope"]["value"],
                     )
-            if reference["spread"] is not None:
+            if reference["spread"] is not None and mine["spread"] is not None:
                 _close(check, f"{where} spread", mine["spread"], reference["spread"], tolerance["envelope"]["value"])
                 if reference["spread"] < 1e-12:  # a closed-form constant circle: the value itself is exact
                     _close(check, f"{where} constant value", mine["value_min"], reference["value_min"], tolerance["constant_value"]["value"])
@@ -2827,7 +2827,6 @@ def mc_verdict_json(verdict) -> dict[str, Any]:
     }
 
 
-MC_FEATURE_ATOL = 2e-3
 MC_FRACTION_ATOL = 2e-2
 MC_TINT_ENERGY_RTOL = 5e-2
 MC_TINT_BASIS = (

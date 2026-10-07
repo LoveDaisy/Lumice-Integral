@@ -593,8 +593,8 @@ MODULE_C_CELLS = (
         ("chromatic_class",),
         (),
         ("A4",),
-        "the 120 deg parhelion tint on the rhombic plate (h/a = 1, sun 9 deg): tint blue, ratio 1.492, four lit "
-        "members of the twelve (the printed digits of chromatic-module-c.md \"Evidence\"),",
+        "the 120 deg parhelion tint on the rhombic plate (h/a = 1, sun 9 deg): tint blue, ratio 1.492, four of "
+        "the 24 members lit (the printed digits of chromatic-module-c.md \"Evidence\")",
     ),
     mc_cell(
         "mc_chromatic_class",

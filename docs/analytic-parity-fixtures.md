@@ -28,7 +28,8 @@ uv run python scripts/export_analytic_parity.py --output-dir artifacts/analytic-
   (the 94 took 7 min on 2026-09-30 with a second export running beside it);
   from wave 3 on (2026-10-07) all 120 took 5:39 with the read-back, of which
   the 26 module C fixtures took about 2:50 (the three plate-crystal class
-  cells at `1e5` poses each dominate).
+  cells at `1e5` poses each dominate).  The final clean-tree repeat on the
+  same day took 3:32 with the read-back.
   Before the four family-pinned cells were added, at load average 20–30, the
   export of 89 fixtures took 50 s and the read-back 153 s. The seven band-sum
   fixtures of that set took 38 s, because the statistical rank-0 cell replays a
