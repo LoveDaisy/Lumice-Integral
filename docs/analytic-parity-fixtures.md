@@ -62,8 +62,12 @@ seed was chosen) and `serves` (the contract §11 rows it certifies,
 `<path>__band_sum_<label>.json`, listed under `band_sum_cells` with its
 `label`, `rank`, `pose_density` family, `projection` kind and `rationale`; an
 export without band-sum cells has no `band_sum_cells` key, so the files and
-the manifest of §6 and §6.1 keep their bytes. A reader MUST ignore top-level
-manifest keys it does not know: later waves add fixture kinds under new keys.
+the manifest of §6 and §6.1 keep their bytes. A module C cell (§6.3) is named
+`<path>__mc_<label>`, its files `<path>__mc_<label>__<kind>.json`, listed
+under `module_c_cells` with each exported kind's `detects` text; an export
+without module C cells has no `module_c_cells` key, so the earlier manifests
+keep their bytes. A reader MUST ignore top-level manifest keys it does not
+know: later waves add fixture kinds under new keys.
 
 The JSON is UTF-8 with sorted keys. Floats are written in the shortest form
 that round-trips to the same float64, so parsing with any conforming JSON
@@ -512,6 +516,125 @@ events are not grazing, agree bit for bit either way. The spot's position does
 not depend on `n` (parallel entry and exit faces), only its weights do.
 `tests/test_parity_export.py::test_non_canonical_index_cell_lights_the_grazing_slab_spot`
 pins the lit streak.
+
+### 6.3 Module C cells (wave 3)
+
+The u-S² geometry layer itself — `dp_field` (the `D_P` field, its gates, the
+interval partition, the weight kinks), `focusing` (critical-value labels) and
+`chromatic` (the colour criterion) — as fixtures for Lumice's schema3 geometry
+port (Lumice scrum `schema3-geometry-port`).  The cells carry the anchors the
+dissolution probe pinned (scrum `wave3-pull-forward`): C02/C05/C06 and the
+splits.  Unlike the module A/B fixtures these are **sun-free**: the field
+layer reads the crystal, the face sequence and the index only, so the inputs
+carry no `incident_direction`.  Every angle is display delta in radians (no
+180° − θ conversion); the cell's index is Lumice's `n(λ)`
+(`spectrum.dispersion.refractive_index`, `n(550) = 1.3110129170742788`), and
+each fixture records its index and wavelength label.  The kink sweeps carry
+400/550/700 nm (the C02/C06 calibers), the wavelength-critical table 450/550/650
+nm (task 42.4's caliber).  The chromatic kinds take their pair from
+`chromatic.N_RED`/`N_BLUE` (1.307/1.317) and record it with the thresholds.
+
+Per-cell sample points (`dp_field_sample`): a strided subset of about 256
+valid points of the 20000-point antipodal Fibonacci lattice plus named
+interior anchors (interior critical points, interior slab-axis points,
+mid-arc kink points; the boundary extrema sit on `dU_P` itself, where a gate
+margin of ~0 makes the exit chain's square root undefined, and belong to the
+topology fixture).  The weights follow the twist-invariant convention:
+`A_P` is the entry measure at any pose with `R u = ŝ_probe = [0, 0, 1]`,
+`T_P` the Fresnel path factor and `w = A_P·T_P` the one kernel
+`path_weight.weighted_power` — observable separately before their product.
+`D_P`, the gradient norm and the gate margins come straight from the field
+layer.
+
+| Kind | Input | Expected (what is compared) |
+|---|---|---|
+| `dp_field_sample` | crystal, faces, index (+label), `lattice_n`, the sample record, `u` | per point: `d_p`, `gradient_norm`, `valid`, the `margin_names`/`margins` of `U_P`'s gates, `a_p`, `t_p`, `w` |
+| `dp_field_topology` | crystal, faces, index (+label), `lattice_n` | `interval_partition` rows `[lo, hi, n_components, n_closed, n_open]`, `critical_values`, interior critical points (position, value, kind, Morse index, gradient norm, Hessian eigenvalues), the boundary loop (pieces: structure + D envelope + endpoint positions, the interior point lists informative; corners with their margin signatures; restricted critical points; plateau value), `degenerate_fold` (axis, axis-point locations, `circle_interior_fraction`, the crease fields), `domain_topology` (counts, `is_disk`, the chart-grid audit) |
+| `dp_field_kinks` | crystal, faces, `indices` (label → n), `lattice_n` | per label, per curve: `(step, margin, method, normal, note, failed_seeds, complete)`, arcs (points, values, `closed`, `ends` gate names; points informative), `value_min`/`value_max`/`spread`, `nonfinite_values_dropped` |
+| `focusing_classify` | crystal, faces, index (+label), `pose_density` (random), `lattice_n` | `focusing.FocusingClassification.as_json`: mechanism, onsets (value_deg, location, source, profile, jacobian_focusing, gradient_norm, measure_limit, multiplicity), `gradient_norm_range` |
+| `wavelength_critical_table` | crystal, faces, `pose_density`, `indices` | `focusing.WavelengthCriticalTable.as_json`: per onset row the per-label values (deg) and `displacement_deg` |
+| `chromatic_diagnose` | crystal, faces, `n_red`, `n_blue`, `lattice_n`, the `thresholds` snapshot | `chromatic.ChromaticVerdict`: kind/color/visible/position, the features (kind, source, color, positive_fraction, delta_red/delta_blue/shift/spread/direction_dispersion, contrast, weight, lit_fraction, visible), notes, coverage |
+| `chromatic_class` | crystal, representative, `family` (plate: sun altitude 9°, 1° zenith, 1e5 poses, seed 3), `n_red`/`n_blue`, `thresholds` | members (the PBD orbit), `lit_members` per index, the verdict with its tint metrics (energies, ratio, TIR fractions, direction dispersion) |
+
+Tolerances: structural fields and labels exact; partition bounds, critical
+values and located positions `1e-9` rad (the walk locates corners and extrema
+to ~1e-12); Hessian eigenvalues `1e-8` relative; onset values `1e-8` deg;
+gradient quantities `1e-6` relative; the sampled medians of
+`chromatic_diagnose` `2e-3` rad; `a_p`/`t_p`/`w` relative `1e-10`; the
+plate-class tint is statistical (`5e-2`; LI's sample is a numpy PCG64
+stream, its split-half σ of the ratio is ≤ 3e-3 at 1e5 poses).
+
+**The cells** (15 cells, 26 fixtures; `serves` names Lumice's A-lines,
+`schema2-redesign-discussion/conclusions.md` §7: A1 field layer, A2
+partition/escape, A3 boundary walk + kinks, A4 focusing/chromatic):
+
+| Cell | Crystal, λ | Kinds | Serves | The anchor it carries |
+|---|---|---|---|---|
+| `3-5__mc_field` | canonical column, 450/550/650 | sample, topology, classify, table | A1 A2 A4 | the 22° inner edge, the closed form `2 asin(n sin 30°) − 60°` = 21.916127° at n(550); the wavelength table's 0.580962° displacement |
+| `3-1-5__mc_field` | canonical column, 550 | sample, topology, classify | A1 A2 A3 A4 | the boundary extremum D_min = 21.916127° (the same closed form); the kind-2 attribution |
+| `3-1-5__mc_kinks` | canonical column, 400/550/700 | kinks | A3 | the C02 sweep: 700 nm [129.364, 134.255], 550 [132.458, 136.842], 400 nm [141.004, 143.652]; 131.030° lies in the 700 nm span |
+| `3-1-6__mc_field` | canonical column, 550 | sample, topology | A1 A2 | the whole-range partition [0°, 180°] |
+| `3-1-6__mc_kinks` | canonical column, 550 | kinks | A3 | the constant kink circle `2 asin √(n²−1)` = 115.945100° at n(550), spread < 1e-12 |
+| `3-1-4-5__mc_field` | canonical column, 550 | topology, kinks | A2 A3 | the partition split at exactly 120.000000°; the kink reaching 149.246753° |
+| `3-4-1-5__mc_field` | canonical column, 550 | topology | A2 | the complementary-circle twin: the same split, the kink on the second reflection |
+| `3-5-6-7__mc_field` | canonical column, 550 | sample, topology, kinks | A1 A2 A3 | the machinery regression: the partition complete from 50.161742°, one domain component (audit `corrected`), kink arcs without NaN |
+| `4-8-7-5__mc_field` | **β** `from_lumice(3.0, [2,1,1,2,1,1])`, 550 | sample, topology, classify | A1 A2 A4 | **C05**: the slab partition [0°, 50.161742°, 120°], both intervals (2, 0, 2), the fold on the c axis (22.764% of the crease inside `U_P`), the blade critical value 120°, `classify` = jacobian@blade |
+| `4-8-1-7-5__mc_kinks` | β, 400/550/700 | kinks | A3 | **C06**: the basal kink's constant circle 149.246753° at 550, dispersion +1.850629° (400 − 700) |
+| `3-1-6__mc_chromatic` | `from_lumice(0.5)`, N_RED/N_BLUE | chromatic | A4 | edge/blue/visible at `2 asin √(n_b²−1)`, shift 3.354°, spread 0 |
+| `3-1-5__mc_chromatic` | `from_lumice(0.5)`, N_RED/N_BLUE | chromatic | A4 | the C02 criterion layer: the kink edge blue/visible (σ 4.878° vs Δ 7.325°), the exit gate red/not visible (σ 108.65° vs |Δ| 0.33°) |
+| `1-3-5-2__mc_chromatic_class` | rhombic plate `from_lumice(0.5, [1.5,1,1,1.5,1,1])` | chromatic_class | A4 | tint blue, ratio 1.492 (printed digits), 4 of 24 members lit |
+| `1-3-4-2__mc_chromatic_class` | same plate | chromatic_class | A4 | the white control, ratio 0.965 |
+| `3-5-6-8__mc_chromatic_class` | same plate | chromatic_class | A4 | the impossible-literal class: four other members carry it, white at 1.029 |
+
+A5 (the contour line integral) is **not directly served**: the issue's scope
+carries no contour objects, and A5 consumes the field and topology cells
+above as its input layer — the limitation is recorded here and in the
+manifest rationale.
+
+**Anchor calibers.** The 52 dissolution-probe records were computed at the
+truncated index `n = 1.3110129`; the fixtures carry the full `n(λ)`, so
+115.945094 → 115.945100 and 50.161740 → 50.161742 (the truncated index
+reproduces the recorded digits; both directions are pinned in
+`tests/test_parity_export_module_c.py`).  The C02 "red/blue ends" of the
+record are `n(700)`/`n(400)` — read from the sweep data, not the chromatic
+pair 1.307/1.317 (at 1.307 the span is [129.451, 134.329], which the record's
+129.364 excludes) — and the corpus' "blue step at 131°" lies inside the
+700 nm span.  Lumice's external anchors (the +1.87° dispersion against the
+fixture's +1.850629, the blade's 119.99999999 at grid resolution against the
+critical value 120) are the cross-engine calibers this table reconciles.
+
+**Crystals.** The β crystal and the rhombic plate rebuild exactly through the
+§2.1 closed-form scalars (`HexPrism.from_lumice`; `face_distance` is the
+apothem-ratio field, Lumice's `height` is `h/(2a)`), as the dissolution probe
+verified member by member.  One geometric fact belongs here because it bounds
+what these fixtures constrain: for prism crystals the side-face normals sit
+at fixed azimuths (`i·60°`; `face_distance` translates planes, it does not
+rotate them), so `D_P`, `U_P`, the topology, the kink curves and
+`focusing.classify` are **position-free** — `fd` and `h` enter the direction
+layer through nothing.  The position-sensitive surface is the entry measure:
+the β cell's `A_P` (`dp_field_sample`) is positive only on the β crystal (on
+the canonical column the corridor of 4-8-7-5 is empty, `A_P ≡ 0` on the whole
+lattice), and the rhombic plate's class lit sets differ (4 of 24 members
+against the regular prism's 12; `3-5-6-8` white on the plate against not lit
+at all on the column).  The export-time probe that recorded this
+(`crystal_consumption_probe.py`, task `module-c-fixture-export`) also verified
+the position-freedom empirically: β against the regular column agree on the
+partition to 2.5e-29°, on the kink envelopes to 4.4e-16 rad, and on the
+classification to ulp level.
+
+**The chromatic thresholds.** Each `chromatic_*` fixture embeds
+`chromatic`'s criterion constants (`N_RED`, `N_BLUE`, `EDGE_MIN_SHIFT_RAD`,
+`EDGE_SPREAD_PER_SHIFT`, `TINT_RATIO_MIN`, `CALIBRATION_WHITE_MAX_DEVIATION`)
+as a **recorded snapshot** so the port can replay the criterion itself.  The
+authority stays the module (`lumice_integral.chromatic`); a constant changed
+there re-exports these fixtures rather than handing the port a second
+implementation to keep in step.
+
+**Not covered** (second batch, LI backlog): the new structure objects
+(S1/S2-restricted corridors, the A = 0 corridor, S6 junctions); contour
+quadrature values; module C cells on pyramids (the module A/B matrix already
+carries pyramids; module C's own would follow the same recipe when the port
+needs them).
 
 ## 7. Update flow
 
