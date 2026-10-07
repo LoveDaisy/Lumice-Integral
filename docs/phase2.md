@@ -246,8 +246,26 @@ sequence, independent of the sun:
   closed loop from its value to the loop extremum where the sublevel set
   first reaches $\partial U_P$ (checked on a small ring). Anything else —
   $U_P$ or its complement not connected, several interior critical points,
-  a saddle, a crease inside $U_P$, a boundary-born sublevel component —
-  raises `TopologyEscape` instead of guessing. The component counts
+  a saddle, a boundary-born sublevel component — raises `TopologyEscape`
+  instead of guessing. A slab crease that crosses the interior of $U_P$ (a
+  rotation slab's max ridge, $D_P$ = the blade value along the crease; the
+  beta crystal's `4-8-7-5`) is partitioned by that same reasoning rather
+  than escaped when three checks hold (task `dp-slab-partition-completion`):
+  the fold set's own sampling holds interior arcs of the crease (a fraction
+  claiming arcs that are not there is a contradiction), the boundary walk
+  carries the blade value as a *strict* local maximum (only transversal
+  crease ends produce one; a plateau at the blade is a tangency signature
+  and does not count), and no crease arc closes inside $U_P$ without
+  touching $\partial U_P$ nor hugs it over an arc (a closed ridge, or a
+  tangency / coincidence). The transversal ends are then ordinary loop
+  extrema at the blade and the generic mechanism applies unchanged; each
+  failed check escapes with its own text (contradiction / not carried /
+  tangency / closed ridge). The cluster evidence is resolution-limited —
+  evidence rather than proof, the chart-audit standard below: its two
+  thresholds are pinned on the one positive fixture (`4-8-7-5`, fold axis =
+  the c axis) to their non-triggering side only, the triggering side is
+  covered by synthetic tests, and no fixture pins an interior slab axis
+  point together with interior crease arcs. The component counts
   themselves are audited (task `dp-thin-neck-topology`): a plural k-NN
   lattice count — a neck thinner than the lattice spacing splits
   `3-5-6-7`'s $U_P$ into two components, non-monotonically in $N$ — is
@@ -267,8 +285,11 @@ sequence, independent of the sun:
   as sub/superlevel regions touching no boundary, arcs as crossings along
   the traced grid boundary moved onto $\partial U_P$ by bisection (node
   values alone fail: $D_P$ falls like a square root off an exit-TIR curve).
-  All intervals of the five fixtures and of the A60-10 members `3-5-6-7`,
-  `3-4-5-7` agree; `3-5-6-7` verifies on the default 20000-point lattice as
+  All intervals of the five fixtures, of the A60-10 members `3-5-6-7`,
+  `3-4-5-7`, and of the beta-crystal slab `4-8-7-5` (the
+  crease-through-$U_P$ gate's one positive fixture, task
+  `dp-slab-partition-completion`, at Lumice's $n(550)$) agree;
+  `3-5-6-7` verifies on the default 20000-point lattice as
   well (the two-component count its neck earns there is a resolution
   artefact the chart audit corrects to one; task `dp-thin-neck-topology`),
   while the A60-10 fixture keeps `--lattice-n 50000`, where the lattice

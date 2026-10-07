@@ -987,3 +987,44 @@ Moved to [overview.md](overview.md) §3.
     unconditional cost (a51): the mirror blind spot, a thin *invalid* gap
     wider than both chains' resolutions merging a truly plural domain
     into a false disk.
+- **2026-10-07**: a slab crease that crosses the interior of $U_P$ is
+  partitioned, not escaped (task `dp-slab-partition-completion`, scrum
+  `wave3-pull-forward`; explore `u-space-dissolution-probe` #3/#11 — the
+  beta crystal's `4-8-7-5` at Lumice's $n(550)$: fold axis = the c axis,
+  the crease circle inside $U_P$ for 22.76% of its sampling, the blade at
+  the C05 anchor value 120 deg). The partition's two generic arguments
+  hold in the presence of a crease — open arcs are still half the loop's
+  crossings, and with no interior critical point there is no closed loop —
+  so the gate only has to establish the crease's ends are ordinary
+  transversal boundary extrema. Decisions:
+  - Two evidence families, consumed by three checks
+    (`certificate._slab_crease_gates`): the boundary walk's own strict
+    local maxima at the blade value (only transversal ends produce them;
+    a plateau there is a tangency signature and `BoundaryCriticalPoint.strict`
+    refuses it), and the fold set's crease-sampling clusters (interior
+    arcs must exist — a patched `circle_interior_fraction` without them is
+    a contradiction; every arc must touch $dU_P$ — a closed ridge's level
+    loops are not the walk's to count; no arc may hug $dU_P$ over an arc —
+    a tangency or coincidence). Any failure escapes with its own text;
+  the mechanism itself (`critical_values`, crossings, counts) is unchanged
+  — no slab-specific counting was written (fail-closed throughout, the
+  invariant rather than a widened hatch).
+  - Sampling-cluster evidence rather than a closed-form circle-polygon
+    intersection: it reuses the existing 7200-sample machinery of
+    `degenerate_fold_set` (subtraction first, a04) and carries its own
+    resolution limit, stated in the same evidence-not-proof terms as the
+    chart audit. Upgrade path: a real misjudgement instance upgrades the
+    cluster check to a closed-form intersection cross-check (a51 — the
+    gate to that work is a demonstrated cost, not an imagined one).
+  - Threshold pinning, stated limitation: `CREASE_CONTACT_MARGIN` (1e-2)
+    and `CREASE_TOUCHING_ARC_RAD` (0.1 rad) are pinned on the one positive
+    fixture to their non-triggering side only (its cluster's contact
+    margin 9.4e-5, its transversal hugs at most 0.031 rad, against the
+    grazing fixtures' 3.14-rad / full-circle coincident arcs); the
+    triggering side is covered by the synthetic escape tests, and no
+    independent pinning exists for other fold-axis directions or for an
+    interior slab axis point together with interior crease arcs.
+  Verified: `4-8-7-5` partitions to $[0, 50.16174, 120]$ deg, both
+  intervals $(2, 0, 2)$, agreeing with the independent chart grid of
+  `scripts/verify_dp_field_intervals.py` per interval; every existing
+  fixture is unchanged ([phase2.md](phase2.md) §3.1).
