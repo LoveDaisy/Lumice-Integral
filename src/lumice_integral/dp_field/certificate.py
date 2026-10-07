@@ -28,15 +28,64 @@ critical data alone:
   points below ``L`` next to it belong to a component whose minimum is
   interior, i.e. ``v``'s); this is checked on a small ring around every
   loop minimum at ``L``.  So ``n_closed = 1`` on ``(v, L)``, else ``0``;
-  a maximum is the mirror image.
+  a maximum is the mirror image.  A loop of constant ``D_P`` (a slab's
+  crease circle as ``dU_P`` itself, :attr:`.boundary.BoundaryLoop.plateau_value`)
+  has every point both its minimum and its maximum at that value: ``L`` is
+  the constant, the ring check is taken at any one point of the loop, and
+  ``D_P`` restricted to the boundary never crosses any ``delta`` off it.
 
 Everything outside that reasoning is the explicit escape hatch
 (:class:`TopologyEscape`, issue ``dp-field-layer``, explore
 ``dp-field-saddle-search``): ``U_P`` or its complement not connected on the
-lattice (not a disk), more than one interior critical point, a saddle or a
-degenerate Morse point, a slab crease inside ``U_P``, or a loop extremum at
-``L`` with ``D_P`` increasing into ``U_P`` (a sublevel component born on the
-boundary).  None of them is resolved silently.
+lattice (not a disk; a plural count is audited first, below), more than one
+interior critical point, a saddle or a degenerate Morse point, a slab crease
+whose three checks below fail, or a loop extremum at ``L`` with ``D_P``
+increasing into ``U_P`` (a sublevel component born on the boundary).  None of
+them is resolved silently.
+
+A slab crease that crosses the interior of ``U_P`` (a rotation slab's max
+ridge, ``D_P = blade`` along the crease, the geometry of the beta crystal's
+``4-8-7-5``) is partitioned by that same reasoning rather than escaped when
+three checks hold (task ``dp-slab-partition-completion``): the fold set's own
+sampling holds interior arcs of the crease (a ``circle_interior_fraction``
+claiming arcs that are not there is a contradiction), the boundary walk
+carries the blade value as a *strict* local maximum (only transversal crease
+ends produce one; a plateau at the blade is a tangency signature and does not
+count), and no crease arc closes inside ``U_P`` without touching ``dU_P`` nor
+hugs ``dU_P`` over an arc (a closed ridge, or a tangency / coincidence).  The
+transversal ends are then ordinary loop extrema at the blade and the generic
+mechanism applies unchanged.  Each failed check escapes with its own text
+(contradiction / not carried / tangency / closed ridge).  The cluster
+evidence is resolution-limited -- evidence rather than proof, the
+chart-audit standard below: its two thresholds
+(:data:`.field.CREASE_CONTACT_MARGIN`, :data:`.field.CREASE_TOUCHING_ARC_RAD`)
+are pinned on the one positive fixture (``4-8-7-5``, fold axis = the c axis)
+to its non-triggering side only, the triggering side is covered by synthetic
+tests, and no fixture pins an interior slab axis point together with interior
+crease arcs (that combination shares this path untested).
+
+The lattice count is resolution-limited, and one regime of that is audited
+(task ``dp-thin-neck-topology``, explore ``u-space-dissolution-probe`` #4):
+a ``U_P`` with a neck thinner than the lattice spacing (``3-5-6-7``: neck
+< 1e-3 rad against 0.016 rad at ``N = 20000``) is split into two k-NN
+components by an artefact, non-monotonically in ``N``.  A plural count is
+therefore audited (:func:`chart_audit`) on a ladder of orthographic charts
+of the entry hemisphere -- a second chain sharing no failure mode with the
+k-NN graph: different sampling geometry, 4-connectivity on the chart
+instead of a 3D k-NN graph, finer resolution.  Counts every grid agrees on
+are the adjudicated counts, evidence rather than proof (two independent
+chains agreeing and converging, still short of an arrangement-exact
+certificate); disagreement establishes nothing and escapes as
+``unconverged``, the fail-closed direction throughout.  This audit and
+``scripts/verify_dp_field_intervals.py`` are deliberately two
+implementations of the same chart (shared gate authority, unshared code):
+their independence is what makes the audit worth anything, it is guarded by
+the fixture cross-checks (``test_partition_agrees_with_the_independent_grid``),
+and neither side's chart construction (axis choice, rim push,
+4-connectivity) may be edited without the other.  Known limitation, left
+uninstrumented (no trigger exists without unconditional cost): the mirror
+blind spot -- a thin *invalid* gap wider than both chains' resolutions can
+merge a truly plural domain into one on both chains and pass a false disk.
 """
 
 from __future__ import annotations
@@ -45,18 +94,27 @@ from dataclasses import dataclass
 from typing import NamedTuple
 
 import numpy as np
+from scipy import ndimage
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 from scipy.spatial import cKDTree
 
+from .. import optics
 from ..geometry import Polyhedron
 from ..s2_store import fibonacci_sphere
 from .boundary import EXTREMUM_ATOL, BoundaryLoop
-from .field import DegenerateFoldSet, Faces, InteriorCriticalPoint, d_p_batch, tangent_basis, valid_batch, validity_margins_batch
+from .field import DegenerateFoldSet, Faces, InteriorCriticalPoint, d_p_batch, d_slab, tangent_basis, valid_batch, validity_margins_batch
 
 # Radius of the ring that decides on which side of a boundary extremum D_P is lower (rad), and its directions.
 SIDE_RING_RAD = 1e-5
 SIDE_RING_DIRECTIONS = 64
+
+# The chart resolutions of the component-count audit (task ``dp-thin-neck-topology``), coarse to fine,
+# and the chart evaluation chunk.  An empty ladder turns the audit off (the rollback switch).
+# (801, 1601) settled 2026-10-07 on 3-5-6-7: both levels adjudicate one component, the full audited
+# chain costs ~2.3 s, and 3201 is not needed.
+AUDIT_LADDER: tuple[int, ...] = (801, 1601)
+CHART_CHUNK = 200_000
 
 
 class TopologyEscape(RuntimeError):
@@ -75,11 +133,18 @@ class DeviationInterval(NamedTuple):
 
 @dataclass(frozen=True)
 class DomainTopology:
-    """Connected components of ``U_P`` and of its complement on a Fibonacci lattice (k-NN graph)."""
+    """Component counts of ``U_P`` and of its complement, adjudicated (module docstring).
+
+    The counts come from the ``lattice_n``-point Fibonacci lattice's k-NN graph; when a count is
+    plural the chart-grid audit (:func:`chart_audit`) runs and, if it converges, its counts
+    replace the lattice's here (``grid_audit`` keeps both).  Without an audit the fields are the
+    lattice counts, unchanged.
+    """
 
     lattice_n: int
     domain_components: int
     complement_components: int
+    grid_audit: ChartAudit | None = None
 
     @property
     def is_disk(self) -> bool:
@@ -100,13 +165,150 @@ def _component_count(points: np.ndarray) -> int:
     return int(connected_components(graph, directed=False)[0])
 
 
+# ---- the chart-grid audit of the lattice component counts (task ``dp-thin-neck-topology``) ------------
+
+
+@dataclass(frozen=True)
+class ChartAudit:
+    """The chart-grid audit of the lattice component counts: its evidence, per grid (module docstring).
+
+    ``grids`` are the audit chart resolutions; ``domain_counts`` / ``complement_counts`` hold one
+    count per grid (``-1``: not counted, that grid's mask breached the chart premise).  The
+    ``lattice_*`` fields keep the audited k-NN counts next to the verdict, so a correction stays
+    visible instead of silent.  ``verdict`` rolls the two counts' statuses up worst-first:
+    ``"unconverged"`` (the grids disagree, or a mask breached the premise) over ``"corrected"``
+    (the grids agree on a count the lattice got wrong) over ``"confirmed"`` (the grids agree with
+    the lattice).  It is an audit trail only: what escapes is decided by the audited counts
+    through :attr:`DomainTopology.is_disk`.
+    """
+
+    grids: tuple[int, ...]
+    domain_counts: tuple[int, ...]
+    complement_counts: tuple[int, ...]
+    lattice_domain_count: int
+    lattice_complement_count: int
+    verdict: str
+
+
+def _chart_grid(grid: int, n_a: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """The ``grid x grid`` orthographic chart of the entry hemisphere: its nodes and the off-chart mask.
+
+    On the chart ``u = x e1 + y e2 + sqrt(1 - x^2 - y^2) n_a``; off-chart nodes (``r >= 1``) are
+    pushed radially onto the rim ``u . n_a = 0``.  This is the chart construction of
+    ``scripts/verify_dp_field_intervals.py``, deliberately re-implemented here: the production
+    audit and the independent verifier must not share code (module docstring).
+    """
+    e1 = np.cross(n_a, np.eye(3)[int(np.argmin(np.abs(n_a)))])
+    e1 /= np.linalg.norm(e1)
+    e2 = np.cross(n_a, e1)
+    xs = np.linspace(-1.0, 1.0, grid)
+    x, y = np.meshgrid(xs, xs, indexing="ij")
+    r = np.sqrt(x**2 + y**2)
+    off_chart = r >= 1.0
+    scale = np.where(~off_chart, 1.0, 1.0 / np.maximum(r, 1e-300))
+    height = np.sqrt(np.clip(1.0 - r**2, 0.0, None))
+    u = (x * scale)[..., None] * e1 + (y * scale)[..., None] * e2 + height[..., None] * n_a
+    u /= np.linalg.norm(u, axis=-1, keepdims=True)
+    return u, off_chart
+
+
+def _chart_valid(u: np.ndarray, faces: Faces, index: float, crystal: Polyhedron | None) -> np.ndarray:
+    """The ``U_P`` mask on the chart nodes, chunked :func:`valid_batch` (the gates' single authority)."""
+    flat = u.reshape(-1, 3)
+    valid = np.zeros(len(flat), dtype=bool)
+    for start in range(0, len(flat), CHART_CHUNK):
+        valid[start : start + CHART_CHUNK] = valid_batch(flat[start : start + CHART_CHUNK], faces, index, crystal=crystal)
+    return valid.reshape(u.shape[:-1])
+
+
+def _chart_component_counts(valid: np.ndarray, off_chart: np.ndarray) -> tuple[int, int] | None:
+    """4-connected ``(domain, complement)`` counts of a chart mask, or ``None`` on a rim breach.
+
+    The domain count labels the valid mask.  The complement count labels the invalid mask with
+    every component holding an off-chart node merged into one: ``U_P`` lies in the open
+    hemisphere ``u . n_a > 0`` (the entry incidence gate), so the pushed rim ring is invalid and
+    connected, and an invalid region of the chart that reaches it joins the one far-hemisphere
+    component of ``S^2 \\ U_P``; an invalid component with no off-chart node is an island of the
+    complement inside the chart, counted separately.  A valid node on the pushed rim breaches
+    that premise (valid already requires ``u . n_a > 0``) and voids the counts -- the rim would
+    merge what it touches -- rather than counting through it (fail closed).
+    """
+    if valid[off_chart].any():
+        return None
+    four = ndimage.generate_binary_structure(2, 1)
+    _, domain = ndimage.label(valid, structure=four)
+    labels, count = ndimage.label(~valid, structure=four)
+    rim_labels = set(np.unique(labels[off_chart]).tolist()) - {0}
+    complement = 1 + sum(1 for label in range(1, count + 1) if label not in rim_labels)
+    return int(domain), int(complement)
+
+
+def _audit_verdict(
+    domain_counts: tuple[int, ...], complement_counts: tuple[int, ...], lattice_domain: int, lattice_complement: int
+) -> str:
+    """The roll-up verdict of the two counts' audit statuses, worst first (``ChartAudit.verdict``)."""
+    statuses = []
+    for counts, lattice in ((domain_counts, lattice_domain), (complement_counts, lattice_complement)):
+        if -1 in counts or len(set(counts)) > 1:
+            statuses.append("unconverged")
+        elif counts[0] == lattice:
+            statuses.append("confirmed")
+        else:
+            statuses.append("corrected")
+    if "unconverged" in statuses:
+        return "unconverged"
+    return "corrected" if "corrected" in statuses else "confirmed"
+
+
+def chart_audit(
+    faces: Faces,
+    index: float,
+    lattice_domain: int,
+    lattice_complement: int,
+    *,
+    crystal: Polyhedron | None = None,
+    ladder: tuple[int, ...] | None = None,
+) -> ChartAudit:
+    """Audit the lattice component counts against a ladder of orthographic charts (module docstring).
+
+    ``ladder`` defaults to the module constant ``AUDIT_LADDER``, read at call time so a runtime
+    change of the constant (empty = the rollback switch) takes effect on the next call.  One chart
+    per resolution of ``ladder`` (each grid's nodes are the next finer grid's
+    even-indexed subset: ``linspace(-1, 1, g)`` sits on half the spacing), its ``U_P`` mask from
+    :func:`valid_batch`, its counts from :func:`_chart_component_counts`.  A count every grid
+    agrees on is the audited count -- a ``"correction"`` of the lattice or a ``"confirmation"``
+    of it; any disagreement or rim breach is ``"unconverged"`` and establishes nothing.  The
+    audit is evidence, not a proof: two chains that share no failure mode (sampling geometry,
+    connectivity, resolution) agreeing and converging -- an arrangement-exact certificate would
+    need more.
+    """
+    if ladder is None:
+        ladder = AUDIT_LADDER
+    n_a = optics.face_normals(crystal, faces)[0]
+    domain_counts: list[int] = []
+    complement_counts: list[int] = []
+    for grid in ladder:
+        u, off_chart = _chart_grid(grid, n_a)
+        counts = _chart_component_counts(_chart_valid(u, faces, index, crystal), off_chart)
+        domain_counts.append(-1 if counts is None else counts[0])
+        complement_counts.append(-1 if counts is None else counts[1])
+    verdict = _audit_verdict(tuple(domain_counts), tuple(complement_counts), lattice_domain, lattice_complement)
+    return ChartAudit(tuple(ladder), tuple(domain_counts), tuple(complement_counts), lattice_domain, lattice_complement, verdict)
+
+
 def domain_topology(
     faces: Faces, index: float, *, lattice_n: int = 20000, crystal: Polyhedron | None = None
 ) -> DomainTopology:
-    """Component counts of ``U_P`` and ``S^2 \\ U_P`` on the ``lattice_n``-point Fibonacci lattice."""
+    """Component counts of ``U_P`` and ``S^2 \\ U_P``, audited when the lattice count is plural (module docstring)."""
     lattice = fibonacci_sphere(lattice_n)
     valid = valid_batch(lattice, faces, index, crystal=crystal)
-    return DomainTopology(lattice_n, _component_count(lattice[valid]), _component_count(lattice[~valid]))
+    domain, complement = _component_count(lattice[valid]), _component_count(lattice[~valid])
+    audit = None
+    if AUDIT_LADDER and (domain > 1 or complement > 1):  # the trigger gate: the audit's cost is paid only here
+        audit = chart_audit(faces, index, domain, complement, crystal=crystal)
+        if audit.verdict != "unconverged":
+            domain, complement = audit.domain_counts[0], audit.complement_counts[0]
+    return DomainTopology(lattice_n, domain, complement, grid_audit=audit)
 
 
 def _side_values(
@@ -144,13 +346,60 @@ def _loop_crossings(extrema_values: np.ndarray, delta: float) -> int:
 
 
 def critical_values(interior: tuple[InteriorCriticalPoint, ...], loop: BoundaryLoop) -> np.ndarray:
-    """Sorted critical values (rad): interior, restricted to pieces, and corners; merged within ``EXTREMUM_ATOL``."""
-    raw = sorted([p.value for p in interior] + [c.value for c in loop.critical_points] + [c.value for c in loop.corners])
+    """Sorted critical values (rad): interior, restricted to pieces, and corners; merged within ``EXTREMUM_ATOL``.
+
+    A loop of constant ``D_P`` (:attr:`.boundary.BoundaryLoop.plateau_value`)
+    contributes that value: it is a critical value of the restricted ``D_P``
+    (the whole boundary is one level), carried by no isolated extremum.
+    """
+    raw = sorted(
+        [p.value for p in interior]
+        + [c.value for c in loop.critical_points]
+        + [c.value for c in loop.corners]
+        + ([] if loop.plateau_value is None else [loop.plateau_value])
+    )
     merged: list[float] = []
     for value in raw:
         if not merged or value - merged[-1] > EXTREMUM_ATOL:
             merged.append(value)
     return np.array(merged)
+
+
+def _slab_crease_gates(fold_set: DegenerateFoldSet, loop: BoundaryLoop, slab: np.ndarray | None) -> None:
+    """The three checks that let a crease through ``U_P`` take the generic partition (module docstring).
+
+    Raises :class:`TopologyEscape` with the failing check's own text
+    (contradiction / not carried / tangency / closed ridge); returns silently
+    when the crease's transversal ends are ordinary loop extrema and the
+    generic mechanism applies.  The blade is ``D_P`` at any point of the
+    crease, :func:`.field.d_slab` of a tangent basis vector of the fold axis
+    (constant along the crease of a rotation or mirror slab).
+    """
+    fraction = fold_set.circle_interior_fraction
+    if fold_set.crease_interior_arcs == 0:
+        raise TopologyEscape(
+            f"the slab crease evidence contradicts the premise: circle_interior_fraction = {fraction:.3%} "
+            "but the crease sampling holds no interior arc of the crease u . n_M = 0 inside U_P"
+        )
+    blade = None if slab is None or fold_set.axis is None else float(d_slab(np.asarray(tangent_basis(fold_set.axis))[0], slab))
+    carried = blade is not None and any(
+        point.kind == "maximum" and point.strict and abs(point.value - blade) <= EXTREMUM_ATOL for point in loop.critical_points
+    )
+    if not carried:
+        raise TopologyEscape(
+            f"the slab crease u . n_M = 0 runs through U_P ({fraction:.3%} of its sampling) but its blade value "
+            "is not carried by the boundary walk as a strict local maximum"
+        )
+    if fold_set.crease_touching_arc:
+        raise TopologyEscape(
+            "the slab crease u . n_M = 0 touches or runs along dU_P over an arc of its sampling "
+            "(a non-transversal contact: its crossings cannot be counted as extrema)"
+        )
+    if fold_set.crease_closed_ridge:
+        raise TopologyEscape(
+            "an interior arc of the slab crease u . n_M = 0 never reaches dU_P (a closed ridge: "
+            "the level loops around it are not the boundary walk's to count)"
+        )
 
 
 def interval_partition(
@@ -169,12 +418,32 @@ def interval_partition(
     ``crystal`` (default: the canonical hexagonal prism) supplies the face normals of the ring probes.
     """
     if not topology.is_disk:
+        audit = topology.grid_audit
+        if audit is None:  # no audit ran: a hand-built topology, or an empty audit ladder
+            raise TopologyEscape(
+                f"U_P is not a disk on the {topology.lattice_n}-point lattice: {topology.domain_components} component(s), "
+                f"complement {topology.complement_components}"
+            )
+        if audit.verdict == "unconverged":
+            raise TopologyEscape(
+                f"U_P is not a disk: lattice {topology.lattice_n} says {audit.lattice_domain_count}/"
+                f"{audit.lattice_complement_count}, chart grids {audit.grids} say {audit.domain_counts}/"
+                f"{audit.complement_counts}; counts are not resolution-converged, the topology is not established"
+            )
+        if audit.verdict == "confirmed":
+            raise TopologyEscape(
+                f"U_P is not a disk: {topology.domain_components} component(s), complement {topology.complement_components} "
+                f"(lattice {topology.lattice_n} and chart grids {audit.grids} agree)"
+            )
+        # corrected: the grids agree on a count the lattice got wrong, and the adjudicated counts still fail is_disk
+        assert audit.verdict == "corrected"
         raise TopologyEscape(
-            f"U_P is not a disk on the {topology.lattice_n}-point lattice: {topology.domain_components} component(s), "
-            f"complement {topology.complement_components}"
+            f"U_P is not a disk: {topology.domain_components} component(s), complement {topology.complement_components} "
+            f"(chart grids {audit.grids} agree, correcting the lattice {topology.lattice_n} counts "
+            f"{audit.lattice_domain_count}/{audit.lattice_complement_count})"
         )
     if fold_set is not None and fold_set.circle_interior_fraction > 0.0:
-        raise TopologyEscape(f"the slab crease u . n_M = 0 runs through U_P ({fold_set.circle_interior_fraction:.3%} of it)")
+        _slab_crease_gates(fold_set, loop, slab)
     if len(interior) > 1:
         raise TopologyEscape(f"{len(interior)} interior critical points: " + ", ".join(p.kind for p in interior))
     extrema = loop.critical_points
@@ -186,10 +455,18 @@ def interval_partition(
     if interior:
         kind = _interior_extremum(interior[0], faces, index, slab, crystal)
         v = interior[0].value
-        edge = values.min() if kind == "minimum" else values.max()
-        touching = [p for p in extrema if p.kind == kind and abs(p.value - edge) <= EXTREMUM_ATOL]
+        if loop.plateau_value is not None:
+            # a constant loop: every point of dU_P is both its minimum and its maximum, at the plateau
+            edge = loop.plateau_value
+            touching_positions = [loop.pieces[0].points[0]]
+        else:
+            edge = values.min() if kind == "minimum" else values.max()
+            touching_positions = [p.position for p in extrema if p.kind == kind and abs(p.value - edge) <= EXTREMUM_ATOL]
         sign = 1.0 if kind == "minimum" else -1.0
-        reaches = any(np.any(sign * (_side_values(p.position, faces, index, slab, crystal) - edge) < -1e-12) for p in touching)
+        reaches = any(
+            np.any(sign * (_side_values(position, faces, index, slab, crystal) - edge) < -1e-12)
+            for position in touching_positions
+        )
         if not reaches or sign * (edge - v) <= 0.0:
             raise TopologyEscape(
                 f"interior {kind} D = {v} and loop {kind} {edge}: the sublevel component of the interior extremum "

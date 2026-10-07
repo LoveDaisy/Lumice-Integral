@@ -925,3 +925,123 @@ Moved to [overview.md](overview.md) §3.
     for `3-1-5`; that expectation is kept for the red gate only.
   - Not traced yet: the sky curve of a kink for oriented crystals.
   - Modules A and B are unchanged.
+- **2026-10-07**: module C is pulled forward (owner ruling across
+  repositories; Lumice `scratchpad/schema2-redesign-discussion/conclusions.md`
+  §4). Clause clarification: the wave table's ch12/12.1 condition sits in the
+  LI-side column — it governs when LI retires JAX (switch), not when Lumice
+  builds C++ (build). Lumice's schema3 raypath report is a terminal-user
+  computation, so under the 2026-09-28 repository-roles ruling its geometry
+  layer already belongs in Lumice C++, and it is module C's first consumer:
+  Lumice's build is pulled ahead while LI's own switch rhythm is unchanged
+  (the wave-2 hold of 2026-09-30 stands; wave 3 still switches B then C on
+  the original trigger). Three conditions: the two JAX-first backlog fixes
+  land first (`family_pinned` on the Parry family, the `1-2-1` boundary
+  walk); the schema3 structure objects (family-restricted `S1`/`S2` curves,
+  corridor-closure $A_P = 0$, `S6` junctions) are prototyped here in JAX and
+  exported as parity fixtures LI → Lumice; LI's switch rhythm untouched.
+  This repository's first batch is scrum `wave3-pull-forward`; the wave
+  table carries the annotation in [overview.md](overview.md) §5.3.
+  Both JAX-first backlog fixes have landed: `family_pinned` on the Parry
+  family (2026-10-07, tasks `focusing-family-pinned-label` /
+  `family-pinned-parry-axis`) and the `1-2-1` boundary walk (2026-10-07,
+  task `boundary-corner-1-2-1`: closure on distance + arc — a heading test
+  rejects the exact return a perimeter-commensurate great-circle loop makes
+  every lap — and a constant-$D_P$ loop as a legal terminal state,
+  [phase2.md](phase2.md) §3.1).
+- **2026-10-07**: the lattice component counts of `U_P` are audited, not
+  believed (task `dp-thin-neck-topology`, scrum `wave3-pull-forward`;
+  explore `u-space-dissolution-probe` #4). The k-NN counter has a
+  resolution blind spot: a neck thinner than the lattice spacing
+  (`3-5-6-7`, < 1e-3 rad against 0.016 rad at $N = 20000$) splits into two
+  components as an artefact, non-monotonically in $N$ (at Lumice's
+  $n(550)$: 50000 → 2, 100000 → 1, 200000 → 2), so no single density is a
+  safe fixture. Decisions:
+  - A plural count now runs a ladder of orthographic chart grids
+    (`AUDIT_LADDER = (801, 1601)`, 4-connected, nested) — a second chain
+    sharing no failure mode with the k-NN graph — before anything escapes.
+    Grids in agreement adjudicate the counts (`corrected` against /
+    `confirmed` by the lattice, worst-first roll-up); disagreement is
+    `unconverged` and escapes; a valid node on the chart rim voids that
+    grid's counts the same way (fail closed throughout). Measured on
+    `3-5-6-7` at 1.31: both grids say one component against the lattice's
+    two, ~2.3 s for the whole audited `domain_topology` — the cost the
+    plural-count trigger gate confines to the paths that need it.
+  - The adjudication is evidence, not a constructive certificate: the
+    disk reasoning's premise is still `is_disk`, now checked on two chains
+    instead of one (`phase1-math-contract.md` §9.5.6a: structural premises
+    explicit, never silently weakened). The escape text reports what both
+    chains said; a corrected count never hides the lattice's own count
+    (`DomainTopology.grid_audit` keeps both).
+  - The production audit and `scripts/verify_dp_field_intervals.py` are
+    two deliberately unshared implementations of the same chart (shared
+    gate authority, shared method, no shared code): the independence is
+    what makes the audit worth anything. The fixture cross-checks
+    (`test_partition_agrees_with_the_independent_grid`, which now includes
+    the audited default-lattice `3-5-6-7`) are the standing guardian of
+    their agreement; neither side's chart construction (axis choice, rim
+    push, connectivity) may be edited without the other.
+  - Not adopted: an arrangement-exact topology enumeration would end all
+    resolution questions but is a new machinery beyond the need (the grid
+    backstop meets it); recorded here so the door is visible. Known
+    limitation, left uninstrumented — no trigger exists without
+    unconditional cost (a51): the mirror blind spot, a thin *invalid* gap
+    wider than both chains' resolutions merging a truly plural domain
+    into a false disk.
+- **2026-10-07**: a slab crease that crosses the interior of $U_P$ is
+  partitioned, not escaped (task `dp-slab-partition-completion`, scrum
+  `wave3-pull-forward`; explore `u-space-dissolution-probe` #3/#11 — the
+  beta crystal's `4-8-7-5` at Lumice's $n(550)$: fold axis = the c axis,
+  the crease circle inside $U_P$ for 22.76% of its sampling, the blade at
+  the C05 anchor value 120 deg). The partition's two generic arguments
+  hold in the presence of a crease — open arcs are still half the loop's
+  crossings, and with no interior critical point there is no closed loop —
+  so the gate only has to establish the crease's ends are ordinary
+  transversal boundary extrema. Decisions:
+  - Two evidence families, consumed by three checks
+    (`certificate._slab_crease_gates`): the boundary walk's own strict
+    local maxima at the blade value (only transversal ends produce them;
+    a plateau there is a tangency signature and `BoundaryCriticalPoint.strict`
+    refuses it), and the fold set's crease-sampling clusters (interior
+    arcs must exist — a patched `circle_interior_fraction` without them is
+    a contradiction; every arc must touch $dU_P$ — a closed ridge's level
+    loops are not the walk's to count; no arc may hug $dU_P$ over an arc —
+    a tangency or coincidence). Any failure escapes with its own text;
+  the mechanism itself (`critical_values`, crossings, counts) is unchanged
+  — no slab-specific counting was written (fail-closed throughout, the
+  invariant rather than a widened hatch).
+  - Sampling-cluster evidence rather than a closed-form circle-polygon
+    intersection: it reuses the existing 7200-sample machinery of
+    `degenerate_fold_set` (subtraction first, a04) and carries its own
+    resolution limit, stated in the same evidence-not-proof terms as the
+    chart audit. Upgrade path: a real misjudgement instance upgrades the
+    cluster check to a closed-form intersection cross-check (a51 — the
+    gate to that work is a demonstrated cost, not an imagined one).
+  - Threshold pinning, stated limitation: `CREASE_CONTACT_MARGIN` (1e-2)
+    and `CREASE_TOUCHING_ARC_RAD` (0.1 rad) are pinned on the one positive
+    fixture to their non-triggering side only (its cluster's contact
+    margin 9.4e-5, its transversal hugs at most 0.031 rad, against the
+    grazing fixtures' 3.14-rad / full-circle coincident arcs); the
+    triggering side is covered by the synthetic escape tests, and no
+    independent pinning exists for other fold-axis directions or for an
+    interior slab axis point together with interior crease arcs.
+  Verified: `4-8-7-5` partitions to $[0, 50.16174, 120]$ deg, both
+  intervals $(2, 0, 2)$, agreeing with the independent chart grid of
+  `scripts/verify_dp_field_intervals.py` per interval; every existing
+  fixture is unchanged ([phase2.md](phase2.md) §3.1).
+- **2026-10-07**: the ch8 face-distance $d$ axis is an in-repo asset, not a
+  scratchpad number (task `ch10-verdict-face-distance-axis`, scrum
+  `wave3-pull-forward`; explore `ch08-liljequist-numeric-reproduction`).
+  The writing repo's 12.1 needs a rev-reproducible source for its d-axis
+  tables, so the explore probes 1–3 are promoted into the fifth chapter-10
+  verdict `face-distance-axis` (`ch10_verdicts.face_distance_axis`, the
+  module's own chains; `scripts/ch10_numerical_verdicts.py` gains it from
+  `VERDICTS` with no CLI change) instead of a parallel `scripts/`
+  pipeline — one semantics, one implementation. Recorded at commit
+  `57a5c02`, 160.7 s: terrain fixed on every $d$ (critical-value spread
+  `4.3e-14`°, corner `1.8e-12`°), the A0-02 member's window opening
+  towards the anthelion (141–180° band integral, trapezoid, ×18.3 /
+  ×27.5 / ×9.2 relative to $d = 1$), the A60-10 edge only dimming
+  (×0.2118 at $d = 1.8$). Reconciled against the explore snapshot
+  bit-for-bit except two walker-machinery drifts ruled to the post-probe
+  commits (details and numbers: [phase2.md](phase2.md) §4, appendix
+  "Chapter-10 verdicts, face-distance d axis").

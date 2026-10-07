@@ -213,7 +213,17 @@ sequence, independent of the sun:
   negative (bisection, then a two-margin Newton, residual `<= 2.3e-16`),
   continuing along the one margin through the corner that keeps the
   boundary, until the walk is back at its first corner — closing the walk
-  is the completeness statement for the loop. An incidence cosine is walked
+  is the completeness statement for the loop. A loop with no corner closes
+  on itself as one piece: closure is credited on distance alone — back
+  within one step of the seed after at least two steps of arc, since a
+  heading test would reject the exact return, which a great-circle loop
+  with perimeter an integer multiple of the step (`1-2-1`: $2\pi/\text{step}
+  = 1440$) makes every lap (task `boundary-corner-1-2-1`). And when $D_P$
+  is constant along the whole loop (the `1-2-1` crease circle, where the
+  mirror fold acts as the identity), the loop has no isolated extremum:
+  `critical_points` is empty and the constant is recorded as
+  `BoundaryLoop.plateau_value`, entering `focusing` as the `slab_circle`
+  onset rather than an invented boundary extremum. An incidence cosine is walked
   as a great circle when its normal $\mathbf m = R_{k-1}^{\mathsf T}\mathbf n_k$
   satisfies $\mathbf m\cdot\mathbf n_a = 0$ (then the margin is linear in
   $\mathbf u$; checked per path at run time), otherwise marched like every
@@ -228,24 +238,62 @@ sequence, independent of the sun:
   nudged onto its closed side, as the corrector does on a piece, so that
   $D_P$ is finite there.
 - *Partition.* Critical values are the interior ones, the extrema of $D_P$
-  along the loop, and the corner values. On each interval the number of
+  along the loop, the corner values, and the value of a loop of constant
+  $D_P$ (the whole boundary is one level). On each interval the number of
   open arcs is half the number of crossings of $\delta$ along the loop
   (exact for any topology); closed loops need an interior extremum, and with
   at most one (a non-degenerate minimum or a slab cone point) there is one
   closed loop from its value to the loop extremum where the sublevel set
   first reaches $\partial U_P$ (checked on a small ring). Anything else —
-  $U_P$ or its complement not connected on the lattice, several interior
-  critical points, a saddle, a crease inside $U_P$, a boundary-born sublevel
-  component — raises `TopologyEscape` instead of guessing.
+  $U_P$ or its complement not connected, several interior critical points,
+  a saddle, a boundary-born sublevel component — raises `TopologyEscape`
+  instead of guessing. A slab crease that crosses the interior of $U_P$ (a
+  rotation slab's max ridge, $D_P$ = the blade value along the crease; the
+  beta crystal's `4-8-7-5`) is partitioned by that same reasoning rather
+  than escaped when three checks hold (task `dp-slab-partition-completion`):
+  the fold set's own sampling holds interior arcs of the crease (a fraction
+  claiming arcs that are not there is a contradiction), the boundary walk
+  carries the blade value as a *strict* local maximum (only transversal
+  crease ends produce one; a plateau at the blade is a tangency signature
+  and does not count), and no crease arc closes inside $U_P$ without
+  touching $\partial U_P$ nor hugs it over an arc (a closed ridge, or a
+  tangency / coincidence). The transversal ends are then ordinary loop
+  extrema at the blade and the generic mechanism applies unchanged; each
+  failed check escapes with its own text (contradiction / not carried /
+  tangency / closed ridge). The cluster evidence is resolution-limited —
+  evidence rather than proof, the chart-audit standard below: its two
+  thresholds are pinned on the one positive fixture (`4-8-7-5`, fold axis =
+  the c axis) to their non-triggering side only, the triggering side is
+  covered by synthetic tests, and no fixture pins an interior slab axis
+  point together with interior crease arcs. The component counts
+  themselves are audited (task `dp-thin-neck-topology`): a plural k-NN
+  lattice count — a neck thinner than the lattice spacing splits
+  `3-5-6-7`'s $U_P$ into two components, non-monotonically in $N$ — is
+  first checked against a ladder of orthographic chart grids of the entry
+  hemisphere (4-connected, finer, sharing no failure mode with the k-NN
+  graph). Grids in agreement adjudicate the counts — evidence from two
+  independent chains, not a constructive certificate — and disagreement
+  escapes as not resolution-converged; a valid node on the chart rim or a
+  mask that breaches the hemisphere premise voids that grid's counts the
+  same way. The production audit and the verification script below are
+  two deliberately unshared implementations of that chart; their
+  agreement is what the audit is worth, guarded by the fixture
+  cross-checks, and neither side's construction (axis choice, rim push,
+  connectivity) may be edited without the other.
 - *Check.* `scripts/verify_dp_field_intervals.py` recomputes every
   interval's counts on a dense grid through `evaluate_fields`: closed loops
   as sub/superlevel regions touching no boundary, arcs as crossings along
   the traced grid boundary moved onto $\partial U_P$ by bisection (node
   values alone fail: $D_P$ falls like a square root off an exit-TIR curve).
-  All intervals of the five fixtures and of the A60-10 members `3-5-6-7`,
-  `3-4-5-7` agree (`--lattice-n 50000` for `3-5-6-7`, whose $U_P$ has a neck
-  the default 20000-point lattice splits); the measured values are in the
-  appendix.
+  All intervals of the five fixtures, of the A60-10 members `3-5-6-7`,
+  `3-4-5-7`, and of the beta-crystal slab `4-8-7-5` (the
+  crease-through-$U_P$ gate's one positive fixture, task
+  `dp-slab-partition-completion`, at Lumice's $n(550)$) agree;
+  `3-5-6-7` verifies on the default 20000-point lattice as
+  well (the two-component count its neck earns there is a resolution
+  artefact the chart audit corrects to one; task `dp-thin-neck-topology`),
+  while the A60-10 fixture keeps `--lattice-n 50000`, where the lattice
+  itself resolves the neck; the measured values are in the appendix.
 - *Weight kinks* (task `chromatic-weight-kink-diagnostic`, 2026-09-30;
   `DPField.weight_kinks`, `dp_field.weight_kink`). This is the third kind of
   critical line: the TIR onset $C_k = \{\mathrm{disc}_k = 0\}$ of each
@@ -425,6 +473,28 @@ Fixtures the structure suggests:
   insertion class (`3-1-5-6-7`) alone adds 3.8 % / 1.7 % (for plates a
   basal reflection only mirrors the elevation). Record: appendix,
   "Chapter-10 verdicts rerun".
+  *Measured on the face-distance d axis (2026-10-07, task
+  `ch10-verdict-face-distance-axis`, `ch10_verdicts.face_distance_axis`;
+  explore `ch08-liljequist-numeric-reproduction`, scrum `wave3-pull-forward`):*
+  the ch8 cross-section scene moves the alternating prism face distances
+  (`face_distance = [1, d, 1, d, 1, d]`, `HexPrism.from_lumice`, normals
+  unchanged) at a fixed plate $h/a = 0.2$ — a different ruler from the
+  $h/a$ axis above, so the two verdicts each keep their own. On
+  $d = 1, 1.2, 1.4, 1.8$: the terrain is the same on every $d$ (critical
+  values of `3-5-6-7-3` spread `4.3e-14`°, of both A60-10 members `0`, the
+  153.0697° TIR-onset corner `1.8e-12`° = the SLSQP constraint tolerance;
+  $d = 1$ is `from_ratio(0.2)` bit-for-bit). The A0-02 member `3-5-6-7-3`:
+  at $d = 1$ its profile peaks in the corner's neighbourhood (153.25° on
+  the 0.25° grid, half maximum 152.75–158.75°) and is zero past 162.5°;
+  for $d \ge 1.2$ the member's own window opens towards the anthelion —
+  the peak moves to the far grid end 179.75° (15–33× the corner value),
+  and the 141–180° band integral (trapezoid over the profile grid, in
+  radians) is ×18.3 / ×27.5 / ×9.2 relative to $d = 1$, rising then
+  falling. The A60-10 edge stays put and only dims: peak 152.00° on every
+  $d$, half maximum 143.5–158.25° at $d = 1$ / 143.5–158.5° at
+  $d \ge 1.2$ (one 0.25° grid step), the peak decaying monotonically to
+  ×0.21 at $d = 1.8$; the two members' profiles agree to `1.5e-12`.
+  Record: appendix, "Chapter-10 verdicts, face-distance d axis".
 - *Parhelic circle*: $D_P(\mathbf u) = \angle(M\mathbf u, \mathbf u)$ has
   $\nabla D_P = 0$ only at $\pm\mathbf n_M$ (on `3-1-6` both lie on the entry
   great circle; with partial reflection one is on $\partial U_P$, where the
@@ -736,7 +806,11 @@ $1/\sin^2\omega$. The probe that established the band sum is
    band usually behaves like scattered points and often beats
    $1/\sqrt{K_{\mathrm{eff}}}$ by 7-9×, but aliases (Parry at $10^7$), so
    stores are sized by $K_{\mathrm{eff}} \ge 10^4$ at the worst pixel of
-   interest, not by the lattice's typical gain.
+   interest, not by the lattice's typical gain. A resolution limit of the
+   same kind at much coarser spacing is why the field layer's component
+   counter is audited rather than believed: `3-5-6-7`'s $U_P$ neck is
+   thinner than the 20000-point lattice's spacing (task
+   `dp-thin-neck-topology`, section 3.1's audit).
 2. *Narrow $\rho$ lowers $K_{\mathrm{eff}}/K$, pixel by pixel.* The band's
    event set is fixed by $\delta$ alone; $\rho$ selects the part that
    contributes. **Measured**: the band keeps 65 % (column density on the sun
@@ -1074,8 +1148,16 @@ needs street-lamp halos (backlog).
   shape independent; the Liljequist peak of `3-5-6-7-3` stays at 153.07° on
   every $h/a$, a corner of the profile at the internal TIR onset of $R_k$
   (not a critical value of $D_P$), its width set by the window. Both layers
-  appear in Lumice's unfiltered ch8 strip at the same azimuths. Tests:
-  `tests/test_ch10_verdicts.py` (`test_a60_10_*`, `test_liljequist_*`).
+  appear in Lumice's unfiltered ch8 strip at the same azimuths. The
+  face-distance $d$ axis (2026-10-07, task
+  `ch10-verdict-face-distance-axis`,
+  `lumice_integral.ch10_verdicts.face_distance_axis`): at a fixed plate
+  $h/a$ the terrain stays fixed while the A0-02 member's own window opens
+  towards the anthelion (band integral ×18.3 / ×27.5 / ×9.2 relative to
+  $d = 1$) and the A60-10 edge only dims (peak ×0.21 at $d = 1.8$;
+  section 4, appendix, "Chapter-10 verdicts, face-distance d axis"). Tests:
+  `tests/test_ch10_verdicts.py` (`test_a60_10_*`, `test_liljequist_*`,
+  `test_face_distance_axis_*`, `test_from_lumice_regular_d1_*`).
 - **Rank-deficient maps.** $M = I$, $W = I$ classes (wedge angle 0,
   `geometry.halo_map_rank` 0) are point masses in the source direction (task
   `path-class-rendering-unit`). The degenerate images of parallel-face
@@ -1094,7 +1176,8 @@ needs street-lamp halos (backlog).
   `dp-field-partial-reflection-boundaries`). Across the parhelic circle of `1-3-2`
   under plates, halving $\sigma$ doubles the peak at a fixed cross integral:
   dimension collapse. Tests: `tests/test_focusing.py`.
-- **Family pinned** (task `focusing-family-pinned-label`, 2026-09-29).
+- **Family pinned** (task `focusing-family-pinned-label`, 2026-09-29; generalized from the
+  c-axis pole to the family's support axis, task `family-pinned-parry-axis`, 2026-10-07).
   Two dimension collapses can behave oppositely: under plates `3-6-4-8`
   lands in one deviation, `3-5` keeps a std of $5.67°$ at every $\sigma$
   (the exploration's sampling convention, not re-measured at the rendering density; explore `degenerate-path-family-coverage` #2, #5). The deviation std of
@@ -1105,18 +1188,26 @@ needs street-lamp halos (backlog).
   $\sin\theta$ factor, which halves the tilt variance, hence the factor
   $\sqrt 2$ (task `lumice-radiometric-check-degenerate-plate`). `focusing.family_pinned`, carried as
   `FocusingClassification.family_pinned` (an orthogonal flag; `mechanism` is
-  unchanged), is true iff the density holds the c axis at a pole (plate,
-  Lowitz), the path has rank 2 and wedge 0 (refractions cancel, the
-  outgoing direction is $M_P\mathbf u$) and $M_P$ commutes with $R_z$: then
-  $D_P$ is constant on every latitude circle about the c axis, the
-  $\sigma \to 0$ support. On $G$ these are elements 3, 4, 5, 6, 11
-  (`symmetry.reflection_group`; 12 is rank 0). The wedge condition is not
-  implied: `3-5` and `1-3` have $M_P = I$ and are not pinned. The label is
-  the $\sigma \to 0$ limit: at $\sigma > 0$ a pinned family's spread is
-  $\propto \sigma$, not zero. Parry is not claimed (its roll convention
-  against Lumice is unchecked). Tests: `tests/test_focusing.py`
-  (`test_family_pinned_*`, including $D_P$ measured on latitude circles:
-  $\le 10^{-9}$° pinned, $\ge 1°$ for `3-5` / `1-3`).
+  unchanged), is true iff the density's $\sigma \to 0$ support is a single
+  circle of poses about a body axis $a = R_0^T \hat z$ (a zenith Gaussian at
+  a pole — plate, Lowitz — pins $a = e_3$; off a pole, column, there is no
+  circle; a roll-locked density pins $a = (\sin\zeta\cos\rho, -\sin\zeta\sin\rho,
+  \cos\zeta)$ from its zenith and roll means $\zeta, \rho$), the path has
+  rank 2 and wedge 0 (refractions cancel, the outgoing direction is
+  $M_P\mathbf u$) and $M_P$ commutes with the rotations about $a$: then
+  $D_P$ is constant on every circle about $a$ the support runs. Under
+  plates on $G$ these are elements 3, 4, 5, 6, 11
+  (`symmetry.reflection_group`; 12 is rank 0). A mirror $S_a$ commutes with
+  the rotations about its own normal, so under Parry ($a = e_1$, body $x$;
+  the roll-0 convention is checked against Lumice `73b0f697`, task
+  `parry-roll-convention-check`) the pinned wedge-0 paths are the $S_x$
+  folds: `1-6-2`, the whole family at $D = 2h$ (the subsun; Lumice corpus
+  C13). The wedge condition is not implied: `3-5` and `1-3` have
+  $M_P = I$ and are not pinned. The label is the $\sigma \to 0$ limit: at
+  $\sigma > 0$ a pinned family's spread is $\propto \sigma$, not zero.
+  Tests: `tests/test_focusing.py` (`test_family_pinned_*`, including
+  $D_P$ measured on latitude circles about $e_3$ and on circles about body
+  $x$: $\le 10^{-9}$° pinned, $\ge 1°$ for `3-5` / `1-3` / `1-4-2`).
 - *Lumice, absolute and shape, on a pinned family* (task
   `lumice-radiometric-check-degenerate-plate`, 2026-09-29). The `3-6-4-8`
   class (12 members) under plates, $\sigma = 0.5, 1, 2, 4°$, against a Lumice
@@ -1195,7 +1286,7 @@ needs street-lamp halos (backlog).
 | critical points, certificate (field layer), contour extraction | measured, in production | appendix; tasks `dp-field-layer`, `s2-contour-extraction` |
 | contour quadrature (precision authority), Phase I and band-sum alignment | measured, in production | section 4, appendix; task `s2-contour-quadrature` |
 | Phase I seeds and cross-check from the store | design | scrum 24 sub-task 5 |
-| chapter-10 verdicts (inner edge, Liljequist, parhelic circle, focusing labels) | measured; rerun with partial internal reflections (A60-10 saddle 141.839300°, the Liljequist peak a TIR onset corner at 153.07°, no jump in the `1-3-2` window, `1-3-5-2` Jacobian focusing at 120°) | section 10, appendix; tasks `ch10-numerical-verdicts`, `ch10-liljequist-unblock-and-docs` |
+| chapter-10 verdicts (inner edge, Liljequist, parhelic circle, focusing labels, face-distance d axis) | measured; rerun with partial internal reflections (A60-10 saddle 141.839300°, the Liljequist peak a TIR onset corner at 153.07°, no jump in the `1-3-2` window, `1-3-5-2` Jacobian focusing at 120°); d axis added (terrain fixed, the A0-02 window opening ×18.3/×27.5/×9.2, the A60-10 edge only dimming ×0.21) | section 10, appendix; tasks `ch10-numerical-verdicts`, `ch10-liljequist-unblock-and-docs`, `ch10-verdict-face-distance-axis` |
 | divergent light | derived | backlog |
 
 ## Appendix: measured record
@@ -2107,3 +2198,58 @@ Against the first run (task `ch10-numerical-verdicts`, entry above):
   `0.017`, and there are about eleven single insertions. The author's ch8
   probe (Lumice filter, σ = 0.5°, D65, PNG) puts A60-10 at `0.53` / `0.27`
   of all raypaths, the same order as LI's `0.47` / `0.22`.
+
+**Chapter-10 verdicts, face-distance d axis (2026-10-07, task
+`ch10-verdict-face-distance-axis`, scrum `wave3-pull-forward`; explore
+`ch08-liljequist-numeric-reproduction`).** `scripts/ch10_numerical_verdicts.py
+--verdict face-distance-axis --output-dir artifacts/ch10-verdicts` at commit
+`57a5c02`, one process, 160.7 s on an M2 Max (the fifth verdict; the script's
+`--verdict` choices derive from `ch10_verdicts.VERDICTS`, no CLI change).
+Crystals `HexPrism.from_lumice(height = 0.1, face_distance = [1, d, 1, d,
+1, d])` (the ch8 scene; $h/a = 0.2$), $n = 1.31$, $d = 1, 1.2, 1.4, 1.8$;
+profiles by `ch10_verdicts._random_profile` (contour quadrature `rtol
+1e-8`, seed store $2{\times}10^5$, 0.25° grids — `3-5-6-7-3` over
+0.25–179.75°, the A60-10 members over 138–166°; `n_deltas` 719 / 113
+guarded by a raise). Three layers:
+
+- *Terrain, fixed on every $d$:* critical values of `3-5-6-7-3`
+  $\{0, 98.160700, 180°\}$ spread `4.3e-14`° across $d$; of both A60-10
+  members $\{50.0626, 141.839300, 163.4652°\}$ spread `0`; the
+  TIR-onset corner 153.069685° spread `1.8e-12`° (the SLSQP constraint
+  tolerance; the three internal faces agree to `5e-11`°). $d = 1$ is
+  `HexPrism.from_ratio(0.2)` bit-for-bit (max vertex difference `0.0`;
+  against `canonical_crystal()`, the $h/a = 2$ column, the difference
+  `0.9` is the $z$ extent alone).
+- *The A0-02 member `3-5-6-7-3`, the window:* at $d = 1$ peak 153.25°
+  (value `4.31e-5`), half maximum 152.75–158.75°, profile zero past
+  162.5°; at $d = 1.2, 1.4, 1.8$ the peak is at the far grid end 179.75°
+  (values `7.49e-4` / `1.12e-3` / `3.73e-4`, 15–33× the corner value
+  `3.66e-5` / `3.41e-5` / `2.46e-5`). The 141–180° band integral —
+  trapezoid over the profile grid, in radians, the rule declared in
+  `numbers.band_integral_rule` — is `5.077e-6` / `9.272e-5` / `1.398e-4` /
+  `4.648e-5`, i.e. ×18.3 / ×27.5 / ×9.2 relative to $d = 1$: rising then
+  falling, the member's own window opening towards the anthelion.
+- *The A60-10 edge, position fixed:* both members peak at 152.00° with
+  half maximum 143.5–158.25° ($d = 1$) / 143.5–158.5° ($d \ge 1.2$), the
+  peak decaying monotonically `1.480e-5` → `1.200e-5` → `9.130e-6` →
+  `3.134e-6` (×0.2118 at $d = 1.8$); the edge weight
+  $\sum_{141°<\delta<143°}$ `2.911e-5` → `2.343e-5` → `1.768e-5` →
+  `5.972e-6`. The two members' profiles agree to `1.5e-12` (two chains,
+  quadrature tolerance; not bit-identical).
+
+Reconciliation against the explore probes (git-ignored snapshot, same
+parameters): probe 1 (terrain) and probe 2 (the A0-02 window, including
+all four 719-point profiles) bit-for-bit identical; probe 3's reductions
+bit-identical, its `3-5-6-7` profiles bit-identical, `3-4-5-7` within
+`1.9e-12`. Two differences, both ruled to the $D_P$ walker machinery that
+changed after the probes ran (their rev `0b20ab1`; `62ac5f7..3db0618`,
+tasks `dp-exit-snell-nan-convention` / `dp-thin-neck-topology` /
+`dp-slab-partition-completion`): the members' first critical value
+50.0626201° → 50.0626198° (Δ `3.9e-7`°, both members, all $d$) and the
+`3-4-5-7` profile at `1.9e-12`. Neither touches a number the explore
+SUMMARY pins (50.06262° rounds the same); the verdict at the current rev
+is the authority (a rerun is bit-identical to the recorded arrays). The
+band integrals differ from the SUMMARY's ad-hoc values (×18.5 / ×27.8 /
+×9.3) by at most 1.4% — the 0.25°-grid discretisation at the 180° band
+edge (a right-endpoint bin sum gives ×18.6 / ×28.0 / ×9.3); the trapezoid
+rule is the one declared above.

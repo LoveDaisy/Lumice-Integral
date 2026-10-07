@@ -511,7 +511,7 @@ ahead of LI switching its dependency:
 |---|---|---|---|
 | 1 | Module A v0: `EvaluatePath` + **seed search** + `TraceFiber[Batch]`, points only | Function 1, path detail | Write the seed-search (discovery) contract (`docs/phase1-math-contract.md` §9.5); export parity fixtures; research and stabilize the diagnostics/weights contract. **No switch.** |
 | 2 | Module A v1: adds the per-point `J_perp` and per-point boundary margins (`struct_size`-compatible extension); Module B: single-path S² store + band sum | Function 2, whole-sky map for one path | Certify A v1 by **output parity only** (owner ruling 2026-09-29, below) → switch fiber solving, retire the JAX continuation path; the writing repository's transitive dependency moves to the `.lumice` release-pull pattern; B is parity-only, no switch |
-| 3 | Module C: `dp_field`/`contour`/`focusing` (C++ forward hyper-dual `Jet2`) | Function 3, preset points and mechanism labels | Once ch12/12.1 are done and no longer researched, switch B first, then C |
+| 3 | Module C: `dp_field`/`contour`/`focusing` (C++ forward hyper-dual `Jet2`) | Function 3, preset points and mechanism labels | Once ch12/12.1 are done and no longer researched, switch B first, then C. **Module C pull-forward (owner ruling 2026-10-07, Lumice `scratchpad/schema2-redesign-discussion/conclusions.md` §4):** Lumice's schema3 raypath report is module C's first consumer, so its **build** is pulled ahead; LI's own **switch** rhythm is unchanged — the wave-2 hold stands and the switch above keeps its original trigger |
 
 1. **Wave 1 includes seed search** (author's judgment: sound); Lumice's Monte
    Carlo need not record ray pose — the Analyze whole-sky map is low
@@ -588,6 +588,18 @@ intersection of the column / Parry / Lowitz families with the fiber has been
 checked on Lumice's side only on `3-5` (discrete points of pose space); LI 46.9
 found that the Parry family collapses whole on paths whose folded matrix is
 `S_x` (e.g. `1-6-2`).
+
+**Wave 3 pull-forward, LI side (owner ruling 2026-10-07, Lumice
+`scratchpad/schema2-redesign-discussion/conclusions.md` §4):** the first
+batch of LI-side work is scrum `wave3-pull-forward` (this repository's
+`scratchpad/`): the two JAX-first fixes that land before any C++ surface
+freeze (`family_pinned` generalized to the Parry family, the `1-2-1`
+boundary-walk defect), the u-space dissolution probe (Lumice's prototype
+gate for the schema3 geometry layer) and the quantitative Liljequist
+reproduction the writing repository's ch12.1 needs. The schema3-specific
+structure objects (the family-restricted `S1`/`S2` curves, the
+corridor-closure curves $A_P = 0$, `S6` junctions) are the second batch,
+awaiting the probe verdict.
 
 ## 6. Validation strategy
 

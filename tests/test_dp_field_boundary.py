@@ -11,6 +11,7 @@ from lumice_integral.canonical_scene import canonical_crystal
 from lumice_integral.dp_field import DPField
 from lumice_integral.dp_field import boundary as B
 from lumice_integral.dp_field import field as F
+from lumice_integral.geometry import fold_matrix
 from lumice_integral.s2_store import fibonacci_sphere
 
 N = 1.31
@@ -157,6 +158,61 @@ def test_corners_on_the_entry_circle_match_a_1d_scan_with_path_domain() -> None:
         assert min(_angle(corner.position, f) for f in found) <= 1e-10
 
 
+def test_walker_d_serves_the_closure_limit_at_the_3_5_6_7_corner() -> None:
+    """The exit-Snell convention (module docstring) on ``3-5-6-7`` at Lumice's ``n(550)``: the walk completes.
+
+    Before the convention the two-margin Newton landed this triple-gate corner
+    on the rounding-negative side of ``exit_snell_discriminant`` and ``_piece``
+    raised through :meth:`Walker.d` (explore ``u-space-dissolution-probe``
+    round 3b; the pre-fix certification run captured the raise at exactly this
+    point).  Which side a given landing rounds to is a coin toss, so the test
+    accepts either branch serving the value and checks it against the limit
+    kernel; the corner value (and the loop minimum) is the U_P-side probe's
+    ``50.16174445450327`` deg up to the Hoelder-1/2 ``sqrt(disc)`` scale.
+    """
+    faces, index = (3, 5, 6, 7), 1.3110129
+    u = np.array([0.0, -0.48947414775668885, 0.8720178086930698])
+    walker = B.Walker(canonical_crystal(), faces, index, None)
+    value = walker.d(u)
+    limit = float(F.d_p_exit_limit(u, faces, index))
+    assert np.isfinite(value)
+    assert abs(value - limit) <= 1e-7  # a finite plain branch is off the limit by ~ sqrt(disc)
+    loop = B.walk_boundary(canonical_crystal(), faces, index)
+    assert {p.margin for p in loop.pieces} == {"internal_2_incidence_cosine", "exit_snell_discriminant"}
+    assert len(loop.corners) == 2
+    for corner in loop.corners:
+        assert set(corner.margins) == {"entry_incidence_cosine", "internal_2_incidence_cosine", "exit_snell_discriminant"}
+        assert np.degrees(corner.value) == pytest.approx(50.16174445450327, abs=2e-5)
+    assert np.isfinite(loop.values).all()
+    assert np.degrees(loop.values.min()) == pytest.approx(50.16174445450327, abs=2e-5)
+
+
+def test_walker_d_off_the_closure_still_raises() -> None:
+    """Fail-closed undiluted: outside ``U_P`` through the exit gate alone (every other gate positive) still raises.
+
+    Pushed ``1e-4`` off the middle of the walked exit-Snell piece, on the far
+    side of the curve: the discriminant is ``-1.3e-4``, three orders past
+    ``VIOLATION_ATOL``, so this is genuinely outside, not closure rounding.
+    """
+    faces, index = (3, 5, 6, 7), 1.3110129
+    loop = B.walk_boundary(canonical_crystal(), faces, index)
+    walker = B.Walker(canonical_crystal(), faces, index, None)
+    piece = next(p for p in loop.pieces if p.margin == "exit_snell_discriminant")
+    mid = piece.points[len(piece.points) // 2]
+    g = walker.tangent_gradient(mid, "exit_snell_discriminant")
+    g = g / np.linalg.norm(g)
+    step = next(
+        s for s in (1.0, -1.0)
+        if walker.margins((mid + s * 1e-6 * g) / np.linalg.norm(mid + s * 1e-6 * g))[walker.k("exit_snell_discriminant")] < 0.0
+    )
+    out = (mid + step * 1e-4 * g) / np.linalg.norm(mid + step * 1e-4 * g)
+    margins = walker.margins(out)
+    assert float(margins[walker.k("exit_snell_discriminant")]) < -1000.0 * B.VIOLATION_ATOL
+    assert all(float(margins[walker.k(n)]) > 0.0 for n in walker.active if n != "exit_snell_discriminant")
+    with pytest.raises(RuntimeError, match="not finite"):
+        walker.d(out)
+
+
 def test_liljequist_corners_carry_every_vanishing_margin(fields) -> None:
     """``3-5-6-7-3``: three gates vanish at every corner, two bound ``U_P``, ``exit_snell`` is coincident.
 
@@ -245,3 +301,83 @@ def test_walk_zero_set_rejects_other_orientations(fields) -> None:
     piece = field.boundary_curves[0]
     with pytest.raises(ValueError, match="orientation"):
         B.walk_zero_set(walker, piece.points[1], piece.margin, orientation=0.5)
+
+
+def test_mirror_slab_1_2_1_is_one_constant_crease_loop() -> None:
+    """``1-2-1``: ``dU_P`` is the entry great circle alone, a corner-free loop of constant ``D_P = 0``.
+
+    ``exit_snell_discriminant = entry_incidence_cosine^2`` on the whole
+    domain (the slab identity), so every other gate stays positive and the
+    equator closes on itself: one great-circle piece with that margin
+    coincident, no corners, no isolated extremum and the constant ``0`` as
+    ``plateau_value`` (the crease circle of the mirror fold, where ``M u =
+    u``).  The loop's perimeter is an integer multiple of the step (``2 pi /
+    WALK_STEP_RAD = 1440``): the walk returns to its seed exactly, which
+    only a distance criterion without a heading test credits.
+    """
+    loop = DPField.build(canonical_crystal(), (1, 2, 1), N).boundary
+    assert 2.0 * np.pi / B.WALK_STEP_RAD == 1440.0
+    (piece,) = loop.pieces
+    assert len(piece.points) == 1441  # 1440 advances + the seed: the exact return adds no duplicate
+    assert piece.margin == "entry_incidence_cosine" and piece.kind == "great_circle"
+    assert piece.circle_normal is not None and np.allclose(piece.circle_normal, [0.0, 0.0, 1.0])
+    assert piece.coincident == ("exit_snell_discriminant",)
+    assert loop.corners == () and loop.critical_points == ()
+    assert loop.plateau_value == pytest.approx(0.0, abs=B.EXTREMUM_ATOL)
+    assert np.array_equal(piece.points[0], piece.points[-1])  # the exact return is the closure
+    assert np.max(np.abs(piece.values)) <= B.EXTREMUM_ATOL
+    # completeness spot check (test_walk_accounts_for_every_lattice_edge_point's pattern)
+    lattice = fibonacci_sphere(20000)
+    valid = F.valid_batch(lattice, (1, 2, 1), N)
+    _, neighbours = cKDTree(lattice).query(lattice, k=7)
+    edge = lattice[valid & np.any(~valid[neighbours[:, 1:]], axis=1)]
+    distances, _ = cKDTree(piece.points).query(edge)
+    assert np.max(distances) <= 1.5 * np.sqrt(4.0 * np.pi / 20000)
+
+
+def test_closure_needs_two_steps_of_arc_and_credits_the_exact_return() -> None:
+    """The closure criterion (module docstring): distance within one step, arc at least two steps.
+
+    On the ``1-2-1`` equator with a half-circle step the first advance lands
+    on the antipode -- within one step of the seed, where only the arc bound
+    holds the walk back -- and the second lands back on it an ulp off (sin pi
+    in the closed-form rotation): the closure is credited and the exact seed
+    glued as the endpoint.
+    """
+    walker = B.Walker(canonical_crystal(), (1, 2, 1), N, fold_matrix(canonical_crystal(), (1, 2, 1)))
+    start = np.array([1.0, 0.0, 0.0])  # a point of the entry equator, u . c = 0
+    points, corner, coincident = B.walk_zero_set(walker, start, "entry_incidence_cosine", stop_at=start, step=np.pi)
+    assert corner is None
+    assert len(points) == 4  # seed, antipode, return an ulp off, seed glued
+    assert np.array_equal(points[0], points[-1])
+    assert _angle(points[1], -start) < 1e-15 and _angle(points[2], start) < 1e-15
+    assert coincident == {"exit_snell_discriminant"}
+
+
+# ---- plateau extrema of a cyclic sequence: wrap merge and run lengths (task dp-slab-partition-completion) ----
+
+
+@pytest.mark.parametrize(
+    ("values", "expected"),
+    [
+        # wrapped 2-sample maximum plateau {8, 0} (seam merge) and an interior 2-sample maximum {4, 5};
+        # the 5s are not extrema
+        (np.array([7, 5, 3, 5, 7, 7, 5, 3, 7.0]), [(0, "maximum", 2), (4, "maximum", 2), (2, "minimum", 1), (7, "minimum", 1)]),
+        # wrapped 2-sample minimum plateau {4, 0}; the strict maxima at 1 and 3 keep run length 1
+        (np.array([5, 7, 3, 7, 5.0]), [(0, "minimum", 2), (1, "maximum", 1), (2, "minimum", 1), (3, "maximum", 1)]),
+        # interior 2-sample plateau maximum away from the seam
+        (np.array([3, 5, 5, 4.0]), [(0, "minimum", 1), (1, "maximum", 2)]),
+        # strict extrema only, no wrap merge (first and last values differ)
+        (np.array([1, 3, 2, 3, 0.0]), [(1, "maximum", 1), (3, "maximum", 1), (2, "minimum", 1), (4, "minimum", 1)]),
+    ],
+)
+def test_plateau_extrema_run_lengths(values: np.ndarray, expected: list[tuple[int, str, int]]) -> None:
+    """Run lengths across the seam: the merged run counts both tails, the last run stops at the seam."""
+    extrema, plateau = B._plateau_extrema(values)
+    assert sorted(extrema) == sorted(expected)
+    assert plateau is None
+
+
+def test_plateau_extrema_constant_loop() -> None:
+    """A constant loop is one plateau, no isolated extrema."""
+    assert B._plateau_extrema(np.array([4.2, 4.2, 4.2, 4.2])) == ([], 4.2)

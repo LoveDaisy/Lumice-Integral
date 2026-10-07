@@ -353,8 +353,10 @@ BAND_SUM_CELLS = (
         "the same point mass under the plate family: m from LI's Haar stream, compared statistically",
         rank0_sample_count=4_000_000,
     ),
-    # Family-pinned paths (focusing.family_pinned: rank 2, wedge 0, fold matrix commuting with R_z, a plate or
-    # Lowitz density): the sigma -> 0 plate family lies in one level set of D_P, so it lands on one sky point and
+    # Family-pinned paths (focusing.family_pinned: rank 2, wedge 0, fold matrix commuting with the rotations
+    # about the family's sigma -> 0 support axis; a plate or Lowitz density pins body z, a Parry density body x --
+    # task family-pinned-parry-axis; the cells below are all plate/Lowitz): the sigma -> 0 plate family lies in
+    # one level set of D_P, so it lands on one sky point and
     # the spot narrows with sigma.  3-5__band_sum_plate above is the control: the same family, not pinned.
     BandSumCell(
         "plate",

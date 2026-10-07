@@ -33,6 +33,14 @@ Two ways to find ``C_k`` (the same split as :mod:`.boundary`'s curve kinds):
   closes.  Seeds within a few steps of a walked arc are dropped, the rest
   start new arcs; the arcs found are *not* certified to be all of ``C_k``
   (``AGENTS.md``: one closed loop is no proof of completeness).
+
+Arc points lie in the closure of ``U_P``, and on a chain whose ``C_k``
+coincides algebraically with the exit-Snell zero set (``3-5-6-7``: the
+internal-1 onset *is* the exit-Snell boundary piece) the exit refraction's
+square root reads a rounding-negative discriminant over whole stretches of
+the arc: those points' values are the closure limit of the exit-Snell
+convention (:meth:`.boundary.Walker.d`, :func:`.field.d_p_exit_limit`) --
+the same value the boundary walk reports on its own exit-Snell piece.
 """
 
 from __future__ import annotations
@@ -45,8 +53,8 @@ from scipy.spatial import cKDTree
 from .. import optics
 from ..geometry import Polyhedron, unit
 from ..s2_store import fibonacci_sphere
-from .boundary import GREAT_CIRCLE_ATOL, WALK_STEP_RAD, Walker, incidence_normals, walk_zero_set
-from .field import d_p_batch, margins_batch, validity_margins_batch
+from .boundary import GREAT_CIRCLE_ATOL, VIOLATION_ATOL, WALK_STEP_RAD, Walker, incidence_normals, walk_zero_set
+from .field import d_p_batch, d_p_exit_limit_batch, margins_batch, validity_margins_batch
 
 Faces = tuple[int, ...]
 
@@ -202,8 +210,33 @@ def _bisect_end(walker: Walker, at, inside_t: float, outside_t: float) -> tuple[
 
 def _arc(walker: Walker, t: np.ndarray, at, *, closed: bool, ends: tuple[str | None, str | None]) -> KinkArc:
     points = at(t)
+    return KinkArc(points, _arc_values(walker, points), closed, ends)
+
+
+def _arc_values(walker: Walker, points: np.ndarray) -> np.ndarray:
+    """``D_P`` on points of ``C_k``: the plain batch, its non-finite entries the closure limit (module docstring).
+
+    Finite entries keep the plain path untouched; a non-finite entry is
+    replaced by :func:`.field.d_p_exit_limit_batch` only after passing the
+    closure check of the exit-Snell convention (smallest gate ``>=
+    -VIOLATION_ATOL``, the complement of :meth:`.boundary.Walker.violated`)
+    -- a point off the closure would mean the walk ran past a stopping gate,
+    which raises instead (fail closed).
+    """
     values = d_p_batch(points, walker.faces, walker.index, walker.slab, crystal=walker.crystal)
-    return KinkArc(points, values, closed, ends)
+    bad = ~np.isfinite(values)
+    if not bad.any():
+        return values
+    smallest = np.min(validity_margins_batch(points[bad], walker.faces, walker.index, crystal=walker.crystal), axis=1)
+    if np.any(smallest < -VIOLATION_ATOL):
+        k = int(np.argmin(smallest))
+        raise RuntimeError(
+            f"D_P is not finite at {points[bad][k]} on {walker.path_id}, off the closure of U_P "
+            f"(smallest gate {smallest[k]:.3e})"
+        )
+    values = np.array(values)  # the batch's read-only device view: writable only on the (rare) replacement path
+    values[bad] = d_p_exit_limit_batch(points[bad], walker.faces, walker.index, crystal=walker.crystal)
+    return values
 
 
 # ---- marched ---------------------------------------------------------------------------------------------
@@ -252,21 +285,17 @@ def _walk_both_ways(walker: Walker, start: np.ndarray, margin: str) -> KinkArc:
     forward, corner, _ = walk_zero_set(walker, start, margin, stop_at=start, step=WALK_STEP_RAD)
     if corner is None:  # back at the seed: a loop inside U_P
         points = np.asarray(forward)
-        return KinkArc(points, _values(walker, points), True, (None, None))
+        return KinkArc(points, _arc_values(walker, points), True, (None, None))
     backward, back_corner, _ = walk_zero_set(walker, start, margin, orientation=-1.0, step=WALK_STEP_RAD)
     points = np.asarray(backward[::-1] + forward[1:])
     ends = (_stopping_gate(walker, back_corner, margin), _stopping_gate(walker, corner, margin))
-    return KinkArc(points, _values(walker, points), False, ends)
+    return KinkArc(points, _arc_values(walker, points), False, ends)
 
 
 def _stopping_gate(walker: Walker, corner: np.ndarray, margin: str) -> str:
     """The gate closest to zero at an arc end (the one :func:`.boundary.walk_zero_set` stopped at)."""
     m = walker.margins(corner)
     return min(walker.active, key=lambda name: abs(float(m[walker.k(name)])))
-
-
-def _values(walker: Walker, points: np.ndarray) -> np.ndarray:
-    return d_p_batch(points, walker.faces, walker.index, walker.slab, crystal=walker.crystal)
 
 
 __all__ = ["KinkArc", "KinkCurve", "marched_kink", "weight_kinks"]

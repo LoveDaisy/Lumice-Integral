@@ -52,6 +52,17 @@ Faces = tuple[int, ...]
 FOLD_DOT_ATOL = 1e-9
 # A point is on dU_P rather than inside when its smallest margin is below this.
 BOUNDARY_MARGIN_ATOL = 1e-10
+# The crease-cluster evidence of degenerate_fold_set (task ``dp-slab-partition-completion``): a crease
+# sample whose binding gate is within CREASE_CONTACT_MARGIN of zero counts as touching dU_P, and a run of
+# such samples hugging dU_P over more than CREASE_TOUCHING_ARC_RAD of arc is a tangency or coincidence
+# with it, not a transversal crossing.  Both are pinned on the one positive fixture (``4-8-7-5`` on the
+# beta crystal, 7200 samples, 2026-10-07) to its non-triggering side: its interior cluster's contact
+# margin is 9.4e-5 and its two transversal crossings hug dU_P for at most 0.031 rad at this tolerance,
+# against the grazing fixtures' coincident arcs (``3-1-6``: 3.14 rad, ``1-2-1``: the whole circle); the
+# sample spacing is 8.7e-4 rad.  Whether they trigger on a genuine tangency or closed ridge is pinned by
+# the synthetic escape tests only -- no fixture exercises the triggering side.
+CREASE_CONTACT_MARGIN = 1e-2
+CREASE_TOUCHING_ARC_RAD = 0.1
 # Tangent-gradient norm below which a Newton iterate is a critical point.
 CRITICAL_GRADIENT_TOL = 1e-10
 # Hessian eigenvalue magnitude below which a critical point is degenerate.
@@ -108,6 +119,36 @@ def d_p_grazing(u: jax.Array, faces: Faces, index: jax.Array, normals: jax.Array
     evaluation = _evaluation(u, faces, index, normals)
     root = jnp.sqrt(jnp.maximum(evaluation.exit.discriminant, 0.0))
     return _deviation(evaluation.direction - root * jnp.asarray(normals)[-1], u)
+
+
+def d_p_exit_limit(u: jax.Array, faces: Faces, index: jax.Array, normals: jax.Array | None = None) -> jax.Array:
+    """:func:`d_p` at the ``disc -> 0+`` limit of the exit refraction: the closure value of the exit-Snell convention.
+
+    The exit direction is ``n d_int + (n c - sqrt(disc)) N_t``
+    (:func:`.optics.refract_smooth`, ``N_t = -normals[-1]`` toward the incident
+    medium, ``d_int`` the last internal direction -- of :attr:`.optics.PathEvaluation`
+    ``internal[-1]``, or ``entry`` with no internal reflection -- and ``c`` the exit
+    ``incidence_cosine``); this kernel *recomputes* the direction with the root
+    dropped, ``n d_int + n c N_t``, instead of subtracting it after the fact.  Same
+    mathematics as :func:`d_p_grazing` (both are the transmitted direction's limit
+    as ``disc -> 0+``), two float paths: the grazing form starts from
+    ``evaluation.direction`` -- already ``NaN`` wherever ``disc < 0``, the exact rounding
+    situation of a two-margin Newton corner or of a coincident kink arc -- while this
+    one has no square root anywhere, so it stays finite as long as the chain up to the
+    exit does (reflections have no root).  It is the value half of the exit-Snell
+    closure convention of :mod:`.dp_field.boundary` / :mod:`.dp_field.weight_kink`
+    (member decision: every gate ``>= -VIOLATION_ATOL``); use it only there -- at a
+    deep interior point (``disc = O(1)``) it is off :func:`d_p` by ``~ sqrt(disc)``,
+    it is not a general ``D_P`` replacement.  Not for slab paths (:func:`d_slab`
+    has no NaN).  The scale ``n`` cancels in the ``atan2`` deviation.
+    """
+    if normals is None:
+        normals = body_normals(None, faces)
+    evaluation = _evaluation(u, faces, index, normals)
+    d_int = evaluation.internal[-1].direction if evaluation.internal else evaluation.entry.direction
+    normal_t = -jnp.asarray(normals)[-1]
+    d_exit = index * d_int + index * evaluation.exit.incidence_cosine * normal_t
+    return _deviation(d_exit, u)
 
 
 def _deviation(phi: jax.Array, u: jax.Array) -> jax.Array:
@@ -213,6 +254,11 @@ def _validity_margins_batch(u: jax.Array, faces: Faces, index: jax.Array, normal
     return jax.vmap(validity_margin_vector, in_axes=(0, None, None, None))(u, faces, index, normals)
 
 
+@partial(jax.jit, static_argnums=1)
+def _d_exit_limit_batch(u: jax.Array, faces: Faces, index: jax.Array, normals: jax.Array) -> jax.Array:
+    return jax.vmap(d_p_exit_limit, in_axes=(0, None, None, None))(u, faces, index, normals)
+
+
 def _as_points(u: np.ndarray | jax.Array) -> jax.Array:
     points = jnp.asarray(u, dtype=jnp.float64)
     if points.ndim != 2 or points.shape[1] != 3:
@@ -280,6 +326,13 @@ def validity_margins_batch(
 ) -> np.ndarray:
     """:func:`validity_margin_vector` at each row of ``u``, ``(N, len(validity_margin_names(faces)))``."""
     return np.asarray(_validity_margins_batch(_as_points(u), faces, jnp.float64(index), body_normals(crystal, faces)))
+
+
+def d_p_exit_limit_batch(
+    u: np.ndarray, faces: Faces, index: float, *, crystal: Polyhedron | None = None
+) -> np.ndarray:
+    """The closure-limit value (:func:`d_p_exit_limit`) at each row of ``u``; the batch half of the exit-Snell convention."""
+    return np.asarray(_d_exit_limit_batch(_as_points(u), faces, jnp.float64(index), body_normals(crystal, faces)))
 
 
 def valid_batch(u: np.ndarray, faces: Faces, index: float, *, crystal: Polyhedron | None = None) -> np.ndarray:
@@ -360,13 +413,28 @@ class DegenerateFoldSet:
 
     ``axis_points`` are ``+-n_M`` with their location ``"interior"``,
     ``"boundary"`` or ``"exterior"``; ``circle_interior_fraction`` is the
-    fraction of a dense sampling of the great circle ``u . n_M = 0`` inside
-    ``U_P`` (0 on every fixture: the circle is a grazing boundary).
+    fraction of a dense sampling of the great circle ``u . n_M = 0`` (the
+    crease) inside ``U_P`` -- 0 when the circle only grazes it (every
+    canonical fixture), 22.76% on the beta crystal's ``4-8-7-5``.  The
+    ``crease_*`` fields are that sampling's cluster evidence (task
+    ``dp-slab-partition-completion``): ``crease_interior_arcs`` is the number
+    of maximal interior runs of the crease (0 exactly when the fraction is 0;
+    a fraction claiming otherwise is a contradiction
+    :func:`.certificate.interval_partition` refuses), ``crease_closed_ridge``
+    says some interior run never comes within ``CREASE_CONTACT_MARGIN`` of
+    ``dU_P`` (a closed ridge: level loops around it are not the boundary
+    walk's to count), and ``crease_touching_arc`` says the crease hugs ``dU_P``
+    (binding gate within ``CREASE_CONTACT_MARGIN`` of zero) over more than
+    ``CREASE_TOUCHING_ARC_RAD`` -- a tangency or coincidence, not a
+    transversal crossing.
     """
 
     axis: np.ndarray | None
     axis_points: tuple[tuple[np.ndarray, str], ...]
     circle_interior_fraction: float
+    crease_interior_arcs: int = 0
+    crease_closed_ridge: bool = False
+    crease_touching_arc: bool = False
 
 
 def location(u: np.ndarray, faces: Faces, index: float, *, crystal: Polyhedron | None = None) -> str:
@@ -380,10 +448,24 @@ def location(u: np.ndarray, faces: Faces, index: float, *, crystal: Polyhedron |
     return "interior" if smallest > 0.0 else "exterior"
 
 
+def _circular_runs(mask: np.ndarray) -> list[tuple[int, int]]:
+    """Maximal circular runs of ``True`` as ``(start index, length)``, wrapping runs included."""
+    n = len(mask)
+    if not mask.any():
+        return []
+    if mask.all():
+        return [(0, n)]
+    rotate = int(np.flatnonzero(~mask)[0])  # rotate so index 0 is False: no run crosses it, pairing is linear
+    steps = np.diff(np.concatenate([np.roll(mask, -rotate), np.roll(mask, -rotate)[:1]]).astype(np.int8))
+    starts = np.flatnonzero(steps == 1) + 1
+    ends = np.flatnonzero(steps == -1)
+    return sorted(((int(s) + rotate) % n, int(e - s + 1)) for s, e in zip(starts, ends))
+
+
 def degenerate_fold_set(
     screen: FoldScreen, faces: Faces, index: float, *, circle_samples: int = 7200, crystal: Polyhedron | None = None
 ) -> DegenerateFoldSet:
-    """Locate the slab critical set ``{+-n_M} U {u . n_M = 0}`` relative to ``U_P``."""
+    """Locate the slab critical set ``{+-n_M} U {u . n_M = 0}`` relative to ``U_P`` and cluster its crease sampling."""
     if screen.axis is None:
         return DegenerateFoldSet(None, (), 0.0)
     axis = screen.axis
@@ -392,8 +474,16 @@ def degenerate_fold_set(
     t = np.linspace(0.0, 2.0 * np.pi, circle_samples, endpoint=False)
     circle = np.cos(t)[:, None] * e[0] + np.sin(t)[:, None] * e[1]
     margins = validity_margins_batch(circle, faces, index, crystal=crystal)
-    inside = np.all(margins > BOUNDARY_MARGIN_ATOL, axis=1)
-    return DegenerateFoldSet(axis, points, float(inside.mean()))
+    binding = margins.min(axis=1)
+    inside = binding > BOUNDARY_MARGIN_ATOL
+    arcs = _circular_runs(inside)
+    closed_ridge = False
+    for start, length in arcs:
+        contact = binding[(start + np.arange(length)) % circle_samples].min()
+        closed_ridge |= contact > CREASE_CONTACT_MARGIN
+    spacing = 2.0 * np.pi / circle_samples
+    touching_arc = any(run_length * spacing >= CREASE_TOUCHING_ARC_RAD for _, run_length in _circular_runs(np.abs(binding) <= CREASE_CONTACT_MARGIN))
+    return DegenerateFoldSet(axis, points, float(inside.mean()), len(arcs), bool(closed_ridge), bool(touching_arc))
 
 
 @partial(jax.jit, static_argnums=(1, 3))
@@ -484,9 +574,9 @@ def interior_critical_points(
 
     For a degenerate fold the interior critical points are the members of the
     slab set lying inside ``U_P`` (kind ``"degenerate"``; a slab circle inside
-    ``U_P`` is reported by the returned :class:`DegenerateFoldSet` and stops
-    the interval partition); the :class:`DegenerateFoldSet` is ``None`` for a
-    non-degenerate path.
+    ``U_P`` is reported by the returned :class:`DegenerateFoldSet` and judged
+    by :func:`.certificate.interval_partition` on its cluster evidence); the
+    :class:`DegenerateFoldSet` is ``None`` for a non-degenerate path.
     """
     if not screen.degenerate:
         return lattice_newton_critical_points(faces, index, lattice_n=lattice_n, crystal=crystal), None
