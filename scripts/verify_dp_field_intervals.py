@@ -151,8 +151,10 @@ def level_counts(grid: Grid, edge: np.ndarray, delta: float) -> tuple[int, int, 
 def verify(faces: Sequence[int], index: float, grid: int, lattice_n: int = 20000) -> list[tuple]:
     """One row per interval: ``(lower_deg, upper_deg, predicted (n, closed, open), grid (n, closed, open))``.
 
-    ``lattice_n`` is the field's lattice (:meth:`.dp_field.DPField.build`): ``3-5-6-7`` needs 50000, its
-    ``U_P`` has a neck that 20000 points split into two components.
+    ``lattice_n`` is the field's lattice (:meth:`.dp_field.DPField.build`); ``3-5-6-7`` partitions on
+    the default 20000 points as well: its neck is a lattice-resolution artefact that the chart
+    audit of task ``dp-thin-neck-topology`` corrects (an audit that shares this script's chart
+    construction by method, deliberately not by code).
     """
     field = DPField.build(canonical_crystal(), faces, index, lattice_n=lattice_n)
     chart = grid_field(field.faces, index, grid)

@@ -37,10 +37,34 @@ critical data alone:
 Everything outside that reasoning is the explicit escape hatch
 (:class:`TopologyEscape`, issue ``dp-field-layer``, explore
 ``dp-field-saddle-search``): ``U_P`` or its complement not connected on the
-lattice (not a disk), more than one interior critical point, a saddle or a
-degenerate Morse point, a slab crease inside ``U_P``, or a loop extremum at
-``L`` with ``D_P`` increasing into ``U_P`` (a sublevel component born on the
-boundary).  None of them is resolved silently.
+lattice (not a disk; a plural count is audited first, below), more than one
+interior critical point, a saddle or a degenerate Morse point, a slab crease
+inside ``U_P``, or a loop extremum at ``L`` with ``D_P`` increasing into
+``U_P`` (a sublevel component born on the boundary).  None of them is
+resolved silently.
+
+The lattice count is resolution-limited, and one regime of that is audited
+(task ``dp-thin-neck-topology``, explore ``u-space-dissolution-probe`` #4):
+a ``U_P`` with a neck thinner than the lattice spacing (``3-5-6-7``: neck
+< 1e-3 rad against 0.016 rad at ``N = 20000``) is split into two k-NN
+components by an artefact, non-monotonically in ``N``.  A plural count is
+therefore audited (:func:`chart_audit`) on a ladder of orthographic charts
+of the entry hemisphere -- a second chain sharing no failure mode with the
+k-NN graph: different sampling geometry, 4-connectivity on the chart
+instead of a 3D k-NN graph, finer resolution.  Counts every grid agrees on
+are the adjudicated counts, evidence rather than proof (two independent
+chains agreeing and converging, still short of an arrangement-exact
+certificate); disagreement establishes nothing and escapes as
+``unconverged``, the fail-closed direction throughout.  This audit and
+``scripts/verify_dp_field_intervals.py`` are deliberately two
+implementations of the same chart (shared gate authority, unshared code):
+their independence is what makes the audit worth anything, it is guarded by
+the fixture cross-checks (``test_partition_agrees_with_the_independent_grid``),
+and neither side's chart construction (axis choice, rim push,
+4-connectivity) may be edited without the other.  Known limitation, left
+uninstrumented (no trigger exists without unconditional cost): the mirror
+blind spot -- a thin *invalid* gap wider than both chains' resolutions can
+merge a truly plural domain into one on both chains and pass a false disk.
 """
 
 from __future__ import annotations
@@ -86,11 +110,18 @@ class DeviationInterval(NamedTuple):
 
 @dataclass(frozen=True)
 class DomainTopology:
-    """Connected components of ``U_P`` and of its complement on a Fibonacci lattice (k-NN graph)."""
+    """Component counts of ``U_P`` and of its complement, adjudicated (module docstring).
+
+    The counts come from the ``lattice_n``-point Fibonacci lattice's k-NN graph; when a count is
+    plural the chart-grid audit (:func:`chart_audit`) runs and, if it converges, its counts
+    replace the lattice's here (``grid_audit`` keeps both).  Without an audit the fields are the
+    lattice counts, unchanged.
+    """
 
     lattice_n: int
     domain_components: int
     complement_components: int
+    grid_audit: ChartAudit | None = None
 
     @property
     def is_disk(self) -> bool:
@@ -241,10 +272,16 @@ def chart_audit(
 def domain_topology(
     faces: Faces, index: float, *, lattice_n: int = 20000, crystal: Polyhedron | None = None
 ) -> DomainTopology:
-    """Component counts of ``U_P`` and ``S^2 \\ U_P`` on the ``lattice_n``-point Fibonacci lattice."""
+    """Component counts of ``U_P`` and ``S^2 \\ U_P``, audited when the lattice count is plural (module docstring)."""
     lattice = fibonacci_sphere(lattice_n)
     valid = valid_batch(lattice, faces, index, crystal=crystal)
-    return DomainTopology(lattice_n, _component_count(lattice[valid]), _component_count(lattice[~valid]))
+    domain, complement = _component_count(lattice[valid]), _component_count(lattice[~valid])
+    audit = None
+    if domain > 1 or complement > 1:  # the trigger gate: the audit's cost is paid only here
+        audit = chart_audit(faces, index, domain, complement, crystal=crystal)
+        if audit.verdict != "unconverged":
+            domain, complement = audit.domain_counts[0], audit.complement_counts[0]
+    return DomainTopology(lattice_n, domain, complement, grid_audit=audit)
 
 
 def _side_values(
@@ -317,9 +354,28 @@ def interval_partition(
     ``crystal`` (default: the canonical hexagonal prism) supplies the face normals of the ring probes.
     """
     if not topology.is_disk:
+        audit = topology.grid_audit
+        if audit is None:  # no audit ran: a hand-built topology, or an empty audit ladder
+            raise TopologyEscape(
+                f"U_P is not a disk on the {topology.lattice_n}-point lattice: {topology.domain_components} component(s), "
+                f"complement {topology.complement_components}"
+            )
+        if audit.verdict == "unconverged":
+            raise TopologyEscape(
+                f"U_P is not a disk: lattice {topology.lattice_n} says {audit.lattice_domain_count}/"
+                f"{audit.lattice_complement_count}, chart grids {audit.grids} say {audit.domain_counts}/"
+                f"{audit.complement_counts}; counts are not resolution-converged, the topology is not established"
+            )
+        if audit.verdict == "confirmed":
+            raise TopologyEscape(
+                f"U_P is not a disk: {topology.domain_components} component(s), complement {topology.complement_components} "
+                f"(lattice {topology.lattice_n} and chart grids {audit.grids} agree)"
+            )
+        # corrected: the grids agree on a count the lattice got wrong, and the adjudicated counts still fail is_disk
         raise TopologyEscape(
-            f"U_P is not a disk on the {topology.lattice_n}-point lattice: {topology.domain_components} component(s), "
-            f"complement {topology.complement_components}"
+            f"U_P is not a disk: {topology.domain_components} component(s), complement {topology.complement_components} "
+            f"(chart grids {audit.grids} agree, correcting the lattice {topology.lattice_n} counts "
+            f"{audit.lattice_domain_count}/{audit.lattice_complement_count})"
         )
     if fold_set is not None and fold_set.circle_interior_fraction > 0.0:
         raise TopologyEscape(f"the slab crease u . n_M = 0 runs through U_P ({fold_set.circle_interior_fraction:.3%} of it)")

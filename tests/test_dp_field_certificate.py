@@ -31,7 +31,9 @@ EXPECTED = {
 }
 # The A60-10 members (two internal reflections, no slab): the loop maximum 141.8393 = 120 + 21.8393 degrees sits
 # on a grazing internal-reflection piece, where the smooth extension of D_P has a saddle (not interior).  The
-# U_P of 3-5-6-7 has a neck that the default 20000-point lattice splits in two: its field takes 50000 points.
+# U_P of 3-5-6-7 has a neck the default lattice splits in two; the chart audit of task dp-thin-neck-topology
+# corrects that artefact, and this fixture stays on the 50000-point lattice that resolves the neck itself,
+# so its counts come from the lattice and the audit does not run.
 A60_10 = {
     (3, 5, 6, 7): (50000, [(50.06262, 141.83930, 2, 0, 2), (141.83930, 163.46516, 1, 0, 1)]),
     (3, 4, 5, 7): (20000, [(50.06262, 141.83930, 2, 0, 2), (141.83930, 163.46516, 1, 0, 1)]),
@@ -93,6 +95,7 @@ def test_3_5_6_7_at_lumice_n550_walks_the_full_stack() -> None:
     """
     field = DPField.build(canonical_crystal(), (3, 5, 6, 7), 1.3110129, lattice_n=100000)
     assert field.domain_topology.is_disk
+    assert field.domain_topology.grid_audit is None  # the lattice resolves the neck here: no audit runs
     assert field.interior_critical_points == ()
     assert np.isfinite(field.boundary.values).all()
     for corner in field.corners:
@@ -260,13 +263,65 @@ def test_chart_audit_record_keeps_the_lattice_counts_visible() -> None:
     assert audit.grids == (801, 1601)
 
 
+@pytest.mark.parametrize("faces", FIXTURES)
+def test_healthy_paths_pay_no_audit(fields, faces) -> None:
+    """A singular lattice count never triggers the chart audit: ``grid_audit is None``, no chart cost."""
+    assert fields[faces].domain_topology.grid_audit is None
+
+
+def test_3_5_6_7_partitions_on_the_default_lattice() -> None:
+    """The chart audit corrects the thin-neck artefact: a disk on 20000 points, the A60-10 partition.
+
+    The lattice says (2, 1); the audit's grids (801, 1601) both say (1, 1),
+    so the adjudicated topology is a disk and the partition runs with the
+    same intervals the 50000-point fixture pins.  The interval values are
+    the default-lattice run of ``scripts/verify_dp_field_intervals.py
+    --path 3 5 6 7 --grid 801`` (every interval predicted == grid there,
+    the M3 evidence of task ``dp-thin-neck-topology``).
+    """
+    field = DPField.build(canonical_crystal(), (3, 5, 6, 7), N)
+    topology = field.domain_topology
+    assert topology.grid_audit.verdict == "corrected"
+    assert topology.grid_audit.lattice_domain_count == 2
+    assert (topology.domain_components, topology.complement_components) == (1, 1)
+    expected = [(50.06262, 141.83930, 2, 0, 2), (141.83930, 163.46516, 1, 0, 1)]
+    partition = field.interval_partition()
+    assert [iv[2:] for iv in partition] == [e[2:] for e in expected]
+    for interval, e in zip(partition, expected):
+        assert np.degrees(interval.lower) == pytest.approx(e[0], abs=5e-6)
+        assert np.degrees(interval.upper) == pytest.approx(e[1], abs=5e-6)
+
+
+def test_escape_text_reports_the_audit_branches(fields) -> None:
+    """The disk escape says what the two chains said: agreed, corrected but still not a disk, or not converged."""
+    field = fields[(3, 5)]
+    args = (field.faces, N, field.interior_critical_points, None, field.boundary)
+    confirmed = C.DomainTopology(20000, 2, 1, grid_audit=C.ChartAudit((801, 1601), (2, 2), (1, 1), 2, 1, "confirmed"))
+    with pytest.raises(TopologyEscape, match=r"2 component\(s\), complement 1 \(lattice 20000 and chart grids \(801, 1601\) agree\)"):
+        C.interval_partition(*args, confirmed, None)
+    corrected = C.DomainTopology(20000, 1, 2, grid_audit=C.ChartAudit((801, 1601), (1, 1), (2, 2), 2, 1, "corrected"))
+    with pytest.raises(TopologyEscape, match=r"1 component\(s\), complement 2 \(chart grids \(801, 1601\) agree, correcting the lattice 20000 counts 2/1\)"):
+        C.interval_partition(*args, corrected, None)
+    unconverged = C.DomainTopology(20000, 2, 1, grid_audit=C.ChartAudit((801, 1601), (1, 2), (1, 1), 2, 1, "unconverged"))
+    with pytest.raises(TopologyEscape, match=r"lattice 20000 says 2/1, chart grids \(801, 1601\) say \(1, 2\)/\(1, 1\); counts are not resolution-converged, the topology is not established"):
+        C.interval_partition(*args, unconverged, None)
+
+
 @pytest.mark.slow
 def test_partition_agrees_with_the_independent_grid() -> None:
-    """``scripts/verify_dp_field_intervals.py`` on the five fixtures and the A60-10 members (~2.5 min on an M2 Max)."""
+    """``scripts/verify_dp_field_intervals.py`` on the five fixtures, the A60-10 members, and 3-5-6-7's audited default lattice (~2.5 min on an M2 Max).
+
+    The ``(3, 5, 6, 7)`` row at the default 20000 points runs the partition
+    through the chart audit's correction; this script's own independent grid
+    is the second chain of that audit, so its agreement here is the standing
+    cross-check of the deliberately dual implementations (module docstring,
+    ``certificate.py``).
+    """
     spec = importlib.util.spec_from_file_location("verify_dp_field_intervals", SCRIPT)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     paths = [(faces, 20000) for faces in FIXTURES] + [(faces, lattice_n) for faces, (lattice_n, _) in A60_10.items()]
+    paths.append(((3, 5, 6, 7), 20000))
     for faces, lattice_n in paths:
         for lower, upper, predicted, measured in module.verify(faces, N, 1201, lattice_n):
             assert predicted == measured, (faces, lower, upper)
