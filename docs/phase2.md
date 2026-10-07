@@ -245,18 +245,34 @@ sequence, independent of the sun:
   at most one (a non-degenerate minimum or a slab cone point) there is one
   closed loop from its value to the loop extremum where the sublevel set
   first reaches $\partial U_P$ (checked on a small ring). Anything else —
-  $U_P$ or its complement not connected on the lattice, several interior
-  critical points, a saddle, a crease inside $U_P$, a boundary-born sublevel
-  component — raises `TopologyEscape` instead of guessing.
+  $U_P$ or its complement not connected, several interior critical points,
+  a saddle, a crease inside $U_P$, a boundary-born sublevel component —
+  raises `TopologyEscape` instead of guessing. The component counts
+  themselves are audited (task `dp-thin-neck-topology`): a plural k-NN
+  lattice count — a neck thinner than the lattice spacing splits
+  `3-5-6-7`'s $U_P$ into two components, non-monotonically in $N$ — is
+  first checked against a ladder of orthographic chart grids of the entry
+  hemisphere (4-connected, finer, sharing no failure mode with the k-NN
+  graph). Grids in agreement adjudicate the counts — evidence from two
+  independent chains, not a constructive certificate — and disagreement
+  escapes as not resolution-converged; a valid node on the chart rim or a
+  mask that breaches the hemisphere premise voids that grid's counts the
+  same way. The production audit and the verification script below are
+  two deliberately unshared implementations of that chart; their
+  agreement is what the audit is worth, guarded by the fixture
+  cross-checks, and neither side's construction (axis choice, rim push,
+  connectivity) may be edited without the other.
 - *Check.* `scripts/verify_dp_field_intervals.py` recomputes every
   interval's counts on a dense grid through `evaluate_fields`: closed loops
   as sub/superlevel regions touching no boundary, arcs as crossings along
   the traced grid boundary moved onto $\partial U_P$ by bisection (node
   values alone fail: $D_P$ falls like a square root off an exit-TIR curve).
   All intervals of the five fixtures and of the A60-10 members `3-5-6-7`,
-  `3-4-5-7` agree (`--lattice-n 50000` for `3-5-6-7`, whose $U_P$ has a neck
-  the default 20000-point lattice splits); the measured values are in the
-  appendix.
+  `3-4-5-7` agree; `3-5-6-7` verifies on the default 20000-point lattice as
+  well (the two-component count its neck earns there is a resolution
+  artefact the chart audit corrects to one; task `dp-thin-neck-topology`),
+  while the A60-10 fixture keeps `--lattice-n 50000`, where the lattice
+  itself resolves the neck; the measured values are in the appendix.
 - *Weight kinks* (task `chromatic-weight-kink-diagnostic`, 2026-09-30;
   `DPField.weight_kinks`, `dp_field.weight_kink`). This is the third kind of
   critical line: the TIR onset $C_k = \{\mathrm{disc}_k = 0\}$ of each
@@ -747,7 +763,11 @@ $1/\sin^2\omega$. The probe that established the band sum is
    band usually behaves like scattered points and often beats
    $1/\sqrt{K_{\mathrm{eff}}}$ by 7-9×, but aliases (Parry at $10^7$), so
    stores are sized by $K_{\mathrm{eff}} \ge 10^4$ at the worst pixel of
-   interest, not by the lattice's typical gain.
+   interest, not by the lattice's typical gain. A resolution limit of the
+   same kind at much coarser spacing is why the field layer's component
+   counter is audited rather than believed: `3-5-6-7`'s $U_P$ neck is
+   thinner than the 20000-point lattice's spacing (task
+   `dp-thin-neck-topology`, section 3.1's audit).
 2. *Narrow $\rho$ lowers $K_{\mathrm{eff}}/K$, pixel by pixel.* The band's
    event set is fixed by $\delta$ alone; $\rho$ selects the part that
    contributes. **Measured**: the band keeps 65 % (column density on the sun

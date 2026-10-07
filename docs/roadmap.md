@@ -948,3 +948,42 @@ Moved to [overview.md](overview.md) §3.
   rejects the exact return a perimeter-commensurate great-circle loop makes
   every lap — and a constant-$D_P$ loop as a legal terminal state,
   [phase2.md](phase2.md) §3.1).
+- **2026-10-07**: the lattice component counts of `U_P` are audited, not
+  believed (task `dp-thin-neck-topology`, scrum `wave3-pull-forward`;
+  explore `u-space-dissolution-probe` #4). The k-NN counter has a
+  resolution blind spot: a neck thinner than the lattice spacing
+  (`3-5-6-7`, < 1e-3 rad against 0.016 rad at $N = 20000$) splits into two
+  components as an artefact, non-monotonically in $N$ (at Lumice's
+  $n(550)$: 50000 → 2, 100000 → 1, 200000 → 2), so no single density is a
+  safe fixture. Decisions:
+  - A plural count now runs a ladder of orthographic chart grids
+    (`AUDIT_LADDER = (801, 1601)`, 4-connected, nested) — a second chain
+    sharing no failure mode with the k-NN graph — before anything escapes.
+    Grids in agreement adjudicate the counts (`corrected` against /
+    `confirmed` by the lattice, worst-first roll-up); disagreement is
+    `unconverged` and escapes; a valid node on the chart rim voids that
+    grid's counts the same way (fail closed throughout). Measured on
+    `3-5-6-7` at 1.31: both grids say one component against the lattice's
+    two, ~2.3 s for the whole audited `domain_topology` — the cost the
+    plural-count trigger gate confines to the paths that need it.
+  - The adjudication is evidence, not a constructive certificate: the
+    disk reasoning's premise is still `is_disk`, now checked on two chains
+    instead of one (`phase1-math-contract.md` §9.5.6a: structural premises
+    explicit, never silently weakened). The escape text reports what both
+    chains said; a corrected count never hides the lattice's own count
+    (`DomainTopology.grid_audit` keeps both).
+  - The production audit and `scripts/verify_dp_field_intervals.py` are
+    two deliberately unshared implementations of the same chart (shared
+    gate authority, shared method, no shared code): the independence is
+    what makes the audit worth anything. The fixture cross-checks
+    (`test_partition_agrees_with_the_independent_grid`, which now includes
+    the audited default-lattice `3-5-6-7`) are the standing guardian of
+    their agreement; neither side's chart construction (axis choice, rim
+    push, connectivity) may be edited without the other.
+  - Not adopted: an arrangement-exact topology enumeration would end all
+    resolution questions but is a new machinery beyond the need (the grid
+    backstop meets it); recorded here so the door is visible. Known
+    limitation, left uninstrumented — no trigger exists without
+    unconditional cost (a51): the mirror blind spot, a thin *invalid* gap
+    wider than both chains' resolutions merging a truly plural domain
+    into a false disk.
