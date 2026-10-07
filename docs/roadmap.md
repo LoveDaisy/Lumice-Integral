@@ -1028,3 +1028,20 @@ Moved to [overview.md](overview.md) §3.
   intervals $(2, 0, 2)$, agreeing with the independent chart grid of
   `scripts/verify_dp_field_intervals.py` per interval; every existing
   fixture is unchanged ([phase2.md](phase2.md) §3.1).
+- **2026-10-07**: the ch8 face-distance $d$ axis is an in-repo asset, not a
+  scratchpad number (task `ch10-verdict-face-distance-axis`, scrum
+  `wave3-pull-forward`; explore `ch08-liljequist-numeric-reproduction`).
+  The writing repo's 12.1 needs a rev-reproducible source for its d-axis
+  tables, so the explore probes 1–3 are promoted into the fifth chapter-10
+  verdict `face-distance-axis` (`ch10_verdicts.face_distance_axis`, the
+  module's own chains; `scripts/ch10_numerical_verdicts.py` gains it from
+  `VERDICTS` with no CLI change) instead of a parallel `scripts/`
+  pipeline — one semantics, one implementation. Recorded at commit
+  `57a5c02`, 160.7 s: terrain fixed on every $d$ (critical-value spread
+  `4.3e-14`°, corner `1.8e-12`°), the A0-02 member's window opening
+  towards the anthelion (141–180° band integral, trapezoid, ×18.3 /
+  ×27.5 / ×9.2 relative to $d = 1$), the A60-10 edge only dimming
+  (×0.2118 at $d = 1.8$). Reconciled against the explore snapshot
+  bit-for-bit except two walker-machinery drifts ruled to the post-probe
+  commits (details and numbers: [phase2.md](phase2.md) §4, appendix
+  "Chapter-10 verdicts, face-distance d axis").

@@ -473,6 +473,27 @@ Fixtures the structure suggests:
   insertion class (`3-1-5-6-7`) alone adds 3.8 % / 1.7 % (for plates a
   basal reflection only mirrors the elevation). Record: appendix,
   "Chapter-10 verdicts rerun".
+  *Measured on the face-distance d axis (2026-10-07, task
+  `ch10-verdict-face-distance-axis`, `ch10_verdicts.face_distance_axis`;
+  explore `ch08-liljequist-numeric-reproduction`, scrum `wave3-pull-forward`):*
+  the ch8 cross-section scene moves the alternating prism face distances
+  (`face_distance = [1, d, 1, d, 1, d]`, `HexPrism.from_lumice`, normals
+  unchanged) at a fixed plate $h/a = 0.2$ — a different ruler from the
+  $h/a$ axis above, so the two verdicts each keep their own. On
+  $d = 1, 1.2, 1.4, 1.8$: the terrain is the same on every $d$ (critical
+  values of `3-5-6-7-3` spread `4.3e-14`°, of both A60-10 members `0`, the
+  153.0697° TIR-onset corner `1.8e-12`° = the SLSQP constraint tolerance;
+  $d = 1$ is `from_ratio(0.2)` bit-for-bit). The A0-02 member `3-5-6-7-3`:
+  at $d = 1$ its profile peaks in the corner's neighbourhood (153.25° on
+  the 0.25° grid, half maximum 152.75–158.75°) and is zero past 162.5°;
+  for $d \ge 1.2$ the member's own window opens towards the anthelion —
+  the peak moves to the far grid end 179.75° (15–33× the corner value),
+  and the 141–180° band integral (trapezoid over the profile grid, in
+  radians) is ×18.3 / ×27.5 / ×9.2 relative to $d = 1$, rising then
+  falling. The A60-10 edge stays put and only dims: peak 152.00°, half
+  maximum 143.5–158.5° on every $d$, the peak decaying monotonically to
+  ×0.21 at $d = 1.8$; the two members' profiles agree to `1.5e-12`.
+  Record: appendix, "Chapter-10 verdicts, face-distance d axis".
 - *Parhelic circle*: $D_P(\mathbf u) = \angle(M\mathbf u, \mathbf u)$ has
   $\nabla D_P = 0$ only at $\pm\mathbf n_M$ (on `3-1-6` both lie on the entry
   great circle; with partial reflection one is on $\partial U_P$, where the
@@ -1126,8 +1147,16 @@ needs street-lamp halos (backlog).
   shape independent; the Liljequist peak of `3-5-6-7-3` stays at 153.07° on
   every $h/a$, a corner of the profile at the internal TIR onset of $R_k$
   (not a critical value of $D_P$), its width set by the window. Both layers
-  appear in Lumice's unfiltered ch8 strip at the same azimuths. Tests:
-  `tests/test_ch10_verdicts.py` (`test_a60_10_*`, `test_liljequist_*`).
+  appear in Lumice's unfiltered ch8 strip at the same azimuths. The
+  face-distance $d$ axis (2026-10-07, task
+  `ch10-verdict-face-distance-axis`,
+  `lumice_integral.ch10_verdicts.face_distance_axis`): at a fixed plate
+  $h/a$ the terrain stays fixed while the A0-02 member's own window opens
+  towards the anthelion (band integral ×18.3 / ×27.5 / ×9.2 relative to
+  $d = 1$) and the A60-10 edge only dims (peak ×0.21 at $d = 1.8$;
+  section 4, appendix, "Chapter-10 verdicts, face-distance d axis"). Tests:
+  `tests/test_ch10_verdicts.py` (`test_a60_10_*`, `test_liljequist_*`,
+  `test_face_distance_axis_*`, `test_from_lumice_regular_d1_*`).
 - **Rank-deficient maps.** $M = I$, $W = I$ classes (wedge angle 0,
   `geometry.halo_map_rank` 0) are point masses in the source direction (task
   `path-class-rendering-unit`). The degenerate images of parallel-face
@@ -1256,7 +1285,7 @@ needs street-lamp halos (backlog).
 | critical points, certificate (field layer), contour extraction | measured, in production | appendix; tasks `dp-field-layer`, `s2-contour-extraction` |
 | contour quadrature (precision authority), Phase I and band-sum alignment | measured, in production | section 4, appendix; task `s2-contour-quadrature` |
 | Phase I seeds and cross-check from the store | design | scrum 24 sub-task 5 |
-| chapter-10 verdicts (inner edge, Liljequist, parhelic circle, focusing labels) | measured; rerun with partial internal reflections (A60-10 saddle 141.839300°, the Liljequist peak a TIR onset corner at 153.07°, no jump in the `1-3-2` window, `1-3-5-2` Jacobian focusing at 120°) | section 10, appendix; tasks `ch10-numerical-verdicts`, `ch10-liljequist-unblock-and-docs` |
+| chapter-10 verdicts (inner edge, Liljequist, parhelic circle, focusing labels, face-distance d axis) | measured; rerun with partial internal reflections (A60-10 saddle 141.839300°, the Liljequist peak a TIR onset corner at 153.07°, no jump in the `1-3-2` window, `1-3-5-2` Jacobian focusing at 120°); d axis added (terrain fixed, the A0-02 window opening ×18.3/×27.5/×9.2, the A60-10 edge only dimming ×0.21) | section 10, appendix; tasks `ch10-numerical-verdicts`, `ch10-liljequist-unblock-and-docs`, `ch10-verdict-face-distance-axis` |
 | divergent light | derived | backlog |
 
 ## Appendix: measured record
@@ -2168,3 +2197,58 @@ Against the first run (task `ch10-numerical-verdicts`, entry above):
   `0.017`, and there are about eleven single insertions. The author's ch8
   probe (Lumice filter, σ = 0.5°, D65, PNG) puts A60-10 at `0.53` / `0.27`
   of all raypaths, the same order as LI's `0.47` / `0.22`.
+
+**Chapter-10 verdicts, face-distance d axis (2026-10-07, task
+`ch10-verdict-face-distance-axis`, scrum `wave3-pull-forward`; explore
+`ch08-liljequist-numeric-reproduction`).** `scripts/ch10_numerical_verdicts.py
+--verdict face-distance-axis --output-dir artifacts/ch10-verdicts` at commit
+`57a5c02`, one process, 160.7 s on an M2 Max (the fifth verdict; the script's
+`--verdict` choices derive from `ch10_verdicts.VERDICTS`, no CLI change).
+Crystals `HexPrism.from_lumice(height = 0.1, face_distance = [1, d, 1, d,
+1, d])` (the ch8 scene; $h/a = 0.2$), $n = 1.31$, $d = 1, 1.2, 1.4, 1.8$;
+profiles by `ch10_verdicts._random_profile` (contour quadrature `rtol
+1e-8`, seed store $2{\times}10^5$, 0.25° grids — `3-5-6-7-3` over
+0.25–179.75°, the A60-10 members over 138–166°; `n_deltas` 719 / 113
+guarded by a raise). Three layers:
+
+- *Terrain, fixed on every $d$:* critical values of `3-5-6-7-3`
+  $\{0, 98.160700, 180°\}$ spread `4.3e-14`° across $d$; of both A60-10
+  members $\{50.0626, 141.839300, 163.4652°\}$ spread `0`; the
+  TIR-onset corner 153.069685° spread `1.8e-12`° (the SLSQP constraint
+  tolerance; the three internal faces agree to `5e-11`°). $d = 1$ is
+  `HexPrism.from_ratio(0.2)` bit-for-bit (max vertex difference `0.0`;
+  against `canonical_crystal()`, the $h/a = 2$ column, the difference
+  `0.9` is the $z$ extent alone).
+- *The A0-02 member `3-5-6-7-3`, the window:* at $d = 1$ peak 153.25°
+  (value `4.31e-5`), half maximum 152.75–158.75°, profile zero past
+  162.5°; at $d = 1.2, 1.4, 1.8$ the peak is at the far grid end 179.75°
+  (values `7.49e-4` / `1.12e-3` / `3.73e-4`, 15–33× the corner value
+  `3.66e-5` / `3.41e-5` / `2.46e-5`). The 141–180° band integral —
+  trapezoid over the profile grid, in radians, the rule declared in
+  `numbers.band_integral_rule` — is `5.077e-6` / `9.272e-5` / `1.398e-4` /
+  `4.648e-5`, i.e. ×18.3 / ×27.5 / ×9.2 relative to $d = 1$: rising then
+  falling, the member's own window opening towards the anthelion.
+- *The A60-10 edge, position fixed:* both members peak at 152.00° with
+  half maximum 143.5–158.25° ($d = 1$) / 143.5–158.5° ($d \ge 1.2$), the
+  peak decaying monotonically `1.480e-5` → `1.200e-5` → `9.130e-6` →
+  `3.134e-6` (×0.2118 at $d = 1.8$); the edge weight
+  $\sum_{141°<\delta<143°}$ `2.911e-5` → `2.343e-5` → `1.768e-5` →
+  `5.972e-6`. The two members' profiles agree to `1.5e-12` (two chains,
+  quadrature tolerance; not bit-identical).
+
+Reconciliation against the explore probes (git-ignored snapshot, same
+parameters): probe 1 (terrain) and probe 2 (the A0-02 window, including
+all four 719-point profiles) bit-for-bit identical; probe 3's reductions
+bit-identical, its `3-5-6-7` profiles bit-identical, `3-4-5-7` within
+`1.9e-12`. Two differences, both ruled to the $D_P$ walker machinery that
+changed after the probes ran (their rev `0b20ab1`; `62ac5f7..3db0618`,
+tasks `dp-exit-snell-nan-convention` / `dp-thin-neck-topology` /
+`dp-slab-partition-completion`): the members' first critical value
+50.0626201° → 50.0626198° (Δ `3.9e-7`°, both members, all $d$) and the
+`3-4-5-7` profile at `1.9e-12`. Neither touches a number the explore
+SUMMARY pins (50.06262° rounds the same); the verdict at the current rev
+is the authority (a rerun is bit-identical to the recorded arrays). The
+band integrals differ from the SUMMARY's ad-hoc values (×18.5 / ×27.8 /
+×9.3) by at most 1.4% — the 0.25°-grid discretisation at the 180° band
+edge (a right-endpoint bin sum gives ×18.6 / ×28.0 / ×9.3); the trapezoid
+rule is the one declared above.
