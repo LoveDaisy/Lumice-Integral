@@ -241,3 +241,96 @@ def test_parallel_face_provenance_reuses_the_canonical_height_ratio(parallel_fac
 def test_ring_direction_refuses_a_zenith_sun() -> None:
     with pytest.raises(ValueError):
         V.ring_direction(np.array([0.0, 0.0, 1.0]), 0.4, 0.0)
+
+
+@pytest.fixture(scope="module")
+def face_distance_axis_d1() -> V.Verdict:
+    return V.face_distance_axis(V.FaceDistanceAxisOptions(
+        ds=(1.0,),
+        grid_3_5_6_7_3=(152.0, 156.0, 4.0),
+        grid_a60_10=(142.0, 146.0, 4.0),
+        lattice_n=20_000,
+        onset_starts=1,
+        a60_10_lattice_n=10_000,
+        seed_store_n=10_000,
+    ))
+
+
+def test_face_distance_axis_d1_terrain_pins(face_distance_axis_d1) -> None:
+    """The verdict runs on a regular d = 1 prism whose terrain is the liljequist one: 98.16 deg, the A60-10
+    saddle 141.8393 deg, the TIR-onset corner 153.0697 deg; every profile kept all its grid deltas."""
+    verdict = face_distance_axis_d1
+    assert verdict.status == "measured"
+    n = verdict.numbers
+    assert n["d1_identity"] == {"from_lumice_d1_vs_from_ratio_max_vertex_difference": 0.0,
+                                "from_lumice_d1_vs_canonical_crystal_max_vertex_difference": 0.9}
+    long = n["terrain"]["3-5-6-7-3"]["per_d"]["1.0"]
+    assert long["critical_values_deg"][1] == pytest.approx(98.1607, abs=1e-4)
+    assert long["tir_corner_deg"] == pytest.approx(153.0697, abs=1e-4)
+    for member, values in n["terrain"]["a60_10"].items():
+        assert member in ("3-5-6-7", "3-4-5-7")
+        assert values["critical_values_deg"][0] == pytest.approx([50.06262, 141.83930, 163.46516], abs=1e-4)
+    (entry,) = n["window_3_5_6_7_3"]
+    assert entry["n_deltas"] == 2 and entry["band_integral_relative_to_d1"] == 1.0  # the n_deltas guard held
+    for entries in n["a60_10"]["profiles"].values():
+        assert all(e["n_deltas"] == 2 for e in entries)
+    assert "trapezoid" in n["band_integral_rule"] and "sum" in n["edge_weight_rule"]
+
+
+def test_from_lumice_regular_d1_is_the_ratio_prism_bitwise() -> None:
+    """``from_lumice(0.1, [1] * 6)`` and ``from_ratio(0.2)`` are the same prism bit for bit, so the d = 1 column
+    of :func:`.ch10_verdicts.face_distance_axis` is :func:`.ch10_verdicts.a60_10_saddle`'s ``h / a = 0.2`` row
+    (one ``DPField.build`` chain, lattice ``a60_10_lattice_n``)."""
+    plate = HexPrism.from_lumice(height=0.1, face_distance=[1.0] * 6, a=1.0)
+    np.testing.assert_array_equal(plate.vertices, HexPrism.from_ratio(0.2).vertices)
+
+
+def test_band_integral_is_a_trapezoid_over_the_window_in_radians() -> None:
+    """``_band_integral`` integrates in radians and keeps exactly the grid points inside the window."""
+    deltas = np.radians(np.array([140.0, 141.0, 150.0, 179.75]))
+    values = np.array([100.0, 10.0, 1.0, 2.0])
+    integral = V._band_integral(deltas, values, (141.0, 180.0))
+    expected = np.trapezoid([10.0, 1.0, 2.0], np.radians([141.0, 150.0, 179.75]))
+    assert integral == pytest.approx(expected, rel=1e-15)
+    assert V._band_integral(deltas, values, (160.0, 170.0)) == 0.0  # no grid point inside
+
+
+# slow: the two-d verdict on 2-deg profile grids is ~26 s on an M2 Max (the recorded run uses the 0.25-deg ch8 grids)
+@pytest.mark.slow
+def test_face_distance_axis_window_opens_and_the_a60_10_edge_only_dims() -> None:
+    """The d axis: terrain fixed; the A0-02 member's own window opens towards the anthelion (far grid end from
+    zero to dominating the corner); the A60-10 edge keeps its position and width and only dims."""
+    verdict = V.face_distance_axis(V.FaceDistanceAxisOptions(
+        ds=(1.0, 1.8),
+        grid_3_5_6_7_3=(150.0, 178.0, 2.0),
+        grid_a60_10=(142.0, 162.0, 2.0),
+        lattice_n=20_000,
+        onset_starts=1,
+        a60_10_lattice_n=10_000,
+        seed_store_n=10_000,
+    ))
+    n = verdict.numbers
+    long = n["terrain"]["3-5-6-7-3"]
+    assert max(long["critical_value_spread_across_d_deg"]) < 1e-12
+    assert long["tir_corner_spread_across_d_deg"] < 1e-9  # the SLSQP constraint tolerance
+    for member in n["terrain"]["a60_10"].values():
+        assert max(member["critical_value_spread_across_d_deg"]) < 1e-12
+
+    by_d = {entry["d"]: entry for entry in n["window_3_5_6_7_3"]}
+    values = verdict.arrays["value_3_5_6_7_3"]
+    assert by_d[1.0]["peak_deg"] == pytest.approx(153.25, abs=2.0)  # the corner neighbourhood (2-deg grid)
+    assert values[0][-1] == 0.0  # the member's window is closed at the far end
+    assert by_d[1.8]["peak_deg"] == float(verdict.arrays["delta_deg_3_5_6_7_3"][-1])
+    assert values[1][-1] > 10.0 * by_d[1.8]["value_at_corner_grid"]  # its own window opened (recorded run ~15x)
+    assert by_d[1.8]["band_integral_relative_to_d1"] > 5.0
+
+    profiles = n["a60_10"]["profiles"]["3-5-6-7"]
+    peaks = [entry["peak_value"] for entry in profiles]
+    assert {entry["peak_deg"] for entry in profiles} == {152.0}
+    assert peaks == sorted(peaks, reverse=True)
+    assert 0.15 < peaks[-1] / peaks[0] < 0.30  # only dims (recorded run 0.21)
+    a, b = (verdict.arrays[f"value_a60_10_{key}"] for key in ("3_5_6_7", "3_4_5_7"))
+    np.testing.assert_allclose(a, b, rtol=1e-5, atol=1e-11)  # both members draw one profile (D3h)
+    assert n["a60_10"]["max_abs_profile_difference_vs_first_member"]["3-4-5-7"] < 1e-10
+    for entries in n["a60_10"]["profiles"].values():
+        assert all(entry["n_deltas"] == len(verdict.arrays["delta_deg_a60_10"]) for entry in entries)
