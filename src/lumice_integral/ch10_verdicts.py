@@ -1,6 +1,6 @@
 """The chapter-10 numerical verdicts (``docs/phase2.md`` section 10; task ``ch10-numerical-verdicts``).
 
-Four statements of the writing series' chapter 10 are settled here as
+Five statements of the writing series' chapter 10 are settled here as
 measurements on the Phase II chains, not assumed: every pixel value comes
 from :mod:`.contour_quadrature` (the precision authority), every critical
 value and Hessian from :class:`.dp_field.DPField`, every focusing label from
@@ -49,6 +49,18 @@ repository; ``scripts/ch10_numerical_verdicts.py`` is the command line.
     and the dimension-collapse signature of the parhelic circle (peak
     ``~ 1 / sigma`` at a fixed integral) on a parallel-face (wedge 0,
     ``M != I``) class.
+``face-distance-axis`` (:func:`face_distance_axis`)
+    The ch8 cross-section ``d`` axis: ``face_distance = [1, d, 1, d, 1, d]``
+    (Lumice convention, face normals unchanged) at a fixed plate ``h / a``
+    -- a different ruler from the ``h / a`` axis of :func:`liljequist`, so
+    the two verdicts each keep their own.  The terrain (the critical values
+    of ``3-5-6-7-3`` and of both A60-10 members, the 153.07 deg TIR-onset
+    corner) is the same on every ``d``; the A0-02 member ``3-5-6-7-3``'s own
+    window opens towards the anthelion (peak to the far grid end, the
+    141--180 deg band integral up then down); the A60-10 142 deg edge stays
+    put and only dims.  Crystals are
+    :meth:`.geometry.HexPrism.from_lumice`; at ``d = 1`` the prism is
+    bit-identical to ``from_ratio(2 * height)``.
 
 ``eps`` is ``delta - D_min`` in radians throughout.
 
@@ -79,7 +91,7 @@ from .optics import domain_margin_names, path_domain_batch, path_id_of, validity
 from .pose_density import build_pose_density
 from .s2_store import S2EventStore, align_rotations, build_event_store, evaluate_fields, event_rotations, fibonacci_sphere
 
-VERDICTS = ("inner-edge", "liljequist", "parhelic-circle", "parallel-face")
+VERDICTS = ("inner-edge", "liljequist", "parhelic-circle", "parallel-face", "face-distance-axis")
 # The store only seeds the extraction's independent check (contour module docstring); the tests' size.
 SEED_STORE_N = 200_000
 LATTICE_N = 200_000
@@ -1082,4 +1094,239 @@ def parallel_face(options: ParallelFaceOptions = ParallelFaceOptions()) -> Verdi
     return Verdict("parallel-face", "measured", statement, numbers, parameters, arrays, notes)
 
 
-RUNNERS = {"inner-edge": inner_edge, "liljequist": liljequist, "parhelic-circle": parhelic_circle, "parallel-face": parallel_face}
+# ---- verdict 5: the face-distance d axis -------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class FaceDistanceAxisOptions:
+    """Inputs of :func:`face_distance_axis` (defaults: the recorded run).
+
+    The ``d`` axis moves the three alternating prism face-to-axis distances
+    off the regular value (``face_distance = [1, d, 1, d, 1, d]``, Lumice
+    convention, normals unchanged) at a fixed plate ``h / a = 2 lumice_height``
+    (``a = 1``): the ch8 cross-section-sensitivity scene, not the ``h / a``
+    axis of :class:`LiljequistOptions`.
+    """
+
+    ds: tuple[float, ...] = (1.0, 1.2, 1.4, 1.8)
+    lumice_height: float = 0.1
+    a60_10_members: tuple[tuple[int, ...], ...] = A60_10_MEMBERS
+    # the U_P of 3-5-6-7 has a neck the default lattice splits in two (LiljequistOptions note)
+    a60_10_lattice_n: int = 50_000
+    grid_3_5_6_7_3: tuple[float, float, float] = (0.25, 179.75, 0.25)  # the ch8 figure-7 binning
+    grid_a60_10: tuple[float, float, float] = (138.0, 166.0, 0.25)
+    # the band integral of the A0-02 profile: trapezoid over the grid points inside this window (deg)
+    band_window_deg: tuple[float, float] = (141.0, 180.0)
+    # the A60-10 edge weight: plain sum of the profile values at the grid points inside (deg)
+    edge_weight_window_deg: tuple[float, float] = (141.0, 143.0)
+    lattice_n: int = LATTICE_N
+    # tir_onset_maximum starts per internal reflection (5 = the recorded run; fewer only coarsen the corner search)
+    onset_starts: int = 5
+    relative_tolerance: float = 1e-8
+    seed_store_n: int = SEED_STORE_N
+
+
+def _band_integral(deltas: np.ndarray, values: np.ndarray, window: tuple[float, float]) -> float:
+    """Trapezoid of the profile over the grid points inside ``window`` (deg), in radians: ``int v d delta``."""
+    lo, hi = np.radians(window)
+    inside = (deltas >= lo) & (deltas <= hi)
+    return float(np.trapezoid(values[inside], deltas[inside]))
+
+
+def face_distance_axis(options: FaceDistanceAxisOptions = FaceDistanceAxisOptions()) -> Verdict:
+    """Verdict 5 (module docstring): the d axis -- terrain fixed, the A0-02 window opening, the A60-10 edge dimming."""
+    index = CANONICAL_REFRACTIVE_INDEX
+    quadrature = cq.QuadratureOptions(relative_tolerance=options.relative_tolerance)
+    faces = (3, 5, 6, 7, 3)
+    if not options.ds or options.ds[0] != 1.0:
+        raise ValueError("face_distance_axis needs ds[0] = 1.0: the band integrals are relative to it and the statement's d = 1 row is the first")
+
+    def crystal_of(d: float) -> HexPrism:
+        return HexPrism.from_lumice(height=options.lumice_height, face_distance=[1.0, d, 1.0, d, 1.0, d], a=1.0)
+
+    # d = 1 is the regular prism at h / a = 2 lumice_height (bit-identical vertices); canonical_crystal() is the
+    # h / a = 2.0 column, so their vertex difference is the z extent alone
+    d1_identity = {
+        "from_lumice_d1_vs_from_ratio_max_vertex_difference": float(np.max(np.abs(
+            crystal_of(1.0).vertices - HexPrism.from_ratio(2.0 * options.lumice_height).vertices))),
+        "from_lumice_d1_vs_canonical_crystal_max_vertex_difference": float(np.max(np.abs(
+            crystal_of(1.0).vertices - canonical_crystal().vertices))),
+    }
+
+    # terrain + window of 3-5-6-7-3: one field per d feeds both layers (default lattice; the corner search keeps
+    # its own options.lattice_n, as in the recorded liljequist peak)
+    grid = _grid(options.grid_3_5_6_7_3)
+    name = path_id_of(faces)
+    terrain_long: dict[str, Any] = {}
+    window: list[dict[str, Any]] = []
+    rows, errors, corners, used = [], [], [], None
+    for d in options.ds:
+        crystal = crystal_of(d)
+        field = DPField.build(crystal, faces, index)
+        critical = np.degrees(field.critical_values)
+        onsets = tir_onset_maximum(field, options.lattice_n, starts=options.onset_starts)
+        found = [v["delta_deg"] for v in onsets.values() if v is not None]
+        corner = max(found)
+        corners.append(corner)
+        store = seed_store(crystal, index, faces, options.seed_store_n)
+        deltas, values, results = _random_profile(field, grid, store, quadrature)
+        if len(deltas) != len(grid):
+            raise RuntimeError(f"{name} at d = {d}: the profile kept {len(deltas)} of {len(grid)} grid deltas")
+        used = deltas if used is None else used
+        if not np.array_equal(used, deltas):
+            raise RuntimeError(f"{name}: the profile grid lost different critical deltas on d = {d}")
+        deg = np.degrees(deltas)
+        k = int(np.argmax(values))
+        kc = int(np.argmin(np.abs(deg - corner)))
+        window.append({
+            "d": d,
+            "n_deltas": int(len(deltas)),
+            "peak_deg": float(deg[k]),
+            "peak_value": float(values[k]),
+            "half_maximum_range_deg": _half_maximum_range(deltas, values),
+            "corner_nearest_grid_deg": float(deg[kc]),
+            "value_at_corner_grid": float(values[kc]),
+            "band_integral_141_180": _band_integral(deltas, values, options.band_window_deg),
+            "max_relative_error_estimate": float(max((r.error_estimate / r.value for r in results if r.value > 0.0), default=0.0)),
+        })
+        rows.append(values)
+        errors.append([r.error_estimate for r in results])
+        terrain_long[str(d)] = {
+            "critical_values_deg": critical.tolist(),
+            "tir_onsets": onsets,
+            "tir_corner_deg": corner,
+            "onset_spread_across_faces_deg": float(np.ptp(found)),
+        }
+    counts = {len(entry["critical_values_deg"]) for entry in terrain_long.values()}
+    if len(counts) != 1:
+        raise RuntimeError(f"{name}: different critical-value counts across d: {sorted(counts)}")
+    long_spread = np.ptp(np.array([entry["critical_values_deg"] for entry in terrain_long.values()]), axis=0)
+    base = next(entry["band_integral_141_180"] for entry in window if entry["d"] == 1.0)
+    for entry in window:
+        entry["band_integral_relative_to_d1"] = entry["band_integral_141_180"] / base
+
+    # terrain + window of the A60-10 members (their lattice keeps off the U_P neck of 3-5-6-7)
+    grid_m = _grid(options.grid_a60_10)
+    wlo, whi = options.edge_weight_window_deg
+    a60_terrain: dict[str, Any] = {}
+    a60_window: dict[str, Any] = {}
+    member_arrays: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+    used_m = None
+    for member in options.a60_10_members:
+        member_name = path_id_of(member)
+        critical_rows, member_window, member_rows, member_errors = [], [], [], []
+        for d in options.ds:
+            crystal = crystal_of(d)
+            field = DPField.build(crystal, member, index, lattice_n=options.a60_10_lattice_n)
+            critical = np.degrees(field.critical_values)
+            if len(critical) != 3:
+                raise RuntimeError(f"{member_name} at d = {d}: {len(critical)} critical values {critical.tolist()}, expected 3")
+            critical_rows.append(critical)
+            store = seed_store(crystal, index, member, options.seed_store_n)
+            deltas, values, results = _random_profile(field, grid_m, store, quadrature)
+            if len(deltas) != len(grid_m):
+                raise RuntimeError(f"{member_name} at d = {d}: the profile kept {len(deltas)} of {len(grid_m)} grid deltas")
+            used_m = deltas if used_m is None else used_m
+            if not np.array_equal(used_m, deltas):
+                raise RuntimeError(f"{member_name}: the profile grid lost different critical deltas on d = {d}")
+            deg = np.degrees(deltas)
+            k = int(np.argmax(values))
+            member_window.append({
+                "d": d,
+                "n_deltas": int(len(deltas)),
+                "peak_deg": float(deg[k]),
+                "peak_value": float(values[k]),
+                "half_maximum_range_deg": _half_maximum_range(deltas, values),
+                "edge_weight_sum": float(values[(deg > wlo) & (deg < whi)].sum()),
+                "max_relative_error_estimate": float(max((r.error_estimate / r.value for r in results if r.value > 0.0), default=0.0)),
+            })
+            member_rows.append(values)
+            member_errors.append([r.error_estimate for r in results])
+        a60_terrain[member_name] = {
+            "critical_values_deg": [c.tolist() for c in critical_rows],
+            "critical_value_spread_across_d_deg": np.ptp(np.array(critical_rows), axis=0).tolist(),
+        }
+        a60_window[member_name] = member_window
+        member_arrays[member_name] = (np.array(member_rows), np.array(member_errors))
+    first_member = next(iter(member_arrays))
+    member_difference = {member: float(np.max(np.abs(member_arrays[member][0] - member_arrays[first_member][0])))
+                         for member in member_arrays if member != first_member}
+
+    arrays: dict[str, np.ndarray] = {
+        "ds": np.asarray(options.ds, dtype=float),
+        "delta_deg_3_5_6_7_3": np.degrees(used),
+        "value_3_5_6_7_3": np.array(rows),
+        "error_3_5_6_7_3": np.array(errors),
+        "delta_deg_a60_10": np.degrees(used_m),
+    }
+    notes = {
+        "ds": "the face-distance scale d of the profile rows (face_distance [1, d, 1, d, 1, d], normals unchanged)",
+        "delta_deg_3_5_6_7_3": f"deg; deviations of the {name} profile (critical values excluded)",
+        "value_3_5_6_7_3": f"random-orientation pixel value of {name} per (d, delta)",
+        "error_3_5_6_7_3": "pixel value; error estimate of value_3_5_6_7_3",
+        "delta_deg_a60_10": "deg; deviations of the A60-10 member profiles (critical values excluded)",
+    }
+    for member_name, (member_values, member_errors) in member_arrays.items():
+        key = member_name.replace("-", "_")
+        arrays[f"value_a60_10_{key}"] = member_values
+        arrays[f"error_a60_10_{key}"] = member_errors
+        notes[f"value_a60_10_{key}"] = f"random-orientation pixel value of {member_name} per (d, delta)"
+        notes[f"error_a60_10_{key}"] = f"pixel value; error estimate of value_a60_10_{key}"
+
+    numbers = {
+        "path": name,
+        "d1_identity": d1_identity,
+        "terrain": {
+            name: {
+                "per_d": terrain_long,
+                "critical_value_spread_across_d_deg": long_spread.tolist(),
+                "tir_corner_spread_across_d_deg": float(np.ptp(corners)),
+            },
+            "a60_10": a60_terrain,
+        },
+        "window_3_5_6_7_3": window,
+        "a60_10": {"profiles": a60_window, "max_abs_profile_difference_vs_first_member": member_difference},
+        "band_integral_rule": (f"trapezoid of the 3-5-6-7-3 profile over the grid points inside "
+                               f"[{options.band_window_deg[0]}, {options.band_window_deg[1]}] deg, in radians, "
+                               "relative to d = 1"),
+        "edge_weight_rule": (f"plain sum of the A60-10 member profile values at the grid points inside "
+                             f"({options.edge_weight_window_deg[0]}, {options.edge_weight_window_deg[1]}) deg"),
+    }
+    parameters = {
+        "crystal": {"type": "hexagonal_prism", "lumice_height": options.lumice_height,
+                    "height_ratio": 2.0 * options.lumice_height, "face_distance_pattern": "[1, d, 1, d, 1, d]"},
+        "refractive_index": index,
+        "options": dataclasses.asdict(options),
+        "quadrature": quadrature.as_json(),
+    }
+
+    spread_max = max(float(np.max(long_spread)), *(max(s) for s in (
+        member["critical_value_spread_across_d_deg"] for member in a60_terrain.values())))
+    d1w, *rest = window
+    a60_first = a60_window[first_member]
+    dimming = a60_first[-1]["peak_value"] / a60_first[0]["peak_value"]
+    statement = (
+        f"The terrain does not move: the critical values of 3-5-6-7-3 and of both A60-10 members and the internal "
+        f"TIR-onset corner {terrain_long[str(options.ds[0])]['tir_corner_deg']:.4f} deg are the same on every d "
+        f"(critical-value spread <= {spread_max:.1e} deg; the corner's {np.ptp(corners):.1e} deg is the SLSQP "
+        "constraint tolerance). The A0-02 member 3-5-6-7-3: at d = 1 its profile peaks in the corner's neighbourhood "
+        f"({d1w['peak_deg']:.2f} deg, half maximum {d1w['half_maximum_range_deg'][0]:.2f}-{d1w['half_maximum_range_deg'][1]:.2f} deg) "
+        f"and is zero past {float(np.degrees(used[rows[0] > 0.0][-1])):.2f} deg; for d >= 1.2 the member's own window opens "
+        f"towards the anthelion, the peak moving to the far grid end ({', '.join(f'{e['peak_deg']:.2f}' for e in rest)} deg), "
+        f"the {options.band_window_deg[0]}-{options.band_window_deg[1]} deg band integral (trapezoid over the profile grid) "
+        f"{' / '.join(f'x{e['band_integral_relative_to_d1']:.1f}' for e in rest)} relative to d = 1, rising then falling. "
+        "The A60-10 142 deg edge stays put and only dims: peak "
+        f"{a60_first[0]['peak_deg']:.2f} deg and half maximum {a60_first[0]['half_maximum_range_deg'][0]:.2f}-"
+        f"{a60_first[0]['half_maximum_range_deg'][1]:.2f} deg on every d, the peak decaying monotonically to x{dimming:.2f} "
+        f"at d = {options.ds[-1]} (the two members' profiles agree to {max(member_difference.values()):.1e})."
+    )
+    return Verdict("face-distance-axis", "measured", statement, numbers, parameters, arrays, notes)
+
+
+RUNNERS = {
+    "inner-edge": inner_edge,
+    "liljequist": liljequist,
+    "parhelic-circle": parhelic_circle,
+    "parallel-face": parallel_face,
+    "face-distance-axis": face_distance_axis,
+}
