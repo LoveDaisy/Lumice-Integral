@@ -39,9 +39,30 @@ Everything outside that reasoning is the explicit escape hatch
 ``dp-field-saddle-search``): ``U_P`` or its complement not connected on the
 lattice (not a disk; a plural count is audited first, below), more than one
 interior critical point, a saddle or a degenerate Morse point, a slab crease
-inside ``U_P``, or a loop extremum at ``L`` with ``D_P`` increasing into
-``U_P`` (a sublevel component born on the boundary).  None of them is
-resolved silently.
+whose three checks below fail, or a loop extremum at ``L`` with ``D_P``
+increasing into ``U_P`` (a sublevel component born on the boundary).  None of
+them is resolved silently.
+
+A slab crease that crosses the interior of ``U_P`` (a rotation slab's max
+ridge, ``D_P = blade`` along the crease, the geometry of the beta crystal's
+``4-8-7-5``) is partitioned by that same reasoning rather than escaped when
+three checks hold (task ``dp-slab-partition-completion``): the fold set's own
+sampling holds interior arcs of the crease (a ``circle_interior_fraction``
+claiming arcs that are not there is a contradiction), the boundary walk
+carries the blade value as a *strict* local maximum (only transversal crease
+ends produce one; a plateau at the blade is a tangency signature and does not
+count), and no crease arc closes inside ``U_P`` without touching ``dU_P`` nor
+hugs ``dU_P`` over an arc (a closed ridge, or a tangency / coincidence).  The
+transversal ends are then ordinary loop extrema at the blade and the generic
+mechanism applies unchanged.  Each failed check escapes with its own text
+(contradiction / not carried / tangency / closed ridge).  The cluster
+evidence is resolution-limited -- evidence rather than proof, the
+chart-audit standard below: its two thresholds
+(:data:`.field.CREASE_CONTACT_MARGIN`, :data:`.field.CREASE_TOUCHING_ARC_RAD`)
+are pinned on the one positive fixture (``4-8-7-5``, fold axis = the c axis)
+to its non-triggering side only, the triggering side is covered by synthetic
+tests, and no fixture pins an interior slab axis point together with interior
+crease arcs (that combination shares this path untested).
 
 The lattice count is resolution-limited, and one regime of that is audited
 (task ``dp-thin-neck-topology``, explore ``u-space-dissolution-probe`` #4):
@@ -82,7 +103,7 @@ from .. import optics
 from ..geometry import Polyhedron
 from ..s2_store import fibonacci_sphere
 from .boundary import EXTREMUM_ATOL, BoundaryLoop
-from .field import DegenerateFoldSet, Faces, InteriorCriticalPoint, d_p_batch, tangent_basis, valid_batch, validity_margins_batch
+from .field import DegenerateFoldSet, Faces, InteriorCriticalPoint, d_p_batch, d_slab, tangent_basis, valid_batch, validity_margins_batch
 
 # Radius of the ring that decides on which side of a boundary extremum D_P is lower (rad), and its directions.
 SIDE_RING_RAD = 1e-5
@@ -344,6 +365,43 @@ def critical_values(interior: tuple[InteriorCriticalPoint, ...], loop: BoundaryL
     return np.array(merged)
 
 
+def _slab_crease_gates(fold_set: DegenerateFoldSet, loop: BoundaryLoop, slab: np.ndarray | None) -> None:
+    """The three checks that let a crease through ``U_P`` take the generic partition (module docstring).
+
+    Raises :class:`TopologyEscape` with the failing check's own text
+    (contradiction / not carried / tangency / closed ridge); returns silently
+    when the crease's transversal ends are ordinary loop extrema and the
+    generic mechanism applies.  The blade is ``D_P`` at any point of the
+    crease, :func:`.field.d_slab` of a tangent basis vector of the fold axis
+    (constant along the crease of a rotation or mirror slab).
+    """
+    fraction = fold_set.circle_interior_fraction
+    if fold_set.crease_interior_arcs == 0:
+        raise TopologyEscape(
+            f"the slab crease evidence contradicts the premise: circle_interior_fraction = {fraction:.3%} "
+            "but the crease sampling holds no interior arc of the crease u . n_M = 0 inside U_P"
+        )
+    blade = None if slab is None or fold_set.axis is None else float(d_slab(np.asarray(tangent_basis(fold_set.axis))[0], slab))
+    carried = blade is not None and any(
+        point.kind == "maximum" and point.strict and abs(point.value - blade) <= EXTREMUM_ATOL for point in loop.critical_points
+    )
+    if not carried:
+        raise TopologyEscape(
+            f"the slab crease u . n_M = 0 runs through U_P ({fraction:.3%} of its sampling) but its blade value "
+            "is not carried by the boundary walk as a strict local maximum"
+        )
+    if fold_set.crease_touching_arc:
+        raise TopologyEscape(
+            "the slab crease u . n_M = 0 touches or runs along dU_P over an arc of its sampling "
+            "(a non-transversal contact: its crossings cannot be counted as extrema)"
+        )
+    if fold_set.crease_closed_ridge:
+        raise TopologyEscape(
+            "an interior arc of the slab crease u . n_M = 0 never reaches dU_P (a closed ridge: "
+            "the level loops around it are not the boundary walk's to count)"
+        )
+
+
 def interval_partition(
     faces: Faces,
     index: float,
@@ -385,7 +443,7 @@ def interval_partition(
             f"{audit.lattice_domain_count}/{audit.lattice_complement_count})"
         )
     if fold_set is not None and fold_set.circle_interior_fraction > 0.0:
-        raise TopologyEscape(f"the slab crease u . n_M = 0 runs through U_P ({fold_set.circle_interior_fraction:.3%} of it)")
+        _slab_crease_gates(fold_set, loop, slab)
     if len(interior) > 1:
         raise TopologyEscape(f"{len(interior)} interior critical points: " + ", ".join(p.kind for p in interior))
     extrema = loop.critical_points

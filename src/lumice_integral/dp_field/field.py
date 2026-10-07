@@ -52,6 +52,17 @@ Faces = tuple[int, ...]
 FOLD_DOT_ATOL = 1e-9
 # A point is on dU_P rather than inside when its smallest margin is below this.
 BOUNDARY_MARGIN_ATOL = 1e-10
+# The crease-cluster evidence of degenerate_fold_set (task ``dp-slab-partition-completion``): a crease
+# sample whose binding gate is within CREASE_CONTACT_MARGIN of zero counts as touching dU_P, and a run of
+# such samples hugging dU_P over more than CREASE_TOUCHING_ARC_RAD of arc is a tangency or coincidence
+# with it, not a transversal crossing.  Both are pinned on the one positive fixture (``4-8-7-5`` on the
+# beta crystal, 7200 samples, 2026-10-07) to its non-triggering side: its interior cluster's contact
+# margin is 9.4e-5 and its two transversal crossings hug dU_P for at most 0.031 rad at this tolerance,
+# against the grazing fixtures' coincident arcs (``3-1-6``: 3.14 rad, ``1-2-1``: the whole circle); the
+# sample spacing is 8.7e-4 rad.  Whether they trigger on a genuine tangency or closed ridge is pinned by
+# the synthetic escape tests only -- no fixture exercises the triggering side.
+CREASE_CONTACT_MARGIN = 1e-2
+CREASE_TOUCHING_ARC_RAD = 0.1
 # Tangent-gradient norm below which a Newton iterate is a critical point.
 CRITICAL_GRADIENT_TOL = 1e-10
 # Hessian eigenvalue magnitude below which a critical point is degenerate.
@@ -402,13 +413,28 @@ class DegenerateFoldSet:
 
     ``axis_points`` are ``+-n_M`` with their location ``"interior"``,
     ``"boundary"`` or ``"exterior"``; ``circle_interior_fraction`` is the
-    fraction of a dense sampling of the great circle ``u . n_M = 0`` inside
-    ``U_P`` (0 on every fixture: the circle is a grazing boundary).
+    fraction of a dense sampling of the great circle ``u . n_M = 0`` (the
+    crease) inside ``U_P`` -- 0 when the circle only grazes it (every
+    canonical fixture), 22.76% on the beta crystal's ``4-8-7-5``.  The
+    ``crease_*`` fields are that sampling's cluster evidence (task
+    ``dp-slab-partition-completion``): ``crease_interior_arcs`` is the number
+    of maximal interior runs of the crease (0 exactly when the fraction is 0;
+    a fraction claiming otherwise is a contradiction
+    :func:`.certificate.interval_partition` refuses), ``crease_closed_ridge``
+    says some interior run never comes within ``CREASE_CONTACT_MARGIN`` of
+    ``dU_P`` (a closed ridge: level loops around it are not the boundary
+    walk's to count), and ``crease_touching_arc`` says the crease hugs ``dU_P``
+    (binding gate within ``CREASE_CONTACT_MARGIN`` of zero) over more than
+    ``CREASE_TOUCHING_ARC_RAD`` -- a tangency or coincidence, not a
+    transversal crossing.
     """
 
     axis: np.ndarray | None
     axis_points: tuple[tuple[np.ndarray, str], ...]
     circle_interior_fraction: float
+    crease_interior_arcs: int = 0
+    crease_closed_ridge: bool = False
+    crease_touching_arc: bool = False
 
 
 def location(u: np.ndarray, faces: Faces, index: float, *, crystal: Polyhedron | None = None) -> str:
@@ -422,10 +448,24 @@ def location(u: np.ndarray, faces: Faces, index: float, *, crystal: Polyhedron |
     return "interior" if smallest > 0.0 else "exterior"
 
 
+def _circular_runs(mask: np.ndarray) -> list[tuple[int, int]]:
+    """Maximal circular runs of ``True`` as ``(start index, length)``, wrapping runs included."""
+    n = len(mask)
+    if not mask.any():
+        return []
+    if mask.all():
+        return [(0, n)]
+    rotate = int(np.flatnonzero(~mask)[0])  # rotate so index 0 is False: no run crosses it, pairing is linear
+    steps = np.diff(np.concatenate([np.roll(mask, -rotate), np.roll(mask, -rotate)[:1]]).astype(np.int8))
+    starts = np.flatnonzero(steps == 1) + 1
+    ends = np.flatnonzero(steps == -1)
+    return sorted(((int(s) + rotate) % n, int(e - s + 1)) for s, e in zip(starts, ends))
+
+
 def degenerate_fold_set(
     screen: FoldScreen, faces: Faces, index: float, *, circle_samples: int = 7200, crystal: Polyhedron | None = None
 ) -> DegenerateFoldSet:
-    """Locate the slab critical set ``{+-n_M} U {u . n_M = 0}`` relative to ``U_P``."""
+    """Locate the slab critical set ``{+-n_M} U {u . n_M = 0}`` relative to ``U_P`` and cluster its crease sampling."""
     if screen.axis is None:
         return DegenerateFoldSet(None, (), 0.0)
     axis = screen.axis
@@ -434,8 +474,16 @@ def degenerate_fold_set(
     t = np.linspace(0.0, 2.0 * np.pi, circle_samples, endpoint=False)
     circle = np.cos(t)[:, None] * e[0] + np.sin(t)[:, None] * e[1]
     margins = validity_margins_batch(circle, faces, index, crystal=crystal)
-    inside = np.all(margins > BOUNDARY_MARGIN_ATOL, axis=1)
-    return DegenerateFoldSet(axis, points, float(inside.mean()))
+    binding = margins.min(axis=1)
+    inside = binding > BOUNDARY_MARGIN_ATOL
+    arcs = _circular_runs(inside)
+    closed_ridge = False
+    for start, length in arcs:
+        contact = binding[(start + np.arange(length)) % circle_samples].min()
+        closed_ridge |= contact > CREASE_CONTACT_MARGIN
+    spacing = 2.0 * np.pi / circle_samples
+    touching_arc = any(run_length * spacing >= CREASE_TOUCHING_ARC_RAD for _, run_length in _circular_runs(np.abs(binding) <= CREASE_CONTACT_MARGIN))
+    return DegenerateFoldSet(axis, points, float(inside.mean()), len(arcs), bool(closed_ridge), bool(touching_arc))
 
 
 @partial(jax.jit, static_argnums=(1, 3))
@@ -526,9 +574,9 @@ def interior_critical_points(
 
     For a degenerate fold the interior critical points are the members of the
     slab set lying inside ``U_P`` (kind ``"degenerate"``; a slab circle inside
-    ``U_P`` is reported by the returned :class:`DegenerateFoldSet` and stops
-    the interval partition); the :class:`DegenerateFoldSet` is ``None`` for a
-    non-degenerate path.
+    ``U_P`` is reported by the returned :class:`DegenerateFoldSet` and judged
+    by :func:`.certificate.interval_partition` on its cluster evidence); the
+    :class:`DegenerateFoldSet` is ``None`` for a non-degenerate path.
     """
     if not screen.degenerate:
         return lattice_newton_critical_points(faces, index, lattice_n=lattice_n, crystal=crystal), None

@@ -223,13 +223,21 @@ class Corner:
 
 @dataclass(frozen=True)
 class BoundaryCriticalPoint:
-    """A local extremum of ``D_P`` restricted to ``dU_P``: inside a piece (``corner`` false) or at a corner."""
+    """A local extremum of ``D_P`` restricted to ``dU_P``: inside a piece (``corner`` false) or at a corner.
+
+    ``strict`` is ``False`` when the extremum is a plateau run of the loop
+    (several samples equal within ``EXTREMUM_ATOL``), not a strict local
+    extremum: the slab-crease gate of :func:`.certificate.interval_partition`
+    accepts only strict members as its blade evidence (a plateau at the blade
+    value is the signature of a crease touching, not crossing, ``dU_P``).
+    """
 
     position: np.ndarray
     value: float
     kind: str
     margin: str
     corner: bool
+    strict: bool = True
 
 
 @dataclass(frozen=True)
@@ -662,13 +670,15 @@ def _golden_extremum(walker: Walker, piece: BoundaryPiece, i: int, kind: str) ->
     return best, d(best)
 
 
-def _plateau_extrema(values: np.ndarray, atol: float = EXTREMUM_ATOL) -> tuple[list[tuple[int, str]], float | None]:
-    """Indices of local extrema of a cyclic sequence, runs of equal values (plateaus) counted once.
+def _plateau_extrema(values: np.ndarray, atol: float = EXTREMUM_ATOL) -> tuple[list[tuple[int, str, int]], float | None]:
+    """Local extrema of a cyclic sequence as ``(index, kind, run length)``, runs of equal values counted once.
 
-    Returns the extrema and, for a loop that is one single plateau, its
-    constant value (``None`` otherwise): a constant loop has no isolated
-    extremum -- the value is the loop's own (a mirror slab's crease circle,
-    the ``slab_circle`` onset of :mod:`.focusing`), not a boundary one.
+    Returns the extrema with the number of samples of each extremum's run
+    (1: a strict extremum; more: a plateau) and, for a loop that is one single
+    plateau, its constant value (``None`` otherwise): a constant loop has no
+    isolated extremum -- the value is the loop's own (a mirror slab's crease
+    circle, the ``slab_circle`` onset of :mod:`.focusing`), not a boundary
+    one.
     """
     n = len(values)
     # compress runs of equal values
@@ -677,18 +687,23 @@ def _plateau_extrema(values: np.ndarray, atol: float = EXTREMUM_ATOL) -> tuple[l
         if runs and abs(values[i] - runs[-1][1]) <= atol:
             continue
         runs.append((i, float(values[i])))
-    if len(runs) > 1 and abs(runs[0][1] - runs[-1][1]) <= atol:
+    wrap_merged = len(runs) > 1 and abs(runs[0][1] - runs[-1][1]) <= atol
+    if wrap_merged:
         runs.pop()
     r = len(runs)
     if r == 1:
         return [], runs[0][1]
+    lengths = []
+    for j in range(r):
+        end = runs[j + 1][0] if j + 1 < r else (runs[0][0] + n if wrap_merged else n)
+        lengths.append(end - runs[j][0])
     out = []
     for j in range(r):
         prev_v, v, next_v = runs[j - 1][1], runs[j][1], runs[(j + 1) % r][1]
         if v < prev_v and v < next_v:
-            out.append((runs[j][0], "minimum"))
+            out.append((runs[j][0], "minimum", lengths[j]))
         elif v > prev_v and v > next_v:
-            out.append((runs[j][0], "maximum"))
+            out.append((runs[j][0], "maximum", lengths[j]))
     return out, None
 
 
@@ -771,13 +786,14 @@ def _loop_critical_points(walker: Walker, pieces: list[BoundaryPiece], corners: 
             values.append(float(piece.values[i]))
     extrema, plateau = _plateau_extrema(np.array(values))
     out = []
-    for flat, kind in extrema:
+    for flat, kind, run_length in extrema:
         p_index, i = owners[flat]
         piece = pieces[p_index]
+        strict = run_length == 1
         if i == 0 and corners:
             corner = corners[p_index - 1]
-            out.append(BoundaryCriticalPoint(corner.position, corner.value, kind, piece.margin, True))
+            out.append(BoundaryCriticalPoint(corner.position, corner.value, kind, piece.margin, True, strict))
             continue
         position, value = _golden_extremum(walker, piece, i, kind)
-        out.append(BoundaryCriticalPoint(position, value, kind, piece.margin, False))
+        out.append(BoundaryCriticalPoint(position, value, kind, piece.margin, False, strict))
     return out, plateau
