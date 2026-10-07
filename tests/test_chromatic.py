@@ -244,10 +244,10 @@ def test_dependency_direction() -> None:
 
     offenders = {}
     for path in PACKAGE_ROOT.rglob("*.py"):
-        # The fixed diagnostic reference is a documented assembler above
-        # chromatic, not part of the field layer whose dependency direction
-        # this guard protects.
-        if path.name in {"chromatic.py", "raypath_diagnostic_reference.py"}:
+        # The fixed diagnostic reference and the parity exporter are documented
+        # assemblers above chromatic, not part of the field layer whose
+        # dependency direction this guard protects.
+        if path.name in {"chromatic.py", "raypath_diagnostic_reference.py", "parity_export.py"}:
             continue
         relative = path.relative_to(PACKAGE_ROOT).with_suffix("")
         package = ".".join(("lumice_integral", *relative.parts[:-1]))  # a module's (or an __init__'s) own package

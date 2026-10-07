@@ -30,7 +30,7 @@ from __future__ import annotations
 import json
 import math
 import subprocess
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from functools import cached_property
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -1501,13 +1501,18 @@ def export_edge_cell(cell: EdgeCell, output_dir: Path, provenance: Mapping[str, 
 
 
 def export_matrix(
-    cells: Sequence[Cell], output_dir: Path, edge_cells: Sequence[EdgeCell] = (), band_sum_cells: Sequence[BandSumCell] = ()
+    cells: Sequence[Cell],
+    output_dir: Path,
+    edge_cells: Sequence[EdgeCell] = (),
+    band_sum_cells: Sequence[BandSumCell] = (),
+    module_c_cells: Sequence[MCCell] = (),
 ) -> dict[str, Any]:
-    """Export every cell (edge cell, band-sum cell) into ``output_dir`` and write :data:`MANIFEST`; returns the manifest.
+    """Export every cell (edge, band-sum, module C cell) into ``output_dir`` and write :data:`MANIFEST`; returns the manifest.
 
-    The manifest lists the matrix under ``cells``, the edge cells under ``edge_cells`` and the module B
-    fixtures under ``band_sum_cells``; a key is absent when it has no entry, so a matrix-only export has the
-    v0 manifest and an export without band-sum cells the wave 2 one, byte for byte.
+    The manifest lists the matrix under ``cells``, the edge cells under ``edge_cells``, the module B
+    fixtures under ``band_sum_cells`` and the module C fixtures under ``module_c_cells``; a key is
+    absent when it has no entry, so a matrix-only export has the v0 manifest and an export without
+    band-sum cells the wave 2 one, byte for byte.
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1523,14 +1528,16 @@ def export_matrix(
         manifest["edge_cells"] = [export_edge_cell(cell, output_dir, provenance) for cell in edge_cells]
     if band_sum_cells:
         manifest["band_sum_cells"] = [export_band_sum_cell(cell, output_dir, provenance) for cell in band_sum_cells]
+    if module_c_cells:
+        manifest["module_c_cells"] = [export_module_c_cell(cell, output_dir, provenance) for cell in module_c_cells]
     write_json(output_dir / MANIFEST, manifest)
     return manifest
 
 
 def verify_directory(output_dir: Path) -> list[Check]:
-    """:func:`verify_fixture` of every file the manifest lists (matrix, edge and band-sum cells)."""
+    """:func:`verify_fixture` of every file the manifest lists (matrix, edge, band-sum and module C cells)."""
     manifest = read_json(Path(output_dir) / MANIFEST)
-    entries = [*manifest["cells"], *manifest.get("edge_cells", []), *manifest.get("band_sum_cells", [])]
+    entries = [*manifest["cells"], *manifest.get("edge_cells", []), *manifest.get("band_sum_cells", []), *manifest.get("module_c_cells", [])]
     return [verify_fixture(Path(output_dir) / name) for cell in entries for name in cell["files"]]
 
 
@@ -2061,6 +2068,961 @@ def export_band_sum_cell(cell: BandSumCell, output_dir: Path, provenance: Mappin
         "skipped": [],
     }
 
+# ------------------------------------------------------------------ module C (dp_field / focusing / chromatic)
+# docs/analytic-parity-fixtures.md "Module C cells (wave 3)": the u-S^2 geometry layer's own quantities as
+# fixtures for Lumice's schema3 geometry port.  Seven fixture kinds, one file each per cell, under
+# the manifest key ``module_c_cells``.  Everything here only reads the module C implementations
+# (``dp_field``, ``focusing``, ``chromatic``) and adds serialisation; no numerical behaviour.
+MC_FIELD_SAMPLE_KIND = "dp_field_sample"
+MC_FIELD_TOPOLOGY_KIND = "dp_field_topology"
+MC_FIELD_KINKS_KIND = "dp_field_kinks"
+MC_FOCUSING_KIND = "focusing_classify"
+MC_WAVELENGTH_KIND = "wavelength_critical_table"
+MC_CHROMATIC_KIND = "chromatic_diagnose"
+MC_CHROMATIC_CLASS_KIND = "chromatic_class"
+MC_KINDS = (
+    MC_FIELD_SAMPLE_KIND,
+    MC_FIELD_TOPOLOGY_KIND,
+    MC_FIELD_KINKS_KIND,
+    MC_FOCUSING_KIND,
+    MC_WAVELENGTH_KIND,
+    MC_CHROMATIC_KIND,
+    MC_CHROMATIC_CLASS_KIND,
+)
+MC_LATTICE_N = 20_000  # the dp_field layer's own default lattice (DPField.build)
+MC_SAMPLE_TARGET = 256  # the dp_field_sample u subset size (strided from the valid lattice points)
+# The pose convention of A_P / T_P / w at a body direction u: any R with R u = this sun (A is twist
+# invariant; the same probe sun as chromatic's random-orientation weights, so both read one kernel).
+MC_PROBE_SUN = np.array([0.0, 0.0, 1.0])
+
+# Tolerances and their bases (docs/analytic-parity-fixtures.md "Module C cells (wave 3)" keeps the table).
+MC_TOPOLOGY_ATOL = 1e-9
+MC_TOPOLOGY_BASIS = (
+    "the boundary walk locates corners by Newton and restricted extrema by bisection to ~1e-12 rad on "
+    "smooth pieces (dp_field.boundary), so cross-backend agreement at 1e-9 rad leaves >= 1e3 room; interval "
+    "partition bounds are the located critical values themselves"
+)
+MC_ONSET_DEG_ATOL = 1e-8
+MC_ONSET_DEG_BASIS = (
+    "interior critical points are Newton iterates of the tangent gradient (|grad| <= 1e-10, dp_field.field) "
+    "and boundary extrema bisected to ~1e-12 rad; 1e-8 deg = 1.7e-10 rad leaves >= 1e2 room"
+)
+MC_GRADIENT_RTOL = 1e-6
+MC_GRADIENT_BASIS = (
+    "AD of the same closed-form chain: a gradient norm near zero (a critical point, a cone axis probe at "
+    "CONE_PROBE_RAD) is relative-noisy at the 1e-9 level and gradient_norm_range is a min/max over the "
+    "fixed 20000-point Fibonacci lattice; 1e-6 relative covers both"
+)
+MC_MEDIAN_ATOL = 2e-3
+MC_MEDIAN_BASIS = (
+    "medians and spreads over a backend's own sampling of the same curve: march spacing ~3.5e-3 rad on the "
+    "closed-form circles and the curves are traced to curve accuracy, so medians/ptp agree at the spacing "
+    "level; 2e-3 rad is half the observed spacing.  Cells with a closed-form value (the constant kinks) are "
+    "pinned tighter by the anchor tests, not by this tolerance"
+)
+MC_KINK_ENVELOPE_ATOL = 1e-9
+MC_KINK_ENVELOPE_BASIS = (
+    "arc ends are gate crossings located to ~1e-12 rad and D_P there is the same closed-form chain; the "
+    "envelope (per-arc min/max) is a property of the curve, not of its sampling.  The arc point lists are "
+    "LI's march sampling and are informative (docs/analytic-parity-fixtures.md \"Module C cells (wave 3)\")"
+)
+MC_A_P_RTOL = 1e-10
+MC_A_P_BASIS = (
+    "the entry measure is a closed-form corridor polygon intersection in float64 (geometry.entry_measure): "
+    "more arithmetic than the direction chain but no Snell amplification (areas are not divided by a "
+    "discriminant square root), so 1e-10 relative leaves ~1e5 ulp"
+)
+
+
+def _finite_or_none(value: float) -> float | None:
+    """``None`` for a non-finite float (``allow_nan = False`` in :func:`dumps`); the value itself otherwise."""
+    value = float(value)
+    return value if math.isfinite(value) else None
+
+
+def mc_thresholds_snapshot() -> dict[str, Any]:
+    """The chromatic criterion's threshold constants, recorded with each chromatic fixture.
+
+    A snapshot for replay, not a second authority: the constants live in
+    :mod:`lumice_integral.chromatic` and a change there re-exports these fixtures
+    (docs/analytic-parity-fixtures.md "Module C cells (wave 3)").
+    """
+    from . import chromatic
+
+    return {
+        "n_red": float(chromatic.N_RED),
+        "n_blue": float(chromatic.N_BLUE),
+        "edge_min_shift_rad": float(chromatic.EDGE_MIN_SHIFT_RAD),
+        "edge_spread_per_shift": float(chromatic.EDGE_SPREAD_PER_SHIFT),
+        "tint_ratio_min": float(chromatic.TINT_RATIO_MIN),
+        "calibration_white_max_deviation": float(chromatic.CALIBRATION_WHITE_MAX_DEVIATION),
+        "authority": "lumice_integral.chromatic; this block is a recorded snapshot, not a second implementation",
+    }
+
+
+@dataclass(frozen=True)
+class MCCell:
+    """A module C cell: one crystal, one face sequence, the fixture kinds it exports.
+
+    ``indices`` are ``(label, n)`` pairs; the first is the cell's primary index (the
+    ``dp_field_sample`` / ``dp_field_topology`` / ``focusing_classify`` fixture and the first kink
+    segment).  ``detects`` maps each exported kind to the failure mode its fixture pins (the
+    manifest carries it verbatim).  The chromatic kinds take their index pair from
+    :func:`mc_thresholds_snapshot`, not from ``indices``.
+    """
+
+    label: str
+    crystal_spec: Mapping[str, Any]
+    faces: tuple[int, ...]
+    kinds: tuple[str, ...]
+    indices: tuple[tuple[str, float], ...] = ()
+    serves: tuple[str, ...] = ()
+    rationale: str = ""
+    detects: Mapping[str, str] = field(default_factory=dict)
+    family_sun_altitude_deg: float = 9.0
+    family_samples: int = 100_000
+    family_seed: int = 3
+
+    def __post_init__(self) -> None:
+        unknown = set(self.kinds) - set(MC_KINDS)
+        if unknown:
+            raise ValueError(f"unknown module C fixture kinds {sorted(unknown)}")
+        if any(kind in self.kinds for kind in (MC_FIELD_SAMPLE_KIND, MC_FIELD_TOPOLOGY_KIND, MC_FOCUSING_KIND, MC_WAVELENGTH_KIND, MC_FIELD_KINKS_KIND)) and not self.indices:
+            raise ValueError(f"cell {self.label} needs at least one (label, n) index")
+
+    @property
+    def crystal(self) -> Polyhedron:
+        return build_crystal(self.crystal_spec)
+
+    @property
+    def path_id(self) -> str:
+        return path_id_of(self.faces, self.crystal)
+
+    @property
+    def name(self) -> str:
+        return f"{self.path_id}__{self.label}"
+
+    @property
+    def primary_index(self) -> tuple[str, float]:
+        return self.indices[0]
+
+
+_MC_FIELD_CACHE: dict[tuple, Any] = {}
+
+
+def mc_field(crystal_spec: Mapping[str, Any], faces: Sequence[int], index: float, lattice_n: int = MC_LATTICE_N):
+    """One cached :class:`.dp_field.DPField` per (crystal, faces, index, lattice) — the builders of
+    one cell's several kinds share the cached field; the verifiers rebuild explicitly and never
+    read the cache."""
+    from .dp_field import DPField
+
+    key = (json.dumps(_jsonable(crystal_spec), sort_keys=True), tuple(int(f) for f in faces), float(index), int(lattice_n))
+    if key not in _MC_FIELD_CACHE:
+        _MC_FIELD_CACHE[key] = DPField.build(build_crystal(crystal_spec), faces, float(index), lattice_n=lattice_n)
+    return _MC_FIELD_CACHE[key]
+
+
+def mc_sample(field, target: int = MC_SAMPLE_TARGET) -> tuple[np.ndarray, list, dict[str, Any]]:
+    """The ``dp_field_sample`` points: a strided subset of the valid lattice plus named interior anchors.
+
+    The anchors are interior critical points, interior slab-axis points and the mid-point of each
+    kink curve's first arc — all strictly inside ``U_P`` (the walk-located boundary extrema sit on
+    ``dU_P`` itself, where a gate margin of ~0 makes the exit chain's square root undefined; they
+    belong to the topology fixture).  Lattice points carry the label ``None``.
+    """
+    from .s2_store import store_lattice
+
+    lattice = store_lattice(MC_LATTICE_N)
+    valid = lattice[field.valid_batch(lattice)]
+    if len(valid) == 0:
+        raise PointUnavailable(f"U_P of {field.faces} holds no lattice point at N = {MC_LATTICE_N}")
+    if len(valid) > target:
+        pick = np.unique(np.round(np.linspace(0.0, len(valid) - 1.0, target)).astype(np.int64))
+        base, base_labels = valid[pick], [None] * len(pick)
+    else:
+        base, base_labels = valid, [None] * len(valid)
+    anchors: list[tuple[np.ndarray, str]] = []
+    for point in field.interior_critical_points[:3]:
+        anchors.append((np.asarray(point.position, dtype=np.float64), f"interior {point.kind} of D_P"))
+    fold = field.degenerate_fold
+    if fold is not None and fold.axis is not None:
+        anchors += [
+            (np.asarray(vector, dtype=np.float64), f"slab axis point, {where}")
+            for vector, where in fold.axis_points
+            if where == "interior"
+        ]
+    for curve in field.weight_kinks:
+        if curve.arcs:
+            arc = curve.arcs[0]
+            anchors.append((np.asarray(arc.points[len(arc.points) // 2], dtype=np.float64), f"kink step {curve.step} mid-arc"))
+    inside = [item for item in anchors if bool(field.valid_batch(item[0][None, :])[0])]
+    points = np.concatenate([base, np.stack([u for u, _ in inside])]) if inside else base
+    labels = [*base_labels, *(text for _, text in inside)]
+    record = {
+        "method": "strided valid subset of the antipodal Fibonacci lattice (s2_store.store_lattice), plus named interior anchors",
+        "lattice_n": MC_LATTICE_N,
+        "lattice_valid_count": int(len(valid)),
+        "lattice_points_kept": int(len(base)),
+        "anchors": [text for _, text in inside],
+        "labels": labels,  # None for lattice points, the anchor text otherwise
+    }
+    return points, labels, record
+
+
+def mc_point_observables(field, u: np.ndarray) -> dict[str, Any]:
+    """Per sample point: ``D_P``, ``|grad D_P|``, the ``U_P`` gate margins, and the weights.
+
+    ``D_P`` is display delta (the angle at the sun), radians, with no 180-minus conversion.  The
+    weights follow the twist-invariant convention of :data:`MC_PROBE_SUN`: conceptually ``w = A_P
+    T_P`` with ``A_P`` the entry measure and ``T_P`` the Fresnel path factor, both observed
+    separately before their product (conventions #18); as API fact the one kernel
+    :func:`.path_weight.entry_and_power` produces the two factors (bound to the same faces and
+    index) and :func:`.path_weight.weighted_power` the product.
+    """
+    from .camera import incident_direction_from_sun
+    from .path_weight import entry_and_power, weighted_power
+    from .s2_store import align_rotations
+
+    u = np.asarray(u, dtype=np.float64).reshape(-1, 3)
+    crystal, faces, index = field.crystal, field.faces, field.index
+    incident = np.asarray(incident_direction_from_sun(MC_PROBE_SUN), dtype=np.float64)
+    rotations = align_rotations(u, MC_PROBE_SUN)
+    # the factors come from the one kernel (path_weight.entry_and_power binds A and T to the same
+    # faces and n; a56: no production module calls the two factor authorities side by side), the
+    # product from the kernel's own weighted_power
+    a_p, t_p = entry_and_power(rotations, faces, incident, index, crystal=crystal)
+    values = {
+        "d_p": np.asarray(field.d_p_batch(u), dtype=np.float64),
+        "gradient_norm": np.linalg.norm(np.asarray(field.gradient_batch(u), dtype=np.float64), axis=1),
+        "valid": np.asarray(field.valid_batch(u), dtype=bool),
+        "a_p": np.asarray(a_p, dtype=np.float64),
+        "t_p": np.asarray(t_p, dtype=np.float64),
+        "w": np.asarray(weighted_power(rotations, faces, incident, index, crystal=crystal), dtype=np.float64),
+    }
+    bad = {key: int(np.count_nonzero(~np.isfinite(np.asarray(value, dtype=np.float64)))) for key, value in values.items() if key != "valid"}
+    if any(bad.values()):
+        raise AssertionError(f"non-finite module C sample observables (NaN discipline): {bad}")
+    values["margins"] = np.asarray(field.validity_margins_batch(u), dtype=np.float64)
+    return values
+
+
+def _snell_atol(margins: np.ndarray, names: Sequence[str]) -> tuple[float, float]:
+    """(kinematic atol, jacobian rtol) at the smallest Snell discriminant of a sample's margins."""
+    smallest = min(
+        (float(value) for name, value in zip(names, np.min(margins, axis=0)) if name.endswith("snell_discriminant") and value > 0.0),
+        default=1.0,
+    )
+    return KINEMATIC_ATOL * max(1.0, 0.5 / math.sqrt(smallest)), KINEMATIC_ATOL * max(1.0, 0.25 / smallest)
+
+
+def build_mc_field_sample_fixture(cell: MCCell, provenance: Mapping[str, Any]) -> dict[str, Any]:
+    label_name, index = cell.primary_index
+    field = mc_field(cell.crystal_spec, cell.faces, index)
+    points, labels, record = mc_sample(field)
+    margin_names = list(validity_margin_names(field.faces))
+    observables = mc_point_observables(field, points)
+    cell_record = _mc_cell_record(cell)
+    fixture = _header(MC_FIELD_SAMPLE_KIND, provenance, cell_record)
+    fixture["input"] = {
+        "crystal": dict(cell.crystal_spec),
+        "faces": list(cell.faces),
+        "refractive_index": float(index),
+        "refractive_index_label": label_name,
+        "lattice_n": MC_LATTICE_N,
+        "d_p_convention": "display delta (angle at the sun), radians, no 180-minus conversion",
+        "weights_convention": "twist-invariant pose with R u = probe sun [0, 0, 1]: A_P = entry_measure, T_P = fresnel_transmission_path, w = A_P T_P",
+        "sample": record,
+    }
+    fixture["expected"] = {
+        "u": points,
+        "labels": labels,
+        "margin_names": margin_names,
+        **{key: observables[key] for key in ("d_p", "gradient_norm", "valid", "margins", "a_p", "t_p", "w")},
+    }
+    atol, jacobian_rtol = _snell_atol(observables["margins"], margin_names)
+    fixture["tolerance"] = {
+        "valid": _tolerance(0.0, "exact; a lattice point of U_P in LI is valid, a backend's own gates decide its row the same way"),
+        "d_p": _tolerance(atol, KINEMATIC_BASIS),
+        "gradient_norm": _tolerance(jacobian_rtol, "relative, " + JACOBIAN_BASIS),
+        "margins": _tolerance(atol, "absolute, per name in margin_names order: " + KINEMATIC_BASIS),
+        "a_p": _tolerance(MC_A_P_RTOL, "relative to max(1, |value|): " + MC_A_P_BASIS),
+        "t_p": _tolerance(atol, KINEMATIC_BASIS),
+        "w": _tolerance(MC_A_P_RTOL, "relative to max(1, |value|): the a_p tolerance, A_P times the T_P chain"),
+    }
+    return fixture
+
+
+def verify_mc_field_sample(fixture: Mapping[str, Any], name: str = "") -> Check:
+    from .dp_field import DPField
+
+    check = Check(name)
+    data = fixture["input"]
+    field = DPField.build(build_crystal(data["crystal"]), data["faces"], data["refractive_index"], lattice_n=data["lattice_n"])
+    points = np.asarray(fixture["expected"]["u"], dtype=np.float64).reshape(-1, 3)
+    got = mc_point_observables(field, points)
+    expected = fixture["expected"]
+    tolerance = fixture["tolerance"]
+    names = list(expected["margin_names"])
+    check.expect(list(validity_margin_names(field.faces)) == names, "margin_names differ from this checkout's gate order")
+    check.expect(np.array_equal(got["valid"], expected["valid"]), "valid mask differs")
+    _close(check, "d_p", got["d_p"], expected["d_p"], tolerance["d_p"]["value"])
+    _close_relative(check, "gradient_norm", got["gradient_norm"], expected["gradient_norm"], tolerance["gradient_norm"]["value"])
+    _close(check, "margins", got["margins"], expected["margins"], tolerance["margins"]["value"])
+    for key in ("a_p", "t_p", "w"):
+        _close_relative(check, key, got[key], expected[key], tolerance[key]["value"])
+    return check
+
+
+def mc_topology_record(field) -> dict[str, Any]:
+    """The whole certified topology layer of a field, JSON-ready (raises :class:`.dp_field.TopologyEscape`)."""
+    partition = field.interval_partition()
+    boundary = field.boundary
+    fold = field.degenerate_fold
+    topology = field.domain_topology
+
+    def piece_record(piece) -> dict[str, Any]:
+        finite = np.isfinite(piece.values)
+        return {
+            "margin": piece.margin,
+            "kind": piece.kind,
+            "circle_normal": None if piece.circle_normal is None else np.asarray(piece.circle_normal, dtype=np.float64),
+            "coincident": list(piece.coincident),
+            "points": np.asarray(piece.points, dtype=np.float64)[finite],
+            "values": np.asarray(piece.values, dtype=np.float64)[finite],
+            "nonfinite_values_dropped": int(np.count_nonzero(~finite)),
+        }
+
+    def corner_record(corner) -> dict[str, Any]:
+        return {
+            "position": np.asarray(corner.position, dtype=np.float64),
+            "value": float(corner.value),
+            "margins": list(corner.margins),
+            "incoming": corner.incoming,
+            "outgoing": corner.outgoing,
+            "tangent": list(corner.tangent),
+            "transversal": list(corner.transversal),
+            "coincident": list(corner.coincident),
+            "residual": float(corner.residual),
+        }
+
+    fold_record = None
+    if fold is not None:
+        fold_record = {
+            "axis": None if fold.axis is None else np.asarray(fold.axis, dtype=np.float64),
+            "axis_points": [[np.asarray(vector, dtype=np.float64), where] for vector, where in fold.axis_points],
+            "circle_interior_fraction": float(fold.circle_interior_fraction),
+            "crease_interior_arcs": int(fold.crease_interior_arcs),
+            "crease_closed_ridge": bool(fold.crease_closed_ridge),
+            "crease_touching_arc": bool(fold.crease_touching_arc),
+        }
+    audit = topology.grid_audit
+    return {
+        "interval_partition": [[float(i.lower), float(i.upper), int(i.n_components), int(i.n_closed), int(i.n_open)] for i in partition],
+        "critical_values": [float(v) for v in field.critical_values],
+        "interior_critical_points": [
+            {
+                "position": np.asarray(p.position, dtype=np.float64),
+                "value": float(p.value),
+                "kind": p.kind,
+                "morse_index": None if p.morse_index is None else int(p.morse_index),
+                "gradient_norm": _finite_or_none(p.gradient_norm),
+                "hessian_eigenvalues": np.asarray(p.hessian_eigenvalues, dtype=np.float64),
+            }
+            for p in field.interior_critical_points
+        ],
+        "boundary": {
+            "pieces": [piece_record(piece) for piece in boundary.pieces],
+            "corners": [corner_record(corner) for corner in boundary.corners],
+            "critical_points": [
+                {
+                    "position": np.asarray(p.position, dtype=np.float64),
+                    "value": float(p.value),
+                    "kind": p.kind,
+                    "margin": p.margin,
+                    "corner": bool(p.corner),
+                    "strict": bool(p.strict),
+                }
+                for p in boundary.critical_points
+            ],
+            "plateau_value": None if boundary.plateau_value is None else float(boundary.plateau_value),
+        },
+        "degenerate_fold": fold_record,
+        "domain_topology": {
+            "lattice_n": int(topology.lattice_n),
+            "domain_components": int(topology.domain_components),
+            "complement_components": int(topology.complement_components),
+            "is_disk": bool(topology.is_disk),
+            "grid_audit": None
+            if audit is None
+            else {
+                "grids": [int(g) for g in audit.grids],
+                "domain_counts": [int(c) for c in audit.domain_counts],
+                "complement_counts": [int(c) for c in audit.complement_counts],
+                "lattice_domain_count": int(audit.lattice_domain_count),
+                "lattice_complement_count": int(audit.lattice_complement_count),
+                "verdict": audit.verdict,
+            },
+        },
+    }
+
+
+def build_mc_field_topology_fixture(cell: MCCell, provenance: Mapping[str, Any]) -> dict[str, Any]:
+    label_name, index = cell.primary_index
+    field = mc_field(cell.crystal_spec, cell.faces, index)
+    fixture = _header(MC_FIELD_TOPOLOGY_KIND, provenance, _mc_cell_record(cell))
+    fixture["input"] = {
+        "crystal": dict(cell.crystal_spec),
+        "faces": list(cell.faces),
+        "refractive_index": float(index),
+        "refractive_index_label": label_name,
+        "lattice_n": MC_LATTICE_N,
+        "values_convention": "radians; interval_partition bounds and every D_P value are display delta",
+    }
+    fixture["expected"] = mc_topology_record(field)
+    fixture["tolerance"] = {
+        "partition_counts": _tolerance(0.0, "exact: the component counts of every interval (n_components, n_closed, n_open)"),
+        "partition_bounds": _tolerance(MC_TOPOLOGY_ATOL, "absolute, rad: " + MC_TOPOLOGY_BASIS),
+        "critical_values": _tolerance(MC_TOPOLOGY_ATOL, "absolute, rad: " + MC_TOPOLOGY_BASIS),
+        "plateau_value": _tolerance(MC_TOPOLOGY_ATOL, "absolute, rad: " + MC_TOPOLOGY_BASIS + "; None-ness exact"),
+        "critical_point_positions": _tolerance(MC_TOPOLOGY_ATOL, "absolute, per component: " + MC_TOPOLOGY_BASIS),
+        "hessian_eigenvalues": _tolerance(1e-8, "relative: AD second derivatives of the same chain; a near-zero eigenvalue at a degenerate point is relative-noisy at 1e-9"),
+        "corner_structure": _tolerance(0.0, "exact: corner count, margin signatures (margins/incoming/outgoing/tangent/transversal/coincident) and residual <= ZERO_MARGIN_ATOL"),
+        "corner_positions": _tolerance(MC_TOPOLOGY_ATOL, "absolute: " + MC_TOPOLOGY_BASIS),
+        "piece_structure": _tolerance(0.0, "exact: piece count, margin, kind, coincident list and nonfinite_values_dropped"),
+        "piece_envelope": _tolerance(MC_TOPOLOGY_ATOL, "absolute, rad: per piece min/max of values and both endpoint positions; the interior point list is LI's own walk sampling (informative)"),
+        "fold_fields": _tolerance(0.0, "exact: axis location strings, crease booleans; axis/axis_points positions within critical_point_positions' tolerance, circle_interior_fraction to 1e-12 (a 7200-sample count)"),
+        "domain_topology": _tolerance(0.0, "exact counts and audit verdict; a backend without the chart audit records grid_audit = null"),
+    }
+    return fixture
+
+
+def _compare_mc_topology(check: Check, got: Mapping[str, Any], expected: Mapping[str, Any], tolerance: Mapping[str, Any]) -> None:
+    atol = tolerance["partition_bounds"]["value"]
+    check.expect(len(got["interval_partition"]) == len(expected["interval_partition"]), "interval count differs")
+    for index, (mine, reference) in enumerate(zip(got["interval_partition"], expected["interval_partition"])):
+        check.expect(mine[2:] == reference[2:], f"interval {index}: counts {mine[2:]} != {reference[2:]}")
+        _close(check, f"interval {index} bounds", mine[:2], reference[:2], atol)
+    _close(check, "critical_values", got["critical_values"], expected["critical_values"], tolerance["critical_values"]["value"])
+    for key, compare in (
+        ("interior_critical_points", lambda mine, ref: (
+            check.expect(mine["kind"] == ref["kind"] and mine["morse_index"] == ref["morse_index"], f"interior critical {ref['kind']}: kind/morse_index"),
+            _close(check, f"interior critical {ref['kind']} position", mine["position"], ref["position"], tolerance["critical_point_positions"]["value"]),
+            _close(check, f"interior critical {ref['kind']} value", mine["value"], ref["value"], atol),
+            _close_relative(check, f"interior critical {ref['kind']} hessian", mine["hessian_eigenvalues"], ref["hessian_eigenvalues"], tolerance["hessian_eigenvalues"]["value"]),
+        )),
+    ):
+        mine_list, ref_list = got[key], expected[key]
+        check.expect(len(mine_list) == len(ref_list), f"{key}: count {len(mine_list)} != {len(ref_list)}")
+        for mine, reference in zip(mine_list, ref_list):
+            compare(mine, reference)
+    mine_boundary, ref_boundary = got["boundary"], expected["boundary"]
+    check.expect(len(mine_boundary["pieces"]) == len(ref_boundary["pieces"]), "boundary piece count differs")
+    for index, (mine, reference) in enumerate(zip(mine_boundary["pieces"], ref_boundary["pieces"])):
+        same = (mine["margin"], mine["kind"], mine["coincident"], mine["nonfinite_values_dropped"]) == (
+            reference["margin"], reference["kind"], reference["coincident"], reference["nonfinite_values_dropped"]
+        )
+        check.expect(same, f"piece {index} ({reference['margin']}): structure differs")
+        if len(reference["values"]) and len(mine["values"]):
+            _close(check, f"piece {index} ({reference['margin']}) envelope", [min(mine["values"]), max(mine["values"])], [min(reference["values"]), max(reference["values"])], tolerance["piece_envelope"]["value"])
+            _close(check, f"piece {index} ({reference['margin']}) ends", [mine["points"][0], mine["points"][-1]], [reference["points"][0], reference["points"][-1]], tolerance["piece_envelope"]["value"])
+    check.expect(len(mine_boundary["corners"]) == len(ref_boundary["corners"]), "corner count differs")
+    for index, (mine, reference) in enumerate(zip(mine_boundary["corners"], ref_boundary["corners"])):
+        signature = ("margins", "incoming", "outgoing", "tangent", "transversal", "coincident")
+        check.expect(all(mine[key] == reference[key] for key in signature), f"corner {index}: margin signature differs")
+        _close(check, f"corner {index} position", mine["position"], reference["position"], tolerance["corner_positions"]["value"])
+        _close(check, f"corner {index} value", mine["value"], reference["value"], atol)
+    check.expect(len(mine_boundary["critical_points"]) == len(ref_boundary["critical_points"]), "boundary critical point count differs")
+    for index, (mine, reference) in enumerate(zip(mine_boundary["critical_points"], ref_boundary["critical_points"])):
+        check.expect((mine["kind"], mine["margin"], mine["corner"], mine["strict"]) == (reference["kind"], reference["margin"], reference["corner"], reference["strict"]), f"boundary critical {index}: structure differs")
+        _close(check, f"boundary critical {index} position", mine["position"], reference["position"], tolerance["critical_point_positions"]["value"])
+        _close(check, f"boundary critical {index} value", mine["value"], reference["value"], atol)
+    mine_plateau, ref_plateau = mine_boundary["plateau_value"], ref_boundary["plateau_value"]
+    check.expect((mine_plateau is None) == (ref_plateau is None), "plateau_value None-ness differs")
+    if ref_plateau is not None and mine_plateau is not None:
+        _close(check, "plateau_value", mine_plateau, ref_plateau, tolerance["plateau_value"]["value"])
+    mine_fold, ref_fold = got["degenerate_fold"], expected["degenerate_fold"]
+    check.expect((mine_fold is None) == (ref_fold is None), "degenerate_fold presence differs")
+    if ref_fold is not None and mine_fold is not None:
+        check.expect(mine_fold["crease_interior_arcs"] == ref_fold["crease_interior_arcs"], "crease_interior_arcs differs")
+        check.expect(mine_fold["crease_closed_ridge"] == ref_fold["crease_closed_ridge"] and mine_fold["crease_touching_arc"] == ref_fold["crease_touching_arc"], "crease booleans differ")
+        check.expect([where for _, where in mine_fold["axis_points"]] == [where for _, where in ref_fold["axis_points"]], "axis point locations differ")
+        check.expect(abs(mine_fold["circle_interior_fraction"] - ref_fold["circle_interior_fraction"]) <= 1e-12, "circle_interior_fraction differs")
+        if ref_fold["axis"] is not None and mine_fold["axis"] is not None:
+            _close(check, "fold axis", mine_fold["axis"], ref_fold["axis"], tolerance["critical_point_positions"]["value"])
+    mine_topo, ref_topo = got["domain_topology"], expected["domain_topology"]
+    check.expect(mine_topo["domain_components"] == ref_topo["domain_components"] and mine_topo["complement_components"] == ref_topo["complement_components"], "domain topology counts differ")
+
+
+def verify_mc_field_topology(fixture: Mapping[str, Any], name: str = "") -> Check:
+    from .dp_field import DPField, TopologyEscape
+
+    check = Check(name)
+    data = fixture["input"]
+    field = DPField.build(build_crystal(data["crystal"]), data["faces"], data["refractive_index"], lattice_n=data["lattice_n"])
+    try:
+        got = mc_topology_record(field)
+    except TopologyEscape as error:
+        check.expect(False, f"the topology escaped at read-back: {error}")
+        return check
+    _compare_mc_topology(check, got, fixture["expected"], fixture["tolerance"])
+    return check
+
+
+def mc_kink_curve_records(field) -> list[dict[str, Any]]:
+    """One record per weight kink curve of a field, sanitised (non-finite D values counted, not stored)."""
+    records = []
+    for curve in field.weight_kinks:
+        arcs, dropped = [], 0
+        for arc in curve.arcs:
+            finite = np.isfinite(arc.values)
+            dropped += int(np.count_nonzero(~finite))
+            arcs.append(
+                {
+                    "points": np.asarray(arc.points, dtype=np.float64)[finite],
+                    "values": np.asarray(arc.values, dtype=np.float64)[finite],
+                    "closed": bool(arc.closed),
+                    "ends": [None if end is None else end for end in arc.ends],
+                }
+            )
+        values = np.concatenate([arc["values"] for arc in arcs]) if arcs else np.zeros(0)
+        records.append(
+            {
+                "step": int(curve.step),
+                "margin": curve.margin,
+                "method": curve.method,
+                "normal": None if curve.normal is None else np.asarray(curve.normal, dtype=np.float64),
+                "note": curve.note,
+                "failed_seeds": int(curve.failed_seeds),
+                "complete": bool(curve.complete),
+                "arcs": arcs,
+                "nonfinite_values_dropped": dropped,
+                "value_min": None if not len(values) else float(values.min()),
+                "value_max": None if not len(values) else float(values.max()),
+                "spread": None if not len(values) else float(np.ptp(values)),
+            }
+        )
+    return records
+
+
+def build_mc_field_kinks_fixture(cell: MCCell, provenance: Mapping[str, Any]) -> dict[str, Any]:
+    mc_field(cell.crystal_spec, cell.faces, cell.primary_index[1])  # warm the field cache for the primary index
+    fixture = _header(MC_FIELD_KINKS_KIND, provenance, _mc_cell_record(cell))
+    fixture["input"] = {
+        "crystal": dict(cell.crystal_spec),
+        "faces": list(cell.faces),
+        "indices": {label: float(index) for label, index in cell.indices},
+        "lattice_n": MC_LATTICE_N,
+        "values_convention": "radians, display delta; a curve with value_min == value_max (spread ~ 0) is a constant circle",
+    }
+    fixture["expected"] = {"kinks": {label: mc_kink_curve_records(mc_field(cell.crystal_spec, cell.faces, index)) for label, index in cell.indices}}
+    fixture["tolerance"] = {
+        "structure": _tolerance(0.0, "exact: curve count, (step, margin, method), arc count, closed and ends gate names, failed_seeds, nonfinite_values_dropped"),
+        "envelope": _tolerance(MC_KINK_ENVELOPE_ATOL, "absolute, rad, per curve and arc: value_min/value_max and the spread; " + MC_KINK_ENVELOPE_BASIS),
+        "constant_value": _tolerance(1e-12, "absolute, rad: the value of a curve whose expected spread is < 1e-12 (a closed-form constant circle, e.g. 3-1-6 at n(lambda) and the basal kink of 4-8-1-7-5)"),
+        "normal": _tolerance(1e-12, "absolute, per component: the great-circle normal m_k of a closed-form kink"),
+    }
+    return fixture
+
+
+def verify_mc_field_kinks(fixture: Mapping[str, Any], name: str = "") -> Check:
+    from .dp_field import DPField
+
+    check = Check(name)
+    data = fixture["input"]
+    tolerance = fixture["tolerance"]
+    for label, index in data["indices"].items():
+        field = DPField.build(build_crystal(data["crystal"]), data["faces"], index, lattice_n=data["lattice_n"])
+        got = mc_kink_curve_records(field)
+        expected = fixture["expected"]["kinks"][label]
+        check.expect(len(got) == len(expected), f"{label}: curve count {len(got)} != {len(expected)}")
+        for curve_index, (mine, reference) in enumerate(zip(got, expected)):
+            structure = ("step", "margin", "method", "note", "failed_seeds", "complete", "nonfinite_values_dropped")
+            where = f"{label} curve {curve_index} ({reference['margin']})"
+            check.expect(all(mine[key] == reference[key] for key in structure), f"{where}: structure differs")
+            if reference["normal"] is not None and mine["normal"] is not None:
+                _close(check, f"{where} normal", mine["normal"], reference["normal"], tolerance["normal"]["value"])
+            check.expect(len(mine["arcs"]) == len(reference["arcs"]), f"{where}: arc count differs")
+            for arc_index, (mine_arc, reference_arc) in enumerate(zip(mine["arcs"], reference["arcs"])):
+                check.expect(mine_arc["closed"] == reference_arc["closed"] and mine_arc["ends"] == reference_arc["ends"], f"{where} arc {arc_index}: closed/ends differ")
+                if len(reference_arc["values"]) and len(mine_arc["values"]):
+                    _close(
+                        check, f"{where} arc {arc_index} envelope",
+                        [float(np.min(mine_arc["values"])), float(np.max(mine_arc["values"]))],
+                        [float(np.min(reference_arc["values"])), float(np.max(reference_arc["values"]))],
+                        tolerance["envelope"]["value"],
+                    )
+            if reference["spread"] is not None and mine["spread"] is not None:
+                _close(check, f"{where} spread", mine["spread"], reference["spread"], tolerance["envelope"]["value"])
+                if reference["spread"] < 1e-12:  # a closed-form constant circle: the value itself is exact
+                    _close(check, f"{where} constant value", mine["value_min"], reference["value_min"], tolerance["constant_value"]["value"])
+                    _close(check, f"{where} constant value (max)", mine["value_max"], reference["value_max"], tolerance["constant_value"]["value"])
+    return check
+
+
+def build_mc_focusing_fixture(cell: MCCell, provenance: Mapping[str, Any]) -> dict[str, Any]:
+    from .focusing import classify
+
+    label_name, index = cell.primary_index
+    classification = classify(cell.crystal, cell.faces, _mc_haar_density(), index)
+    fixture = _header(MC_FOCUSING_KIND, provenance, _mc_cell_record(cell))
+    fixture["input"] = {
+        "crystal": dict(cell.crystal_spec),
+        "faces": list(cell.faces),
+        "refractive_index": float(index),
+        "refractive_index_label": label_name,
+        "pose_density": _density_block({"family": "random"}),
+        "lattice_n": MC_LATTICE_N,
+    }
+    fixture["expected"] = _mc_classification_json(classification)
+    fixture["tolerance"] = {
+        "labels": _tolerance(0.0, "exact: mechanism, jacobian_focusing, dimension_collapse, halo_map_rank, confined_dimensions, family_pinned and every onset's (location, source, profile, jacobian_focusing, multiplicity)"),
+        "onset_value_deg": _tolerance(MC_ONSET_DEG_ATOL, "absolute, deg: " + MC_ONSET_DEG_BASIS),
+        "onset_gradient_norm": _tolerance(MC_GRADIENT_RTOL, "relative (null for a non-finite norm, an exit-TIR end): " + MC_GRADIENT_BASIS),
+        "measure_limit": _tolerance(1e-8, "relative: 2 pi / sqrt(det H) of the AD Hessian at a finite_jump onset"),
+        "gradient_norm_range": _tolerance(MC_GRADIENT_RTOL, "relative: " + MC_GRADIENT_BASIS),
+        "confinement_widths_deg": _tolerance(0.0, "exact: empty under the random density (the only density these cells export)"),
+    }
+    return fixture
+
+
+def _mc_haar_density():
+    from .pose_density import HaarUniformPoseDensity
+
+    return HaarUniformPoseDensity()
+
+
+def _mc_classification_json(classification) -> dict[str, Any]:
+    """``FocusingClassification.as_json`` with non-finite onset gradient norms as ``null``."""
+    document = classification.as_json()
+    for onset in document["onsets"]:
+        onset["gradient_norm"] = _finite_or_none(onset["gradient_norm"])
+    return document
+
+
+def verify_mc_focusing(fixture: Mapping[str, Any], name: str = "") -> Check:
+    from .focusing import classify
+
+    check = Check(name)
+    data = fixture["input"]
+    got = _mc_classification_json(classify(build_crystal(data["crystal"]), data["faces"], _mc_haar_density(), data["refractive_index"]))
+    expected = fixture["expected"]
+    tolerance = fixture["tolerance"]
+    for key in ("path", "halo_map_rank", "mechanism", "jacobian_focusing", "dimension_collapse", "confined_dimensions", "confinement_widths_deg", "family_pinned"):
+        check.expect(got[key] == expected[key], f"{key}: {got[key]!r} != {expected[key]!r}")
+    mine_range, reference_range = got["gradient_norm_range"], expected["gradient_norm_range"]
+    if mine_range is None or reference_range is None:
+        check.expect(mine_range is None and reference_range is None, "gradient_norm_range availability differs")
+    else:
+        _close_relative(check, "gradient_norm_range", mine_range, reference_range, tolerance["gradient_norm_range"]["value"])
+    check.expect(len(got["onsets"]) == len(expected["onsets"]), f"onset count {len(got['onsets'])} != {len(expected['onsets'])}")
+    for index, (mine, reference) in enumerate(zip(got["onsets"], expected["onsets"])):
+        exact = ("location", "source", "profile", "jacobian_focusing", "multiplicity")
+        check.expect(all(mine[key] == reference[key] for key in exact), f"onset {index} ({reference['source']}): structure differs")
+        _close(check, f"onset {index} ({reference['source']}) value_deg", mine["value_deg"], reference["value_deg"], tolerance["onset_value_deg"]["value"])
+        if reference["gradient_norm"] is None:
+            check.expect(mine["gradient_norm"] is None, f"onset {index}: gradient_norm availability differs")
+        else:
+            _close_relative(check, f"onset {index} gradient_norm", mine["gradient_norm"], reference["gradient_norm"], tolerance["onset_gradient_norm"]["value"])
+        if reference["measure_limit"] is None:
+            check.expect(mine["measure_limit"] is None, f"onset {index}: measure_limit availability differs")
+        else:
+            _close_relative(check, f"onset {index} measure_limit", mine["measure_limit"], reference["measure_limit"], tolerance["measure_limit"]["value"])
+    return check
+
+
+def build_mc_wavelength_fixture(cell: MCCell, provenance: Mapping[str, Any]) -> dict[str, Any]:
+    from .focusing import wavelength_critical_table
+
+    indices = {label: index for label, index in cell.indices}
+    table = wavelength_critical_table(cell.crystal, cell.faces, _mc_haar_density(), indices)
+    fixture = _header(MC_WAVELENGTH_KIND, provenance, _mc_cell_record(cell))
+    fixture["input"] = {
+        "crystal": dict(cell.crystal_spec),
+        "faces": list(cell.faces),
+        "pose_density": _density_block({"family": "random"}),
+        "indices": {label: float(index) for label, index in indices.items()},
+    }
+    fixture["expected"] = table.as_json()
+    fixture["tolerance"] = {
+        "structure": _tolerance(0.0, "exact: path, labels, indices and every row's (location, source, profile, jacobian_focusing)"),
+        "values_deg": _tolerance(MC_ONSET_DEG_ATOL, "absolute, deg per label: " + MC_ONSET_DEG_BASIS),
+        "displacement_deg": _tolerance(2e-8, "absolute, deg: the max-min of one row's values, the difference of two values_deg"),
+    }
+    return fixture
+
+
+def verify_mc_wavelength(fixture: Mapping[str, Any], name: str = "") -> Check:
+    from .focusing import wavelength_critical_table
+
+    check = Check(name)
+    data = fixture["input"]
+    got = wavelength_critical_table(build_crystal(data["crystal"]), data["faces"], _mc_haar_density(), data["indices"]).as_json()
+    expected = fixture["expected"]
+    tolerance = fixture["tolerance"]
+    check.expect(got["path"] == expected["path"] and got["labels"] == expected["labels"], "path/labels differ")
+    check.expect(got["indices"] == expected["indices"], "indices differ")
+    check.expect(len(got["onsets"]) == len(expected["onsets"]), f"row count {len(got['onsets'])} != {len(expected['onsets'])}")
+    for index, (mine, reference) in enumerate(zip(got["onsets"], expected["onsets"])):
+        exact = ("location", "source", "profile", "jacobian_focusing")
+        check.expect(all(mine[key] == reference[key] for key in exact), f"row {index} ({reference['source']}): structure differs")
+        check.expect(set(mine["values_deg"]) == set(reference["values_deg"]), f"row {index}: labels differ")
+        for label in reference["values_deg"]:
+            _close(check, f"row {index} ({reference['source']}) {label}", mine["values_deg"][label], reference["values_deg"][label], tolerance["values_deg"]["value"])
+        _close(check, f"row {index} ({reference['source']}) displacement", mine["displacement_deg"], reference["displacement_deg"], tolerance["displacement_deg"]["value"])
+    return check
+
+
+def _mc_feature_json(feature) -> dict[str, Any]:
+    """A :class:`.chromatic.ChromaticFeature` verbatim (angles in radians; ``score`` is derived)."""
+    record = {
+        "kind": feature.kind,
+        "source": feature.source,
+        "color": feature.color,
+        "positive_fraction": float(feature.positive_fraction),
+        "delta_red": float(feature.delta_red),
+        "delta_blue": float(feature.delta_blue),
+        "shift": float(feature.shift),
+        "spread": float(feature.spread),
+        "direction_dispersion": float(feature.direction_dispersion),
+        "contrast": float(feature.contrast),
+        "weight": float(feature.weight),
+        "lit_fraction": float(feature.lit_fraction),
+        "visible": bool(feature.visible),
+    }
+    if set(record) != {f.name for f in fields(feature)}:
+        raise ValueError("ChromaticFeature fields drifted from _mc_feature_json; update the serializer")
+    return record
+
+
+def _mc_tint_json(tint) -> dict[str, Any] | None:
+    if tint is None:
+        return None
+    record = {
+        "energy_red": float(tint.energy_red),
+        "energy_blue": float(tint.energy_blue),
+        "ratio": _finite_or_none(tint.ratio),
+        "tir_fraction_red": _finite_or_none(tint.tir_fraction_red),
+        "tir_fraction_blue": _finite_or_none(tint.tir_fraction_blue),
+        "direction_dispersion": float(tint.direction_dispersion),
+    }
+    if set(record) != {f.name for f in fields(tint)}:
+        raise ValueError("TintMetrics fields drifted from _mc_tint_json; update the serializer")
+    return record
+
+
+def mc_verdict_json(verdict) -> dict[str, Any]:
+    """A :class:`.chromatic.ChromaticVerdict` as a record (status/statement/values shape, angles radians)."""
+    return {
+        "faces": [int(f) for f in verdict.faces],
+        "kind": verdict.kind,
+        "color": verdict.color,
+        "visible": bool(verdict.visible),
+        "position": _finite_or_none(verdict.position) if verdict.position is not None else None,
+        "features": [_mc_feature_json(feature) for feature in verdict.features],
+        "tint": _mc_tint_json(verdict.tint),
+        "notes": list(verdict.notes),
+        "n_red": float(verdict.n_red),
+        "n_blue": float(verdict.n_blue),
+        "coverage_complete": bool(verdict.coverage_complete),
+    }
+
+
+MC_FRACTION_ATOL = 2e-2
+MC_TINT_ENERGY_RTOL = 5e-2
+MC_TINT_BASIS = (
+    "statistical: the family sample is LI's numpy PCG64 stream (sample_plate_poses, seed 3, 1e5 poses); a "
+    "backend estimates the same family mean from its own sample.  LI's split-half sigma of the ratio at "
+    "1e5 poses is <= 3e-3 on the three class cells, so 5e-2 is > 15 sigma; energies carry the same relative room"
+)
+
+
+def build_mc_chromatic_fixture(cell: MCCell, provenance: Mapping[str, Any]) -> dict[str, Any]:
+    from . import chromatic
+
+    verdict = chromatic.diagnose(cell.crystal, cell.faces, lattice_n=MC_LATTICE_N)
+    fixture = _header(MC_CHROMATIC_KIND, provenance, _mc_cell_record(cell))
+    fixture["input"] = {
+        "crystal": dict(cell.crystal_spec),
+        "faces": list(cell.faces),
+        "n_red": float(chromatic.N_RED),
+        "n_blue": float(chromatic.N_BLUE),
+        "lattice_n": MC_LATTICE_N,
+        "thresholds": mc_thresholds_snapshot(),
+        "angles_convention": "radians; delta_red/delta_blue are the median D of the feature's line at each index",
+    }
+    fixture["expected"] = mc_verdict_json(verdict)
+    fixture["tolerance"] = {
+        "verdict": _tolerance(0.0, "exact: kind, color, visible, coverage_complete, notes and the feature list in order (kind, source, color, visible)"),
+        "position": _tolerance(MC_MEDIAN_ATOL, "absolute, rad: " + MC_MEDIAN_BASIS),
+        "feature_angles": _tolerance(MC_MEDIAN_ATOL, "absolute, rad, per feature (delta_red, delta_blue, shift, spread, direction_dispersion): " + MC_MEDIAN_BASIS),
+        "feature_fractions": _tolerance(MC_FRACTION_ATOL, "absolute (positive_fraction, contrast, lit_fraction) and weight relative: sampled medians over a backend's own curve sampling"),
+    }
+    return fixture
+
+
+def verify_mc_chromatic(fixture: Mapping[str, Any], name: str = "") -> Check:
+    from . import chromatic
+
+    check = Check(name)
+    data = fixture["input"]
+    verdict = chromatic.diagnose(build_crystal(data["crystal"]), data["faces"], n_red=data["n_red"], n_blue=data["n_blue"], lattice_n=data["lattice_n"])
+    got = mc_verdict_json(verdict)
+    expected = fixture["expected"]
+    tolerance = fixture["tolerance"]
+    for key in ("kind", "color", "visible", "coverage_complete", "notes", "faces"):
+        check.expect(got[key] == expected[key], f"{key}: {got[key]!r} != {expected[key]!r}")
+    if expected["position"] is None:
+        check.expect(got["position"] is None, "position availability differs")
+    else:
+        _close(check, "position", got["position"], expected["position"], tolerance["position"]["value"])
+    check.expect(len(got["features"]) == len(expected["features"]), f"feature count {len(got['features'])} != {len(expected['features'])}")
+    for index, (mine, reference) in enumerate(zip(got["features"], expected["features"])):
+        where = f"feature {index} ({reference['source']})"
+        check.expect((mine["kind"], mine["source"], mine["color"], mine["visible"]) == (reference["kind"], reference["source"], reference["color"], reference["visible"]), f"{where}: structure differs")
+        for key in ("delta_red", "delta_blue", "shift", "spread", "direction_dispersion"):
+            _close(check, f"{where} {key}", mine[key], reference[key], tolerance["feature_angles"]["value"])
+        for key in ("positive_fraction", "contrast", "lit_fraction"):
+            _close(check, f"{where} {key}", mine[key], reference[key], tolerance["feature_fractions"]["value"])
+        _close_relative(check, f"{where} weight", mine["weight"], reference["weight"], tolerance["feature_fractions"]["value"])
+    return check
+
+
+def _mc_class_record(family) -> dict[str, Any]:
+    return {
+        "family": "plate",
+        "sun_altitude_deg": float(family.sun_altitude_deg),
+        "zenith_std_deg": float(family.zenith_std_deg),
+        "samples": int(family.samples),
+        "seed": int(family.seed),
+        "sampler": "pose_density.sample_plate_poses: uniform spin, half-normal tilt, uniform tilt direction, numpy.random.default_rng(seed)",
+    }
+
+
+def build_mc_chromatic_class_fixture(cell: MCCell, provenance: Mapping[str, Any]) -> dict[str, Any]:
+    from . import chromatic
+    from .chromatic import PlateFamily
+
+    family = PlateFamily(cell.family_sun_altitude_deg, samples=cell.family_samples, seed=cell.family_seed)
+    class_verdict = chromatic.diagnose_class(cell.crystal, cell.faces, family, lattice_n=MC_LATTICE_N)
+    fixture = _header(MC_CHROMATIC_CLASS_KIND, provenance, _mc_cell_record(cell))
+    fixture["input"] = {
+        "crystal": dict(cell.crystal_spec),
+        "representative": [int(f) for f in cell.faces],
+        "family": _mc_class_record(family),
+        "n_red": float(chromatic.N_RED),
+        "n_blue": float(chromatic.N_BLUE),
+        "thresholds": mc_thresholds_snapshot(),
+    }
+    fixture["expected"] = {
+        "members": [[int(f) for f in member] for member in class_verdict.members],
+        "lit_members": {label: [[int(f) for f in member] for member in members] for label, members in class_verdict.lit_members.items()},
+        "verdict": mc_verdict_json(class_verdict.verdict),
+        "feasibility_resolution_rad": None if class_verdict.feasibility_resolution_rad is None else float(class_verdict.feasibility_resolution_rad),
+    }
+    fixture["tolerance"] = {
+        "members": _tolerance(0.0, "exact: the PBD orbit (chromatic.class_members) and, per index, the lit member list (a sampled verdict on the family sample; chromatic's own resolution statement, ChromaticVerdict docstring)"),
+        "verdict": _tolerance(0.0, "exact: kind, color, visible, notes"),
+        "tint_energies": _tolerance(MC_TINT_ENERGY_RTOL, "relative: " + MC_TINT_BASIS),
+        "tint_ratio": _tolerance(MC_TINT_ENERGY_RTOL, "absolute: " + MC_TINT_BASIS),
+        "tir_fractions": _tolerance(1e-2, "absolute: an A T-weighted fraction of the same sampled reflections"),
+        "direction_dispersion": _tolerance(1e-9, "absolute, rad: zero for a slab-like class (measured < 1e-12 in LI); a dispersive class reports its own note and none is exported"),
+    }
+    return fixture
+
+
+def verify_mc_chromatic_class(fixture: Mapping[str, Any], name: str = "") -> Check:
+    from . import chromatic
+    from .chromatic import PlateFamily
+
+    check = Check(name)
+    data = fixture["input"]
+    family = PlateFamily(data["family"]["sun_altitude_deg"], zenith_std_deg=data["family"]["zenith_std_deg"], samples=data["family"]["samples"], seed=data["family"]["seed"])
+    got = chromatic.diagnose_class(build_crystal(data["crystal"]), data["representative"], family, n_red=data["n_red"], n_blue=data["n_blue"], lattice_n=MC_LATTICE_N)
+    expected = fixture["expected"]
+    tolerance = fixture["tolerance"]
+    check.expect([[int(f) for f in member] for member in got.members] == expected["members"], "members differ")
+    check.expect(
+        {label: [[int(f) for f in member] for member in members] for label, members in got.lit_members.items()} == expected["lit_members"],
+        "lit_members differ",
+    )
+    mine_verdict, reference_verdict = mc_verdict_json(got.verdict), expected["verdict"]
+    for key in ("kind", "color", "visible", "notes", "coverage_complete"):
+        check.expect(mine_verdict[key] == reference_verdict[key], f"verdict {key}: {mine_verdict[key]!r} != {reference_verdict[key]!r}")
+    mine_tint, reference_tint = mine_verdict["tint"], reference_verdict["tint"]
+    if reference_tint is None:
+        check.expect(mine_tint is None, "tint availability differs")
+    else:
+        for key in ("energy_red", "energy_blue"):
+            _close_relative(check, f"tint {key}", mine_tint[key], reference_tint[key], tolerance["tint_energies"]["value"])
+        _close(check, "tint ratio", mine_tint["ratio"], reference_tint["ratio"], tolerance["tint_ratio"]["value"])
+        for key in ("tir_fraction_red", "tir_fraction_blue"):
+            _close(check, f"tint {key}", mine_tint[key], reference_tint[key], tolerance["tir_fractions"]["value"])
+        _close(check, "tint direction_dispersion", mine_tint["direction_dispersion"], reference_tint["direction_dispersion"], tolerance["direction_dispersion"]["value"])
+    return check
+
+
+def _mc_cell_record(cell: MCCell) -> dict[str, Any]:
+    return {
+        "name": cell.name,
+        "path": cell.path_id,
+        "label": cell.label,
+        "serves": list(cell.serves),
+        "rationale": cell.rationale,
+        "detects": dict(cell.detects),
+    }
+
+
+_MC_BUILDERS = {
+    MC_FIELD_SAMPLE_KIND: build_mc_field_sample_fixture,
+    MC_FIELD_TOPOLOGY_KIND: build_mc_field_topology_fixture,
+    MC_FIELD_KINKS_KIND: build_mc_field_kinks_fixture,
+    MC_FOCUSING_KIND: build_mc_focusing_fixture,
+    MC_WAVELENGTH_KIND: build_mc_wavelength_fixture,
+    MC_CHROMATIC_KIND: build_mc_chromatic_fixture,
+    MC_CHROMATIC_CLASS_KIND: build_mc_chromatic_class_fixture,
+}
+
+
+def export_module_c_cell(cell: MCCell, output_dir: Path, provenance: Mapping[str, Any]) -> dict[str, Any]:
+    """Write one module C cell's fixtures; returns its manifest entry (``module_c_cells``)."""
+    from .dp_field import TopologyEscape
+
+    entry: dict[str, Any] = {
+        "name": cell.name,
+        "path": cell.path_id,
+        "crystal": dict(cell.crystal_spec),
+        "label": cell.label,
+        "serves": list(cell.serves),
+        "rationale": cell.rationale,
+        "indices": {label: float(index) for label, index in cell.indices},
+        "detects": {kind: str(cell.detects.get(kind, "")) for kind in cell.kinds},
+        "files": [],
+        "skipped": [],
+    }
+    for kind in cell.kinds:
+        try:
+            fixture = _MC_BUILDERS[kind](cell, provenance)
+        except TopologyEscape as error:  # an honest refusal is recorded, never faked (52 cells' rule)
+            entry["skipped"].append({"fixture": kind, "reason": f"TopologyEscape: {error}"})
+            continue
+        name = f"{cell.name}__{kind}.json"
+        write_json(Path(output_dir) / name, fixture)
+        entry["files"].append(name)
+    return entry
+
+
+for _kind, _verifier in (
+    (MC_FIELD_SAMPLE_KIND, verify_mc_field_sample),
+    (MC_FIELD_TOPOLOGY_KIND, verify_mc_field_topology),
+    (MC_FIELD_KINKS_KIND, verify_mc_field_kinks),
+    (MC_FOCUSING_KIND, verify_mc_focusing),
+    (MC_WAVELENGTH_KIND, verify_mc_wavelength),
+    (MC_CHROMATIC_KIND, verify_mc_chromatic),
+    (MC_CHROMATIC_CLASS_KIND, verify_mc_chromatic_class),
+):
+    VERIFIERS[_kind] = _verifier
+
+
 __all__ = [
     "BAND_SUM_KIND",
     "CATEGORIES",
@@ -2104,4 +3066,35 @@ __all__ = [
     "verify_band_sum",
     "verify_directory",
     "verify_fixture",
+    "MCCell",
+    "MC_KINDS",
+    "MC_CHROMATIC_CLASS_KIND",
+    "MC_CHROMATIC_KIND",
+    "MC_FIELD_KINKS_KIND",
+    "MC_FIELD_SAMPLE_KIND",
+    "MC_FIELD_TOPOLOGY_KIND",
+    "MC_FOCUSING_KIND",
+    "MC_WAVELENGTH_KIND",
+    "build_mc_field_sample_fixture",
+    "build_mc_field_topology_fixture",
+    "build_mc_field_kinks_fixture",
+    "build_mc_focusing_fixture",
+    "build_mc_wavelength_fixture",
+    "build_mc_chromatic_fixture",
+    "build_mc_chromatic_class_fixture",
+    "export_module_c_cell",
+    "mc_field",
+    "mc_sample",
+    "mc_point_observables",
+    "mc_thresholds_snapshot",
+    "mc_topology_record",
+    "mc_kink_curve_records",
+    "mc_verdict_json",
+    "verify_mc_field_sample",
+    "verify_mc_field_topology",
+    "verify_mc_field_kinks",
+    "verify_mc_focusing",
+    "verify_mc_wavelength",
+    "verify_mc_chromatic",
+    "verify_mc_chromatic_class",
 ]

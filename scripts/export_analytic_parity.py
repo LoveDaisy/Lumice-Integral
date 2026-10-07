@@ -17,6 +17,7 @@ section 11.1).  The module B cells (``BAND_SUM_CELLS``, ``docs/band-sum-contract
     uv run python scripts/export_analytic_parity.py --output-dir /tmp/parity-edge --cells 3-5__limits --verify
     uv run python scripts/export_analytic_parity.py --output-dir /tmp/parity-band --cells 3-5__band_sum_plate --verify
     uv run python scripts/export_analytic_parity.py --output-dir /tmp/parity-pinned --cells 3-6-4-8__band_sum_plate --verify
+    uv run python scripts/export_analytic_parity.py --output-dir /tmp/parity-mc --cells 4-8-7-5__mc_field --verify
 """
 
 from __future__ import annotations
@@ -44,6 +45,7 @@ from lumice_integral.parity_export import (
     BandSumCell,
     Cell,
     EdgeCell,
+    MCCell,
     OptionVariant,
     Scene,
     export_matrix,
@@ -52,6 +54,7 @@ from lumice_integral.parity_export import (
     pyramid_crystal,
     verify_directory,
 )
+from lumice_integral.spectrum.dispersion import refractive_index
 
 SUN = tuple(float(x) for x in canonical_sun_direction())
 # The ch06 canonical column (canonical_scene.canonical_crystal() is HexPrism.from_lumice(1.0)).
@@ -412,6 +415,210 @@ BAND_SUM_CELLS = (
 )
 
 
+# ------------------------------------------------------------------ module C cells (wave 3, docs/analytic-parity-fixtures.md "Module C cells (wave 3)")
+# The u-S^2 geometry layer of Lumice's schema3 port (Lumice scrum schema3-geometry-port, A1-A5):
+# every cell's `serves` names the A-lines it locks (Lumice schema2-redesign-discussion/conclusions.md,
+# "wave-1 核验与 Lumice 侧规划"), `detects` the failure
+# mode per fixture kind.  Indices are Lumice's n(lambda) (spectrum.dispersion); the first entry is the
+# cell's primary index.  The kink sweeps carry 400/550/700 nm (the C02/C06 calibers), the
+# wavelength-critical table 450/550/650 nm (task 42.4's caliber, docs/phase2.md section on wavelength
+# onsets).  The chromatic cells take their pair N_RED/N_BLUE from chromatic (1.307/1.317) and record it.
+N400, N450, N550, N650, N700 = (refractive_index(nm) for nm in (400.0, 450.0, 550.0, 650.0, 700.0))
+INDEX_550 = (("550nm", N550),)
+INDEX_SWEEP = (("400nm", N400), ("550nm", N550), ("700nm", N700))
+INDEX_TABLE = (("450nm", N450), ("550nm", N550), ("650nm", N650))
+# The dissolution probe's scenario crystals (scrum wave3-pull-forward, 659 config): the canonical
+# column (from_lumice(1.0)), the beta crystal and the user's rhombic plate at h/a = 1 (the
+# chromatic-module-c.md "Evidence" fixture crystal, HexPrism(a=1, h=1, face_distance=RHOMBIC)).
+BETA = prism_crystal(3.0, (2, 1, 1, 2, 1, 1))
+PRISM_H1 = prism_crystal(0.5)
+RHOMBIC_PLATE = prism_crystal(0.5, (1.5, 1, 1, 1.5, 1, 1))
+
+DETECTS = {
+    "dp_field_sample": "D_P / gradient / U_P gate margins / A_P / T_P / w at fixed u: chain or index drift, "
+    "gate-set change, corridor (entry measure) regression, weight-kernel mismatch",
+    "dp_field_topology": "partition bounds and counts, critical values, corner margin signatures, degenerate-fold "
+    "fields, domain topology counts: partition escapes, corner Newton, slab-crease gates, chart audit",
+    "dp_field_kinks": "TIR-onset curve structure (step/margin/method, arc count, closed, ends) and D envelope per "
+    "index; the constant circles pin their closed-form value (3-1-6, C06)",
+    "focusing_classify": "the kind-1 onset table and its labels (mechanism, profile, jacobian_focusing, "
+    "multiplicity), gradient_norm_range, family_pinned",
+    "wavelength_critical_table": "onset displacement across n(lambda): the wavelength-critical preset (task 42.4)",
+    "chromatic_diagnose": "the colour verdict (kind/color/visible), every feature's criterion quantities, the "
+    "threshold snapshot (N_RED/N_BLUE/EDGE_MIN_SHIFT_RAD/EDGE_SPREAD_PER_SHIFT/TINT_RATIO_MIN)",
+    "chromatic_class": "the PBD class: lit member set per index, tint energies/ratio, tir fractions (entry measure "
+    "x Fresnel through one kernel on a plate family sample)",
+}
+
+
+def mc_cell(*args, **kwargs) -> MCCell:
+    """An :class:`MCCell` whose ``detects`` defaults to the shared per-kind texts (DETECTS below)."""
+    kwargs.setdefault("detects", DETECTS)
+    return MCCell(*args, **kwargs)
+
+
+MODULE_C_CELLS = (
+    mc_cell(
+        "mc_field",
+        PRISM,
+        (3, 5),
+        ("dp_field_sample", "dp_field_topology", "focusing_classify", "wavelength_critical_table"),
+        INDEX_TABLE,
+        ("A1", "A2", "A4"),
+        "the kind-1 representative: the 22 deg inner edge on the canonical column.  The interior minimum is the "
+        "closed form 2 asin(n sin 30 deg) - 60 deg (21.916127 deg at n(550)); the wavelength table moves it "
+        "0.581 deg across 450/550/650 nm (task 42.4's caliber)",
+    ),
+    mc_cell(
+        "mc_field",
+        PRISM,
+        (3, 1, 5),
+        ("dp_field_sample", "dp_field_topology", "focusing_classify"),
+        INDEX_550,
+        ("A1", "A2", "A3", "A4"),
+        "the kind-2 representative: one basal internal reflection; its smallest critical value is the boundary "
+        "extremum 21.916127 deg (the exit-TIR curve's minimum, the same closed form as 3-5's interior minimum); "
+        "classify pins the kind-2 attribution against 4-8-7-5's jacobian@blade",
+    ),
+    mc_cell(
+        "mc_kinks",
+        PRISM,
+        (3, 1, 5),
+        ("dp_field_kinks",),
+        INDEX_SWEEP,
+        ("A3",),
+        "the C02 kink family: the basal TIR onset sweeps [129.364, 134.255] deg at 700 nm, [132.458, 136.842] at "
+        "550 nm and [141.004, 143.652] at 400 nm (the explore's red/blue ends are n(700)/n(400), read from this "
+        "sweep); the corpus anchor 131.030 deg lies inside the 700 nm span",
+    ),
+    mc_cell(
+        "mc_field",
+        PRISM,
+        (3, 1, 6),
+        ("dp_field_sample", "dp_field_topology"),
+        INDEX_550,
+        ("A1", "A2"),
+        "a single-mirror slab between opposite side faces: the partition is the whole range [0, 180] deg, one "
+        "component open at both ends",
+    ),
+    mc_cell(
+        "mc_kinks",
+        PRISM,
+        (3, 1, 6),
+        ("dp_field_kinks",),
+        INDEX_550,
+        ("A3",),
+        "the constant kink: the whole onset circle sits on D = 2 asin sqrt(n^2 - 1) = 115.945100 deg at n(550) "
+        "(the 52 SUMMARY's 115.945094 was the truncated n = 1.3110129 caliber), spread < 1e-12 rad",
+    ),
+    mc_cell(
+        "mc_field",
+        PRISM,
+        (3, 1, 4, 5),
+        ("dp_field_topology", "dp_field_kinks"),
+        INDEX_550,
+        ("A2", "A3"),
+        "the basal-reflection circle as a domain gate: the partition splits exactly at 120.000000 deg (the "
+        "complementary circle of C05/C06, isomorphic across crystals) and the kink reaches up to 149.246753 deg",
+    ),
+    mc_cell(
+        "mc_field",
+        PRISM,
+        (3, 4, 1, 5),
+        ("dp_field_topology",),
+        INDEX_550,
+        ("A2",),
+        "the complementary-circle twin of 3-1-4-5: the same split at 120.000000 deg with the kink on the second "
+        "reflection instead of the first",
+    ),
+    mc_cell(
+        "mc_field",
+        PRISM,
+        (3, 5, 6, 7),
+        ("dp_field_sample", "dp_field_topology", "dp_field_kinks"),
+        INDEX_550,
+        ("A1", "A2", "A3"),
+        "the machinery regression cell (tasks dp-exit-snell-nan-convention, dp-thin-neck-topology, "
+        "dp-slab-partition-completion): the partition completes from the D limit 50.161742 deg, the domain is "
+        "one component (chart-audit corrected), and the marched kink arcs carry no NaN",
+    ),
+    mc_cell(
+        "mc_field",
+        BETA,
+        (4, 8, 7, 5),
+        ("dp_field_sample", "dp_field_topology", "focusing_classify"),
+        INDEX_550,
+        ("A1", "A2", "A4"),
+        "the C05 cell on the beta crystal (from_lumice(3.0, [2,1,1,2,1,1]), the 659 config): a degenerate fold "
+        "with the axis on the c axis, the partition [0, 50.161742, 120] deg, both intervals (2, 0, 2), the blade "
+        "critical value 120 deg (the corpus' 119.99999999 is this value at grid resolution) and classify "
+        "jacobian@blade (boundary_extremum/degenerate plus the slab circle)",
+    ),
+    mc_cell(
+        "mc_kinks",
+        BETA,
+        (4, 8, 1, 7, 5),
+        ("dp_field_kinks",),
+        INDEX_SWEEP,
+        ("A3",),
+        "the C06 cell: the basal reflection's TIR onset is a closed-form constant circle at 149.246753 deg "
+        "(550 nm) with dispersion +1.850629 deg from 400 to 700 nm (the corpus anchor +1.87 deg); the two side "
+        "reflection onsets march from the 120 deg gate",
+    ),
+    mc_cell(
+        "mc_chromatic",
+        PRISM_H1,
+        (3, 1, 6),
+        ("chromatic_diagnose",),
+        (),
+        ("A4",),
+        "the dark hole's rim: edge/blue/visible at delta = 2 asin sqrt(n_blue^2 - 1), shift 3.354 deg, spread 0 "
+        "(chromatic-module-c.md \"Evidence\"; the crystal is that fixture's HexPrism() = from_lumice(0.5))",
+    ),
+    mc_cell(
+        "mc_chromatic",
+        PRISM_H1,
+        (3, 1, 5),
+        ("chromatic_diagnose",),
+        (),
+        ("A4",),
+        "the C02 criterion layer: the kink edge is blue/visible while the exit gate is red/not visible (sigma "
+        "108.7 deg against |Delta| 0.33 deg), the divergence from the issue's expected red gate recorded in "
+        "chromatic-module-c.md \"Evidence\"",
+    ),
+    mc_cell(
+        "mc_chromatic_class",
+        RHOMBIC_PLATE,
+        (1, 3, 5, 2),
+        ("chromatic_class",),
+        (),
+        ("A4",),
+        "the 120 deg parhelion tint on the rhombic plate (h/a = 1, sun 9 deg): tint blue, ratio 1.492, four of "
+        "the 24 members lit (the printed digits of chromatic-module-c.md \"Evidence\")",
+    ),
+    mc_cell(
+        "mc_chromatic_class",
+        RHOMBIC_PLATE,
+        (1, 3, 4, 2),
+        ("chromatic_class",),
+        (),
+        ("A4",),
+        "the white control: ratio 0.965 on the same plate and family (a class whose reflections stay partial "
+        "across the index pair; the TINT_RATIO_MIN calibration neighbour)",
+    ),
+    mc_cell(
+        "mc_chromatic_class",
+        RHOMBIC_PLATE,
+        (3, 5, 6, 8),
+        ("chromatic_class",),
+        (),
+        ("A4",),
+        "the impossible-literal class: 3-5-6-8 itself is not a face set of this plate; four other members carry "
+        "the class to a white verdict at ratio 1.029",
+    ),
+)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--output-dir", type=Path, default=Path("artifacts/analytic-parity"))
@@ -420,16 +627,18 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     cells, edge_cells, band_sum_cells = matrix(), list(EDGE_CELLS), list(BAND_SUM_CELLS)
+    module_c_cells = list(MODULE_C_CELLS)
     if args.cells:
-        known = [cell.name for cell in (*cells, *edge_cells, *band_sum_cells)]
+        known = [cell.name for cell in (*cells, *edge_cells, *band_sum_cells, *module_c_cells)]
         unknown = set(args.cells) - set(known)
         if unknown:
             parser.error(f"unknown cells {sorted(unknown)}; known: {known}")
         cells = [cell for cell in cells if cell.name in args.cells]
         edge_cells = [cell for cell in edge_cells if cell.name in args.cells]
         band_sum_cells = [cell for cell in band_sum_cells if cell.name in args.cells]
-    manifest = export_matrix(cells, args.output_dir, edge_cells, band_sum_cells)
-    for entry in [*manifest["cells"], *manifest.get("edge_cells", []), *manifest.get("band_sum_cells", [])]:
+        module_c_cells = [cell for cell in module_c_cells if cell.name in args.cells]
+    manifest = export_matrix(cells, args.output_dir, edge_cells, band_sum_cells, module_c_cells)
+    for entry in [*manifest["cells"], *manifest.get("edge_cells", []), *manifest.get("band_sum_cells", []), *manifest.get("module_c_cells", [])]:
         skipped = "; ".join(f"{item['fixture']} skipped: {item['reason']}" for item in entry["skipped"])
         print(f"{entry['name']}: {len(entry['files'])} files" + (f" ({skipped})" if skipped else ""))
     if not args.verify:

@@ -16,15 +16,16 @@ Lumice Integral（LI）按固定 rev 导出一个 JSON fixture 目录，Lumice �
 uv run python scripts/export_analytic_parity.py --output-dir artifacts/analytic-parity --verify
 ```
 
-- 一条命令写出矩阵（§6）、边缘情形（§6.1）与带求和格（§6.2）的全部 fixture 和一个 `manifest.json`，共 94 个。
+- 一条命令写出矩阵（§6）、边缘情形（§6.1）、带求和格（§6.2）与模块 C 格（§6.3）的全部 fixture 和一个 `manifest.json`，共 120 个。
   空闲的 M2 Max 上（2026-09-29），加入 `n = 1.307` 格之前的 93 个导出加读回共 64 s（2026-09-30 的 94 个在旁边另有一次
-  导出时用了 7 min）。加入四个族钉定格之前、负载 20–30 下，89 个 fixture 导出
+  导出时用了 7 min）；波次 3 起（2026-10-07）120 个连读回共 5:39，其中 26 个模块 C fixture 约
+  2:50（三个板晶 class 格各 `1e5` 个姿态是大头）；同日最终清洁树复跑连读回 3:32。加入四个族钉定格之前、负载 20–30 下，89 个 fixture 导出
   50 s、读回 153 s，其中七个带求和 fixture 读回 38 s（统计性秩 0 格要重放 `4e6` 个姿态的 Haar 流）；更早的
   82 个在空闲机器上连读回约 1 min，波次 2 之前只有矩阵，约 16 s。
 - **确定性**：同一 rev 重跑逐字节相同。LI 的 `tests/test_parity_export.py` 在两个独立解释器里各导出一次，
   逐文件比较。fixture 不记录时间、主机和路径。
 - `--verify` 读回每个 fixture，用当前 checkout 重算，按 fixture 自带容差（§5）比较，任一失败即非零退出。
-  `--cells 3-5__random 3-5__limits 3-5__band_sum_plate ...` 只导出子集（矩阵格、边缘格与带求和格都按名字）。
+  `--cells 3-5__random 3-5__limits 3-5__band_sum_plate 4-8-7-5__mc_field ...` 只导出子集（矩阵格、边缘格、带求和格与模块 C 格都按名字）。
 - 产物在 `artifacts/` 下，LI 不纳入版本控制。钉住的那一份在 Lumice 仓库里，每个 fixture 自己记录来源的
   LI rev。
 - 代码：`lumice_integral.parity_export`（格式、选点、校验器）与 `scripts/export_analytic_parity.py`
@@ -40,7 +41,9 @@ uv run python scripts/export_analytic_parity.py --output-dir artifacts/analytic-
 边缘格另有 `label`、`point`（种子怎么选）与 `serves`（它认证的契约 §11 条目，见
 `docs/phase1-math-contract.md` §11.1）。只导出矩阵时没有 `edge_cells` 键。带求和格（§6.2）只有一个文件
 `<path>__band_sum_<label>.json`，列在 `band_sum_cells` 下，带 `label`、`rank`、`pose_density` 族名、`projection` 种类与
-`rationale`；不导出带求和格时没有 `band_sum_cells` 键，§6 与 §6.1 的文件和 manifest 字节不变。读取器必须忽略自己
+`rationale`；不导出带求和格时没有 `band_sum_cells` 键，§6 与 §6.1 的文件和 manifest 字节不变。模块 C 格（§6.3）名为
+`<path>__mc_<label>`，文件为 `<path>__mc_<label>__<kind>.json`，列在 `module_c_cells` 下，带每个导出种类的
+`detects` 说明；不导出模块 C 格时没有 `module_c_cells` 键，更早的 manifest 字节不变。读取器必须忽略自己
 不认识的 manifest 顶层键：后续波次会在新键下增加 fixture 种类。
 
 JSON 为 UTF-8，键排序。浮点写成能往返回同一个 float64 的最短形式，任何符合规范的 JSON 读取器
@@ -50,7 +53,7 @@ JSON 为 UTF-8，键排序。浮点写成能往返回同一个 float64 的最短
 |---|---|
 | `format` | `"lumice-integral/analytic-parity"` |
 | `schema_version` | `1`。波次 2 只新增了可选字段（§3.1、§3.2），没有改名或删除，v0 的每个键字节不变（对照 2026-09-29 `5ea2bde` 的导出核过）。没有波次 2 字段的 fixture 来自旧导出，按 v0 的比较方法。破坏性修改才升版本。 |
-| `fixture_kind` | `evaluate_path`、`trace_fiber`、`seed_search` 或 `band_sum` |
+| `fixture_kind` | `evaluate_path`、`trace_fiber`、`seed_search`、`band_sum`，或 §6.3 的模块 C 种类（`dp_field_sample`、`dp_field_topology`、`dp_field_kinks`、`focusing_classify`、`wavelength_critical_table`、`chromatic_diagnose`、`chromatic_class`） |
 | `symmetry_semantics` | 恒为 `"none"`：输入是一个具体面序列，不涉及任何对称约化（Lumice `doc/analytic-api.md` §3.3 规则 2；`docs/conventions.md` #21）。 |
 | `provenance.li_rev` | 导出时 LI 的完整 commit SHA |
 | `provenance.li_tracked_tree_clean` | 导出时受控文件与该 commit 不一致则为 `false`，这样的 fixture 不应拷入 Lumice |
@@ -362,6 +365,86 @@ Lambert 格的 LI 侧与线性格走同样两种求和形式：相机只经像�
 通过；按固定 1.31 判闸门的后端在第 4 列差六个数量级，而 (2, 5)、(2, 6) 的事件不是掠射的，两种实现下逐位相同。亮斑
 位置与 `n` 无关（入射面与出射面平行），只有权重随 `n` 变。
 `tests/test_parity_export.py::test_non_canonical_index_cell_lights_the_grazing_slab_spot` 钉住这条亮带。
+
+### 6.3 模块 C 格（波次 3）
+
+u-S² 几何层本体——`dp_field`（`D_P` 场、门、区间分档、权重折线）、`focusing`（临界值标签）与
+`chromatic`（颜色判据）——作为 Lumice schema3 几何层移植（Lumice scrum `schema3-geometry-port`）的
+fixture。各格携带溶解探针（scrum `wave3-pull-forward`）钉下的锚点：C02/C05/C06 与切分。与模块 A/B
+的 fixture 不同，这些是**无太阳**的：场层只读晶体、面序和折射率，input 不携带 `incident_direction`。
+所有角度都是 display delta（弧度，无 180°−θ 换算）；折射率取 Lumice 的 `n(λ)`
+（`spectrum.dispersion.refractive_index`，`n(550) = 1.3110129170742788`），每个 fixture 记录自己的折射率
+与波长 label。kink 扫动格带 400/550/700 nm（C02/C06 口径），波长临界表带 450/550/650 nm（task 42.4
+口径）。chromatic 种类的折射率对取 `chromatic.N_RED`/`N_BLUE`（1.307/1.317），随阈值一起记录。
+
+每格的采样点（`dp_field_sample`）：20000 点反对称 Fibonacci 格的有效点做跨步抽取（约 256 个），再加具名
+内部锚点（内部临界点、内部 slab 轴点、kink 弧中点；边界极值本身落在 `dU_P` 上——那里门余量 ~0，出射链的
+平方根无定义——属于 topology 格）。权重采用扭曲不变约定：`A_P` 是任何满足 `R u = ŝ_probe = [0, 0, 1]`
+的姿态处的 entry measure，`T_P` 是 Fresnel 路径因子，`w = A_P·T_P` 走同一内核
+`path_weight.weighted_power`——相乘前各自可观察。`D_P`、梯度范数与门余量直接来自场层。
+
+| 种类 | 输入 | expected（被比较的量） |
+|---|---|---|
+| `dp_field_sample` | 晶体、faces、折射率（+label）、`lattice_n`、采样记录、`u` | 逐点：`d_p`、`gradient_norm`、`valid`、`U_P` 各门的 `margin_names`/`margins`、`a_p`、`t_p`、`w` |
+| `dp_field_topology` | 晶体、faces、折射率（+label）、`lattice_n` | `interval_partition` 行 `[lo, hi, n_components, n_closed, n_open]`、`critical_values`、内部临界点（位置、值、种类、Morse 指标、梯度范数、Hessian 特征值）、边界环（piece：结构 + D 包络 + 端点位置，内部点列为参考性；角点带 margin 签名；限制临界点；plateau 值）、`degenerate_fold`（轴、轴点位置、`circle_interior_fraction`、crease 各字段）、`domain_topology`（计数、`is_disk`、chart 网格审计） |
+| `dp_field_kinks` | 晶体、faces、`indices`（label → n）、`lattice_n` | 每 label 每曲线：`(step, margin, method, normal, note, failed_seeds, complete)`、弧（points、values、`closed`、`ends` 门名；points 为参考性）、`value_min`/`value_max`/`spread`、`nonfinite_values_dropped` |
+| `focusing_classify` | 晶体、faces、折射率（+label）、`pose_density`（random）、`lattice_n` | `focusing.FocusingClassification.as_json`：机制、onset（value_deg、location、source、profile、jacobian_focusing、gradient_norm、measure_limit、multiplicity）、`gradient_norm_range` |
+| `wavelength_critical_table` | 晶体、faces、`pose_density`、`indices` | `focusing.WavelengthCriticalTable.as_json`：每 onset 行各 label 的值（deg）与 `displacement_deg` |
+| `chromatic_diagnose` | 晶体、faces、`n_red`、`n_blue`、`lattice_n`、`thresholds` 快照 | `chromatic.ChromaticVerdict`：kind/color/visible/position、feature 全字段（kind、source、color、positive_fraction、delta_red/delta_blue/shift/spread/direction_dispersion、contrast、weight、lit_fraction、visible）、notes、coverage |
+| `chromatic_class` | 晶体、代表路径、`family`（板晶：太阳高度 9°、1° 天顶、`1e5` 姿态、seed 3）、`n_red`/`n_blue`、`thresholds` | 成员（PBD 轨道）、逐折射率的 `lit_members`、verdict 及其 tint 指标（能量、ratio、TIR 占比、方向色散） |
+
+容差：结构字段与标签精确；分档边界、临界值与定位位置 `1e-9` rad（行走把角点与极值定位到 ~1e-12）；Hessian
+特征值相对 `1e-8`；onset 值 `1e-8` deg；梯度类量相对 `1e-6`；`chromatic_diagnose` 的采样中位数 `2e-3`
+rad；`a_p`/`t_p`/`w` 相对 `1e-10`；板晶 class 的 tint 是统计性的（`5e-2`；LI 的样本是 numpy PCG64 流，
+`1e5` 姿态下 ratio 的对半分裂 σ ≤ 3e-3）。
+
+**格位表**（15 格 26 文件；`serves` 用 Lumice 的 A 线命名，`schema2-redesign-discussion/conclusions.md`
+§7：A1 场层、A2 partition/escape、A3 边界行走 + kink、A4 focusing/chromatic）：
+
+| 格 | 晶体、λ | 种类 | serves | 携带的锚点 |
+|---|---|---|---|---|
+| `3-5__mc_field` | 规范柱，450/550/650 | sample、topology、classify、table | A1 A2 A4 | 22° 内缘，闭式 `2 asin(n sin 30°) − 60°` = 21.916127°@n(550)；波长表位移 0.580962° |
+| `3-1-5__mc_field` | 规范柱，550 | sample、topology、classify | A1 A2 A3 A4 | 边界极值 D_min = 21.916127°（同一闭式）；kind-2 归属 |
+| `3-1-5__mc_kinks` | 规范柱，400/550/700 | kinks | A3 | C02 扫动：700 nm [129.364, 134.255]、550 [132.458, 136.842]、400 nm [141.004, 143.652]；131.030° 落在 700 nm 跨度内 |
+| `3-1-6__mc_field` | 规范柱，550 | sample、topology | A1 A2 | 全域分档 [0°, 180°] |
+| `3-1-6__mc_kinks` | 规范柱，550 | kinks | A3 | 常值 kink 圆 `2 asin √(n²−1)` = 115.945100°@n(550)，spread < 1e-12 |
+| `3-1-4-5__mc_field` | 规范柱，550 | topology、kinks | A2 A3 | 分档在 120.000000° 精确切分；kink 上探 149.246753° |
+| `3-4-1-5__mc_field` | 规范柱，550 | topology | A2 | 互补圈孪生：同一切分，kink 在第二个反射 |
+| `3-5-6-7__mc_field` | 规范柱，550 | sample、topology、kinks | A1 A2 A3 | 机件回归格：分档自 50.161742° 起完整、域单连通（audit `corrected`）、kink 弧无 NaN |
+| `4-8-7-5__mc_field` | **β** `from_lumice(3.0, [2,1,1,2,1,1])`，550 | sample、topology、classify | A1 A2 A4 | **C05**：slab 分档 [0°, 50.161742°, 120°]、两区间 (2, 0, 2)、褶皱轴 = c 轴（crease 22.764% 在 `U_P` 内）、刀刃临界值 120°、classify = jacobian@blade |
+| `4-8-1-7-5__mc_kinks` | β，400/550/700 | kinks | A3 | **C06**：基面 kink 常值圆 149.246753°@550、色散 +1.850629°（400 − 700） |
+| `3-1-6__mc_chromatic` | `from_lumice(0.5)`，N_RED/N_BLUE | chromatic | A4 | edge/blue/visible @ `2 asin √(n_b²−1)`、shift 3.354°、spread 0 |
+| `3-1-5__mc_chromatic` | `from_lumice(0.5)`，N_RED/N_BLUE | chromatic | A4 | C02 判据层：kink 边 blue/visible（σ 4.878° 对 Δ 7.325°）、出射门 red/不可见（σ 108.65° 对 |Δ| 0.33°） |
+| `1-3-5-2__mc_chromatic_class` | 菱面板 `from_lumice(0.5, [1.5,1,1,1.5,1,1])` | chromatic_class | A4 | tint blue、ratio 1.492（printed digits）、24 成员中 4 个点亮 |
+| `1-3-4-2__mc_chromatic_class` | 同一板晶 | chromatic_class | A4 | 白色对照格，ratio 0.965 |
+| `3-5-6-8__mc_chromatic_class` | 同一板晶 | chromatic_class | A4 | 字面不可能类：其余四个成员承载，白色 1.029 |
+
+A5（contour 线积分）**不在直接服务面**：issue 范围不含 contour 对象，A5 以上的场与拓扑格为其输入层——该
+局限记录于此与 manifest rationale。
+
+**锚点口径。** 52 溶解探针的记录值在截断折射率 `n = 1.3110129` 下算出；fixture 带完整 `n(λ)`，故
+115.945094 → 115.945100、50.161740 → 50.161742（截断 n 复现记录位数；两个方向都钉在
+`tests/test_parity_export_module_c.py`）。记录中 C02 的「红/蓝端」是 `n(700)`/`n(400)`——由扫动数据读出，
+不是 chromatic 对 1.307/1.317（1.307 下跨度为 [129.451, 134.329]，记录的 129.364 已排除该可能）——语料的
+「131° 蓝台阶」落在 700 nm 跨度内。Lumice 的外部锚点（色散 +1.87° 对 fixture 的 +1.850629、刀刃格点分辨率
+下的 119.99999999 对临界值 120）是本表调和的跨引擎口径。
+
+**晶体。** β 晶体与菱面板经 §2.1 的闭式标量精确重建（`HexPrism.from_lumice`；`face_distance` 是边心距比
+字段，Lumice 的 `height` 是 `h/(2a)`），溶解探针已逐成员验证。有一条几何事实属于本节，因为它界定了这些
+fixture 约束什么：棱柱晶体的侧面法向落在固定方位角上（`i·60°`；`face_distance` 只平移面、不旋转），因此
+`D_P`、`U_P`、拓扑、kink 曲线与 `focusing.classify` 都**与位置无关**——fd 和 h 不进入方向层。位置敏感面是
+entry measure：β 格的 `A_P`（`dp_field_sample`）只在 β 晶体上为正（规范柱上 4-8-7-5 的走廊是空的，整格
+`A_P ≡ 0`），菱面板的 class 点亮成员集也不同（4/24 对规范柱的 12；`3-5-6-8` 在板晶上白色、在柱晶上完全不
+点亮）。记录这一点的导出期探针（`crystal_consumption_probe.py`，task `module-c-fixture-export`）同时实测了
+位置无关性：β 对规范柱，分档一致到 2.5e-29°、kink 包络到 4.4e-16 rad、classify 到 ulp 量级。
+
+**chromatic 阈值。** 每个 `chromatic_*` fixture 内嵌 `chromatic` 的判据常量（`N_RED`、`N_BLUE`、
+`EDGE_MIN_SHIFT_RAD`、`EDGE_SPREAD_PER_SHIFT`、`TINT_RATIO_MIN`、`CALIBRATION_WHITE_MAX_DEVIATION`）作为
+**记录性快照**，使 port 可以复现判据本身。权威仍在模块（`lumice_integral.chromatic`）；常量在模块里变了就
+重导出这些 fixture，而不是交给 port 一份需要对齐的第二实现。
+
+**不在本批**（第二批，LI backlog）：新结构对象（S1/S2 受限走廊、A = 0 走廊、S6 junction）；contour 求积
+值；金字塔晶体的模块 C 格（模块 A/B 矩阵已携带金字塔；port 需要时按同一配方补）。
 
 ## 7. 更新流程
 
