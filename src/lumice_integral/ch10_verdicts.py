@@ -1166,6 +1166,8 @@ def face_distance_axis(options: FaceDistanceAxisOptions = FaceDistanceAxisOption
         critical = np.degrees(field.critical_values)
         onsets = tir_onset_maximum(field, options.lattice_n, starts=options.onset_starts)
         found = [v["delta_deg"] for v in onsets.values() if v is not None]
+        if not found:
+            raise RuntimeError(f"{name} at d = {d}: no TIR onset converged")
         corner = max(found)
         corners.append(corner)
         store = seed_store(crystal, index, faces, options.seed_store_n)
@@ -1305,19 +1307,53 @@ def face_distance_axis(options: FaceDistanceAxisOptions = FaceDistanceAxisOption
     d1w, *rest = window
     a60_first = a60_window[first_member]
     dimming = a60_first[-1]["peak_value"] / a60_first[0]["peak_value"]
+
+    def rises_then_falls(seq: list[float]) -> bool:
+        if len(seq) < 3:
+            return False
+        k = int(np.argmax(seq))
+        return (all(a < b for a, b in zip(seq[:k], seq[1:k + 1]))
+                and all(a > b for a, b in zip(seq[k:], seq[k + 1:])))
+
+    positive = np.flatnonzero(rows[0] > 0.0)
+    if len(positive) == 0:
+        raise RuntimeError(f"{name}: the d = 1 profile is zero on the whole grid")
+    window_opening = ""
+    if rest:
+        relative = [e["band_integral_relative_to_d1"] for e in rest]
+        shape = ", rising then falling" if rises_then_falls(relative) else ""
+        window_opening = (
+            " beyond d = 1 the member's own window opens towards the anthelion, the peak moving to the far grid "
+            f"end ({', '.join(f'{e['peak_deg']:.2f}' for e in rest)} deg), the {options.band_window_deg[0]}-"
+            f"{options.band_window_deg[1]} deg band integral (trapezoid over the profile grid) "
+            f"{' / '.join(f'x{r:.1f}' for r in relative)} relative to d = 1{shape}."
+        )
+
+    # verify before claim: "on every d" / "monotonically" only when the per-d numbers say so
+    peak_degrees = sorted({e["peak_deg"] for e in a60_first})
+    peak_values = [e["peak_value"] for e in a60_first]
+    decays = dimming < 1.0 and all(b < a for a, b in zip(peak_values, peak_values[1:]))
+    by_half: dict[tuple[float, float], list[float]] = {}
+    for entry in a60_first:
+        by_half.setdefault(tuple(entry["half_maximum_range_deg"]), []).append(entry["d"])
+    if len(by_half) == 1:
+        (half_lo, half_hi), = by_half
+        half_text = f"{half_lo:.2f}-{half_hi:.2f} deg on every d"
+    else:
+        half_text = ", ".join(f"{lo:.2f}-{hi:.2f} deg at d = {', '.join(f'{d:g}' for d in ds_at_d)}"
+                              for (lo, hi), ds_at_d in by_half.items())
+    peak_text = (f"peak {a60_first[0]['peak_deg']:.2f} deg on every d" if len(peak_degrees) == 1
+                 else ", ".join(f"peak {e['peak_deg']:.2f} deg at d = {e['d']:g}" for e in a60_first))
+    edge_claim = "stays put and only dims" if len(peak_degrees) == 1 and decays else "measured across d"
     statement = (
         f"The terrain does not move: the critical values of 3-5-6-7-3 and of both A60-10 members and the internal "
         f"TIR-onset corner {terrain_long[str(options.ds[0])]['tir_corner_deg']:.4f} deg are the same on every d "
         f"(critical-value spread <= {spread_max:.1e} deg; the corner's {np.ptp(corners):.1e} deg is the SLSQP "
         "constraint tolerance). The A0-02 member 3-5-6-7-3: at d = 1 its profile peaks in the corner's neighbourhood "
         f"({d1w['peak_deg']:.2f} deg, half maximum {d1w['half_maximum_range_deg'][0]:.2f}-{d1w['half_maximum_range_deg'][1]:.2f} deg) "
-        f"and is zero past {float(np.degrees(used[rows[0] > 0.0][-1])):.2f} deg; for d >= 1.2 the member's own window opens "
-        f"towards the anthelion, the peak moving to the far grid end ({', '.join(f'{e['peak_deg']:.2f}' for e in rest)} deg), "
-        f"the {options.band_window_deg[0]}-{options.band_window_deg[1]} deg band integral (trapezoid over the profile grid) "
-        f"{' / '.join(f'x{e['band_integral_relative_to_d1']:.1f}' for e in rest)} relative to d = 1, rising then falling. "
-        "The A60-10 142 deg edge stays put and only dims: peak "
-        f"{a60_first[0]['peak_deg']:.2f} deg and half maximum {a60_first[0]['half_maximum_range_deg'][0]:.2f}-"
-        f"{a60_first[0]['half_maximum_range_deg'][1]:.2f} deg on every d, the peak decaying monotonically to x{dimming:.2f} "
+        f"and is zero past {float(np.degrees(used[positive[-1]])):.2f} deg;{window_opening} "
+        f"The A60-10 142 deg edge {edge_claim}: {peak_text}, half maximum {half_text}, "
+        f"the peak {'decaying monotonically' if decays else 'ending'} at x{dimming:.2f} "
         f"at d = {options.ds[-1]} (the two members' profiles agree to {max(member_difference.values()):.1e})."
     )
     return Verdict("face-distance-axis", "measured", statement, numbers, parameters, arrays, notes)

@@ -490,8 +490,9 @@ Fixtures the structure suggests:
   the peak moves to the far grid end 179.75° (15–33× the corner value),
   and the 141–180° band integral (trapezoid over the profile grid, in
   radians) is ×18.3 / ×27.5 / ×9.2 relative to $d = 1$, rising then
-  falling. The A60-10 edge stays put and only dims: peak 152.00°, half
-  maximum 143.5–158.5° on every $d$, the peak decaying monotonically to
+  falling. The A60-10 edge stays put and only dims: peak 152.00° on every
+  $d$, half maximum 143.5–158.25° at $d = 1$ / 143.5–158.5° at
+  $d \ge 1.2$ (one 0.25° grid step), the peak decaying monotonically to
   ×0.21 at $d = 1.8$; the two members' profiles agree to `1.5e-12`.
   Record: appendix, "Chapter-10 verdicts, face-distance d axis".
 - *Parhelic circle*: $D_P(\mathbf u) = \angle(M\mathbf u, \mathbf u)$ has
