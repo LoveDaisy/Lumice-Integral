@@ -21,7 +21,8 @@ but the gates' authority (:func:`.optics.path_domain_batch`):
   below the grid and would be counted as many fragments.
 
 Run ``uv run python scripts/verify_dp_field_intervals.py`` (the five fixture
-paths, ``--grid`` points per side); exit status 1 on any mismatch.
+paths plus the beta-crystal slab fixture, ``--grid`` points per side); exit
+status 1 on any mismatch.
 """
 
 from __future__ import annotations
@@ -37,11 +38,20 @@ from scipy import ndimage
 from lumice_integral import optics
 from lumice_integral.canonical_scene import canonical_crystal
 from lumice_integral.dp_field import DPField
+from lumice_integral.geometry import HexPrism, Polyhedron
 from lumice_integral.s2_store import align_rotations, evaluate_fields
 
 FIXTURES: tuple[tuple[int, ...], ...] = ((3, 5), (1, 3), (3, 1, 6), (1, 3, 2), (3, 5, 6, 7, 3))
+# The beta scenario crystal of explore ``u-space-dissolution-probe`` at Lumice's ``n(550)``: the
+# slab-crease gate's one positive fixture (task ``dp-slab-partition-completion``).
+BETA_FIXTURES: tuple[tuple[int, ...], ...] = ((4, 8, 7, 5),)
+BETA_INDEX = 1.3110129
 SUN = np.array([0.0, 0.0, 1.0])
 CHUNK = 200_000
+
+
+def beta_crystal() -> HexPrism:
+    return HexPrism.from_lumice(height=3.0, face_distance=[2.0, 1.0, 1.0, 2.0, 1.0, 1.0])
 
 
 class Grid(NamedTuple):
@@ -52,8 +62,7 @@ class Grid(NamedTuple):
     deviation: np.ndarray
 
 
-def _evaluate(u: np.ndarray, faces: tuple[int, ...], index: float) -> tuple[np.ndarray, np.ndarray]:
-    crystal = canonical_crystal()
+def _evaluate(u: np.ndarray, faces: tuple[int, ...], index: float, crystal: Polyhedron) -> tuple[np.ndarray, np.ndarray]:
     valid = np.zeros(len(u), dtype=bool)
     deviation = np.full(len(u), np.nan)
     for start in range(0, len(u), CHUNK):
@@ -64,9 +73,9 @@ def _evaluate(u: np.ndarray, faces: tuple[int, ...], index: float) -> tuple[np.n
     return valid, deviation
 
 
-def grid_field(faces: tuple[int, ...], index: float, grid: int) -> Grid:
+def grid_field(faces: tuple[int, ...], index: float, grid: int, crystal: Polyhedron) -> Grid:
     """The ``grid x grid`` orthographic chart of the entry hemisphere (module docstring)."""
-    n_a = optics.face_normals(canonical_crystal(), faces)[0]
+    n_a = optics.face_normals(crystal, faces)[0]
     e1 = np.cross(n_a, np.eye(3)[int(np.argmin(np.abs(n_a)))])
     e1 /= np.linalg.norm(e1)
     e2 = np.cross(n_a, e1)
@@ -80,7 +89,7 @@ def grid_field(faces: tuple[int, ...], index: float, grid: int) -> Grid:
     u /= np.linalg.norm(u, axis=-1, keepdims=True)
     valid = np.zeros((grid, grid), dtype=bool)
     deviation = np.full((grid, grid), np.nan)
-    valid[on_chart], deviation[on_chart] = _evaluate(u[on_chart], faces, index)
+    valid[on_chart], deviation[on_chart] = _evaluate(u[on_chart], faces, index, crystal)
     return Grid(u, valid, deviation)
 
 
@@ -111,7 +120,7 @@ def trace_edge(valid: np.ndarray) -> list[tuple[int, int]]:
     raise RuntimeError("edge tracing did not close")
 
 
-def edge_values(grid: Grid, faces: tuple[int, ...], index: float, iterations: int = 60) -> np.ndarray:
+def edge_values(grid: Grid, faces: tuple[int, ...], index: float, crystal: Polyhedron, iterations: int = 60) -> np.ndarray:
     """``D`` on ``dU_P`` next to every traced edge node, in tracing order (bisection towards an outside neighbour)."""
     nodes = trace_edge(grid.valid)
     inside, outside = [], []
@@ -127,10 +136,10 @@ def edge_values(grid: Grid, faces: tuple[int, ...], index: float, iterations: in
     for _ in range(iterations):
         middle = inside + outside
         middle /= np.linalg.norm(middle, axis=1, keepdims=True)
-        valid, _ = _evaluate(middle, faces, index)
+        valid, _ = _evaluate(middle, faces, index, crystal)
         inside[valid] = middle[valid]
         outside[~valid] = middle[~valid]
-    return _evaluate(inside, faces, index)[1]
+    return _evaluate(inside, faces, index, crystal)[1]
 
 
 def level_counts(grid: Grid, edge: np.ndarray, delta: float) -> tuple[int, int, int]:
@@ -148,17 +157,20 @@ def level_counts(grid: Grid, edge: np.ndarray, delta: float) -> tuple[int, int, 
     return n_closed + n_open, n_closed, n_open
 
 
-def verify(faces: Sequence[int], index: float, grid: int, lattice_n: int = 20000) -> list[tuple]:
+def verify(faces: Sequence[int], index: float, grid: int, lattice_n: int = 20000, crystal: Polyhedron | None = None) -> list[tuple]:
     """One row per interval: ``(lower_deg, upper_deg, predicted (n, closed, open), grid (n, closed, open))``.
 
     ``lattice_n`` is the field's lattice (:meth:`.dp_field.DPField.build`); ``3-5-6-7`` partitions on
     the default 20000 points as well: its neck is a lattice-resolution artefact that the chart
     audit of task ``dp-thin-neck-topology`` corrects (an audit that shares this script's chart
-    construction by method, deliberately not by code).
+    construction by method, deliberately not by code).  ``crystal`` defaults to the canonical
+    hexagonal prism; the beta fixture passes its own (the script stays one implementation, the
+    fixture table carries the crystal).
     """
-    field = DPField.build(canonical_crystal(), faces, index, lattice_n=lattice_n)
-    chart = grid_field(field.faces, index, grid)
-    edge = edge_values(chart, field.faces, index)
+    crystal = canonical_crystal() if crystal is None else crystal
+    field = DPField.build(crystal, faces, index, lattice_n=lattice_n)
+    chart = grid_field(field.faces, index, grid, crystal)
+    edge = edge_values(chart, field.faces, index, crystal)
     rows = []
     for interval in field.interval_partition():
         delta = 0.5 * (interval.lower + interval.upper)
@@ -174,12 +186,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--path", type=int, nargs="+", action="append", help="face sequence (repeatable); default: the fixtures")
     parser.add_argument("--lattice-n", type=int, default=20000, help="Fibonacci lattice of the field layer (DPField.build)")
     args = parser.parse_args(argv)
-    paths = [tuple(p) for p in args.path] if args.path else list(FIXTURES)
+    runs = (
+        [(tuple(p), args.refractive_index, canonical_crystal()) for p in args.path]
+        if args.path
+        else [(faces, args.refractive_index, canonical_crystal()) for faces in FIXTURES]
+        + [(faces, BETA_INDEX, beta_crystal()) for faces in BETA_FIXTURES]
+    )
     failures = 0
-    for faces in paths:
+    for faces, index, crystal in runs:
         start = time.perf_counter()
-        rows = verify(faces, args.refractive_index, args.grid, args.lattice_n)
-        print(f"{optics.path_id_of(faces)}  ({time.perf_counter() - start:.1f} s, grid {args.grid})")
+        rows = verify(faces, index, args.grid, args.lattice_n, crystal=crystal)
+        print(f"{optics.path_id_of(faces, crystal)}  ({time.perf_counter() - start:.1f} s, grid {args.grid})")
         for lower, upper, predicted, measured in rows:
             ok = predicted == measured
             failures += not ok

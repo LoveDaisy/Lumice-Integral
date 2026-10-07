@@ -12,11 +12,19 @@ import pytest
 from lumice_integral.canonical_scene import canonical_crystal
 from lumice_integral.dp_field import DPField, TopologyEscape
 from lumice_integral.dp_field import certificate as C
-from lumice_integral.focusing import field_onsets
+from lumice_integral.focusing import classify, field_onsets
+from lumice_integral.geometry import HexPrism
+from lumice_integral.pose_density import build_pose_density
 
 N = 1.31
 FIXTURES = ((3, 5), (1, 3), (3, 1, 6), (1, 3, 2), (3, 5, 6, 7, 3), (1, 2, 1))
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "verify_dp_field_intervals.py"
+# The beta scenario crystal of explore ``u-space-dissolution-probe`` at Lumice's ``n(550)``: the one
+# fixture whose slab crease crosses ``U_P`` (22.76% of its sampling), the three-check gate's positive
+# case (task ``dp-slab-partition-completion``; values from the task's probe_partition.json).
+BETA = HexPrism.from_lumice(height=3.0, face_distance=[2.0, 1.0, 1.0, 2.0, 1.0, 1.0])
+PATH_BETA = (4, 8, 7, 5)
+N_BETA = 1.3110129
 
 # (lower deg, upper deg, n_components, n_closed, n_open), checked by scripts/verify_dp_field_intervals.py
 EXPECTED = {
@@ -43,6 +51,11 @@ A60_10 = {
 @pytest.fixture(scope="module")
 def fields() -> dict[tuple[int, ...], DPField]:
     return {faces: DPField.build(canonical_crystal(), faces, N) for faces in FIXTURES}
+
+
+@pytest.fixture(scope="module")
+def beta_field() -> DPField:
+    return DPField.build(BETA, PATH_BETA, N_BETA)
 
 
 @pytest.mark.parametrize("faces", FIXTURES)
@@ -73,6 +86,64 @@ def test_a60_10_members_partition(faces) -> None:
     for interval, e in zip(partition, expected):
         assert np.degrees(interval.lower) == pytest.approx(e[0], abs=5e-6)
         assert np.degrees(interval.upper) == pytest.approx(e[1], abs=5e-6)
+
+
+def test_4_8_7_5_slab_crease_partition(beta_field) -> None:
+    """The beta crystal's slab crease crosses ``U_P`` and still partitions (task ``dp-slab-partition-completion``).
+
+    The crease (the c-axis great circle, ``D_P = 120 deg`` along it) enters
+    ``U_P`` as one 1.43-rad arc; its two transversal ends are the walk's two
+    *strict* blade maxima, the four corners (``entry`` / ``internal_i`` /
+    ``exit_snell`` triple gates) sit at the 50.1617 deg closure value, and the
+    two axis points on ``dU_P`` are the loop minima at ``D = 0``.  The pinned
+    partition equals the task's Step 1 probe draft (the generic mechanism with
+    the escape branch disabled) and the independent chart grid of
+    ``scripts/verify_dp_field_intervals.py`` at 1201 points per side (the
+    slow test below); C05's display support ``[0.54, 120] deg`` is bracketed.
+    """
+    field = beta_field
+    assert field.domain_topology.is_disk
+    assert field.interior_critical_points == ()
+    fold = field.degenerate_fold
+    assert fold.circle_interior_fraction == pytest.approx(0.22764, abs=2e-4)
+    assert [where for _, where in fold.axis_points] == ["boundary", "boundary"]
+    assert (fold.crease_interior_arcs, fold.crease_closed_ridge, fold.crease_touching_arc) == (1, False, False)
+    expected = [(0.0, 50.161740, 2, 0, 2), (50.161740, 120.0, 2, 0, 2)]
+    partition = field.interval_partition()
+    assert [iv[2:] for iv in partition] == [e[2:] for e in expected]
+    for interval, e in zip(partition, expected):
+        assert np.degrees(interval.lower) == pytest.approx(e[0], abs=5e-6)
+        assert np.degrees(interval.upper) == pytest.approx(e[1], abs=5e-6)
+        assert interval.n_components == interval.n_closed + interval.n_open
+    # C05 anchor: the display support [0.54, 120] deg lies inside the partition's range
+    assert np.degrees(partition[0].lower) <= 0.54 < np.degrees(partition[-1].upper)
+    maxima = [p for p in field.boundary_critical_points if p.kind == "maximum"]
+    assert len(maxima) == 2 and all(p.strict for p in maxima)  # one per crease-arc end, not plateaus
+    assert all(p.value == pytest.approx(partition[-1].upper, abs=1e-15) for p in maxima)
+    assert np.degrees(partition[-1].upper) == pytest.approx(120.0, abs=1e-9)
+
+
+def test_4_8_7_5_classifies_jacobian_at_the_blade(beta_field) -> None:
+    """``focusing`` on the partitioned slab: ``jacobian``, the vanishing-gradient pair at the 120 deg blade.
+
+    The 120 deg boundary pair carries the vanishing gradient (the crease is a
+    critical ridge: ``grad D_P = 0`` at the blade maxima), the 0 deg pair are
+    cone-point boundary extrema with finite gradient, and the closed-form
+    ``slab_axis`` onsets sit at exactly 0 (explore insight 11).
+    """
+    field = beta_field
+    label = classify(BETA, PATH_BETA, build_pose_density("random"), N_BETA, field=field)
+    assert label.mechanism == "jacobian"
+    assert label.jacobian_focusing
+    onsets = {(o.source, o.profile): o for o in field_onsets(field)}
+    blade = onsets[("boundary_extremum", "degenerate")]
+    assert np.degrees(blade.value) == pytest.approx(120.0, abs=1e-9)
+    assert blade.multiplicity == 2
+    axis = onsets[("slab_axis", "cone_point")]
+    assert axis.value == 0.0 and axis.multiplicity == 2
+    zero = onsets[("boundary_extremum", "boundary_onset")]
+    assert np.degrees(zero.value) == pytest.approx(0.0, abs=1e-9) and zero.multiplicity == 2
+    assert np.degrees(onsets[("slab_circle", "inverse_sqrt_divergence")].value) == pytest.approx(120.0, abs=1e-9)
 
 
 def test_3_5_6_7_at_lumice_n550_walks_the_full_stack() -> None:
@@ -186,10 +257,57 @@ def test_escape_hatch_two_interior_critical_points(fields) -> None:
 
 
 def test_escape_hatch_crease_inside(fields) -> None:
+    """A patched ``circle_interior_fraction`` on a grazing crease: the gate's contradiction form.
+
+    ``3-1-6``'s real crease sampling holds no interior arc (its crease is a
+    grazing boundary -- a 3.14-rad coincident arc, the tangency evidence), so
+    the patched fraction is caught by the first check: evidence contradicting
+    the premise.  One of the four fail-closed forms of the slab-crease gate;
+    the others are pinned synthetically below.
+    """
     field = fields[(3, 1, 6)]
     crease = dataclasses.replace(field.degenerate_fold, circle_interior_fraction=0.1)
     with pytest.raises(TopologyEscape, match="crease"):
         C.interval_partition(field.faces, N, (), crease, field.boundary, field.domain_topology, field.slab)
+
+
+# ---- the four fail-closed forms of the slab-crease gate (task dp-slab-partition-completion) ------------
+
+
+def _beta_partition_args(beta_field: DPField, crease) -> tuple:
+    """``interval_partition`` args of the beta field: its own everything, a hand-built disk topology, the given crease."""
+    return (beta_field.faces, beta_field.index, (), crease, beta_field.boundary, C.DomainTopology(20000, 1, 1), beta_field.slab)
+
+
+def test_slab_gate_escape_contradiction(beta_field) -> None:
+    """Form 0: a fraction claiming interior arcs the crease sampling does not hold."""
+    crease = dataclasses.replace(beta_field.degenerate_fold, crease_interior_arcs=0)
+    with pytest.raises(TopologyEscape, match="holds no interior arc"):
+        C.interval_partition(*_beta_partition_args(beta_field, crease), crystal=BETA)
+
+
+def test_slab_gate_escape_blade_not_carried(beta_field, fields) -> None:
+    """Form (a): a loop with no strict local maximum at the blade value (here a foreign, non-slab loop)."""
+    foreign = fields[(3, 5)].boundary  # maxima at 43.0 / 50.1 deg: nothing near the 120 deg blade
+    with pytest.raises(TopologyEscape, match="not carried by the boundary walk as a strict local maximum"):
+        C.interval_partition(
+            beta_field.faces, beta_field.index, (), beta_field.degenerate_fold, foreign,
+            C.DomainTopology(20000, 1, 1), beta_field.slab, crystal=BETA,
+        )
+
+
+def test_slab_gate_escape_tangency(beta_field) -> None:
+    """Form 2a: the crease hugging ``dU_P`` over an arc (a tangency or coincidence, not a crossing)."""
+    crease = dataclasses.replace(beta_field.degenerate_fold, crease_touching_arc=True)
+    with pytest.raises(TopologyEscape, match="non-transversal contact"):
+        C.interval_partition(*_beta_partition_args(beta_field, crease), crystal=BETA)
+
+
+def test_slab_gate_escape_closed_ridge(beta_field) -> None:
+    """Form 2b: an interior crease arc that never reaches ``dU_P`` (the level loops around it are not the walk's to count)."""
+    crease = dataclasses.replace(beta_field.degenerate_fold, crease_closed_ridge=True)
+    with pytest.raises(TopologyEscape, match="closed ridge"):
+        C.interval_partition(*_beta_partition_args(beta_field, crease), crystal=BETA)
 
 
 def test_escape_hatch_minimum_that_never_reaches_the_boundary_first(fields) -> None:
@@ -326,13 +444,14 @@ def test_escape_text_reports_the_audit_branches(fields) -> None:
 
 @pytest.mark.slow
 def test_partition_agrees_with_the_independent_grid() -> None:
-    """``scripts/verify_dp_field_intervals.py`` on the five fixtures, the A60-10 members, and 3-5-6-7's audited default lattice (~2.5 min on an M2 Max).
+    """``scripts/verify_dp_field_intervals.py`` on the fixtures, the A60-10 members, 3-5-6-7's audited default lattice, and the beta slab (~3 min on an M2 Max).
 
     The ``(3, 5, 6, 7)`` row at the default 20000 points runs the partition
     through the chart audit's correction; this script's own independent grid
     is the second chain of that audit, so its agreement here is the standing
     cross-check of the deliberately dual implementations (module docstring,
-    ``certificate.py``).
+    ``certificate.py``).  The beta row verifies the slab-crease gate's one
+    positive fixture end to end (task ``dp-slab-partition-completion``).
     """
     spec = importlib.util.spec_from_file_location("verify_dp_field_intervals", SCRIPT)
     module = importlib.util.module_from_spec(spec)
@@ -342,4 +461,6 @@ def test_partition_agrees_with_the_independent_grid() -> None:
     for faces, lattice_n in paths:
         for lower, upper, predicted, measured in module.verify(faces, N, 1201, lattice_n):
             assert predicted == measured, (faces, lower, upper)
+    for lower, upper, predicted, measured in module.verify(PATH_BETA, N_BETA, 1201, crystal=BETA):
+        assert predicted == measured, (PATH_BETA, lower, upper)
 
