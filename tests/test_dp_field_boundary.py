@@ -352,3 +352,32 @@ def test_closure_needs_two_steps_of_arc_and_credits_the_exact_return() -> None:
     assert np.array_equal(points[0], points[-1])
     assert _angle(points[1], -start) < 1e-15 and _angle(points[2], start) < 1e-15
     assert coincident == {"exit_snell_discriminant"}
+
+
+# ---- plateau extrema of a cyclic sequence: wrap merge and run lengths (task dp-slab-partition-completion) ----
+
+
+@pytest.mark.parametrize(
+    ("values", "expected"),
+    [
+        # wrapped 2-sample maximum plateau {8, 0} (seam merge) and an interior 2-sample maximum {4, 5};
+        # the 5s are not extrema
+        (np.array([7, 5, 3, 5, 7, 7, 5, 3, 7.0]), [(0, "maximum", 2), (4, "maximum", 2), (2, "minimum", 1), (7, "minimum", 1)]),
+        # wrapped 2-sample minimum plateau {4, 0}; the strict maxima at 1 and 3 keep run length 1
+        (np.array([5, 7, 3, 7, 5.0]), [(0, "minimum", 2), (1, "maximum", 1), (2, "minimum", 1), (3, "maximum", 1)]),
+        # interior 2-sample plateau maximum away from the seam
+        (np.array([3, 5, 5, 4.0]), [(0, "minimum", 1), (1, "maximum", 2)]),
+        # strict extrema only, no wrap merge (first and last values differ)
+        (np.array([1, 3, 2, 3, 0.0]), [(1, "maximum", 1), (3, "maximum", 1), (2, "minimum", 1), (4, "minimum", 1)]),
+    ],
+)
+def test_plateau_extrema_run_lengths(values: np.ndarray, expected: list[tuple[int, str, int]]) -> None:
+    """Run lengths across the seam: the merged run counts both tails, the last run stops at the seam."""
+    extrema, plateau = B._plateau_extrema(values)
+    assert sorted(extrema) == sorted(expected)
+    assert plateau is None
+
+
+def test_plateau_extrema_constant_loop() -> None:
+    """A constant loop is one plateau, no isolated extrema."""
+    assert B._plateau_extrema(np.array([4.2, 4.2, 4.2, 4.2])) == ([], 4.2)

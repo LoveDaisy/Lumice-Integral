@@ -273,3 +273,22 @@ def test_lattice_newton_finds_no_smooth_critical_point_on_slab_paths(faces) -> N
     assert F.lattice_newton_critical_points(faces, N, lattice_n=2000) == ()
     u = _random_valid(faces, 64, seed=5)
     np.testing.assert_allclose(np.linalg.norm(F.gradient_batch(u, faces, N, F.fold_screen(canonical_crystal(), faces).fold_matrix), axis=1), 2.0, atol=1e-9)
+
+
+# ---- circular runs of a boolean ring mask (task dp-slab-partition-completion) ----
+
+
+@pytest.mark.parametrize(
+    ("mask", "expected"),
+    [
+        (np.array([False, False, False]), []),
+        (np.array([True, True, True, True]), [(0, 4)]),
+        (np.array([False, True, False]), [(1, 1)]),
+        (np.array([True, False, True]), [(2, 2)]),  # one run across the seam {2, 0}
+        (np.array([True, True, False, True, True, True, False, False]), [(0, 2), (3, 3)]),
+        (np.array([True, True, False, False, True]), [(4, 3)]),  # wrapped run {4, 0, 1}
+    ],
+)
+def test_circular_runs(mask: np.ndarray, expected: list[tuple[int, int]]) -> None:
+    """Maximal circular True-runs as (start, length), wrap normalization included."""
+    assert F._circular_runs(mask) == expected

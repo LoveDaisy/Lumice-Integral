@@ -689,14 +689,21 @@ def _plateau_extrema(values: np.ndarray, atol: float = EXTREMUM_ATOL) -> tuple[l
         runs.append((i, float(values[i])))
     wrap_merged = len(runs) > 1 and abs(runs[0][1] - runs[-1][1]) <= atol
     if wrap_merged:
-        runs.pop()
+        popped_start = runs.pop()[0]
     r = len(runs)
     if r == 1:
         return [], runs[0][1]
     lengths = []
     for j in range(r):
-        end = runs[j + 1][0] if j + 1 < r else (runs[0][0] + n if wrap_merged else n)
+        if j + 1 < r:
+            end = runs[j + 1][0]
+        elif wrap_merged:
+            end = popped_start  # the merged first run owns [popped_start, n)
+        else:
+            end = n
         lengths.append(end - runs[j][0])
+    if wrap_merged:
+        lengths[0] += n - popped_start  # the popped tail run's samples belong to the merged first run
     out = []
     for j in range(r):
         prev_v, v, next_v = runs[j - 1][1], runs[j][1], runs[(j + 1) % r][1]

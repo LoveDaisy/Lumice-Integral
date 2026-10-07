@@ -43,7 +43,9 @@ from lumice_integral.s2_store import align_rotations, evaluate_fields
 
 FIXTURES: tuple[tuple[int, ...], ...] = ((3, 5), (1, 3), (3, 1, 6), (1, 3, 2), (3, 5, 6, 7, 3))
 # The beta scenario crystal of explore ``u-space-dissolution-probe`` at Lumice's ``n(550)``: the
-# slab-crease gate's one positive fixture (task ``dp-slab-partition-completion``).
+# slab-crease gate's one positive fixture (task ``dp-slab-partition-completion``).  Kept in literal
+# sync with ``tests/test_dp_field_certificate.py``'s ``BETA``/``N_BETA`` -- the slow test
+# ``test_partition_agrees_with_the_independent_grid`` asserts the two definitions agree.
 BETA_FIXTURES: tuple[tuple[int, ...], ...] = ((4, 8, 7, 5),)
 BETA_INDEX = 1.3110129
 SUN = np.array([0.0, 0.0, 1.0])

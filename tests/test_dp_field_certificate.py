@@ -21,7 +21,9 @@ FIXTURES = ((3, 5), (1, 3), (3, 1, 6), (1, 3, 2), (3, 5, 6, 7, 3), (1, 2, 1))
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "verify_dp_field_intervals.py"
 # The beta scenario crystal of explore ``u-space-dissolution-probe`` at Lumice's ``n(550)``: the one
 # fixture whose slab crease crosses ``U_P`` (22.76% of its sampling), the three-check gate's positive
-# case (task ``dp-slab-partition-completion``; values from the task's probe_partition.json).
+# case (task ``dp-slab-partition-completion``; values from the task's probe_partition.json).  Kept in
+# literal sync with ``scripts/verify_dp_field_intervals.py``'s ``beta_crystal()``/``BETA_INDEX`` --
+# ``test_partition_agrees_with_the_independent_grid`` asserts the two definitions agree.
 BETA = HexPrism.from_lumice(height=3.0, face_distance=[2.0, 1.0, 1.0, 2.0, 1.0, 1.0])
 PATH_BETA = (4, 8, 7, 5)
 N_BETA = 1.3110129
@@ -267,7 +269,7 @@ def test_escape_hatch_crease_inside(fields) -> None:
     """
     field = fields[(3, 1, 6)]
     crease = dataclasses.replace(field.degenerate_fold, circle_interior_fraction=0.1)
-    with pytest.raises(TopologyEscape, match="crease"):
+    with pytest.raises(TopologyEscape, match="holds no interior arc"):
         C.interval_partition(field.faces, N, (), crease, field.boundary, field.domain_topology, field.slab)
 
 
@@ -456,6 +458,8 @@ def test_partition_agrees_with_the_independent_grid() -> None:
     spec = importlib.util.spec_from_file_location("verify_dp_field_intervals", SCRIPT)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    assert module.BETA_INDEX == N_BETA
+    assert np.array_equal(module.beta_crystal().face_distance_ratios, BETA.face_distance_ratios)
     paths = [(faces, 20000) for faces in FIXTURES] + [(faces, lattice_n) for faces, (lattice_n, _) in A60_10.items()]
     paths.append(((3, 5, 6, 7), 20000))
     for faces, lattice_n in paths:
