@@ -1045,3 +1045,45 @@ Moved to [overview.md](overview.md) §3.
   bit-for-bit except two walker-machinery drifts ruled to the post-probe
   commits (details and numbers: [phase2.md](phase2.md) §4, appendix
   "Chapter-10 verdicts, face-distance d axis").
+- **2026-10-07**: the module C parity surface is a mechanical, rev-pinned
+  artifact set, not prose anchors (task `module-c-fixture-export`, after
+  scrum `wave3-pull-forward`'s explores 52.2/52.5/52.8/52.9; consumed by
+  Lumice's `schema3-geometry-port` A1–A5 line, wave-1/2 conventions).
+  `parity_export` grows seven fixture kinds (`dp_field_sample` /
+  `dp_field_topology` / `dp_field_kinks` / `focusing_classify` /
+  `wavelength_critical_table` / `chromatic_diagnose` / `chromatic_class`)
+  over 15 cells / 26 fixtures, 94 → 120 under the new manifest key
+  `module_c_cells`, every fixture carrying a self-describing `input`
+  (crystal `from_lumice` scalars, explicit n and wavelength) and
+  `serves`/`detects`; the explore prose anchors (the C05 slab partition
+  and blade 120.000000°, the C06 base-plane kink 149.246753°@550 with
+  dispersion +1.850629°, the C02 sweep spans with 131.030° inside the
+  700 nm span, the 115.945100219° closed-form kink, the 21.916126972°
+  boundary extremum, the 120.00000000000001° split) are pinned tests with
+  mutation self-checks. Decisions:
+  - anchors are recorded at Lumice's full n(λ): the explore values used a
+    truncated n = 1.3110129 (the 3-1-6 constant kink is 115.945100219° at
+    full n against 115.945094° recorded; a three-chain probe pins the
+    difference as caliber, not drift — a42), and the C02 red/blue ends are
+    700/400 nm, not the N_RED/N_BLUE indices;
+  - the crystal-parameter discrimination probe was redesigned on white-box
+    evidence: prism face normals are fd/h-independent, so topology / kinks /
+    classify are position-invariant by construction (measured δ ≤ 1e-13) and
+    the probe pins the position-sensitive faces instead — the β crystal's
+    A_P spans [9.3e-4, 5.08] where the regular column's corridor is
+    identically empty, and the rhombic panel's lit set (4 of 24 vs the
+    column's 12) and tints differ (the recorded "optics bypass" learning is
+    harmless-equivalent for prisms and real only for pyramid crystals, of
+    which this batch has none);
+  - export-side weights flow through the `path_weight` kernel
+    (`entry_and_power` / `weighted_power`), keeping the factor-authority
+    guard (a56) and the chromatic dependency-direction guard green with
+    module C itself untouched.
+  The pre-existing 94 fixtures hold under two independent assertions (the
+  task diff touches no fixture path; normalized re-export identical after
+  dropping `provenance.li_rev`). Verified serially at the closeout tree:
+  export + `--verify` 120/120 pass (13766 comparisons), the 94-invariance
+  check 94/94, fast tier 1465 passed / 1 skipped, slow tier 50 passed /
+  3 skipped (the task-13 store artifact absent)
+  ([analytic-parity-fixtures.md](analytic-parity-fixtures.md), "Module C
+  cells (wave 3)").
