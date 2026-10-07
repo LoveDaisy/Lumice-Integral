@@ -146,8 +146,9 @@ def test_anchor_pins_discriminate() -> None:
             _pin(label, got, expected, tolerance)
 
 
-# ------------------------------------------------------------------ slow: full export, determinism, anchors
-pytestmark_slow = pytest.mark.slow
+# ------------------------------------------------------------------ slow tier
+# the 6 fast tests above stay in the default tier; the 3 slow ones below are marked individually
+# (a module-level pytestmark would move all of them out of the fast suite)
 
 MC_CELL_NAMES = (
     "3-5__mc_field", "3-1-5__mc_field", "3-1-5__mc_kinks", "3-1-6__mc_field", "3-1-6__mc_kinks",

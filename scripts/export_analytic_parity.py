@@ -415,9 +415,10 @@ BAND_SUM_CELLS = (
 )
 
 
-# ------------------------------------------------------------------ module C cells (wave 3, docs/analytic-parity-fixtures.md section 6.3)
+# ------------------------------------------------------------------ module C cells (wave 3, docs/analytic-parity-fixtures.md "Module C cells (wave 3)")
 # The u-S^2 geometry layer of Lumice's schema3 port (Lumice scrum schema3-geometry-port, A1-A5):
-# every cell's `serves` names the A-lines it locks (conclusions.md section 7), `detects` the failure
+# every cell's `serves` names the A-lines it locks (Lumice schema2-redesign-discussion/conclusions.md,
+# "wave-1 核验与 Lumice 侧规划"), `detects` the failure
 # mode per fixture kind.  Indices are Lumice's n(lambda) (spectrum.dispersion); the first entry is the
 # cell's primary index.  The kink sweeps carry 400/550/700 nm (the C02/C06 calibers), the
 # wavelength-critical table 450/550/650 nm (task 42.4's caliber, docs/phase2.md section on wavelength
@@ -428,7 +429,7 @@ INDEX_SWEEP = (("400nm", N400), ("550nm", N550), ("700nm", N700))
 INDEX_TABLE = (("450nm", N450), ("550nm", N550), ("650nm", N650))
 # The dissolution probe's scenario crystals (scrum wave3-pull-forward, 659 config): the canonical
 # column (from_lumice(1.0)), the beta crystal and the user's rhombic plate at h/a = 1 (the
-# chromatic-module-c.md section 3 fixture crystal, HexPrism(a=1, h=1, face_distance=RHOMBIC)).
+# chromatic-module-c.md "Evidence" fixture crystal, HexPrism(a=1, h=1, face_distance=RHOMBIC)).
 BETA = prism_crystal(3.0, (2, 1, 1, 2, 1, 1))
 PRISM_H1 = prism_crystal(0.5)
 RHOMBIC_PLATE = prism_crystal(0.5, (1.5, 1, 1, 1.5, 1, 1))
@@ -572,7 +573,7 @@ MODULE_C_CELLS = (
         (),
         ("A4",),
         "the dark hole's rim: edge/blue/visible at delta = 2 asin sqrt(n_blue^2 - 1), shift 3.354 deg, spread 0 "
-        "(chromatic-module-c.md section 3; the crystal is that fixture's HexPrism() = from_lumice(0.5))",
+        "(chromatic-module-c.md \"Evidence\"; the crystal is that fixture's HexPrism() = from_lumice(0.5))",
     ),
     mc_cell(
         "mc_chromatic",
@@ -583,7 +584,7 @@ MODULE_C_CELLS = (
         ("A4",),
         "the C02 criterion layer: the kink edge is blue/visible while the exit gate is red/not visible (sigma "
         "108.7 deg against |Delta| 0.33 deg), the divergence from the issue's expected red gate recorded in "
-        "chromatic-module-c.md section 3",
+        "chromatic-module-c.md \"Evidence\"",
     ),
     mc_cell(
         "mc_chromatic_class",
@@ -593,7 +594,7 @@ MODULE_C_CELLS = (
         (),
         ("A4",),
         "the 120 deg parhelion tint on the rhombic plate (h/a = 1, sun 9 deg): tint blue, ratio 1.492, four lit "
-        "members of the twelve (the printed digits of chromatic-module-c.md section 3)",
+        "members of the twelve (the printed digits of chromatic-module-c.md \"Evidence\"),",
     ),
     mc_cell(
         "mc_chromatic_class",

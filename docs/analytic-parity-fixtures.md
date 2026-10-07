@@ -22,10 +22,13 @@ uv run python scripts/export_analytic_parity.py --output-dir artifacts/analytic-
 ```
 
 - One command writes every fixture of the matrix (§6), the edge cells
-  (§6.1), the band-sum cells (§6.2) and a `manifest.json`, 94 fixtures. On an
-  idle M2 Max (2026-09-29) the export and the read-back of the 93 before the
-  `n = 1.307` cell took 64 s together (the 94 took 7 min on 2026-09-30 with a
-  second export running beside it).
+  (§6.1), the band-sum cells (§6.2), the module C cells (§6.3) and a
+  `manifest.json`, 120 fixtures. On an idle M2 Max (2026-09-29) the export
+  and the read-back of the 93 before the `n = 1.307` cell took 64 s together
+  (the 94 took 7 min on 2026-09-30 with a second export running beside it);
+  from wave 3 on (2026-10-07) all 120 took 5:39 with the read-back, of which
+  the 26 module C fixtures took about 2:50 (the three plate-crystal class
+  cells at `1e5` poses each dominate).
   Before the four family-pinned cells were added, at load average 20–30, the
   export of 89 fixtures took 50 s and the read-back 153 s. The seven band-sum
   fixtures of that set took 38 s, because the statistical rank-0 cell replays a
@@ -78,7 +81,7 @@ there are no NaN or infinities. Every fixture has these fields:
 |---|---|
 | `format` | `"lumice-integral/analytic-parity"` |
 | `schema_version` | `1`. Wave 2 added optional fields (§3.1, §3.2) and renamed or removed none, so every v0 key keeps its bytes (checked against the 2026-09-29 export at `5ea2bde`). A fixture without the wave 2 fields comes from an older export, and its recipes are the v0 ones. A breaking change raises the version. |
-| `fixture_kind` | `evaluate_path`, `trace_fiber`, `seed_search` or `band_sum` |
+| `fixture_kind` | `evaluate_path`, `trace_fiber`, `seed_search`, `band_sum`, or the module C kinds of §6.3 (`dp_field_sample`, `dp_field_topology`, `dp_field_kinks`, `focusing_classify`, `wavelength_critical_table`, `chromatic_diagnose`, `chromatic_class`) |
 | `symmetry_semantics` | Always `"none"`. The input is one concrete face sequence and no symmetry reduction is involved (Lumice `doc/analytic-api.md` §3.3 rule 2; `docs/conventions.md` #21). |
 | `provenance.li_rev` | Full LI commit SHA of the export |
 | `provenance.li_tracked_tree_clean` | `false` if tracked files differed from that commit at export time. Such a fixture should not be copied into Lumice. |

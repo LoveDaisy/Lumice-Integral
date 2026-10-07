@@ -30,7 +30,7 @@ from __future__ import annotations
 import json
 import math
 import subprocess
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from functools import cached_property
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -2187,7 +2187,7 @@ class MCCell:
         unknown = set(self.kinds) - set(MC_KINDS)
         if unknown:
             raise ValueError(f"unknown module C fixture kinds {sorted(unknown)}")
-        if any(kind in self.kinds for kind in (MC_FIELD_SAMPLE_KIND, MC_FIELD_TOPOLOGY_KIND, MC_FOCUSING_KIND, MC_WAVELENGTH_KIND)) and not self.indices:
+        if any(kind in self.kinds for kind in (MC_FIELD_SAMPLE_KIND, MC_FIELD_TOPOLOGY_KIND, MC_FOCUSING_KIND, MC_WAVELENGTH_KIND, MC_FIELD_KINKS_KIND)) and not self.indices:
             raise ValueError(f"cell {self.label} needs at least one (label, n) index")
 
     @property
@@ -2211,8 +2211,9 @@ _MC_FIELD_CACHE: dict[tuple, Any] = {}
 
 
 def mc_field(crystal_spec: Mapping[str, Any], faces: Sequence[int], index: float, lattice_n: int = MC_LATTICE_N):
-    """One cached :class:`.dp_field.DPField` per (crystal, faces, index, lattice) — the exporters and
-    verifiers of a cell share a field so the read-back replays the same cached layers."""
+    """One cached :class:`.dp_field.DPField` per (crystal, faces, index, lattice) — the builders of
+    one cell's several kinds share the cached field; the verifiers rebuild explicitly and never
+    read the cache."""
     from .dp_field import DPField
 
     key = (json.dumps(_jsonable(crystal_spec), sort_keys=True), tuple(int(f) for f in faces), float(index), int(lattice_n))
@@ -2272,10 +2273,11 @@ def mc_point_observables(field, u: np.ndarray) -> dict[str, Any]:
     """Per sample point: ``D_P``, ``|grad D_P|``, the ``U_P`` gate margins, and the weights.
 
     ``D_P`` is display delta (the angle at the sun), radians, with no 180-minus conversion.  The
-    weights follow the twist-invariant convention of :data:`MC_PROBE_SUN`: ``A_P`` is
-    :func:`.geometry.entry_measure_batch` at any pose with ``R u = s_hat``, ``T_P`` the Fresnel path
-    factor :func:`.optics.fresnel_transmission_path_batch` and ``w = A_P T_P`` the one kernel
-    :func:`.path_weight.weighted_power` (observable separately before their product, conventions #18).
+    weights follow the twist-invariant convention of :data:`MC_PROBE_SUN`: conceptually ``w = A_P
+    T_P`` with ``A_P`` the entry measure and ``T_P`` the Fresnel path factor, both observed
+    separately before their product (conventions #18); as API fact the one kernel
+    :func:`.path_weight.entry_and_power` produces the two factors (bound to the same faces and
+    index) and :func:`.path_weight.weighted_power` the product.
     """
     from .camera import incident_direction_from_sun
     from .path_weight import entry_and_power, weighted_power
@@ -2481,6 +2483,7 @@ def build_mc_field_topology_fixture(cell: MCCell, provenance: Mapping[str, Any])
         "partition_counts": _tolerance(0.0, "exact: the component counts of every interval (n_components, n_closed, n_open)"),
         "partition_bounds": _tolerance(MC_TOPOLOGY_ATOL, "absolute, rad: " + MC_TOPOLOGY_BASIS),
         "critical_values": _tolerance(MC_TOPOLOGY_ATOL, "absolute, rad: " + MC_TOPOLOGY_BASIS),
+        "plateau_value": _tolerance(MC_TOPOLOGY_ATOL, "absolute, rad: " + MC_TOPOLOGY_BASIS + "; None-ness exact"),
         "critical_point_positions": _tolerance(MC_TOPOLOGY_ATOL, "absolute, per component: " + MC_TOPOLOGY_BASIS),
         "hessian_eigenvalues": _tolerance(1e-8, "relative: AD second derivatives of the same chain; a near-zero eigenvalue at a degenerate point is relative-noisy at 1e-9"),
         "corner_structure": _tolerance(0.0, "exact: corner count, margin signatures (margins/incoming/outgoing/tangent/transversal/coincident) and residual <= ZERO_MARGIN_ATOL"),
@@ -2533,7 +2536,10 @@ def _compare_mc_topology(check: Check, got: Mapping[str, Any], expected: Mapping
         check.expect((mine["kind"], mine["margin"], mine["corner"], mine["strict"]) == (reference["kind"], reference["margin"], reference["corner"], reference["strict"]), f"boundary critical {index}: structure differs")
         _close(check, f"boundary critical {index} position", mine["position"], reference["position"], tolerance["critical_point_positions"]["value"])
         _close(check, f"boundary critical {index} value", mine["value"], reference["value"], atol)
-    check.expect(mine_boundary["plateau_value"] == ref_boundary["plateau_value"], "plateau_value differs")
+    mine_plateau, ref_plateau = mine_boundary["plateau_value"], ref_boundary["plateau_value"]
+    check.expect((mine_plateau is None) == (ref_plateau is None), "plateau_value None-ness differs")
+    if ref_plateau is not None:
+        _close(check, "plateau_value", mine_plateau, ref_plateau, tolerance["plateau_value"]["value"])
     mine_fold, ref_fold = got["degenerate_fold"], expected["degenerate_fold"]
     check.expect((mine_fold is None) == (ref_fold is None), "degenerate_fold presence differs")
     if ref_fold is not None:
@@ -2599,7 +2605,7 @@ def mc_kink_curve_records(field) -> list[dict[str, Any]]:
 
 
 def build_mc_field_kinks_fixture(cell: MCCell, provenance: Mapping[str, Any]) -> dict[str, Any]:
-    field = mc_field(cell.crystal_spec, cell.faces, cell.primary_index[1])
+    mc_field(cell.crystal_spec, cell.faces, cell.primary_index[1])  # warm the field cache for the primary index
     fixture = _header(MC_FIELD_KINKS_KIND, provenance, _mc_cell_record(cell))
     fixture["input"] = {
         "crystal": dict(cell.crystal_spec),
@@ -2768,7 +2774,7 @@ def verify_mc_wavelength(fixture: Mapping[str, Any], name: str = "") -> Check:
 
 def _mc_feature_json(feature) -> dict[str, Any]:
     """A :class:`.chromatic.ChromaticFeature` verbatim (angles in radians; ``score`` is derived)."""
-    return {
+    record = {
         "kind": feature.kind,
         "source": feature.source,
         "color": feature.color,
@@ -2783,12 +2789,15 @@ def _mc_feature_json(feature) -> dict[str, Any]:
         "lit_fraction": float(feature.lit_fraction),
         "visible": bool(feature.visible),
     }
+    if set(record) != {f.name for f in fields(feature)}:
+        raise ValueError("ChromaticFeature fields drifted from _mc_feature_json; update the serializer")
+    return record
 
 
 def _mc_tint_json(tint) -> dict[str, Any] | None:
     if tint is None:
         return None
-    return {
+    record = {
         "energy_red": float(tint.energy_red),
         "energy_blue": float(tint.energy_blue),
         "ratio": _finite_or_none(tint.ratio),
@@ -2796,6 +2805,9 @@ def _mc_tint_json(tint) -> dict[str, Any] | None:
         "tir_fraction_blue": _finite_or_none(tint.tir_fraction_blue),
         "direction_dispersion": float(tint.direction_dispersion),
     }
+    if set(record) != {f.name for f in fields(tint)}:
+        raise ValueError("TintMetrics fields drifted from _mc_tint_json; update the serializer")
+    return record
 
 
 def mc_verdict_json(verdict) -> dict[str, Any]:
