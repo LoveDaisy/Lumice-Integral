@@ -115,6 +115,14 @@ JACOBIAN_FOCUSING_PROFILES = frozenset({"log_divergence", "inverse_sqrt_divergen
 # critical-point tolerance of dp_field.field is 1e-10 on Newton iterates; boundary points are located
 # by bisection along a piece to ~1e-12 rad, where a non-degenerate |grad D| is O(1)).
 BOUNDARY_GRADIENT_ATOL = 1e-6
+# |grad D_P| at an exit-TIR corner is mathematically unbounded (the exit chain's square root
+# vanishes there), so a numerically finite evaluation of it is floating-point luck: another
+# backend gets NaN or a wildly different magnitude, and usability is not bit-comparable.  Norms at
+# or above this bound are treated as divergent and reported as inf.  Probes on the module C cells
+# (docs/analytic-parity-fixtures.md): every legitimate onset / lattice norm <= ~1.2e2, the corner
+# evaluations >= 1.8e7 (measured on the reference-scale cells) — 1e6 leaves >= 1.3 orders of margin
+# above the largest legitimate norm and >= 1.3 orders below the smallest corner one.
+DIVERGENT_GRADIENT_NORM = 1e6
 # Samples of the slab circle u . n_M = 0 and of the U_P lattice.
 CIRCLE_SAMPLES = 7200
 LATTICE_N = 20000
@@ -130,7 +138,9 @@ class CriticalOnset:
     ``source`` names the critical datum (``"interior_minimum"``, ``"slab_axis"``,
     ``"slab_circle"``, ``"boundary_extremum"``, ``"corner"`` ...);
     ``gradient_norm`` is ``|grad_{S^2} D_P|`` at (or, for a cone point,
-    ``CONE_PROBE_RAD`` next to) the point; ``measure_limit`` is
+    ``CONE_PROBE_RAD`` next to) the point — ``inf`` at a boundary point where the
+    gradient is non-finite or divergent (``>= DIVERGENT_GRADIENT_NORM``, the
+    exit-TIR corner convention); ``measure_limit`` is
     ``2 pi / sqrt(det H)`` for a ``finite_jump`` (the limit of ``int dl /
     |grad D|``), ``None`` otherwise; ``multiplicity`` counts the critical
     points merged into this record (same value within ``EXTREMUM_ATOL``,
@@ -351,9 +361,11 @@ def field_onsets(field: DPField) -> tuple[CriticalOnset, ...]:
         norms = np.linalg.norm(field.gradient_batch(np.stack([b[0] for b in boundary])), axis=1)
         for (position, value, source), norm in zip(boundary, norms):
             finite = bool(np.isfinite(norm))
-            # a non-finite gradient is an exit-TIR end (|grad D| unbounded): not a vanishing one
+            # a non-finite or divergent (>= DIVERGENT_GRADIENT_NORM) gradient is an exit-TIR end
+            # (|grad D| unbounded there): not a vanishing one, and not bit-comparable either
             profile = "degenerate" if finite and norm <= BOUNDARY_GRADIENT_ATOL else "boundary_onset"
-            onsets.append(CriticalOnset(float(value), "boundary", source, profile, float(norm) if finite else float("inf")))
+            usable = finite and norm <= DIVERGENT_GRADIENT_NORM
+            onsets.append(CriticalOnset(float(value), "boundary", source, profile, float(norm) if usable else float("inf")))
     return _merged(onsets)
 
 

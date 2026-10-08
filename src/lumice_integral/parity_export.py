@@ -2111,7 +2111,9 @@ MC_GRADIENT_RTOL = 1e-6
 MC_GRADIENT_BASIS = (
     "AD of the same closed-form chain: a gradient norm near zero (a critical point, a cone axis probe at "
     "CONE_PROBE_RAD) is relative-noisy at the 1e-9 level and gradient_norm_range is a min/max over the "
-    "fixed 20000-point Fibonacci lattice; 1e-6 relative covers both"
+    "fixed 20000-point Fibonacci lattice; 1e-6 relative covers both.  An onset gradient that is non-finite "
+    "or divergent (>= focusing.DIVERGENT_GRADIENT_NORM, the exit-TIR corner convention: |grad D| is "
+    "unbounded there and a finite value is floating-point luck) is exported as null on both sides"
 )
 MC_MEDIAN_ATOL = 2e-3
 MC_MEDIAN_BASIS = (
@@ -2677,7 +2679,7 @@ def build_mc_focusing_fixture(cell: MCCell, provenance: Mapping[str, Any]) -> di
     fixture["tolerance"] = {
         "labels": _tolerance(0.0, "exact: mechanism, jacobian_focusing, dimension_collapse, halo_map_rank, confined_dimensions, family_pinned and every onset's (location, source, profile, jacobian_focusing, multiplicity)"),
         "onset_value_deg": _tolerance(MC_ONSET_DEG_ATOL, "absolute, deg: " + MC_ONSET_DEG_BASIS),
-        "onset_gradient_norm": _tolerance(MC_GRADIENT_RTOL, "relative (null for a non-finite norm, an exit-TIR end): " + MC_GRADIENT_BASIS),
+        "onset_gradient_norm": _tolerance(MC_GRADIENT_RTOL, "relative (null for a non-finite or divergent norm, an exit-TIR corner): " + MC_GRADIENT_BASIS),
         "measure_limit": _tolerance(1e-8, "relative: 2 pi / sqrt(det H) of the AD Hessian at a finite_jump onset"),
         "gradient_norm_range": _tolerance(MC_GRADIENT_RTOL, "relative: " + MC_GRADIENT_BASIS),
         "confinement_widths_deg": _tolerance(0.0, "exact: empty under the random density (the only density these cells export)"),
