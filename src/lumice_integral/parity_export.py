@@ -123,7 +123,10 @@ ARCLENGTH_BASIS = (
 
 # ------------------------------------------------------------------ crystal
 def prism_crystal(height: float, face_distance: Sequence[float] = (1.0,) * 6) -> dict[str, Any]:
-    """``LUMICE_ANALYTIC_Crystal`` of a Lumice prism (``HexPrism.from_lumice``); unused fields are zero."""
+    """``LUMICE_ANALYTIC_Crystal`` of a Lumice prism; unused fields are zero.
+
+    ``height`` is the Lumice ratio (prism height over the reference circumscribed diameter), a
+    conventional scalar; the instantiation scale is decided once, in :func:`build_crystal`."""
     return {
         "kind": "prism",
         "height": float(height),
@@ -151,7 +154,7 @@ def pyramid_crystal(
     lower_wedge_deg: float,
     face_distance: Sequence[float] = (1.0,) * 6,
 ) -> dict[str, Any]:
-    """``LUMICE_ANALYTIC_Crystal`` of a Lumice pyramid (``Pyramid.from_lumice`` with wedge angles)."""
+    """``LUMICE_ANALYTIC_Crystal`` of a Lumice pyramid (wedge angles); scalars as in :func:`prism_crystal`."""
     return {
         "kind": "pyramid",
         "height": float(prism_h),
@@ -164,10 +167,17 @@ def pyramid_crystal(
 
 
 def build_crystal(spec: Mapping[str, Any]) -> Polyhedron:
-    """The LI crystal of a fixture's ``crystal`` block (hexagon edge ``a = 1``, LI's scale)."""
+    """The LI crystal of a fixture's ``crystal`` block, at the engine's reference scale.
+
+    The block's scalars are Lumice ``shape`` quantities, ratios over the reference circumscribed
+    diameter; the crystal is instantiated with hexagon edge ``a = 0.5`` so that diameter is 1,
+    matching the engine's closed-form reference (Lumice ``geo3d_closedform`` builds its vertices
+    at ``0.5`` unit).  Area quantities (``a_p``, ``w``, tint energies) come out in units of the
+    reference circumscribed diameter squared; angles and structural outputs are scale-free.
+    """
     face_distance = tuple(float(f) for f in spec["face_distance"])
     if spec["kind"] == "prism":
-        return HexPrism.from_lumice(spec["height"], face_distance)
+        return HexPrism.from_lumice(spec["height"], face_distance, a=0.5)
     if spec["kind"] == "pyramid":
         return Pyramid.from_lumice(
             spec["height"],
@@ -176,6 +186,7 @@ def build_crystal(spec: Mapping[str, Any]) -> Polyhedron:
             face_distance=face_distance,
             upper_wedge_deg=spec["upper_wedge_deg"],
             lower_wedge_deg=spec["lower_wedge_deg"],
+            a=0.5,
         )
     raise ValueError(f"unknown crystal kind {spec['kind']!r}")
 
