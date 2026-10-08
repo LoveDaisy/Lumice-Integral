@@ -33,7 +33,7 @@ import subprocess
 from dataclasses import asdict, dataclass, field, fields
 from functools import cached_property
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, Sequence, TYPE_CHECKING
 
 import jax.numpy as jnp
 import numpy as np
@@ -59,6 +59,9 @@ from .optics import (
 from .provenance import git_commit, sha256_of
 from .s2_store import S2EventStore, StoreSeeds, build_event_store, event_rotations
 from .so3 import rotation_distances
+
+if TYPE_CHECKING:
+    from .dp_field import DPField
 
 FORMAT = "lumice-integral/analytic-parity"
 SCHEMA_VERSION = 1
@@ -123,7 +126,10 @@ ARCLENGTH_BASIS = (
 
 # ------------------------------------------------------------------ crystal
 def prism_crystal(height: float, face_distance: Sequence[float] = (1.0,) * 6) -> dict[str, Any]:
-    """``LUMICE_ANALYTIC_Crystal`` of a Lumice prism (``HexPrism.from_lumice``); unused fields are zero."""
+    """``LUMICE_ANALYTIC_Crystal`` of a Lumice prism; unused fields are zero.
+
+    ``height`` is the Lumice ratio (prism height over the reference circumscribed diameter), a
+    conventional scalar; the instantiation scale is decided once, in :func:`build_crystal`."""
     return {
         "kind": "prism",
         "height": float(height),
@@ -151,7 +157,7 @@ def pyramid_crystal(
     lower_wedge_deg: float,
     face_distance: Sequence[float] = (1.0,) * 6,
 ) -> dict[str, Any]:
-    """``LUMICE_ANALYTIC_Crystal`` of a Lumice pyramid (``Pyramid.from_lumice`` with wedge angles)."""
+    """``LUMICE_ANALYTIC_Crystal`` of a Lumice pyramid (wedge angles); scalars as in :func:`prism_crystal`."""
     return {
         "kind": "pyramid",
         "height": float(prism_h),
@@ -164,10 +170,17 @@ def pyramid_crystal(
 
 
 def build_crystal(spec: Mapping[str, Any]) -> Polyhedron:
-    """The LI crystal of a fixture's ``crystal`` block (hexagon edge ``a = 1``, LI's scale)."""
+    """The LI crystal of a fixture's ``crystal`` block, at the engine's reference scale.
+
+    The block's scalars are Lumice ``shape`` quantities, ratios over the reference circumscribed
+    diameter; the crystal is instantiated with hexagon edge ``a = 0.5`` so that diameter is 1,
+    matching the engine's closed-form reference (Lumice ``geo3d_closedform`` builds its vertices
+    at ``0.5`` unit).  Area quantities (``a_p``, ``w``, tint energies) come out in units of the
+    reference circumscribed diameter squared; angles and structural outputs are scale-free.
+    """
     face_distance = tuple(float(f) for f in spec["face_distance"])
     if spec["kind"] == "prism":
-        return HexPrism.from_lumice(spec["height"], face_distance)
+        return HexPrism.from_lumice(spec["height"], face_distance, a=0.5)
     if spec["kind"] == "pyramid":
         return Pyramid.from_lumice(
             spec["height"],
@@ -176,6 +189,7 @@ def build_crystal(spec: Mapping[str, Any]) -> Polyhedron:
             face_distance=face_distance,
             upper_wedge_deg=spec["upper_wedge_deg"],
             lower_wedge_deg=spec["lower_wedge_deg"],
+            a=0.5,
         )
     raise ValueError(f"unknown crystal kind {spec['kind']!r}")
 
@@ -2105,13 +2119,19 @@ MC_TOPOLOGY_BASIS = (
 MC_ONSET_DEG_ATOL = 1e-8
 MC_ONSET_DEG_BASIS = (
     "interior critical points are Newton iterates of the tangent gradient (|grad| <= 1e-10, dp_field.field) "
-    "and boundary extrema bisected to ~1e-12 rad; 1e-8 deg = 1.7e-10 rad leaves >= 1e2 room"
+    "and boundary extrema bisected to ~1e-12 rad; 1e-8 deg = 1.7e-10 rad leaves >= 1e2 room.  The ~1e-12 "
+    "claim holds for isolated extrema only: a near-degenerate pair of corners (values differing by more "
+    "than this tolerance yet within EXTREMUM_ATOL) is merged by focusing and the surviving member is each "
+    "backend's floating-point order, so the affected fixture's tolerance block widens its onset-value "
+    "tolerance to the merge tolerance itself; exactly degenerate symmetric pairs stay at this tolerance"
 )
 MC_GRADIENT_RTOL = 1e-6
 MC_GRADIENT_BASIS = (
     "AD of the same closed-form chain: a gradient norm near zero (a critical point, a cone axis probe at "
     "CONE_PROBE_RAD) is relative-noisy at the 1e-9 level and gradient_norm_range is a min/max over the "
-    "fixed 20000-point Fibonacci lattice; 1e-6 relative covers both"
+    "fixed 20000-point Fibonacci lattice; 1e-6 relative covers both.  An onset gradient that is non-finite "
+    "or divergent (>= focusing.DIVERGENT_GRADIENT_NORM, the exit-TIR corner convention: |grad D| is "
+    "unbounded there and a finite value is floating-point luck) is exported as null on both sides"
 )
 MC_MEDIAN_ATOL = 2e-3
 MC_MEDIAN_BASIS = (
@@ -2659,11 +2679,39 @@ def verify_mc_field_kinks(fixture: Mapping[str, Any], name: str = "") -> Check:
     return check
 
 
+def _mc_onset_value_tolerance(field: DPField) -> tuple[float, str]:
+    """The onset-value tolerance a focusing fixture of ``field`` needs: ``MC_ONSET_DEG_ATOL``, widened to
+    ``degrees(EXTREMUM_ATOL)`` when two corners of ``dU_P`` differ by more than ``MC_ONSET_DEG_ATOL``
+    (in radians) yet at most ``EXTREMUM_ATOL``.
+
+    Such a near-degenerate pair is merged by ``focusing._merged`` and the surviving member is each
+    backend's floating-point order, so the merged onset's value can shift by the pair's difference —
+    past the default tolerance, up to the merge tolerance itself (MC_ONSET_DEG_BASIS).  Pairs at or
+    below the default tolerance (exactly degenerate corners of a symmetric path, diffs ~1e-16 rad)
+    keep it: their merged value does not depend on the member.  Only corner-corner pairs are
+    considered: boundary_extremum merges are mirror images of one extremum, equal in value.
+    """
+    from .dp_field.boundary import EXTREMUM_ATOL
+
+    values = np.sort(np.asarray([corner.value for corner in field.corners], dtype=float))
+    diffs = np.diff(values) if values.size >= 2 else np.array([])
+    if diffs.size and bool(np.any((math.radians(MC_ONSET_DEG_ATOL) < diffs) & (diffs <= EXTREMUM_ATOL))):
+        return (
+            math.degrees(EXTREMUM_ATOL),
+            f"absolute, deg, widened from {MC_ONSET_DEG_ATOL:g}: two corners of this path differ by more "
+            f"than {MC_ONSET_DEG_ATOL:g} deg yet within EXTREMUM_ATOL, and the merge's surviving member is "
+            f"each backend's floating-point order: " + MC_ONSET_DEG_BASIS,
+        )
+    return MC_ONSET_DEG_ATOL, "absolute, deg: " + MC_ONSET_DEG_BASIS
+
+
 def build_mc_focusing_fixture(cell: MCCell, provenance: Mapping[str, Any]) -> dict[str, Any]:
     from .focusing import classify
 
     label_name, index = cell.primary_index
-    classification = classify(cell.crystal, cell.faces, _mc_haar_density(), index)
+    field = mc_field(cell.crystal_spec, cell.faces, index)
+    classification = classify(cell.crystal, cell.faces, _mc_haar_density(), index, field=field)
+    onset_value_atol, onset_value_basis = _mc_onset_value_tolerance(field)
     fixture = _header(MC_FOCUSING_KIND, provenance, _mc_cell_record(cell))
     fixture["input"] = {
         "crystal": dict(cell.crystal_spec),
@@ -2676,8 +2724,8 @@ def build_mc_focusing_fixture(cell: MCCell, provenance: Mapping[str, Any]) -> di
     fixture["expected"] = _mc_classification_json(classification)
     fixture["tolerance"] = {
         "labels": _tolerance(0.0, "exact: mechanism, jacobian_focusing, dimension_collapse, halo_map_rank, confined_dimensions, family_pinned and every onset's (location, source, profile, jacobian_focusing, multiplicity)"),
-        "onset_value_deg": _tolerance(MC_ONSET_DEG_ATOL, "absolute, deg: " + MC_ONSET_DEG_BASIS),
-        "onset_gradient_norm": _tolerance(MC_GRADIENT_RTOL, "relative (null for a non-finite norm, an exit-TIR end): " + MC_GRADIENT_BASIS),
+        "onset_value_deg": _tolerance(onset_value_atol, onset_value_basis),
+        "onset_gradient_norm": _tolerance(MC_GRADIENT_RTOL, "relative (null for a non-finite or divergent norm, an exit-TIR corner): " + MC_GRADIENT_BASIS),
         "measure_limit": _tolerance(1e-8, "relative: 2 pi / sqrt(det H) of the AD Hessian at a finite_jump onset"),
         "gradient_norm_range": _tolerance(MC_GRADIENT_RTOL, "relative: " + MC_GRADIENT_BASIS),
         "confinement_widths_deg": _tolerance(0.0, "exact: empty under the random density (the only density these cells export)"),
