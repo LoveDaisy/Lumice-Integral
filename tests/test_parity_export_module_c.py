@@ -100,6 +100,34 @@ def test_chromatic_verdicts_of_the_two_diagnose_cells() -> None:
     assert math.degrees(gate["spread"]) > 90.0 and abs(math.degrees(gate["shift"])) < 1.0  # sigma 108.7 vs Delta -0.33
 
 
+# ------------------------------------------------------------------ the caliber conventions (reference scale)
+def test_focusing_fixtures_follow_the_caliber_conventions() -> None:
+    """The reference-scale caliber (docs/analytic-parity-fixtures.md "Two conventions"): a divergent
+    exit-TIR corner gradient exports as null, and only a corner pair whose difference exceeds the
+    default tolerance yet stays within EXTREMUM_ATOL widens onset_value_deg — exactly degenerate
+    symmetric corners and pair-free paths keep the default."""
+    from lumice_integral.dp_field.boundary import EXTREMUM_ATOL
+
+    cells = (  # (cell, onset_value_deg tolerance, {corner value_deg: expected gradient_norm})
+        (pe.MCCell("mc_field", pe.prism_crystal(1.0), (3, 5), ("focusing_classify",), (("450nm", N450),)),
+         1e-8, {50.618816106: None}),
+        (pe.MCCell("mc_field", pe.prism_crystal(1.0), (3, 1, 5), ("focusing_classify",), (("550nm", N550),)),
+         math.degrees(EXTREMUM_ATOL), {43.545132152: 1.0, 151.667406123: None}),
+        (pe.MCCell("mc_field", BETA, (4, 8, 7, 5), ("focusing_classify",), (("550nm", N550),)),
+         1e-8, {50.161741671: 1.667618233325774}),
+    )
+    for cell, onset_tol, corner_grads in cells:
+        fixture = pe.build_mc_focusing_fixture(cell, pe.fixture_provenance())
+        assert fixture["tolerance"]["onset_value_deg"]["value"] == onset_tol, cell.name
+        corners = [o for o in fixture["expected"]["onsets"] if o["source"] == "corner"]
+        for value, gradient in corner_grads.items():
+            (onset,) = [o for o in corners if abs(o["value_deg"] - value) < 1e-6]
+            if gradient is None:
+                assert onset["gradient_norm"] is None, f"{cell.name}: corner {value} should be null (divergent)"
+            else:
+                assert onset["gradient_norm"] == pytest.approx(gradient, rel=1e-6), f"{cell.name}: corner {value}"
+
+
 # ------------------------------------------------------------------ the anchor table (values, degrees)
 def _constant_kink(fixture: dict, label: str) -> float:
     return math.degrees(next(curve["value_min"] for curve in fixture["expected"]["kinks"][label] if curve["spread"] is not None and curve["spread"] < 1e-12))
