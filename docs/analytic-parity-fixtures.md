@@ -595,8 +595,12 @@ that diverges on the curve) are each backend's floating-point luck.
 Measured 2026-10-08 on the 3-1-5 exit gate: LI's 344 walk points carry
 margin residuals within `±5.2e-16` (lit 269/344) while Lumice's own walk
 splits its own way (205/344), and the dispersion medians differ by
-`6.2e4`.  These fields are exported as `null` for every `gate_edge`
-feature on both sides and availability (null vs not) is compared exactly;
+`6.2e4`.  The same luck holds across platforms of one backend as well:
+PR #52's CI (2026-10-08) measured LI's own Linux x86 walk 4/344 away from
+the macOS side, the sign not printed by the CI message (the same family
+as Lumice scrum-649's 1e-8 cross-ISA red).  These fields are exported as
+`null` for every `gate_edge` feature on both sides and availability (null
+vs not) is compared exactly;
 a fixture that still carries a bare value is rejected with its own
 message.  `visible` keeps its bare value — its shift/spread clauses decide
 it (the 3-1-5 gate sits 34.6% below `EDGE_MIN_SHIFT_RAD` with spread

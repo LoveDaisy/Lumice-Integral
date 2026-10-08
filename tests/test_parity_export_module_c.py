@@ -134,21 +134,32 @@ def test_focusing_fixtures_follow_the_caliber_conventions() -> None:
 def test_chromatic_gate_features_follow_convention_3() -> None:
     """The singular-set caliber (docs/analytic-parity-fixtures.md "Three conventions", No. 3): a
     gate feature's lit_fraction / weight / direction_dispersion are evaluated on the gate's own
-    zero set -- per-backend rounding luck -- so they export as null with availability compared
-    exactly, and a fixture still carrying a bare value is rejected with its own message while the
-    still-pinned fields keep discriminating.  The pinned two-sided history is the red half of the
-    red-to-green proof: the old bare-value comparison would fail both fields."""
-    # the two backends' historical lit_fraction of the 3-1-5 exit gate (Lumice
-    # scrum-schema3-geometry-port/scrum.md section 6, 2026-10-08: each side's own walk lands on
-    # the gate's zero set and the rounding sign of the exit discriminant decides lit per point --
-    # LI 269/344, Lumice 205/344; the direction_dispersion medians differ by 6.2e4)
+    zero set -- per-backend and per-platform rounding luck -- so they export as null with
+    availability compared exactly, and a fixture still carrying a bare value is rejected with its
+    own message while the still-pinned fields keep discriminating.  The pinned two-sided history
+    is the red half of the red-to-green proof: the old bare-value comparison would fail both
+    fields; the live walk pins none of these singular-set values, that contract is the null
+    export and the rejection block below."""
+    # the two backends' historical lit_fraction of the 3-1-5 exit gate -- recorded observations
+    # (Lumice scrum-schema3-geometry-port/scrum.md section 6, 2026-10-08: each side's own walk
+    # lands on the gate's zero set and the rounding sign of the exit discriminant decides lit per
+    # point -- LI 269/344, Lumice 205/344; the direction_dispersion medians differ by 6.2e4);
+    # they serve the red half above, nothing live is compared against them
     li_lit, lumice_lit, dispersion_diff = 269 / 344, 205 / 344, 6.2e4
     assert abs(li_lit - lumice_lit) > pe.MC_FRACTION_ATOL  # 0.186 > 2e-2: the old convention goes red
     assert dispersion_diff > pe.MC_MEDIAN_ATOL  # 6.2e4 >> 2e-3: same for the dispersion median
-    # today's LI computes one of the two pinned sides (the diagnose chain is deterministic; +-2
-    # walk points of room for arithmetic-order noise across platforms)
+    # the live walk's singular-set values are pinned nowhere.  Third landing of the same coin:
+    # PR #52 CI 2026-10-08 -- the same LI chain on Linux x86 came out 4/344 away from the macOS
+    # side (the CI message prints no sign), the same rounding luck cross-ISA as cross-backend
+    # (Lumice scrum-649's 1e-8 cross-ISA red family): any finite band on lit_fraction asserts on
+    # luck, and direction_dispersion's median is taken over whichever half the signs light up.
+    # What survives is platform-independent: the gate feature exists (discrete structure), and
+    # weight -- the median of A.T over walk points pinned to the zero set |residual| <= 5.2e-16,
+    # where the exit transmittance dies as sqrt(residual) <= 2.3e-8 per point (measured [0,
+    # 1.3e-8], the in-domain median ~2.5e-2) -- moves only within its ~1e-8 class under rounding
+    # luck and cannot cross the 1e-7 bound (~4x headroom, derived not fitted)
     live = next(f for f in C.diagnose(cell_3_1_5_chromatic().crystal, (3, 1, 5), lattice_n=pe.MC_LATTICE_N).features if f.kind == "gate_edge")
-    assert abs(live.lit_fraction - li_lit) <= 2 / 344 and live.weight < 1e-7 and live.direction_dispersion > 1e4
+    assert live.weight < 1e-7
 
     fixture = pe.build_mc_chromatic_fixture(cell_3_1_5_chromatic(), pe.fixture_provenance())
     gate = next(f for f in fixture["expected"]["features"] if f["kind"] == "gate_edge")

@@ -412,7 +412,9 @@ fixture 保持 `1e-8` deg。（3）**gate 自身零集上求值的字段**：`ch
 `T_exit`，`~1e-8`，域内中位 `~2.5e-2`）与 `direction_dispersion`（在曲线上发散的
 `dD_P/dn` 的有限幸存子集中位）都是各后端自己的浮点运气。2026-10-08 在 3-1-5 出射门
 实测：LI 的 344 个 walk 点 margin 残差在 `±5.2e-16` 内（lit 269/344），Lumice 自己的
-walk 另掷一路（205/344），色散中位差 `6.2e4`。这些字段对所有 `gate_edge` 特征两侧一律
+walk 另掷一路（205/344），色散中位差 `6.2e4`。同一运气在同一后端跨平台（ISA）同样成立：
+PR #52 CI（2026-10-08）实测 LI 自身的 Linux x86 walk 距 macOS 侧 4/344（CI 消息不打印
+符号；与 Lumice scrum-649 的 1e-8 跨 ISA 红同族）。这些字段对所有 `gate_edge` 特征两侧一律
 导出 `null`，可用性（null 与否）精确比较；仍携带裸值的 fixture 以独立消息拒绝。
 `visible` 保留裸值——其 shift/spread 条款决定判定（3-1-5 gate 低于
 `EDGE_MIN_SHIFT_RAD` 达 34.6%、spread `≫ |shift|`），其 lit 输入不钉。`edge`（权重
