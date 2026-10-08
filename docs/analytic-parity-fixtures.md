@@ -96,7 +96,7 @@ there are no NaN or infinities. Every fixture has these fields:
 
 | Field | Meaning |
 |---|---|
-| `crystal` | The `LUMICE_ANALYTIC_Crystal` scalars, field for field: `kind` (`"prism"` / `"pyramid"`), `height` (prism height or the pyramid's prism band `prism_h`, in units of the reference circumscribed diameter), `face_distance[6]`, `upper_h`, `lower_h`, `upper_wedge_deg`, `lower_wedge_deg`. Fields not used by the kind are `0.0`. Semantics are Lumice `doc/configuration.md` §prism / §pyramid. LI builds `HexPrism.from_lumice(height, face_distance)` / `Pyramid.from_lumice(height, upper_h, lower_h, face_distance=..., upper_wedge_deg=..., lower_wedge_deg=...)` with hexagon edge `a = 1`. Every output below is scale-free. |
+| `crystal` | The `LUMICE_ANALYTIC_Crystal` scalars, field for field: `kind` (`"prism"` / `"pyramid"`), `height` (prism height or the pyramid's prism band `prism_h`, in units of the reference circumscribed diameter), `face_distance[6]`, `upper_h`, `lower_h`, `upper_wedge_deg`, `lower_wedge_deg`. Fields not used by the kind are `0.0`. Semantics are Lumice `doc/configuration.md` §prism / §pyramid. LI builds `HexPrism.from_lumice(height, face_distance, a = 0.5)` / `Pyramid.from_lumice(height, upper_h, lower_h, face_distance=..., upper_wedge_deg=..., lower_wedge_deg=..., a = 0.5)` — hexagon edge `a = 0.5`, so the circumscribed diameter is 1, the engine's closed-form reference scale (`geo3d_closedform` builds its vertices at `0.5` unit; the parity consumer instantiates the same reference). Angles and structural outputs are scale-free; area quantities (`a_p`, `w`, the tint energies and chromatic weights) are in units of the reference circumscribed diameter squared and are only comparable at this scale. |
 | `faces` | The concrete face sequence in Lumice face numbers (entry, internal reflections, exit) |
 | `refractive_index` | The ice index of the call |
 | `incident_direction` | World propagation direction of the sunlight, sun → crystal (`s = -ŝ`) |
@@ -567,6 +567,25 @@ gradient quantities `1e-6` relative; the sampled medians of
 `chromatic_diagnose` `2e-3` rad; `a_p`/`t_p`/`w` relative `1e-10`; the
 plate-class tint is statistical (`5e-2`; LI's sample is a numpy PCG64
 stream, its split-half σ of the ratio is ≤ 3e-3 at 1e5 poses).
+
+Two conventions pin the two spots where a value is not reproducible across
+backends at the printed precision.  (1) *Divergent corner gradients*: at an
+exit-TIR corner `|grad D_P|` is mathematically unbounded; a numerically
+finite evaluation of it is floating-point luck (another backend gets NaN or
+a different magnitude).  An onset gradient that is non-finite or at or above
+`focusing.DIVERGENT_GRADIENT_NORM` (`1e6`; every legitimate onset/lattice
+norm is `≤ ~1.2e2`, the corner evaluations are `≥ 1.8e7`, measured on the
+reference-scale cells) is exported as `null` on both sides, and usability
+(null vs not) is compared exactly.  (2)
+*Near-degenerate corner pairs*: two corners whose values differ by more
+than the default `1e-8` deg tolerance yet within `EXTREMUM_ATOL` are merged
+by `focusing`, and which member survives is each backend's floating-point
+order — the merged onset value can shift by the pair's difference, up to the
+merge tolerance itself.  A focusing fixture whose path has such a pair
+carries `onset_value_deg` widened to `degrees(EXTREMUM_ATOL)` ≈ `5.73e-6`
+deg in its tolerance block, with the mechanism in the basis; exactly
+degenerate symmetric pairs (diffs at machine epsilon) and every other
+fixture keep `1e-8` deg.
 
 **The cells** (15 cells, 26 fixtures; `serves` names Lumice's A-lines,
 `schema2-redesign-discussion/conclusions.md` §7: A1 field layer, A2

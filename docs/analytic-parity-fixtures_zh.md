@@ -67,7 +67,7 @@ JSON 为 UTF-8，键排序。浮点写成能往返回同一个 float64 的最短
 
 | 字段 | 含义 |
 |---|---|
-| `crystal` | 与 `LUMICE_ANALYTIC_Crystal` 逐字段对应：`kind`（`"prism"` / `"pyramid"`）、`height`（柱高，或锥晶的棱柱段 `prism_h`，以参考外接圆直径为单位）、`face_distance[6]`、`upper_h`、`lower_h`、`upper_wedge_deg`、`lower_wedge_deg`；该种类不用的字段为 `0.0`。语义见 Lumice `doc/configuration.md` §prism / §pyramid。LI 用 `HexPrism.from_lumice(height, face_distance)` / `Pyramid.from_lumice(height, upper_h, lower_h, face_distance=..., upper_wedge_deg=..., lower_wedge_deg=...)` 构造，六边形边长 `a = 1`；下面所有输出都与尺度无关。 |
+| `crystal` | 与 `LUMICE_ANALYTIC_Crystal` 逐字段对应：`kind`（`"prism"` / `"pyramid"`）、`height`（柱高，或锥晶的棱柱段 `prism_h`，以参考外接圆直径为单位）、`face_distance[6]`、`upper_h`、`lower_h`、`upper_wedge_deg`、`lower_wedge_deg`；该种类不用的字段为 `0.0`。语义见 Lumice `doc/configuration.md` §prism / §pyramid。LI 用 `HexPrism.from_lumice(height, face_distance, a = 0.5)` / `Pyramid.from_lumice(height, upper_h, lower_h, face_distance=..., upper_wedge_deg=..., lower_wedge_deg=..., a = 0.5)` 构造——六边形边长 `a = 0.5`，外接圆直径为 1，即引擎闭式参考尺度（`geo3d_closedform` 顶点取 `0.5` unit；parity 消费端实例化的同一参考尺度）。角度与结构量与尺度无关；面积类量（`a_p`、`w`、tint 能量与 chromatic weight）以参考外接圆直径为单位，只有在该尺度下才可比。 |
 | `faces` | Lumice 面编号的具体面序列（入射面、各内反射面、出射面） |
 | `refractive_index` | 本次调用的冰折射率 |
 | `incident_direction` | 世界系太阳光传播方向，太阳 → 晶体（`s = -ŝ`） |
@@ -397,6 +397,16 @@ fixture。各格携带溶解探针（scrum `wave3-pull-forward`）钉下的锚�
 特征值相对 `1e-8`；onset 值 `1e-8` deg；梯度类量相对 `1e-6`；`chromatic_diagnose` 的采样中位数 `2e-3`
 rad；`a_p`/`t_p`/`w` 相对 `1e-10`；板晶 class 的 tint 是统计性的（`5e-2`；LI 的样本是 numpy PCG64 流，
 `1e5` 姿态下 ratio 的对半分裂 σ ≤ 3e-3）。
+
+两条约定钉住数值在打印精度下不可跨后端复现的两处。（1）**发散角点梯度**：exit-TIR 角点处
+`|grad D_P|` 数学上无界；数值上算出的有限值是浮点运气（另一个后端得到 NaN 或不同量级）。非有限或达到
+/超过 `focusing.DIVERGENT_GRADIENT_NORM`（`1e6`；合法 onset / lattice 梯度 `≤ ~1.2e2`，角点求值
+`≥ 1.8e7`，参考尺度格位实测）的 onset 梯度两侧一律导出为 `null`，可用性（null 与否）按精确比较。
+（2）**近简并角点对**：两个角点值相差超过默认 `1e-8` deg 容差、又在 `EXTREMUM_ATOL` 内时被 `focusing`
+合并，保留哪个成员是各后端自己的浮点序——合并后的 onset 值可能随成员选择偏移角点对的差值，上限即合并容差
+本身。路径带这种角点对的 focusing fixture，其容差块的 `onset_value_deg` 放宽为
+`degrees(EXTREMUM_ATOL)` ≈ `5.73e-6` deg，basis 写明机制；逐位相等的对称角点组（差值在机器精度）与其余
+fixture 保持 `1e-8` deg。
 
 **格位表**（15 格 26 文件；`serves` 用 Lumice 的 A 线命名，`schema2-redesign-discussion/conclusions.md`
 §7：A1 场层、A2 partition/escape、A3 边界行走 + kink、A4 focusing/chromatic）：
