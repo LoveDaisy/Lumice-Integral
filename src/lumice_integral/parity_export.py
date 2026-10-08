@@ -2116,7 +2116,11 @@ MC_TOPOLOGY_BASIS = (
 MC_ONSET_DEG_ATOL = 1e-8
 MC_ONSET_DEG_BASIS = (
     "interior critical points are Newton iterates of the tangent gradient (|grad| <= 1e-10, dp_field.field) "
-    "and boundary extrema bisected to ~1e-12 rad; 1e-8 deg = 1.7e-10 rad leaves >= 1e2 room"
+    "and boundary extrema bisected to ~1e-12 rad; 1e-8 deg = 1.7e-10 rad leaves >= 1e2 room.  The ~1e-12 "
+    "claim holds for isolated extrema only: a near-degenerate pair of corners (values differing by more "
+    "than this tolerance yet within EXTREMUM_ATOL) is merged by focusing and the surviving member is each "
+    "backend's floating-point order, so the affected fixture's tolerance block widens its onset-value "
+    "tolerance to the merge tolerance itself; exactly degenerate symmetric pairs stay at this tolerance"
 )
 MC_GRADIENT_RTOL = 1e-6
 MC_GRADIENT_BASIS = (
@@ -2672,11 +2676,39 @@ def verify_mc_field_kinks(fixture: Mapping[str, Any], name: str = "") -> Check:
     return check
 
 
+def _mc_onset_value_tolerance(field) -> tuple[float, str]:
+    """The onset-value tolerance a focusing fixture of ``field`` needs: ``MC_ONSET_DEG_ATOL``, widened to
+    ``degrees(EXTREMUM_ATOL)`` when two corners of ``dU_P`` differ by more than ``MC_ONSET_DEG_ATOL``
+    (in radians) yet at most ``EXTREMUM_ATOL``.
+
+    Such a near-degenerate pair is merged by ``focusing._merged`` and the surviving member is each
+    backend's floating-point order, so the merged onset's value can shift by the pair's difference —
+    past the default tolerance, up to the merge tolerance itself (MC_ONSET_DEG_BASIS).  Pairs at or
+    below the default tolerance (exactly degenerate corners of a symmetric path, diffs ~1e-16 rad)
+    keep it: their merged value does not depend on the member.  Only corner-corner pairs are
+    considered: boundary_extremum merges are mirror images of one extremum, equal in value.
+    """
+    from .dp_field.boundary import EXTREMUM_ATOL
+
+    values = np.sort(np.asarray([corner.value for corner in field.corners], dtype=float))
+    diffs = np.diff(values) if values.size >= 2 else np.array([])
+    if diffs.size and bool(np.any((math.radians(MC_ONSET_DEG_ATOL) < diffs) & (diffs <= EXTREMUM_ATOL))):
+        return (
+            math.degrees(EXTREMUM_ATOL),
+            f"absolute, deg, widened from {MC_ONSET_DEG_ATOL:g}: two corners of this path differ by more "
+            f"than {MC_ONSET_DEG_ATOL:g} deg yet within EXTREMUM_ATOL, and the merge's surviving member is "
+            f"each backend's floating-point order: " + MC_ONSET_DEG_BASIS,
+        )
+    return MC_ONSET_DEG_ATOL, "absolute, deg: " + MC_ONSET_DEG_BASIS
+
+
 def build_mc_focusing_fixture(cell: MCCell, provenance: Mapping[str, Any]) -> dict[str, Any]:
     from .focusing import classify
 
     label_name, index = cell.primary_index
-    classification = classify(cell.crystal, cell.faces, _mc_haar_density(), index)
+    field = mc_field(cell.crystal_spec, cell.faces, index)
+    classification = classify(cell.crystal, cell.faces, _mc_haar_density(), index, field=field)
+    onset_value_atol, onset_value_basis = _mc_onset_value_tolerance(field)
     fixture = _header(MC_FOCUSING_KIND, provenance, _mc_cell_record(cell))
     fixture["input"] = {
         "crystal": dict(cell.crystal_spec),
@@ -2689,7 +2721,7 @@ def build_mc_focusing_fixture(cell: MCCell, provenance: Mapping[str, Any]) -> di
     fixture["expected"] = _mc_classification_json(classification)
     fixture["tolerance"] = {
         "labels": _tolerance(0.0, "exact: mechanism, jacobian_focusing, dimension_collapse, halo_map_rank, confined_dimensions, family_pinned and every onset's (location, source, profile, jacobian_focusing, multiplicity)"),
-        "onset_value_deg": _tolerance(MC_ONSET_DEG_ATOL, "absolute, deg: " + MC_ONSET_DEG_BASIS),
+        "onset_value_deg": _tolerance(onset_value_atol, onset_value_basis),
         "onset_gradient_norm": _tolerance(MC_GRADIENT_RTOL, "relative (null for a non-finite or divergent norm, an exit-TIR corner): " + MC_GRADIENT_BASIS),
         "measure_limit": _tolerance(1e-8, "relative: 2 pi / sqrt(det H) of the AD Hessian at a finite_jump onset"),
         "gradient_norm_range": _tolerance(MC_GRADIENT_RTOL, "relative: " + MC_GRADIENT_BASIS),
