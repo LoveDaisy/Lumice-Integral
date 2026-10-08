@@ -46,12 +46,14 @@ def test_dumps_is_canonical() -> None:
 
 
 def test_prism_block_builds_the_canonical_column() -> None:
-    assert np.array_equal(pe.build_crystal(PRISM).vertices, canonical_crystal().vertices)
+    # the parity crystal is the canonical column at the engine reference scale (circumscribed diameter 1,
+    # i.e. exactly half of canonical_crystal's own a=1 instantiation)
+    assert np.array_equal(pe.build_crystal(PRISM).vertices, 0.5 * canonical_crystal().vertices)
     assert PRISM["upper_h"] == PRISM["lower_h"] == PRISM["upper_wedge_deg"] == PRISM["lower_wedge_deg"] == 0.0
 
 
 def test_pyramid_block_is_the_miller_pyramid_through_its_wedge_angles() -> None:
-    by_miller = Pyramid.from_lumice(0.5, 0.25, 0.6, (1, 0, 1), (2, 0, 3), face_distance=(1, 1.1, 0.9, 1, 1.2, 0.95))
+    by_miller = Pyramid.from_lumice(0.5, 0.25, 0.6, (1, 0, 1), (2, 0, 3), face_distance=(1, 1.1, 0.9, 1, 1.2, 0.95), a=0.5)
     spec = pe.pyramid_crystal(
         0.5, 0.25, 0.6, pe.miller_wedge_deg((1, 0, 1)), pe.miller_wedge_deg((2, 0, 3)), (1, 1.1, 0.9, 1, 1.2, 0.95)
     )
@@ -467,8 +469,9 @@ def test_family_pinned_cells_put_their_whole_sigma_zero_family_on_one_deviation(
 def test_non_canonical_index_cell_lights_the_grazing_slab_spot(tmp_path: Path) -> None:
     """``1-3-4-2__band_sum_plate_n1.307`` (task entry-measure-exit-gate-index): the only fixture at n != 1.31.  Its
     internal ray sits between the critical cones of 1.307 and 1.31, so the entry measure's exit gate decides the
-    spot.  With the gate at the caller's index the streak at azimuth 120 deg is lit (centre ~8.6e-4, K = 132);
-    with the gate at the package index 1.31 (before the fix) the centre was 4.8e-10 from 18 non-grazing events."""
+    spot.  With the gate at the caller's index the streak at azimuth 120 deg is lit (centre ~2.1e-4 at the engine
+    reference scale, a quarter of the a=1 export's 8.6e-4; K = 132); with the gate at the package index 1.31
+    (before the fix) the centre was ~1.2e-10 from 18 non-grazing events."""
     script = _export_script()
     (cell,) = [cell for cell in script.BAND_SUM_CELLS if cell.name == "1-3-4-2__band_sum_plate_n1.307"]
     assert cell.scene.refractive_index == 1.307
@@ -477,7 +480,7 @@ def test_non_canonical_index_cell_lights_the_grazing_slab_spot(tmp_path: Path) -
     assert fixture["input"]["refractive_index"] == 1.307
     pixels = {tuple(p["label"]): p for p in fixture["expected"]["pixels"]}
     for label in ((0, 4), (1, 4), (2, 4), (3, 4), (4, 4)):
-        assert pixels[label]["status"] == "ok" and pixels[label]["value"] > 5e-5 and pixels[label]["K_eff"] > 20.0, label
+        assert pixels[label]["status"] == "ok" and pixels[label]["value"] > 1.25e-5 and pixels[label]["K_eff"] > 20.0, label
     assert pixels[(2, 3)]["K"] == 0 and pixels[(2, 3)]["value"] == 0.0  # the empty band beside the streak
     (check,) = pe.verify_directory(tmp_path)
     assert not check.failures, check.failures
