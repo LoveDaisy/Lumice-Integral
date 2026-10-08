@@ -364,7 +364,7 @@ def field_onsets(field: DPField) -> tuple[CriticalOnset, ...]:
             # a non-finite or divergent (>= DIVERGENT_GRADIENT_NORM) gradient is an exit-TIR end
             # (|grad D| unbounded there): not a vanishing one, and not bit-comparable either
             profile = "degenerate" if finite and norm <= BOUNDARY_GRADIENT_ATOL else "boundary_onset"
-            usable = finite and norm <= DIVERGENT_GRADIENT_NORM
+            usable = finite and norm < DIVERGENT_GRADIENT_NORM
             onsets.append(CriticalOnset(float(value), "boundary", source, profile, float(norm) if usable else float("inf")))
     return _merged(onsets)
 

@@ -167,16 +167,31 @@ def test_field_onsets_reports_divergent_corner_gradients_as_inf() -> None:
         corners = (
             SimpleNamespace(position=np.array([1.0, 0.0, 0.0]), value=0.5),
             SimpleNamespace(position=np.array([0.0, 1.0, 0.0]), value=1.5),
+            SimpleNamespace(position=np.array([0.0, 0.0, 1.0]), value=2.5),
         )
 
         @staticmethod
         def gradient_batch(u):
             lucky = 30.0 * focusing.DIVERGENT_GRADIENT_NORM  # a finite value, floating-point luck
-            return np.stack([np.full(3, lucky / np.sqrt(3.0)), np.array([1.0, 0.0, 0.0])])
+            return np.stack([
+                np.full(3, lucky / np.sqrt(3.0)),
+                np.array([1.0, 0.0, 0.0]),
+                np.array([focusing.DIVERGENT_GRADIENT_NORM, 0.0, 0.0]),  # exactly at the bound: divergent (>=)
+            ])
 
-    (lucky, finite) = sorted(focusing.field_onsets(_Field()), key=lambda o: o.value)
+    (lucky, finite, at_bound) = sorted(focusing.field_onsets(_Field()), key=lambda o: o.value)
     assert lucky.source == "corner" and lucky.gradient_norm == math.inf and lucky.profile == "boundary_onset"
+    assert at_bound.source == "corner" and at_bound.gradient_norm == math.inf
     assert finite.source == "corner" and finite.gradient_norm == 1.0
+
+
+def test_extremum_atol_tracks_the_dp_field_boundary_constant() -> None:
+    """The near-degenerate-corner tolerance widening (``parity_export._mc_onset_value_tolerance``) is
+    calibrated on ``dp_field.boundary.EXTREMUM_ATOL`` and stays valid only while ``focusing._merged``
+    merges with the same constant; a local redefinition on either side must turn this red."""
+    from lumice_integral.dp_field.boundary import EXTREMUM_ATOL
+
+    assert focusing.EXTREMUM_ATOL is EXTREMUM_ATOL
 
 
 def test_wavelength_critical_table_regresses_the_explore_authority() -> None:

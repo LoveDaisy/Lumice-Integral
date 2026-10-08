@@ -33,7 +33,7 @@ import subprocess
 from dataclasses import asdict, dataclass, field, fields
 from functools import cached_property
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, Sequence, TYPE_CHECKING
 
 import jax.numpy as jnp
 import numpy as np
@@ -59,6 +59,9 @@ from .optics import (
 from .provenance import git_commit, sha256_of
 from .s2_store import S2EventStore, StoreSeeds, build_event_store, event_rotations
 from .so3 import rotation_distances
+
+if TYPE_CHECKING:
+    from .dp_field import DPField
 
 FORMAT = "lumice-integral/analytic-parity"
 SCHEMA_VERSION = 1
@@ -2676,7 +2679,7 @@ def verify_mc_field_kinks(fixture: Mapping[str, Any], name: str = "") -> Check:
     return check
 
 
-def _mc_onset_value_tolerance(field) -> tuple[float, str]:
+def _mc_onset_value_tolerance(field: DPField) -> tuple[float, str]:
     """The onset-value tolerance a focusing fixture of ``field`` needs: ``MC_ONSET_DEG_ATOL``, widened to
     ``degrees(EXTREMUM_ATOL)`` when two corners of ``dU_P`` differ by more than ``MC_ONSET_DEG_ATOL``
     (in radians) yet at most ``EXTREMUM_ATOL``.
