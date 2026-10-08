@@ -10,6 +10,7 @@ SUMMARY's prose anchors as regression assertions, at the full Lumice n(lambda) c
 
 from __future__ import annotations
 
+import copy
 import json
 import math
 import os
@@ -98,6 +99,8 @@ def test_chromatic_verdicts_of_the_two_diagnose_cells() -> None:
     assert abs(math.degrees(kink["shift"]) - 7.325) <= 5e-4 and abs(math.degrees(kink["spread"]) - 4.878) <= 5e-4
     assert gate["kind"] == "gate_edge" and (gate["color"], gate["visible"]) == ("red", False)
     assert math.degrees(gate["spread"]) > 90.0 and abs(math.degrees(gate["shift"])) < 1.0  # sigma 108.7 vs Delta -0.33
+    assert all(gate[key] is None for key in pe.MC_CONVENTION_3_FIELDS)  # convention 3: singular-set fields are null
+    assert all(kink[key] is not None for key in pe.MC_CONVENTION_3_FIELDS)  # the weight kink keeps every field (the control)
 
 
 # ------------------------------------------------------------------ the caliber conventions (reference scale)
@@ -126,6 +129,49 @@ def test_focusing_fixtures_follow_the_caliber_conventions() -> None:
                 assert onset["gradient_norm"] is None, f"{cell.name}: corner {value} should be null (divergent)"
             else:
                 assert onset["gradient_norm"] == pytest.approx(gradient, rel=1e-6), f"{cell.name}: corner {value}"
+
+
+def test_chromatic_gate_features_follow_convention_3() -> None:
+    """The singular-set caliber (docs/analytic-parity-fixtures.md "Three conventions", No. 3): a
+    gate feature's lit_fraction / weight / direction_dispersion are evaluated on the gate's own
+    zero set -- per-backend rounding luck -- so they export as null with availability compared
+    exactly, and a fixture still carrying a bare value is rejected with its own message while the
+    still-pinned fields keep discriminating.  The pinned two-sided history is the red half of the
+    red-to-green proof: the old bare-value comparison would fail both fields."""
+    # the two backends' historical lit_fraction of the 3-1-5 exit gate (Lumice
+    # scrum-schema3-geometry-port/scrum.md section 6, 2026-10-08: each side's own walk lands on
+    # the gate's zero set and the rounding sign of the exit discriminant decides lit per point --
+    # LI 269/344, Lumice 205/344; the direction_dispersion medians differ by 6.2e4)
+    li_lit, lumice_lit, dispersion_diff = 269 / 344, 205 / 344, 6.2e4
+    assert abs(li_lit - lumice_lit) > pe.MC_FRACTION_ATOL  # 0.186 > 2e-2: the old convention goes red
+    assert dispersion_diff > pe.MC_MEDIAN_ATOL  # 6.2e4 >> 2e-3: same for the dispersion median
+    # today's LI computes one of the two pinned sides (the diagnose chain is deterministic; +-2
+    # walk points of room for arithmetic-order noise across platforms)
+    live = next(f for f in C.diagnose(cell_3_1_5_chromatic().crystal, (3, 1, 5), lattice_n=pe.MC_LATTICE_N).features if f.kind == "gate_edge")
+    assert abs(live.lit_fraction - li_lit) <= 2 / 344 and live.weight < 1e-7 and live.direction_dispersion > 1e4
+
+    fixture = pe.build_mc_chromatic_fixture(cell_3_1_5_chromatic(), pe.fixture_provenance())
+    gate = next(f for f in fixture["expected"]["features"] if f["kind"] == "gate_edge")
+    assert gate["source"] == "exit_snell_discriminant"
+    for key in pe.MC_CONVENTION_3_FIELDS:
+        assert gate[key] is None, key
+    for key in ("feature_angles", "feature_fractions"):
+        assert "Convention 3" in fixture["tolerance"][key]["basis"], key
+    assert not pe.verify_mc_chromatic(fixture, "convention-3").failures  # the green half
+
+    # a fixture that still carries a bare value is rejected -- with the dedicated message, never
+    # a value comparison (either side's historical value, any value at all)
+    for bare in (li_lit, lumice_lit, 0.0, 1.0):
+        stale = copy.deepcopy(fixture)
+        stale_gate = next(f for f in stale["expected"]["features"] if f["kind"] == "gate_edge")
+        stale_gate["lit_fraction"] = bare
+        failures = pe.verify_mc_chromatic(stale, "stale").failures
+        assert failures == ["feature 1 (exit_snell_discriminant) lit_fraction: convention-3 field carries bare value; re-export required"], bare
+    # the still-pinned fields keep discriminating: a drifted shift is caught at the old tolerance
+    drifted = copy.deepcopy(fixture)
+    drifted_gate = next(f for f in drifted["expected"]["features"] if f["kind"] == "gate_edge")
+    drifted_gate["shift"] += 1e-2
+    assert any("shift" in failure for failure in pe.verify_mc_chromatic(drifted, "drifted").failures)
 
 
 # ------------------------------------------------------------------ the anchor table (values, degrees)
