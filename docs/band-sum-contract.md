@@ -368,7 +368,14 @@ lattice mean).
 **Units and normalisation.** A value is LI's Phase I pixel value: power per
 steradian sent along `P` by one crystal of the pose ensemble, per unit
 incident irradiance, with the crystal at hexagon edge `a = 1`
-(conventions #17). §8 converts it to Lumice's brightness.
+(conventions #17). §8 converts it to Lumice's brightness.  The parity
+fixtures export at the engine reference scale instead — hexagon edge
+`a = 0.5`, circumscribed diameter 1 (`build_crystal`, since PR #51): every
+area-dimensioned quantity there (`a_p`, `w`, the tint energies and the
+chromatic weights) carries a `0.25` factor against this `a = 1` statement.
+The fixtures doc — "Shared input fields", the `crystal` row — is the
+authority for that scale; this paragraph stays the authority for the
+render values above.
 
 **What a value is.** A band average in deviation and a point in azimuth
 (the pixel centre's). Phase I and the contour quadrature give point values;

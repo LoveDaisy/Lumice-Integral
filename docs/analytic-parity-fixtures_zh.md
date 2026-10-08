@@ -390,7 +390,7 @@ fixture。各格携带溶解探针（scrum `wave3-pull-forward`）钉下的锚�
 | `dp_field_kinks` | 晶体、faces、`indices`（label → n）、`lattice_n` | 每 label 每曲线：`(step, margin, method, normal, note, failed_seeds, complete)`、弧（points、values、`closed`、`ends` 门名；points 为参考性）、`value_min`/`value_max`/`spread`、`nonfinite_values_dropped` |
 | `focusing_classify` | 晶体、faces、折射率（+label）、`pose_density`（random）、`lattice_n` | `focusing.FocusingClassification.as_json`：机制、onset（value_deg、location、source、profile、jacobian_focusing、gradient_norm、measure_limit、multiplicity）、`gradient_norm_range` |
 | `wavelength_critical_table` | 晶体、faces、`pose_density`、`indices` | `focusing.WavelengthCriticalTable.as_json`：每 onset 行各 label 的值（deg）与 `displacement_deg` |
-| `chromatic_diagnose` | 晶体、faces、`n_red`、`n_blue`、`lattice_n`、`thresholds` 快照 | `chromatic.ChromaticVerdict`：kind/color/visible/position、feature 全字段（kind、source、color、positive_fraction、delta_red/delta_blue/shift/spread/direction_dispersion、contrast、weight、lit_fraction、visible）、notes、coverage |
+| `chromatic_diagnose` | 晶体、faces、`n_red`、`n_blue`、`lattice_n`、`thresholds` 快照 | `chromatic.ChromaticVerdict`：kind/color/visible/position、feature 全字段（kind、source、color、positive_fraction、delta_red/delta_blue/shift/spread/direction_dispersion、contrast、weight、lit_fraction、visible；`gate_edge` 特征的 `lit_fraction`/`weight`/`direction_dispersion` 为 `null`——下文约定 3）、notes、coverage |
 | `chromatic_class` | 晶体、代表路径、`family`（板晶：太阳高度 9°、1° 天顶、`1e5` 姿态、seed 3）、`n_red`/`n_blue`、`thresholds` | 成员（PBD 轨道）、逐折射率的 `lit_members`、verdict 及其 tint 指标（能量、ratio、TIR 占比、方向色散） |
 
 容差：结构字段与标签精确；分档边界、临界值与定位位置 `1e-9` rad（行走把角点与极值定位到 ~1e-12）；Hessian
@@ -398,7 +398,7 @@ fixture。各格携带溶解探针（scrum `wave3-pull-forward`）钉下的锚�
 rad；`a_p`/`t_p`/`w` 相对 `1e-10`；板晶 class 的 tint 是统计性的（`5e-2`；LI 的样本是 numpy PCG64 流，
 `1e5` 姿态下 ratio 的对半分裂 σ ≤ 3e-3）。
 
-两条约定钉住数值在打印精度下不可跨后端复现的两处。（1）**发散角点梯度**：exit-TIR 角点处
+三条约定钉住数值在打印精度下不可跨后端复现的三处。（1）**发散角点梯度**：exit-TIR 角点处
 `|grad D_P|` 数学上无界；数值上算出的有限值是浮点运气（另一个后端得到 NaN 或不同量级）。非有限或达到
 /超过 `focusing.DIVERGENT_GRADIENT_NORM`（`1e6`；合法 onset / lattice 梯度 `≤ ~1.2e2`，角点求值
 `≥ 1.8e7`，参考尺度格位实测）的 onset 梯度两侧一律导出为 `null`，可用性（null 与否）按精确比较。
@@ -406,7 +406,18 @@ rad；`a_p`/`t_p`/`w` 相对 `1e-10`；板晶 class 的 tint 是统计性的（`
 合并，保留哪个成员是各后端自己的浮点序——合并后的 onset 值可能随成员选择偏移角点对的差值，上限即合并容差
 本身。路径带这种角点对的 focusing fixture，其容差块的 `onset_value_deg` 放宽为
 `degrees(EXTREMUM_ATOL)` ≈ `5.73e-6` deg，basis 写明机制；逐位相等的对称角点组（差值在机器精度）与其余
-fixture 保持 `1e-8` deg。
+fixture 保持 `1e-8` deg。（3）**gate 自身零集上求值的字段**：`chromatic_diagnose` 中
+`kind = "gate_edge"` 的特征，其 walk 点就是该 gate margin 的零集本身，于是
+`lit_fraction`（权重内核里出射判别式的舍入符号）、`weight`（sqrt 残差尺度的
+`T_exit`，`~1e-8`，域内中位 `~2.5e-2`）与 `direction_dispersion`（在曲线上发散的
+`dD_P/dn` 的有限幸存子集中位）都是各后端自己的浮点运气。2026-10-08 在 3-1-5 出射门
+实测：LI 的 344 个 walk 点 margin 残差在 `±5.2e-16` 内（lit 269/344），Lumice 自己的
+walk 另掷一路（205/344），色散中位差 `6.2e4`。这些字段对所有 `gate_edge` 特征两侧一律
+导出 `null`，可用性（null 与否）精确比较；仍携带裸值的 fixture 以独立消息拒绝。
+`visible` 保留裸值——其 shift/spread 条款决定判定（3-1-5 gate 低于
+`EDGE_MIN_SHIFT_RAD` 达 34.6%、spread `≫ |shift|`），其 lit 输入不钉。`edge`（权重
+kink）特征保留全部字段：反射支过 onset 连续，其 lit 谓词是结构性的入口走廊判定
+（3-1-6 kink 的 `0.845` lit fraction 即走廊空集占比，跨后端绿）。
 
 **格位表**（15 格 26 文件；`serves` 用 Lumice 的 A 线命名，`schema2-redesign-discussion/conclusions.md`
 §7：A1 场层、A2 partition/escape、A3 边界行走 + kink、A4 focusing/chromatic）：

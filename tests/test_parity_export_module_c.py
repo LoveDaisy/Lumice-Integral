@@ -105,7 +105,7 @@ def test_chromatic_verdicts_of_the_two_diagnose_cells() -> None:
 
 # ------------------------------------------------------------------ the caliber conventions (reference scale)
 def test_focusing_fixtures_follow_the_caliber_conventions() -> None:
-    """The reference-scale caliber (docs/analytic-parity-fixtures.md "Two conventions"): a divergent
+    """The reference-scale caliber (docs/analytic-parity-fixtures.md "Three conventions"): a divergent
     exit-TIR corner gradient exports as null, and only a corner pair whose difference exceeds the
     default tolerance yet stays within EXTREMUM_ATOL widens onset_value_deg — exactly degenerate
     symmetric corners and pair-free paths keep the default."""
