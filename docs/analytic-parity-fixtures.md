@@ -562,8 +562,10 @@ layer.
 
 Tolerances: structural fields and labels exact; partition bounds, critical
 values and located positions `1e-9` rad (the walk locates corners and extrema
-to ~1e-12); Hessian eigenvalues `1e-8` relative; onset values `1e-8` deg;
-gradient quantities `1e-6` relative; the sampled medians of
+to ~1e-12); Hessian eigenvalues `1e-8` relative; onset values `1e-8` deg
+(corner rows of a fixture that emitted the corner tier read
+`degrees(EXTREMUM_ATOL)` — convention 1's value half below); gradient
+quantities `1e-6` relative; the sampled medians of
 `chromatic_diagnose` `2e-3` rad; `a_p`/`t_p`/`w` relative `1e-10`; the
 plate-class tint is statistical (`5e-2`; LI's sample is a numpy PCG64
 stream, its split-half σ of the ratio is ≤ 3e-3 at 1e5 poses).
@@ -576,7 +578,22 @@ a different magnitude).  An onset gradient that is non-finite or at or above
 `focusing.DIVERGENT_GRADIENT_NORM` (`1e6`; every legitimate onset/lattice
 norm is `≤ ~1.2e2`, the corner evaluations are `≥ 1.8e7`, measured on the
 reference-scale cells) is exported as `null` on both sides, and usability
-(null vs not) is compared exactly.  (2)
+(null vs not) is compared exactly.  The same convention carries the corner's
+*value*: the walk's located position on an unbounded gradient is each
+platform's rounding luck, and the sqrt fold of `D_P` at the corner carries it
+into the value — measured 3.5e-7..7.6e-7 deg across ISAs on Lumice PR #477's
+CI (2026-10-09; only the corner rows drifted, the interior/boundary-extremum
+rows matched to 1e-14 there; the same family as the 1e-8 cross-ISA red behind
+Lumice's ba512cd1).  A fixture whose classification carries such a corner
+(`source = "corner"` with a null gradient norm) therefore emits a per-row
+corner tier in its tolerance block — `onset_value_deg_corner` for
+`focusing_classify`, `values_deg_corner` and `displacement_deg_corner` for
+`wavelength_critical_table`, each `degrees(EXTREMUM_ATOL)` ≈ `5.73e-6` deg —
+and the corner rows read the tier while every other row keeps the default
+`1e-8`/`2e-8` deg.  Key-present means every corner row of the fixture is one
+(the emission is fixture-level, keyed on the divergence predicate); a fixture
+that someday mixes well-behaved corners (finite gradient norm) with singular
+ones must move the tier to per-row emission first.  (2)
 *Near-degenerate corner pairs*: two corners whose values differ by more
 than the default `1e-8` deg tolerance yet within `EXTREMUM_ATOL` are merged
 by `focusing`, and which member survives is each backend's floating-point

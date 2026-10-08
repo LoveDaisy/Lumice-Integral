@@ -2133,6 +2133,18 @@ MC_GRADIENT_BASIS = (
     "or divergent (>= focusing.DIVERGENT_GRADIENT_NORM, the exit-TIR corner convention: |grad D| is "
     "unbounded there and a finite value is floating-point luck) is exported as null on both sides"
 )
+# The corner-value tier (convention 1's value half): the mechanism sentence shared by the three
+# ``*_corner`` tolerance keys.  The tier value is degrees(EXTREMUM_ATOL), resolved lazily by
+# _mc_corner_value_tier like _mc_onset_value_tolerance's widened value.
+MC_CORNER_VALUE_TIER_BASIS = (
+    "the corner rows of this fixture are exit-TIR corners (gradient_norm null, the same convention that "
+    "nulls their gradient): the walk's located position on an unbounded gradient is each platform's "
+    "rounding luck and the sqrt fold carries it into the value — cross-ISA drift 3.5e-7..7.6e-7 deg "
+    "measured on PR #477's CI (the same family as the 1e-8 cross-ISA red behind Lumice's ba512cd1).  "
+    "Emitted only when the classification carries such a corner, so key-present means every corner row "
+    "of the fixture is one; a fixture that someday mixes well-behaved corners (finite gradient_norm) "
+    "with singular ones must move the tier to per-row emission first"
+)
 MC_MEDIAN_ATOL = 2e-3
 MC_MEDIAN_BASIS = (
     "medians and spreads over a backend's own sampling of the same curve: march spacing ~3.5e-3 rad on the "
@@ -2705,6 +2717,24 @@ def _mc_onset_value_tolerance(field: DPField) -> tuple[float, str]:
     return MC_ONSET_DEG_ATOL, "absolute, deg: " + MC_ONSET_DEG_BASIS
 
 
+def _mc_corner_value_tier() -> float:
+    """The corner-row value tier: ``degrees(EXTREMUM_ATOL)`` (the merge tolerance, one constant, one authority).
+
+    The mechanism and the emission contract are in :data:`MC_CORNER_VALUE_TIER_BASIS` (convention 1's
+    value half): a fixture emits a ``*_corner`` key only when its classification carries an exit-TIR
+    corner (``source == "corner"`` with a null gradient norm), so key-present means every corner row of
+    that fixture is one.
+    """
+    from .dp_field.boundary import EXTREMUM_ATOL
+
+    return math.degrees(EXTREMUM_ATOL)
+
+
+def _mc_has_singular_corner(onsets: Any) -> bool:
+    """Whether any onset is an exit-TIR corner: ``source == "corner"`` with a null gradient norm."""
+    return any(onset["source"] == "corner" and onset["gradient_norm"] is None for onset in onsets)
+
+
 def build_mc_focusing_fixture(cell: MCCell, provenance: Mapping[str, Any]) -> dict[str, Any]:
     from .focusing import classify
 
@@ -2730,6 +2760,10 @@ def build_mc_focusing_fixture(cell: MCCell, provenance: Mapping[str, Any]) -> di
         "gradient_norm_range": _tolerance(MC_GRADIENT_RTOL, "relative: " + MC_GRADIENT_BASIS),
         "confinement_widths_deg": _tolerance(0.0, "exact: empty under the random density (the only density these cells export)"),
     }
+    if _mc_has_singular_corner(fixture["expected"]["onsets"]):
+        fixture["tolerance"]["onset_value_deg_corner"] = _tolerance(
+            _mc_corner_value_tier(), "absolute, deg, corner tier: " + MC_CORNER_VALUE_TIER_BASIS + "; " + MC_ONSET_DEG_BASIS
+        )
     return fixture
 
 
@@ -2766,7 +2800,15 @@ def verify_mc_focusing(fixture: Mapping[str, Any], name: str = "") -> Check:
     for index, (mine, reference) in enumerate(zip(got["onsets"], expected["onsets"])):
         exact = ("location", "source", "profile", "jacobian_focusing", "multiplicity")
         check.expect(all(mine[key] == reference[key] for key in exact), f"onset {index} ({reference['source']}): structure differs")
-        _close(check, f"onset {index} ({reference['source']}) value_deg", mine["value_deg"], reference["value_deg"], tolerance["onset_value_deg"]["value"])
+        # per-row tier: a corner row of a fixture that emitted the corner tier reads the tier value
+        # (MC_CORNER_VALUE_TIER_BASIS: key-present means every corner row of the fixture is singular);
+        # every other row keeps the default onset_value_deg
+        value_tolerance = (
+            tolerance["onset_value_deg_corner"]["value"]
+            if reference["source"] == "corner" and "onset_value_deg_corner" in tolerance
+            else tolerance["onset_value_deg"]["value"]
+        )
+        _close(check, f"onset {index} ({reference['source']}) value_deg", mine["value_deg"], reference["value_deg"], value_tolerance)
         if reference["gradient_norm"] is None:
             check.expect(mine["gradient_norm"] is None, f"onset {index}: gradient_norm availability differs")
         else:
@@ -2779,7 +2821,7 @@ def verify_mc_focusing(fixture: Mapping[str, Any], name: str = "") -> Check:
 
 
 def build_mc_wavelength_fixture(cell: MCCell, provenance: Mapping[str, Any]) -> dict[str, Any]:
-    from .focusing import wavelength_critical_table
+    from .focusing import classify, wavelength_critical_table
 
     indices = {label: index for label, index in cell.indices}
     table = wavelength_critical_table(cell.crystal, cell.faces, _mc_haar_density(), indices)
@@ -2796,6 +2838,19 @@ def build_mc_wavelength_fixture(cell: MCCell, provenance: Mapping[str, Any]) -> 
         "values_deg": _tolerance(MC_ONSET_DEG_ATOL, "absolute, deg per label: " + MC_ONSET_DEG_BASIS),
         "displacement_deg": _tolerance(2e-8, "absolute, deg: the max-min of one row's values, the difference of two values_deg"),
     }
+    # The table's rows are the same critical-set enumeration as classify's onsets (the structure
+    # tolerance pins every row's (location, source, ...) on both sides), so the corner-value tier is
+    # detected once on the classification at the cell's primary index — divergence is the corner's
+    # own property, not per-index.
+    if _mc_has_singular_corner(_mc_classification_json(classify(cell.crystal, cell.faces, _mc_haar_density(), cell.primary_index[1]))["onsets"]):
+        fixture["tolerance"]["values_deg_corner"] = _tolerance(
+            _mc_corner_value_tier(), "absolute, deg per label, corner tier: " + MC_CORNER_VALUE_TIER_BASIS + "; " + MC_ONSET_DEG_BASIS
+        )
+        fixture["tolerance"]["displacement_deg_corner"] = _tolerance(
+            _mc_corner_value_tier(),
+            "absolute, deg, corner tier: the max-min of one corner row's values is the difference of two "
+            "luck-carried values_deg and reads the same tier: " + MC_CORNER_VALUE_TIER_BASIS,
+        )
     return fixture
 
 
@@ -2814,9 +2869,14 @@ def verify_mc_wavelength(fixture: Mapping[str, Any], name: str = "") -> Check:
         exact = ("location", "source", "profile", "jacobian_focusing")
         check.expect(all(mine[key] == reference[key] for key in exact), f"row {index} ({reference['source']}): structure differs")
         check.expect(set(mine["values_deg"]) == set(reference["values_deg"]), f"row {index}: labels differ")
+        # per-row tier (see verify_mc_focusing): a corner row of a fixture that emitted the corner
+        # tier reads it for the row's values and its displacement, every other row keeps the defaults
+        corner_row = reference["source"] == "corner" and "values_deg_corner" in tolerance
+        values_tolerance = tolerance["values_deg_corner"]["value"] if corner_row else tolerance["values_deg"]["value"]
+        displacement_tolerance = tolerance["displacement_deg_corner"]["value"] if corner_row else tolerance["displacement_deg"]["value"]
         for label in reference["values_deg"]:
-            _close(check, f"row {index} ({reference['source']}) {label}", mine["values_deg"][label], reference["values_deg"][label], tolerance["values_deg"]["value"])
-        _close(check, f"row {index} ({reference['source']}) displacement", mine["displacement_deg"], reference["displacement_deg"], tolerance["displacement_deg"]["value"])
+            _close(check, f"row {index} ({reference['source']}) {label}", mine["values_deg"][label], reference["values_deg"][label], values_tolerance)
+        _close(check, f"row {index} ({reference['source']}) displacement", mine["displacement_deg"], reference["displacement_deg"], displacement_tolerance)
     return check
 
 
