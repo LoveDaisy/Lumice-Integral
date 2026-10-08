@@ -557,7 +557,7 @@ layer.
 | `dp_field_kinks` | crystal, faces, `indices` (label → n), `lattice_n` | per label, per curve: `(step, margin, method, normal, note, failed_seeds, complete)`, arcs (points, values, `closed`, `ends` gate names; points informative), `value_min`/`value_max`/`spread`, `nonfinite_values_dropped` |
 | `focusing_classify` | crystal, faces, index (+label), `pose_density` (random), `lattice_n` | `focusing.FocusingClassification.as_json`: mechanism, onsets (value_deg, location, source, profile, jacobian_focusing, gradient_norm, measure_limit, multiplicity), `gradient_norm_range` |
 | `wavelength_critical_table` | crystal, faces, `pose_density`, `indices` | `focusing.WavelengthCriticalTable.as_json`: per onset row the per-label values (deg) and `displacement_deg` |
-| `chromatic_diagnose` | crystal, faces, `n_red`, `n_blue`, `lattice_n`, the `thresholds` snapshot | `chromatic.ChromaticVerdict`: kind/color/visible/position, the features (kind, source, color, positive_fraction, delta_red/delta_blue/shift/spread/direction_dispersion, contrast, weight, lit_fraction, visible), notes, coverage |
+| `chromatic_diagnose` | crystal, faces, `n_red`, `n_blue`, `lattice_n`, the `thresholds` snapshot | `chromatic.ChromaticVerdict`: kind/color/visible/position, the features (kind, source, color, positive_fraction, delta_red/delta_blue/shift/spread/direction_dispersion, contrast, weight, lit_fraction, visible; a `gate_edge` feature carries `null` for `lit_fraction`/`weight`/`direction_dispersion` — convention 3 below), notes, coverage |
 | `chromatic_class` | crystal, representative, `family` (plate: sun altitude 9°, 1° zenith, 1e5 poses, seed 3), `n_red`/`n_blue`, `thresholds` | members (the PBD orbit), `lit_members` per index, the verdict with its tint metrics (energies, ratio, TIR fractions, direction dispersion) |
 
 Tolerances: structural fields and labels exact; partition bounds, critical
@@ -568,7 +568,7 @@ gradient quantities `1e-6` relative; the sampled medians of
 plate-class tint is statistical (`5e-2`; LI's sample is a numpy PCG64
 stream, its split-half σ of the ratio is ≤ 3e-3 at 1e5 poses).
 
-Two conventions pin the two spots where a value is not reproducible across
+Three conventions pin the three spots where a value is not reproducible across
 backends at the printed precision.  (1) *Divergent corner gradients*: at an
 exit-TIR corner `|grad D_P|` is mathematically unbounded; a numerically
 finite evaluation of it is floating-point luck (another backend gets NaN or
@@ -585,7 +585,30 @@ merge tolerance itself.  A focusing fixture whose path has such a pair
 carries `onset_value_deg` widened to `degrees(EXTREMUM_ATOL)` ≈ `5.73e-6`
 deg in its tolerance block, with the mechanism in the basis; exactly
 degenerate symmetric pairs (diffs at machine epsilon) and every other
-fixture keep `1e-8` deg.
+fixture keep `1e-8` deg.  (3) *Fields evaluated on a gate's own zero set*:
+a `chromatic_diagnose` feature with `kind = "gate_edge"` is walked on the
+gate margin's zero level itself, so `lit_fraction` (the rounding sign of the
+exit discriminant inside the weight kernel), `weight` (`T_exit` at the
+sqrt-residual scale, `~1e-8` against a `~2.5e-2` in-domain median) and
+`direction_dispersion` (the median of the finite survivors of a `dD_P/dn`
+that diverges on the curve) are each backend's floating-point luck.
+Measured 2026-10-08 on the 3-1-5 exit gate: LI's 344 walk points carry
+margin residuals within `±5.2e-16` (lit 269/344) while Lumice's own walk
+splits its own way (205/344), and the dispersion medians differ by
+`6.2e4`.  The same luck holds across platforms of one backend as well:
+PR #52's CI (2026-10-08) measured LI's own Linux x86 walk 4/344 away from
+the macOS side, the sign not printed by the CI message (the same family
+as Lumice scrum-649's 1e-8 cross-ISA red).  These fields are exported as
+`null` for every `gate_edge` feature on both sides and availability (null
+vs not) is compared exactly;
+a fixture that still carries a bare value is rejected with its own
+message.  `visible` keeps its bare value — its shift/spread clauses decide
+it (the 3-1-5 gate sits 34.6% below `EDGE_MIN_SHIFT_RAD` with spread
+`≫ |shift|`), its lit input is not pinned.  An `edge` (weight-kink)
+feature keeps every field: the reflected branch is continuous through its
+onset and its lit predicate is the structural entry-corridor one (the
+3-1-6 kink's `0.845` lit fraction is the corridor-emptiness fraction,
+green cross-backend).
 
 **The cells** (15 cells, 26 fixtures; `serves` names Lumice's A-lines,
 `schema2-redesign-discussion/conclusions.md` §7: A1 field layer, A2

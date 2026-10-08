@@ -2821,7 +2821,14 @@ def verify_mc_wavelength(fixture: Mapping[str, Any], name: str = "") -> Check:
 
 
 def _mc_feature_json(feature) -> dict[str, Any]:
-    """A :class:`.chromatic.ChromaticFeature` verbatim (angles in radians; ``score`` is derived)."""
+    """A :class:`.chromatic.ChromaticFeature` (angles in radians; ``score`` is derived).
+
+    A ``gate_edge`` feature carries ``null`` for ``MC_CONVENTION_3_FIELDS`` (convention 3,
+    docs/analytic-parity-fixtures.md "Three conventions"): its walk points are the gate's own
+    zero set and those fields are each backend's floating-point luck.  The production
+    :class:`.chromatic.ChromaticFeature` keeps computing them; only the export contract pins
+    nothing.
+    """
     record = {
         "kind": feature.kind,
         "source": feature.source,
@@ -2837,6 +2844,9 @@ def _mc_feature_json(feature) -> dict[str, Any]:
         "lit_fraction": float(feature.lit_fraction),
         "visible": bool(feature.visible),
     }
+    if feature.kind == "gate_edge":
+        for key in MC_CONVENTION_3_FIELDS:
+            record[key] = None
     if set(record) != {f.name for f in fields(feature)}:
         raise ValueError("ChromaticFeature fields drifted from _mc_feature_json; update the serializer")
     return record
@@ -2876,6 +2886,24 @@ def mc_verdict_json(verdict) -> dict[str, Any]:
 
 
 MC_FRACTION_ATOL = 2e-2
+# Convention 3 (docs/analytic-parity-fixtures.md "Three conventions"): a gate feature's walk
+# points are that gate's own zero set, so these fields are evaluated on the quantity's own
+# singular set and are not reproducible across backends -- lit_fraction is the rounding sign of
+# the exit discriminant inside the weight kernel (probe 2026-10-08: residuals +-5e-16 split
+# +293/-51 on LI's 344 walk points, Lumice's own walk splits its own way), weight its
+# sqrt-magnitude (A T of [0, 1.3e-8] against a ~2.5e-2 in-domain median), direction_dispersion
+# the median of the finite survivors of a dD_P/dn that diverges on the curve (LI: 51/344
+# non-finite, survivors 2.3e7-7.5e7).  Exported as null on both sides; availability is compared
+# exactly and a fixture that still carries a bare value is rejected.  An "edge" (weight-kink)
+# feature keeps every field: the reflected branch is continuous through its onset and its lit
+# predicate is the structural entry-corridor one.
+MC_CONVENTION_3_FIELDS = ("lit_fraction", "weight", "direction_dispersion")
+MC_CONVENTION_3_BASIS = (
+    "Convention 3: a gate feature's lit_fraction, weight and direction_dispersion are evaluated "
+    "on the gate's own zero set (the singular set of the quantity itself) and are exported as "
+    "null on both sides, availability compared exactly; visible keeps its bare value (its "
+    "shift/spread clauses decide it, its lit input is not pinned)"
+)
 MC_TINT_ENERGY_RTOL = 5e-2
 MC_TINT_BASIS = (
     "statistical: the family sample is LI's numpy PCG64 stream (sample_plate_poses, seed 3, 1e5 poses); a "
@@ -2902,8 +2930,8 @@ def build_mc_chromatic_fixture(cell: MCCell, provenance: Mapping[str, Any]) -> d
     fixture["tolerance"] = {
         "verdict": _tolerance(0.0, "exact: kind, color, visible, coverage_complete, notes and the feature list in order (kind, source, color, visible)"),
         "position": _tolerance(MC_MEDIAN_ATOL, "absolute, rad: " + MC_MEDIAN_BASIS),
-        "feature_angles": _tolerance(MC_MEDIAN_ATOL, "absolute, rad, per feature (delta_red, delta_blue, shift, spread, direction_dispersion): " + MC_MEDIAN_BASIS),
-        "feature_fractions": _tolerance(MC_FRACTION_ATOL, "absolute (positive_fraction, contrast, lit_fraction) and weight relative: sampled medians over a backend's own curve sampling"),
+        "feature_angles": _tolerance(MC_MEDIAN_ATOL, "absolute, rad, per feature (delta_red, delta_blue, shift, spread; direction_dispersion of an edge feature): " + MC_MEDIAN_BASIS + ". " + MC_CONVENTION_3_BASIS),
+        "feature_fractions": _tolerance(MC_FRACTION_ATOL, "absolute (positive_fraction, contrast, lit_fraction of an edge feature) and weight relative (an edge feature): sampled medians over a backend's own curve sampling. " + MC_CONVENTION_3_BASIS),
     }
     return fixture
 
@@ -2927,11 +2955,20 @@ def verify_mc_chromatic(fixture: Mapping[str, Any], name: str = "") -> Check:
     for index, (mine, reference) in enumerate(zip(got["features"], expected["features"])):
         where = f"feature {index} ({reference['source']})"
         check.expect((mine["kind"], mine["source"], mine["color"], mine["visible"]) == (reference["kind"], reference["source"], reference["color"], reference["visible"]), f"{where}: structure differs")
-        for key in ("delta_red", "delta_blue", "shift", "spread", "direction_dispersion"):
+        for key in ("delta_red", "delta_blue", "shift", "spread"):
             _close(check, f"{where} {key}", mine[key], reference[key], tolerance["feature_angles"]["value"])
-        for key in ("positive_fraction", "contrast", "lit_fraction"):
+        if reference["kind"] == "gate_edge":  # convention 3: null on both sides, availability only
+            for key in MC_CONVENTION_3_FIELDS:
+                if reference[key] is not None:
+                    check.expect(False, f"{where} {key}: convention-3 field carries bare value; re-export required")
+                else:
+                    check.expect(mine[key] is None, f"{where} {key}: availability differs")
+        else:
+            _close(check, f"{where} direction_dispersion", mine["direction_dispersion"], reference["direction_dispersion"], tolerance["feature_angles"]["value"])
+            _close(check, f"{where} lit_fraction", mine["lit_fraction"], reference["lit_fraction"], tolerance["feature_fractions"]["value"])
+            _close_relative(check, f"{where} weight", mine["weight"], reference["weight"], tolerance["feature_fractions"]["value"])
+        for key in ("positive_fraction", "contrast"):
             _close(check, f"{where} {key}", mine[key], reference[key], tolerance["feature_fractions"]["value"])
-        _close_relative(check, f"{where} weight", mine["weight"], reference["weight"], tolerance["feature_fractions"]["value"])
     return check
 
 
