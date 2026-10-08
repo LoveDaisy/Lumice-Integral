@@ -108,20 +108,28 @@ def test_focusing_fixtures_follow_the_caliber_conventions() -> None:
     """The reference-scale caliber (docs/analytic-parity-fixtures.md "Three conventions"): a divergent
     exit-TIR corner gradient exports as null, and only a corner pair whose difference exceeds the
     default tolerance yet stays within EXTREMUM_ATOL widens onset_value_deg — exactly degenerate
-    symmetric corners and pair-free paths keep the default."""
+    symmetric corners and pair-free paths keep the default.  The corner-value tier (convention 1's
+    value half) follows the same predicate as the null gradient: a fixture carrying a divergent
+    corner emits ``onset_value_deg_corner`` at degrees(EXTREMUM_ATOL), a fixture whose only corner is
+    well-behaved (finite gradient, the 4-8-7-5 control) must not emit it."""
     from lumice_integral.dp_field.boundary import EXTREMUM_ATOL
 
-    cells = (  # (cell, onset_value_deg tolerance, {corner value_deg: expected gradient_norm})
+    cells = (  # (cell, onset_value_deg tolerance, corner tier emitted, {corner value_deg: expected gradient_norm})
         (pe.MCCell("mc_field", pe.prism_crystal(1.0), (3, 5), ("focusing_classify",), (("450nm", N450),)),
-         1e-8, {50.618816106: None}),
+         1e-8, True, {50.618816106: None}),
         (pe.MCCell("mc_field", pe.prism_crystal(1.0), (3, 1, 5), ("focusing_classify",), (("550nm", N550),)),
-         math.degrees(EXTREMUM_ATOL), {43.545132152: 1.0, 151.667406123: None}),
+         math.degrees(EXTREMUM_ATOL), True, {43.545132152: 1.0, 151.667406123: None}),
         (pe.MCCell("mc_field", BETA, (4, 8, 7, 5), ("focusing_classify",), (("550nm", N550),)),
-         1e-8, {50.161741671: 1.667618233325774}),
+         1e-8, False, {50.161741671: 1.667618233325774}),
     )
-    for cell, onset_tol, corner_grads in cells:
+    for cell, onset_tol, corner_tier, corner_grads in cells:
         fixture = pe.build_mc_focusing_fixture(cell, pe.fixture_provenance())
         assert fixture["tolerance"]["onset_value_deg"]["value"] == onset_tol, cell.name
+        assert ("onset_value_deg_corner" in fixture["tolerance"]) == corner_tier, cell.name
+        if corner_tier:
+            tier = fixture["tolerance"]["onset_value_deg_corner"]
+            assert tier["value"] == math.degrees(EXTREMUM_ATOL), cell.name
+            assert "corner tier" in tier["basis"], cell.name
         corners = [o for o in fixture["expected"]["onsets"] if o["source"] == "corner"]
         for value, gradient in corner_grads.items():
             (onset,) = [o for o in corners if abs(o["value_deg"] - value) < 1e-6]

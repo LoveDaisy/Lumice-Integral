@@ -394,7 +394,8 @@ fixture。各格携带溶解探针（scrum `wave3-pull-forward`）钉下的锚�
 | `chromatic_class` | 晶体、代表路径、`family`（板晶：太阳高度 9°、1° 天顶、`1e5` 姿态、seed 3）、`n_red`/`n_blue`、`thresholds` | 成员（PBD 轨道）、逐折射率的 `lit_members`、verdict 及其 tint 指标（能量、ratio、TIR 占比、方向色散） |
 
 容差：结构字段与标签精确；分档边界、临界值与定位位置 `1e-9` rad（行走把角点与极值定位到 ~1e-12）；Hessian
-特征值相对 `1e-8`；onset 值 `1e-8` deg；梯度类量相对 `1e-6`；`chromatic_diagnose` 的采样中位数 `2e-3`
+特征值相对 `1e-8`；onset 值 `1e-8` deg（发射了 corner tier 的 fixture，其 corner 行读
+`degrees(EXTREMUM_ATOL)`——下文约定 1 的 value half）；梯度类量相对 `1e-6`；`chromatic_diagnose` 的采样中位数 `2e-3`
 rad；`a_p`/`t_p`/`w` 相对 `1e-10`；板晶 class 的 tint 是统计性的（`5e-2`；LI 的样本是 numpy PCG64 流，
 `1e5` 姿态下 ratio 的对半分裂 σ ≤ 3e-3）。
 
@@ -402,6 +403,15 @@ rad；`a_p`/`t_p`/`w` 相对 `1e-10`；板晶 class 的 tint 是统计性的（`
 `|grad D_P|` 数学上无界；数值上算出的有限值是浮点运气（另一个后端得到 NaN 或不同量级）。非有限或达到
 /超过 `focusing.DIVERGENT_GRADIENT_NORM`（`1e6`；合法 onset / lattice 梯度 `≤ ~1.2e2`，角点求值
 `≥ 1.8e7`，参考尺度格位实测）的 onset 梯度两侧一律导出为 `null`，可用性（null 与否）按精确比较。
+同一约定也覆盖角点的**值**：无界梯度上 walk 的定位位置是各平台自己的舍入运气，`D_P` 在角点处的
+sqrt fold 把它带进值里——Lumice PR #477 的 CI（2026-10-09）实测跨 ISA 漂移 3.5e-7..7.6e-7 deg
+（只有 corner 行漂，内部/边界极值行在 1e-14 量级；与 Lumice ba512cd1 背后的 1e-8 跨 ISA 红同族）。
+因此 classification 带这种角点（`source = "corner"` 且梯度 norm 为 null）的 fixture，在容差块增发
+per-row corner tier——`focusing_classify` 发 `onset_value_deg_corner`、`wavelength_critical_table` 发
+`values_deg_corner` 与 `displacement_deg_corner`，值均为 `degrees(EXTREMUM_ATOL)` ≈ `5.73e-6` deg——
+corner 行读 tier，其余行保持默认 `1e-8`/`2e-8` deg。键存在 ⇒ 该 fixture 全部 corner 行属奇异族
+（发射是 fixture 级的，以发散谓词为键）；将来若同一 fixture 混合良态 corner（梯度 norm 有限）与
+奇异 corner，必须先把 tier 改为逐行发射。
 （2）**近简并角点对**：两个角点值相差超过默认 `1e-8` deg 容差、又在 `EXTREMUM_ATOL` 内时被 `focusing`
 合并，保留哪个成员是各后端自己的浮点序——合并后的 onset 值可能随成员选择偏移角点对的差值，上限即合并容差
 本身。路径带这种角点对的 focusing fixture，其容差块的 `onset_value_deg` 放宽为
