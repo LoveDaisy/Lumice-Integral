@@ -39,8 +39,11 @@ def _valid_arrays() -> dict[str, np.ndarray]:
     source_world = np.array([1.0, 0.0, 0.0])
     source_body = np.repeat(source_world[None, :], 4, axis=0)
     vertices_body = np.zeros((12, 3))
+    vertices_body[:3] = np.array(
+        [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [0.0, 1.0, 0.0]]
+    )
     face_normals_body = np.array([[0.0, 0.0, 1.0]])
-    face_centers_body = np.array([[0.0, 0.0, 0.0]])
+    face_centers_body = np.array([[0.0, -1.0 / 3.0, 0.0]])
     return {
         "selected_dense_indices": world_body_data.SELECTED_INDICES,
         "rotations": rotations,
@@ -169,6 +172,46 @@ def test_world_body_data_rejects_incomplete_metadata_contract(tmp_path, mutate, 
 
 
 @pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (lambda metadata: metadata["geometry"].__setitem__("edges", []), "non-empty list"),
+        (
+            lambda metadata: metadata["geometry"].__setitem__("face_vertex_ids", [[0, 0, 2]]),
+            "repeated vertex indices",
+        ),
+        (
+            lambda metadata: metadata["geometry"].__setitem__(
+                "edges", [[0, 1], [1, 2], [0, 2], [0, 1]]
+            ),
+            "duplicates",
+        ),
+        (
+            lambda metadata: metadata["geometry"].__setitem__(
+                "edges", [[0, 1], [1, 2], [0, 11]]
+            ),
+            "face boundaries",
+        ),
+        (
+            lambda metadata: metadata["geometry"].__setitem__(
+                "edges", [[0, 0], [1, 2], [0, 2]]
+            ),
+            "invalid or repeated",
+        ),
+        (
+            lambda metadata: metadata["illustration_camera"].__setitem__("distance", 0.1),
+            "cannot project the payload",
+        ),
+    ],
+)
+def test_world_body_data_rejects_unrenderable_geometry(tmp_path, mutate, message):
+    directory = _write_valid(tmp_path)
+    _rewrite_metadata(directory, mutate)
+
+    with pytest.raises(world_body_data.IllustrationDataError, match=message):
+        world_body_data.load_data(tmp_path)
+
+
+@pytest.mark.parametrize(
     ("field", "value", "message"),
     [
         ("schema", "unsupported/v9", "unsupported schema"),
@@ -199,6 +242,7 @@ def test_world_body_data_rejects_hash_mismatch(tmp_path):
         ("source_world", np.array([np.nan, 0.0, 0.0]), "contains non-finite"),
         ("rotations", np.zeros((4, 3, 3)), "not elements of SO\\(3\\)"),
         ("source_body", np.zeros((4, 3)), "coordinate reconstruction"),
+        ("vertices_body", np.zeros((12, 3)), "face 3 has zero area"),
         ("target_direction", np.zeros(3), "target_direction is not a unit"),
         ("outgoing_directions", np.zeros((4, 3)), "outgoing_directions are not unit"),
         ("face_normals_body", np.zeros((1, 3)), "face_normals_body are not unit"),
@@ -262,6 +306,25 @@ def test_world_body_replot_has_eight_panels_and_does_not_modify_data(tmp_path):
             np.testing.assert_allclose(polygon, lower_polygons[0], atol=0.0)
     finally:
         matplotlib.pyplot.close(figure)
+
+
+def test_world_body_replot_closes_figure_when_save_fails(tmp_path, monkeypatch):
+    pytest.importorskip("matplotlib")
+    import matplotlib.pyplot as plt
+    from matplotlib.figure import Figure
+
+    _write_valid(tmp_path / "data")
+    world_body_frames = _load_module("world_body_frames")
+    before = plt.get_fignums()
+
+    def fail_save(self, *args, **kwargs):
+        raise OSError("synthetic write failure")
+
+    monkeypatch.setattr(Figure, "savefig", fail_save)
+    with pytest.raises(OSError, match="synthetic write failure"):
+        world_body_frames.replot_data(tmp_path / "data", tmp_path / "figures")
+
+    assert plt.get_fignums() == before
 
 
 def test_world_body_replot_import_chain_excludes_solver_modules(tmp_path):

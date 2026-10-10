@@ -252,18 +252,59 @@ def _validate_pair(
     if any(
         not isinstance(ids, list)
         or len(ids) < 3
-        or any(not isinstance(index, int) or index < 0 or index >= vertex_count for index in ids)
+        or len(set(ids)) != len(ids)
+        or any(
+            isinstance(index, bool)
+            or not isinstance(index, int)
+            or index < 0
+            or index >= vertex_count
+            for index in ids
+        )
         for ids in face_vertex_ids
     ):
-        raise _fail(directory, "face_vertex_ids contain an invalid vertex index", data_root)
+        raise _fail(directory, "face_vertex_ids contain invalid or repeated vertex indices", data_root)
+
+    boundary_edges: set[tuple[int, int]] = set()
+    for face_index, ids in enumerate(face_vertex_ids):
+        points = arrays["vertices_body"][ids]
+        area_vector = np.sum(np.cross(points, np.roll(points, -1, axis=0)), axis=0)
+        if np.linalg.norm(area_vector) <= 1e-12:
+            raise _fail(directory, f"face {face_numbers[face_index]} has zero area", data_root)
+        center_error = np.max(
+            np.abs(arrays["face_centers_body"][face_index] - np.mean(points, axis=0))
+        )
+        if center_error > 1e-12:
+            raise _fail(directory, f"face {face_numbers[face_index]} center disagrees with its vertices", data_root)
+        offsets = points - arrays["face_centers_body"][face_index]
+        if np.max(np.abs(offsets @ arrays["face_normals_body"][face_index])) > 1e-12:
+            raise _fail(directory, f"face {face_numbers[face_index]} normal is not perpendicular", data_root)
+        boundary_edges.update(
+            tuple(sorted((start, end))) for start, end in zip(ids, ids[1:] + ids[:1])
+        )
+
     edges = geometry.get("edges")
-    if not isinstance(edges, list) or any(
-        not isinstance(edge, list)
-        or len(edge) != 2
-        or any(not isinstance(index, int) or index < 0 or index >= vertex_count for index in edge)
-        for edge in edges
-    ):
-        raise _fail(directory, "edges contain an invalid vertex index", data_root)
+    if not isinstance(edges, list) or not edges:
+        raise _fail(directory, "edges must be a non-empty list", data_root)
+    edge_keys: list[tuple[int, int]] = []
+    for edge in edges:
+        if (
+            not isinstance(edge, list)
+            or len(edge) != 2
+            or any(
+                isinstance(index, bool)
+                or not isinstance(index, int)
+                or index < 0
+                or index >= vertex_count
+                for index in edge
+            )
+            or edge[0] == edge[1]
+        ):
+            raise _fail(directory, "edges contain invalid or repeated vertex indices", data_root)
+        edge_keys.append(tuple(sorted(edge)))
+    if len(set(edge_keys)) != len(edge_keys):
+        raise _fail(directory, "edges contain duplicates", data_root)
+    if set(edge_keys) != boundary_edges:
+        raise _fail(directory, "edges do not match the declared face boundaries", data_root)
 
     rotations = arrays["rotations"]
     orthogonality_error = float(np.max(np.abs(rotations.transpose(0, 2, 1) @ rotations - np.eye(3))))
@@ -307,6 +348,37 @@ def _validate_pair(
         raise _fail(directory, "body/world coordinate reconstruction exceeds 1e-12", data_root)
     if outgoing_error > 1e-10:
         raise _fail(directory, "production outgoing-direction residual exceeds 1e-10", data_root)
+
+    from _crystal_view import Camera
+
+    try:
+        illustration_camera = Camera(
+            azimuth_deg=float(camera["azimuth_deg"]),
+            elevation_deg=float(camera["elevation_deg"]),
+            projection=str(camera["projection"]),
+            distance=float(camera["distance"]),
+        )
+        body_points = np.concatenate(
+            [
+                arrays["vertices_body"],
+                arrays["face_centers_body"],
+                2.3 * arrays["source_body"],
+                np.zeros((1, 3)),
+            ]
+        )
+        illustration_camera.project(body_points)
+        for index in range(4):
+            world_points = np.concatenate(
+                [
+                    arrays["vertices_world"][index],
+                    arrays["face_centers_world"][index],
+                    (2.3 * arrays["source_world"])[None, :],
+                    np.zeros((1, 3)),
+                ]
+            )
+            illustration_camera.project(world_points)
+    except ValueError as error:
+        raise _fail(directory, f"illustration camera cannot project the payload ({error})", data_root) from error
 
 
 def load_data(data_root: Path | str) -> IllustrationData:
