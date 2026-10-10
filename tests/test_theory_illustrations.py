@@ -4,6 +4,7 @@ from hashlib import sha256
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
 import sys
 
 import numpy as np
@@ -12,12 +13,22 @@ import pytest
 
 REPO = Path(__file__).parents[1]
 REFERENCE = Path(__file__).parent / "data" / "theory_illustrations" / "world_body_reference.json"
-_DATA_MODULE_PATH = REPO / "scripts" / "illustrations" / "_world_body_data.py"
-_DATA_SPEC = importlib.util.spec_from_file_location("_world_body_data", _DATA_MODULE_PATH)
-assert _DATA_SPEC is not None and _DATA_SPEC.loader is not None
-world_body_data = importlib.util.module_from_spec(_DATA_SPEC)
-sys.modules[_DATA_SPEC.name] = world_body_data
-_DATA_SPEC.loader.exec_module(world_body_data)
+ILLUSTRATIONS = REPO / "scripts" / "illustrations"
+sys.path.insert(0, str(ILLUSTRATIONS))
+
+
+def _load_module(name: str):
+    path = ILLUSTRATIONS / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+world_body_data = _load_module("_world_body_data")
+crystal_view = _load_module("_crystal_view")
 
 
 def _valid_arrays() -> dict[str, np.ndarray]:
@@ -49,6 +60,7 @@ def _valid_metadata() -> dict[str, object]:
         "schema": world_body_data.SCHEMA_VERSION,
         "figure_id": world_body_data.FIGURE_ID,
         "fixture": {"name": "synthetic"},
+        "illustration_camera": world_body_data.ILLUSTRATION_CAMERA,
         "geometry": {
             "face_numbers": [3],
             "face_vertex_ids": [[0, 1, 2]],
@@ -145,6 +157,87 @@ def test_world_body_data_rejects_invalid_numeric_payload(tmp_path, name, value, 
 
     with pytest.raises(world_body_data.IllustrationDataError, match=message):
         world_body_data.load_data(tmp_path)
+
+
+def test_crystal_camera_projection_and_visibility_are_deterministic():
+    camera = crystal_view.Camera(azimuth_deg=0.0, elevation_deg=0.0, distance=7.0)
+
+    projected = camera.project_xy(np.array([[0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]))
+    np.testing.assert_allclose(projected, [[1.0, 0.0], [0.0, 1.0]], atol=1e-15)
+    near = camera.project_xy(np.array([[1.0, 1.0, 0.0]]))[0]
+    assert near[0] == pytest.approx(7.0 / 6.0)
+    with pytest.raises(ValueError, match="behind the perspective camera"):
+        camera.project_xy(np.array([[7.0, 0.0, 0.0]]))
+
+    normals = np.array([[1.0, 0.0, 0.0], [-1.0, 0.0, 0.0]])
+    centers = np.array([[1.0, 0.0, 0.0], [-1.0, 0.0, 0.0]])
+    visible = crystal_view.face_visibility(normals, centers, camera)
+    np.testing.assert_array_equal(visible, [True, False])
+    assert crystal_view.edge_visibility([[0, 1]], [[0, 1, 2], [0, 1, 3]], visible).tolist() == [True]
+
+
+def test_world_body_replot_has_eight_panels_and_does_not_modify_data(tmp_path):
+    matplotlib = pytest.importorskip("matplotlib")
+    directory = _write_valid(tmp_path / "data")
+    world_body_frames = _load_module("world_body_frames")
+    metadata_path = directory / world_body_data.METADATA_FILE
+    arrays_path = directory / world_body_data.ARRAYS_FILE
+    before = {
+        path: (sha256(path.read_bytes()).hexdigest(), path.stat().st_mtime_ns)
+        for path in (metadata_path, arrays_path)
+    }
+
+    output = world_body_frames.replot_data(tmp_path / "data", tmp_path / "figures")
+
+    image = matplotlib.image.imread(output)
+    assert image.shape[:2] == (1500, 2400)
+    assert before == {
+        path: (sha256(path.read_bytes()).hexdigest(), path.stat().st_mtime_ns)
+        for path in (metadata_path, arrays_path)
+    }
+    data = world_body_data.load_data(tmp_path / "data")
+    figure = world_body_frames.render_figure(data)
+    try:
+        assert len(figure.axes) == 8
+        assert [text.get_text() for text in figure.texts].count("1") == 2
+        assert [text.get_text() for text in figure.texts].count("4") == 2
+        assert sum(text.get_text() == "3" for axis in figure.axes for text in axis.texts) == 8
+        assert sum("source" in text.get_text() for axis in figure.axes for text in axis.texts) == 4
+        assert sum("Sun" in text.get_text() for axis in figure.axes for text in axis.texts) == 4
+        lower_polygons = [figure.axes[index].patches[0].get_xy() for index in (1, 3, 5, 7)]
+        for polygon in lower_polygons[1:]:
+            np.testing.assert_allclose(polygon, lower_polygons[0], atol=0.0)
+    finally:
+        matplotlib.pyplot.close(figure)
+
+
+def test_world_body_replot_import_chain_excludes_solver_modules(tmp_path):
+    pytest.importorskip("matplotlib")
+    directory = _write_valid(tmp_path / "data")
+    output_directory = tmp_path / "output with spaces"
+    script = ILLUSTRATIONS / "world_body_frames.py"
+    code = f"""
+import importlib.abc
+import runpy
+import sys
+
+class Blocker(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.split('.')[0] in {{'jax', 'scipy', 'lumice_integral', 'halo_notes'}}:
+            raise RuntimeError(f'forbidden import: {{fullname}}')
+        return None
+
+sys.meta_path.insert(0, Blocker())
+sys.path.insert(0, {str(ILLUSTRATIONS)!r})
+sys.argv = [{str(script)!r}, '--replot', '--data-dir', {str(tmp_path / 'data')!r}, '--output-dir', {str(output_directory)!r}]
+runpy.run_path({str(script)!r}, run_name='__main__')
+"""
+
+    completed = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+
+    assert completed.returncode == 0, completed.stderr
+    assert (output_directory / "world-body-frames.png").is_file()
+    assert directory.is_dir()
 
 
 def test_world_body_reference_records_the_accepted_sampling_and_source_hashes():

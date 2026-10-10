@@ -23,6 +23,8 @@ RETRACTION_ITERATIONS = 2
 SELECTED_INDICES = np.array([0, 128, 256, 384], dtype=np.int64)
 ORIGINAL_ACCEPTED_REVISION = "98b4a8c7ec70e519f3744279840c2814f871ade7"
 ORIGINAL_PROTOTYPE_SHA256 = "eb8bb4850835faeb2442a5f25bee1fd9271bcc887d077a62e7999b17bd8c6a62"
+ORIGINAL_ACCEPTED_IMAGE_SHA256 = "e0fe35655484acd6b76ced2d9286e1b03e25340211c13e64eb99bc0695add81e"
+WRITING_VISUAL_REFERENCE_REVISION = "b7784b8c96c742ee4f49f2277fe424bfda213ae4"
 ILLUSTRATION_CAMERA = {
     "azimuth_deg": 65.0,
     "elevation_deg": 24.0,
@@ -435,6 +437,13 @@ def recompute_data(data_root: Path | str) -> IllustrationData:
             "continuation_options": asdict(options),
             "original_accepted_revision": ORIGINAL_ACCEPTED_REVISION,
             "original_prototype_sha256": ORIGINAL_PROTOTYPE_SHA256,
+            "original_accepted_image_sha256": ORIGINAL_ACCEPTED_IMAGE_SHA256,
+            "visual_reference": {
+                "repository": "Writing-Lab/modern-ice-halo-series",
+                "revision": WRITING_VISUAL_REFERENCE_REVISION,
+                "paths": ["halo_notes/draw/projection.py", "halo_notes/draw/scene.py"],
+                "use": "projection and crystal-visibility behavior only; no runtime dependency or copied framework",
+            },
             "recompute_command": recompute_command(data_root),
         },
     }
