@@ -559,6 +559,9 @@ def test_tracked_world_body_asset_and_reproduction_contract_are_linked():
     assert "[world-body-frames.png](figures/theory/world-body-frames.png)" in contract
     assert world_body_data.SCHEMA_VERSION in contract
     assert "scripts/illustrations/regen.py --mode all" in contract
+    assert "internal, rebuildable" in contract
+    assert "re-certify SO(3)" in contract
+    assert "azimuth `65 deg`" in contract
     assert "independently implemented" in contract
     assert "/Users/" not in contract
 

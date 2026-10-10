@@ -448,9 +448,9 @@ packages, or a second registry.
 Each figure entry should have explicit input and output directories and two
 non-overlapping operations:
 
-- **replot:** read an existing data export, validate its schema/provenance, and
-  write only the figure. Missing data fails clearly. It must not import a
-  solver path that starts calculation as a side effect.
+- **replot:** read an existing internal data export, check the basic consumption
+  format and file pairing, and write only the figure. Missing data fails clearly.
+  It must not import a solver path that starts calculation as a side effect.
 - **recompute:** call LI's production scientific interfaces, write numerical
   arrays plus metadata to the requested data directory, and stop. It must not
   silently overwrite the canonical document figure.
@@ -501,9 +501,9 @@ embedding; this inventory does not multiply formats pre-emptively.
 
 `--data-dir` names the batch data root, not the figure leaf. The first command
 below writes `canonical-fiber/` and `world-body-frames/` beneath that root and
-never writes a PNG. The second reads only the self-contained figure leaf and
-writes the named PNG; missing, damaged, or unsupported data fails with the exact
-recompute command instead of starting the solver.
+never writes a PNG. The second reads only the figure's internal rebuildable
+cache and writes the named PNG; missing, unreadable, or unsupported data fails
+with the exact recompute command instead of starting the solver.
 
 ```bash
 JAX_PLATFORMS=cpu OMP_NUM_THREADS=1 \
@@ -528,15 +528,33 @@ uv run --with matplotlib python scripts/illustrations/regen.py --mode all \
 
 The figure cache schema is
 `lumice-integral.illustration.world-body-frames/v1`, separate from the upstream
-`lumice-integral.figure-data/v3` export. It records the 513-point presentation
-grid, two fixed production retraction iterations, selected indices
-`[0, 128, 256, 384]`, body-to-world rotations, source directions, production
-outgoing directions, and the canonical crystal's vertices, faces, edges,
-normals, and centroids. Metadata records array shapes, dtypes, units, the NPZ
-SHA-256, LI revision and dirty state, Python/package versions, continuation
-options, coordinate residuals, component scope, and the upstream v3 hashes.
-Replotting validates those declarations with `allow_pickle=False` and has no
-runtime dependency on LI, JAX, SciPy, Writing-Lab, scratchpad, or Lumice.
+`lumice-integral.figure-data/v3` export. It is an internal, rebuildable
+intermediate rather than an arbitrary external-payload protocol. It records the
+513-point presentation grid, two fixed production retraction iterations,
+selected indices `[0, 128, 256, 384]`, body-to-world rotations, source
+directions, production outgoing directions, and the canonical crystal's
+vertices, faces, edges, normals, and centroids. Metadata records array shapes,
+dtypes, units, the NPZ SHA-256, LI revision and dirty state, Python/package
+versions, continuation options, coordinate residuals, component scope, and the
+upstream v3 hashes.
+
+Replotting uses `allow_pickle=False`, checks the JSON/NPZ identity and hash,
+requires the consumed arrays with usable shapes, numeric dtypes and finite
+values, and checks only the face/edge indices needed by the renderer. It does
+not re-certify SO(3), coordinate equalities, face topology, normal orientation,
+or every redundant metadata declaration after the files have been synchronously
+rewritten. Those scientific properties are checked while production data is
+assembled and by the slow canonical regression, which directly compares the
+actual arrays with the production crystal, direction evaluator, path validity,
+and the historical four-pose anchor. This split keeps a corrupted or incomplete
+cache diagnosable without duplicating a crystal-geometry validator in plotting
+code.
+
+The rendering layer owns the accepted visual defaults: a perspective camera at
+azimuth `65 deg`, elevation `24 deg`, distance `7`, and face `3` as the visible
+landmark. These choices are explicit in `world_body_frames.py`; changing them
+does not change the cache schema. Replotting has no runtime dependency on LI,
+JAX, SciPy, Writing-Lab, scratchpad, or Lumice.
 
 The narrow projection and visibility behavior was independently implemented in
 LI after consulting Writing-Lab revision
@@ -547,10 +565,15 @@ runtime dependency. The accepted prototype remains provenance evidence at LI
 revision `98b4a8c7ec70e519f3744279840c2814f871ade7`; the historical four rotations
 are a small regression oracle, never a production input.
 
-The canonical asset is 2400×1500 pixels. It was inspected at 960 and 720 pixel
-reading widths on 2026-10-11: the two-row correspondence, four direct-numbered
-poses, source arrows, face-3 landmark, visible/hidden edge distinction, frame
-triads, $R_i^{\mathsf T}$ mappings, and bottom identity remained legible. This is
+The canonical asset is 2400×1500 pixels. A fresh empty-directory rebuild at
+rendering-code revision `274dad6` produced SHA-256
+`dfeda8a1788ed61743e50d7ef4734bd2f9ff9f7c2373593b00477ce948337024`,
+identical to the tracked PNG. The rebuilt image, the tracked image, and the
+accepted prototype were opened directly; 960×600 and 720×450 downscaled views
+were also inspected. At both reading widths the two-row correspondence, four
+direct-numbered poses, source arrows, face-3 landmark, visible/hidden edge
+distinction, frame triads, $R_i^{\mathsf T}$ mappings, and bottom identity were
+legible, with no clipping or label collision that changed the reading. This is
 a production readability check, not a claim of author aesthetic approval.
 
 ## 7. Acceptance and handoff
