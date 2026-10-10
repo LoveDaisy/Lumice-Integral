@@ -248,6 +248,16 @@ def test_world_body_data_ignores_redundant_and_presentation_metadata(tmp_path):
     assert loaded.metadata["illustration_camera"]["distance"] == -1.0
 
 
+def test_world_body_data_allows_unrelated_additional_records(tmp_path):
+    directory = _write_valid(tmp_path)
+    _rewrite_arrays(directory, lambda arrays: arrays.__setitem__("unused", np.array([1.0])))
+    _rewrite_metadata(directory, lambda metadata: metadata.__setitem__("unused", {"note": "ignored"}))
+
+    loaded = world_body_data.load_data(tmp_path)
+
+    np.testing.assert_array_equal(loaded.arrays["unused"], [1.0])
+
+
 def test_world_body_data_does_not_recompute_scientific_invariants_on_load(tmp_path):
     directory = _write_valid(tmp_path)
     _rewrite_array(directory, "rotations", np.zeros((4, 3, 3)))
@@ -367,6 +377,33 @@ def test_world_body_replot_closes_figure_when_save_fails(tmp_path, monkeypatch):
         world_body_frames.replot_data(tmp_path / "data", tmp_path / "figures")
 
     assert plt.get_fignums() == before
+
+
+def test_world_body_data_import_does_not_load_presentation_layer(tmp_path):
+    code = f"""
+import importlib.abc
+import sys
+
+class Blocker(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == '_crystal_view':
+            raise RuntimeError(f'forbidden import: {{fullname}}')
+        return None
+
+sys.meta_path.insert(0, Blocker())
+sys.path.insert(0, {str(ILLUSTRATIONS)!r})
+import _world_body_data
+assert '_crystal_view' not in sys.modules
+"""
+
+    completed = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
 
 
 def test_world_body_replot_import_chain_excludes_solver_modules(tmp_path):
@@ -561,13 +598,101 @@ def test_recomputed_world_body_data_matches_accepted_four_poses(tmp_path):
     )
     assert completed.returncode == 0, completed.stderr
     result = world_body_data.load_data(data_root)
+    arrays = result.arrays
 
+    from lumice_integral.canonical_scene import (
+        canonical_crystal,
+        canonical_pixel_problem,
+        canonical_sun_direction,
+        canonical_target_direction,
+    )
+    from lumice_integral.weights import evaluate_weights_batch
+    import jax
+
+    rotations = arrays["rotations"]
     np.testing.assert_allclose(
-        result.arrays["rotations"],
+        rotations,
         np.asarray(reference["rotations"]),
         rtol=0.0,
         atol=reference["rotation_atol"],
     )
+    np.testing.assert_array_equal(arrays["selected_dense_indices"], [0, 128, 256, 384])
+
+    crystal = canonical_crystal()
+    vertices_body = np.asarray(crystal.vertices)
+    face_numbers = np.array([face.number for face in crystal.faces])
+    face_normals_body = np.stack([crystal.normal(face) for face in crystal.faces])
+    face_centers_body = np.stack([crystal.centroid(face) for face in crystal.faces])
+    np.testing.assert_array_equal(arrays["vertices_body"], vertices_body)
+    np.testing.assert_array_equal(arrays["face_numbers"], face_numbers)
+    np.testing.assert_array_equal(arrays["face_normals_body"], face_normals_body)
+    np.testing.assert_array_equal(arrays["face_centers_body"], face_centers_body)
+    assert result.metadata["geometry"]["face_vertex_ids"] == [
+        list(face.vertex_ids) for face in crystal.faces
+    ]
+    assert result.metadata["geometry"]["edges"] == [list(edge) for edge in crystal.edges]
+
+    source_world = np.asarray(canonical_sun_direction())
+    target_direction = np.asarray(canonical_target_direction())
+    np.testing.assert_array_equal(arrays["source_world"], source_world)
+    np.testing.assert_array_equal(arrays["target_direction"], target_direction)
+    np.testing.assert_allclose(
+        arrays["source_body"],
+        np.einsum("nji,j->ni", rotations, source_world),
+        rtol=0.0,
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        arrays["vertices_world"],
+        np.stack([vertices_body @ rotation.T for rotation in rotations]),
+        rtol=0.0,
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        arrays["face_normals_world"],
+        np.stack([face_normals_body @ rotation.T for rotation in rotations]),
+        rtol=0.0,
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        arrays["face_centers_world"],
+        np.stack([face_centers_body @ rotation.T for rotation in rotations]),
+        rtol=0.0,
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        np.einsum("nij,nj->ni", rotations, arrays["source_body"]),
+        np.broadcast_to(source_world, (4, 3)),
+        rtol=0.0,
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        rotations.transpose(0, 2, 1) @ rotations,
+        np.broadcast_to(np.eye(3), (4, 3, 3)),
+        rtol=0.0,
+        atol=1e-10,
+    )
+    np.testing.assert_allclose(np.linalg.det(rotations), 1.0, rtol=0.0, atol=1e-10)
+
+    problem = canonical_pixel_problem()
+    outgoing = np.asarray(jax.vmap(problem.direction_evaluator)(rotations))
+    np.testing.assert_allclose(arrays["outgoing_directions"], outgoing, rtol=0.0, atol=1e-12)
+    assert np.max(np.linalg.norm(outgoing - target_direction, axis=1)) <= 1e-10
+    validity = evaluate_weights_batch(
+        problem.weight_evaluators,
+        rotations,
+        ("path_validity",),
+    ).values["path_validity"]
+    np.testing.assert_array_equal(validity, np.ones_like(validity))
+
+    world_body_frames = _load_module("world_body_frames")
+    assert world_body_frames.LANDMARK_FACE_NUMBER in face_numbers
+    assert world_body_frames.DEFAULT_CAMERA == {
+        "azimuth_deg": 65.0,
+        "elevation_deg": 24.0,
+        "distance": 7.0,
+        "projection": "perspective",
+    }
     assert result.metadata["source"]["component_scope"] == "one component reached from one seed"
     assert result.metadata["source"]["component_completeness"] == "unknown"
     assert result.metadata["sampling"]["selected_indices"] == [0, 128, 256, 384]
