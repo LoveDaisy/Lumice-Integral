@@ -2137,13 +2137,13 @@ MC_GRADIENT_BASIS = (
 # ``*_corner`` tolerance keys.  The tier value is degrees(EXTREMUM_ATOL), resolved lazily by
 # _mc_corner_value_tier like _mc_onset_value_tolerance's widened value.
 MC_CORNER_VALUE_TIER_BASIS = (
-    "the corner rows of this fixture are exit-TIR corners (gradient_norm null, the same convention that "
-    "nulls their gradient): the walk's located position on an unbounded gradient is each platform's "
-    "rounding luck and the sqrt fold carries it into the value — cross-ISA drift 3.5e-7..7.6e-7 deg "
-    "measured on PR #477's CI (the same family as the 1e-8 cross-ISA red behind Lumice's ba512cd1).  "
-    "Emitted only when the classification carries such a corner, so key-present means every corner row "
-    "of the fixture is one; a fixture that someday mixes well-behaved corners (finite gradient_norm) "
-    "with singular ones must move the tier to per-row emission first"
+    "the classification carries an exit-TIR corner (gradient_norm null, the same convention that nulls "
+    "its gradient): the walk's located position on an unbounded gradient is each platform's rounding "
+    "luck and the sqrt fold carries it into the value — cross-ISA drift 3.5e-7..7.6e-7 deg measured "
+    "on PR #477's CI (the same family as the 1e-8 cross-ISA red behind Lumice's ba512cd1).  Emission "
+    "is fixture-level when any such corner is present; consumers apply the key to every source=corner "
+    "row.  A finite-gradient corner is therefore supported only when this tier is no wider than the "
+    "fixture's default (as in the mixed 3-1-5 cell, whose near-degenerate default already equals it)"
 )
 MC_MEDIAN_ATOL = 2e-3
 MC_MEDIAN_BASIS = (
@@ -2721,9 +2721,10 @@ def _mc_corner_value_tier() -> float:
     """The corner-row value tier: ``degrees(EXTREMUM_ATOL)`` (the merge tolerance, one constant, one authority).
 
     The mechanism and the emission contract are in :data:`MC_CORNER_VALUE_TIER_BASIS` (convention 1's
-    value half): a fixture emits a ``*_corner`` key only when its classification carries an exit-TIR
-    corner (``source == "corner"`` with a null gradient norm), so key-present means every corner row of
-    that fixture is one.
+    value half): a fixture emits a ``*_corner`` key when any onset is an exit-TIR corner
+    (``source == "corner"`` with a null gradient norm).  Consumers apply that fixture-level key to
+    every ``source == "corner"`` row; a finite-gradient corner is supported only when the corner tier
+    is no wider than the fixture's default.
     """
     from .dp_field.boundary import EXTREMUM_ATOL
 
@@ -2800,9 +2801,9 @@ def verify_mc_focusing(fixture: Mapping[str, Any], name: str = "") -> Check:
     for index, (mine, reference) in enumerate(zip(got["onsets"], expected["onsets"])):
         exact = ("location", "source", "profile", "jacobian_focusing", "multiplicity")
         check.expect(all(mine[key] == reference[key] for key in exact), f"onset {index} ({reference['source']}): structure differs")
-        # per-row tier: a corner row of a fixture that emitted the corner tier reads the tier value
-        # (MC_CORNER_VALUE_TIER_BASIS: key-present means every corner row of the fixture is singular);
-        # every other row keeps the default onset_value_deg
+        # The fixture-level key is emitted when any singular corner exists and is read by every corner
+        # row.  The exported matrix separately checks that a finite-gradient corner is never widened
+        # beyond this fixture's default; every non-corner row reads that existing default.
         value_tolerance = (
             tolerance["onset_value_deg_corner"]["value"]
             if reference["source"] == "corner" and "onset_value_deg_corner" in tolerance
@@ -2839,9 +2840,9 @@ def build_mc_wavelength_fixture(cell: MCCell, provenance: Mapping[str, Any]) -> 
         "displacement_deg": _tolerance(2e-8, "absolute, deg: the max-min of one row's values, the difference of two values_deg"),
     }
     # The table's rows are the same critical-set enumeration as classify's onsets (the structure
-    # tolerance pins every row's (location, source, ...) on both sides), so the corner-value tier is
-    # detected once on the classification at the cell's primary index — divergence is the corner's
-    # own property, not per-index.
+    # tolerance pins every row's (location, source, ...) on both sides).  Emission checks the primary
+    # index once; the current exported 3-5 cell separately verifies that every exported index has the
+    # same singular-corner classification, rather than treating that as a generic per-index guarantee.
     if _mc_has_singular_corner(_mc_classification_json(classify(cell.crystal, cell.faces, _mc_haar_density(), cell.primary_index[1]))["onsets"]):
         fixture["tolerance"]["values_deg_corner"] = _tolerance(
             _mc_corner_value_tier(), "absolute, deg per label, corner tier: " + MC_CORNER_VALUE_TIER_BASIS + "; " + MC_ONSET_DEG_BASIS
@@ -2869,8 +2870,8 @@ def verify_mc_wavelength(fixture: Mapping[str, Any], name: str = "") -> Check:
         exact = ("location", "source", "profile", "jacobian_focusing")
         check.expect(all(mine[key] == reference[key] for key in exact), f"row {index} ({reference['source']}): structure differs")
         check.expect(set(mine["values_deg"]) == set(reference["values_deg"]), f"row {index}: labels differ")
-        # per-row tier (see verify_mc_focusing): a corner row of a fixture that emitted the corner
-        # tier reads it for the row's values and its displacement, every other row keeps the defaults
+        # Fixture-level selection (see verify_mc_focusing): source=corner plus key-present reads the
+        # corner values/displacement tier; every other row reads this fixture's existing defaults.
         corner_row = reference["source"] == "corner" and "values_deg_corner" in tolerance
         values_tolerance = tolerance["values_deg_corner"]["value"] if corner_row else tolerance["values_deg"]["value"]
         displacement_tolerance = tolerance["displacement_deg_corner"]["value"] if corner_row else tolerance["displacement_deg"]["value"]

@@ -23,6 +23,7 @@ import numpy as np
 import pytest
 
 from lumice_integral import chromatic as C
+from lumice_integral import focusing as F
 from lumice_integral import parity_export as pe
 from lumice_integral.spectrum.dispersion import refractive_index
 
@@ -104,39 +105,177 @@ def test_chromatic_verdicts_of_the_two_diagnose_cells() -> None:
 
 
 # ------------------------------------------------------------------ the caliber conventions (reference scale)
-def test_focusing_fixtures_follow_the_caliber_conventions() -> None:
-    """The reference-scale caliber (docs/analytic-parity-fixtures.md "Three conventions"): a divergent
-    exit-TIR corner gradient exports as null, and only a corner pair whose difference exceeds the
-    default tolerance yet stays within EXTREMUM_ATOL widens onset_value_deg — exactly degenerate
-    symmetric corners and pair-free paths keep the default.  The corner-value tier (convention 1's
-    value half) follows the same predicate as the null gradient: a fixture carrying a divergent
-    corner emits ``onset_value_deg_corner`` at degrees(EXTREMUM_ATOL), a fixture whose only corner is
-    well-behaved (finite gradient, the 4-8-7-5 control) must not emit it."""
+def _focusing_corner_cells() -> tuple[pe.MCCell, ...]:
+    return (
+        pe.MCCell("mc_field", pe.prism_crystal(1.0), (3, 5), ("focusing_classify",), (("450nm", N450),)),
+        pe.MCCell("mc_field", pe.prism_crystal(1.0), (3, 1, 5), ("focusing_classify",), (("550nm", N550),)),
+        pe.MCCell("mc_field", BETA, (4, 8, 7, 5), ("focusing_classify",), (("550nm", N550),)),
+    )
+
+
+@pytest.fixture(scope="module")
+def focusing_corner_fixtures() -> dict[str, dict]:
+    return {cell.path_id: pe.build_mc_focusing_fixture(cell, pe.fixture_provenance()) for cell in _focusing_corner_cells()}
+
+
+@pytest.fixture(scope="module")
+def wavelength_corner_fixture() -> dict:
+    cell = pe.MCCell(
+        "mc_field",
+        pe.prism_crystal(1.0),
+        (3, 5),
+        ("wavelength_critical_table",),
+        (("450nm", N450), ("550nm", N550), ("650nm", N650)),
+    )
+    return pe.build_mc_wavelength_fixture(cell, pe.fixture_provenance())
+
+
+def _assert_finite_corner_tier_is_no_wider_than_default(fixture: dict) -> None:
+    tolerance = fixture["tolerance"]
+    default = tolerance["onset_value_deg"]["value"]
+    corner = tolerance.get("onset_value_deg_corner", tolerance["onset_value_deg"])["value"]
+    for onset in fixture["expected"]["onsets"]:
+        if onset["source"] == "corner" and onset["gradient_norm"] is not None:
+            assert corner <= default, f"finite corner {onset['value_deg']} gets {corner:g} over default {default:g}"
+
+
+def test_focusing_fixtures_follow_the_caliber_conventions(focusing_corner_fixtures: dict[str, dict]) -> None:
+    """The real matrix distinguishes the singular tier from the near-degenerate default widening."""
     from lumice_integral.dp_field.boundary import EXTREMUM_ATOL
 
-    cells = (  # (cell, onset_value_deg tolerance, corner tier emitted, {corner value_deg: expected gradient_norm})
-        (pe.MCCell("mc_field", pe.prism_crystal(1.0), (3, 5), ("focusing_classify",), (("450nm", N450),)),
-         1e-8, True, {50.618816106: None}),
-        (pe.MCCell("mc_field", pe.prism_crystal(1.0), (3, 1, 5), ("focusing_classify",), (("550nm", N550),)),
-         math.degrees(EXTREMUM_ATOL), True, {43.545132152: 1.0, 151.667406123: None}),
-        (pe.MCCell("mc_field", BETA, (4, 8, 7, 5), ("focusing_classify",), (("550nm", N550),)),
-         1e-8, False, {50.161741671: 1.667618233325774}),
+    expected = (  # (path, default tolerance, corner tier emitted, {corner value_deg: expected gradient_norm})
+        ("3-5", 1e-8, True, {50.618816106: None}),
+        ("3-1-5", math.degrees(EXTREMUM_ATOL), True, {43.545132152: 1.0, 151.667406123: None}),
+        ("4-8-7-5", 1e-8, False, {50.161741671: 1.667618233325774}),
     )
-    for cell, onset_tol, corner_tier, corner_grads in cells:
-        fixture = pe.build_mc_focusing_fixture(cell, pe.fixture_provenance())
-        assert fixture["tolerance"]["onset_value_deg"]["value"] == onset_tol, cell.name
-        assert ("onset_value_deg_corner" in fixture["tolerance"]) == corner_tier, cell.name
+    for path_id, onset_tol, corner_tier, corner_grads in expected:
+        fixture = focusing_corner_fixtures[path_id]
+        assert fixture["tolerance"]["onset_value_deg"]["value"] == onset_tol, path_id
+        assert ("onset_value_deg_corner" in fixture["tolerance"]) == corner_tier, path_id
         if corner_tier:
             tier = fixture["tolerance"]["onset_value_deg_corner"]
-            assert tier["value"] == math.degrees(EXTREMUM_ATOL), cell.name
-            assert "corner tier" in tier["basis"], cell.name
-        corners = [o for o in fixture["expected"]["onsets"] if o["source"] == "corner"]
+            assert tier["value"] == math.degrees(EXTREMUM_ATOL), path_id
+            assert "corner tier" in tier["basis"], path_id
+        corners = [onset for onset in fixture["expected"]["onsets"] if onset["source"] == "corner"]
         for value, gradient in corner_grads.items():
-            (onset,) = [o for o in corners if abs(o["value_deg"] - value) < 1e-6]
+            (onset,) = [candidate for candidate in corners if abs(candidate["value_deg"] - value) < 1e-6]
             if gradient is None:
-                assert onset["gradient_norm"] is None, f"{cell.name}: corner {value} should be null (divergent)"
+                assert onset["gradient_norm"] is None, f"{path_id}: corner {value} should be null (divergent)"
             else:
-                assert onset["gradient_norm"] == pytest.approx(gradient, rel=1e-6), f"{cell.name}: corner {value}"
+                assert onset["gradient_norm"] == pytest.approx(gradient, rel=1e-6), f"{path_id}: corner {value}"
+        _assert_finite_corner_tier_is_no_wider_than_default(fixture)
+
+    mixed = focusing_corner_fixtures["3-1-5"]
+    mixed_corners = [onset["gradient_norm"] for onset in mixed["expected"]["onsets"] if onset["source"] == "corner"]
+    assert any(gradient is None for gradient in mixed_corners) and any(gradient is not None for gradient in mixed_corners)
+    assert mixed["tolerance"]["onset_value_deg_corner"]["value"] == mixed["tolerance"]["onset_value_deg"]["value"]
+
+    unsupported = copy.deepcopy(mixed)
+    unsupported["tolerance"]["onset_value_deg"]["value"] = 1e-8
+    with pytest.raises(AssertionError, match="finite corner"):
+        _assert_finite_corner_tier_is_no_wider_than_default(unsupported)
+
+
+class _JsonResult:
+    def __init__(self, document: dict):
+        self.document = document
+
+    def as_json(self) -> dict:
+        return copy.deepcopy(self.document)
+
+
+def _verify_focusing_drift(
+    monkeypatch: pytest.MonkeyPatch, fixture: dict, row_index: int, drift_deg: float
+) -> list[str]:
+    got = copy.deepcopy(fixture["expected"])
+    for onset in got["onsets"]:
+        if onset["gradient_norm"] is None:
+            onset["gradient_norm"] = math.inf
+    got["onsets"][row_index]["value_deg"] += drift_deg
+    monkeypatch.setattr(F, "classify", lambda *_args, **_kwargs: _JsonResult(got))
+    return pe.verify_mc_focusing(fixture, "corner-routing").failures
+
+
+def test_focusing_corner_tier_routes_by_source_and_existing_default(
+    monkeypatch: pytest.MonkeyPatch, focusing_corner_fixtures: dict[str, dict]
+) -> None:
+    singular = focusing_corner_fixtures["3-5"]
+    singular_corner = next(index for index, row in enumerate(singular["expected"]["onsets"]) if row["source"] == "corner")
+    singular_noncorner = next(index for index, row in enumerate(singular["expected"]["onsets"]) if row["source"] != "corner")
+    assert not _verify_focusing_drift(monkeypatch, singular, singular_corner, 1e-6)
+    assert any("value_deg" in failure for failure in _verify_focusing_drift(monkeypatch, singular, singular_corner, 1e-5))
+    assert any("value_deg" in failure for failure in _verify_focusing_drift(monkeypatch, singular, singular_noncorner, 1e-6))
+
+    finite = focusing_corner_fixtures["4-8-7-5"]
+    finite_corner = next(index for index, row in enumerate(finite["expected"]["onsets"]) if row["source"] == "corner")
+    assert "onset_value_deg_corner" not in finite["tolerance"]
+    assert any("value_deg" in failure for failure in _verify_focusing_drift(monkeypatch, finite, finite_corner, 1e-6))
+
+    mixed = focusing_corner_fixtures["3-1-5"]
+    mixed_finite = next(
+        index
+        for index, row in enumerate(mixed["expected"]["onsets"])
+        if row["source"] == "corner" and row["gradient_norm"] is not None
+    )
+    without_corner_key = copy.deepcopy(mixed)
+    del without_corner_key["tolerance"]["onset_value_deg_corner"]
+    for candidate in (mixed, without_corner_key):
+        assert not _verify_focusing_drift(monkeypatch, candidate, mixed_finite, 1e-6)
+        assert any("value_deg" in failure for failure in _verify_focusing_drift(monkeypatch, candidate, mixed_finite, 1e-5))
+
+
+def test_wavelength_corner_tier_is_supported_at_every_exported_index(wavelength_corner_fixture: dict) -> None:
+    from lumice_integral.dp_field.boundary import EXTREMUM_ATOL
+
+    tolerance = wavelength_corner_fixture["tolerance"]
+    tier = math.degrees(EXTREMUM_ATOL)
+    assert tolerance["values_deg"]["value"] == 1e-8
+    assert tolerance["displacement_deg"]["value"] == 2e-8
+    assert tolerance["values_deg_corner"]["value"] == tier
+    assert tolerance["displacement_deg_corner"]["value"] == tier
+
+    data = wavelength_corner_fixture["input"]
+    crystal = pe.build_crystal(data["crystal"])
+    for label, refractive_index_value in data["indices"].items():
+        classification = pe._mc_classification_json(
+            F.classify(crystal, data["faces"], pe._mc_haar_density(), refractive_index_value)
+        )
+        corners = [row for row in classification["onsets"] if row["source"] == "corner"]
+        assert corners and all(row["gradient_norm"] is None for row in corners), label
+
+
+def _verify_wavelength_drift(
+    monkeypatch: pytest.MonkeyPatch,
+    fixture: dict,
+    row_index: int,
+    drift_deg: float,
+    *,
+    label: str | None = None,
+) -> list[str]:
+    got = copy.deepcopy(fixture["expected"])
+    if label is None:
+        got["onsets"][row_index]["displacement_deg"] += drift_deg
+    else:
+        got["onsets"][row_index]["values_deg"][label] += drift_deg
+    monkeypatch.setattr(F, "wavelength_critical_table", lambda *_args, **_kwargs: _JsonResult(got))
+    return pe.verify_mc_wavelength(fixture, "corner-routing").failures
+
+
+def test_wavelength_corner_tier_routes_values_and_displacement(
+    monkeypatch: pytest.MonkeyPatch, wavelength_corner_fixture: dict
+) -> None:
+    rows = wavelength_corner_fixture["expected"]["onsets"]
+    corner = next(index for index, row in enumerate(rows) if row["source"] == "corner")
+    noncorner = next(index for index, row in enumerate(rows) if row["source"] != "corner")
+    label = wavelength_corner_fixture["expected"]["labels"][0]
+
+    assert not _verify_wavelength_drift(monkeypatch, wavelength_corner_fixture, corner, 1e-6, label=label)
+    assert any(label in failure for failure in _verify_wavelength_drift(monkeypatch, wavelength_corner_fixture, corner, 1e-5, label=label))
+    assert any(label in failure for failure in _verify_wavelength_drift(monkeypatch, wavelength_corner_fixture, noncorner, 1e-6, label=label))
+
+    assert not _verify_wavelength_drift(monkeypatch, wavelength_corner_fixture, corner, 1e-6)
+    assert any("displacement" in failure for failure in _verify_wavelength_drift(monkeypatch, wavelength_corner_fixture, corner, 1e-5))
+    assert any("displacement" in failure for failure in _verify_wavelength_drift(monkeypatch, wavelength_corner_fixture, noncorner, 1e-6))
 
 
 def test_chromatic_gate_features_follow_convention_3() -> None:
@@ -240,7 +379,7 @@ def test_anchor_pins_discriminate() -> None:
 
 
 # ------------------------------------------------------------------ slow tier
-# the 6 fast tests above stay in the default tier; the 3 slow ones below are marked individually
+# The cheap in-memory tests above stay in the default tier; the 3 slow ones below are marked individually
 # (a module-level pytestmark would move all of them out of the fast suite)
 
 MC_CELL_NAMES = (
