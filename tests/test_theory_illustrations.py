@@ -29,6 +29,7 @@ def _load_module(name: str):
 
 world_body_data = _load_module("_world_body_data")
 crystal_view = _load_module("_crystal_view")
+regen = _load_module("regen")
 
 
 def _valid_arrays() -> dict[str, np.ndarray]:
@@ -238,6 +239,117 @@ runpy.run_path({str(script)!r}, run_name='__main__')
     assert completed.returncode == 0, completed.stderr
     assert (output_directory / "world-body-frames.png").is_file()
     assert directory.is_dir()
+
+
+def test_regen_uses_one_ordered_command_table():
+    planned = regen.commands(
+        mode="all",
+        data_root=Path("data root"),
+        output_directory=Path("output root"),
+        only="world-body-frames",
+    )
+
+    assert [(step.figure_id, operation) for step, operation, *_ in planned] == [
+        ("world-body-frames", "recompute"),
+        ("world-body-frames", "replot"),
+    ]
+    assert [category for *_, category, _ in planned] == ["scientific recompute", "pure rendering"]
+    assert all(Path(command[1]).is_absolute() for _, _, command, _, _ in planned)
+    assert "--output-dir" not in planned[0][2]
+    assert planned[1][2][-2:] == ["--output-dir", "output root"]
+
+
+def test_regen_dry_run_is_side_effect_free_from_arbitrary_cwd(tmp_path):
+    data_root = tmp_path / "data root"
+    output_directory = tmp_path / "output root"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(ILLUSTRATIONS / "regen.py"),
+            "--mode",
+            "all",
+            "--data-dir",
+            str(data_root),
+            "--output-dir",
+            str(output_directory),
+            "--dry-run",
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "Implemented batch: 1/6 B1 figures" in completed.stdout
+    assert "world-body-frames:recompute" in completed.stdout
+    assert "world-body-frames:replot" in completed.stdout
+    assert "scientific recompute" in completed.stdout
+    assert "pure rendering" in completed.stdout
+    assert not data_root.exists()
+    assert not output_directory.exists()
+
+
+def test_regen_replot_handles_space_paths_and_preserves_child_failure(tmp_path):
+    pytest.importorskip("matplotlib")
+    data_root = tmp_path / "data root"
+    output_directory = tmp_path / "output root"
+    _write_valid(data_root)
+    command = [
+        sys.executable,
+        str(ILLUSTRATIONS / "regen.py"),
+        "--mode",
+        "replot",
+        "--only",
+        "world-body-frames",
+        "--data-dir",
+        str(data_root),
+        "--output-dir",
+        str(output_directory),
+    ]
+
+    completed = subprocess.run(command, cwd=tmp_path, capture_output=True, text=True)
+    assert completed.returncode == 0, completed.stderr
+    assert (output_directory / "world-body-frames.png").is_file()
+
+    failed = subprocess.run(
+        [
+            *command[: command.index("--data-dir") + 1],
+            str(tmp_path / "missing data"),
+            "--output-dir",
+            str(tmp_path / "unused output"),
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+    assert failed.returncode != 0
+    assert "Recompute with:" in failed.stderr
+    assert not (tmp_path / "unused output").exists()
+
+
+def test_regen_rejects_unknown_figure_id(tmp_path):
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(ILLUSTRATIONS / "regen.py"),
+            "--mode",
+            "replot",
+            "--only",
+            "not-a-figure",
+            "--data-dir",
+            str(tmp_path / "data"),
+            "--output-dir",
+            str(tmp_path / "output"),
+            "--dry-run",
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 2
+    assert "unknown figure ID" in completed.stderr
+    assert not (tmp_path / "data").exists()
+    assert not (tmp_path / "output").exists()
 
 
 def test_world_body_reference_records_the_accepted_sampling_and_source_hashes():
