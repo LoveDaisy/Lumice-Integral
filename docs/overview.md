@@ -635,5 +635,6 @@ produce plausible but systematically wrong radiance.
 | [ch06-reference-fixture.md](ch06-reference-fixture.md) | chapter-6 fixture, provenance, acceptance stages, Lumice comparisons |
 | [ch11-pose-density-families.md](ch11-pose-density-families.md) | the five pose-density families |
 | [chromatic-module-c.md](chromatic-module-c.md) | weight kinks (the third kind of critical line) and the colour criterion; module C spec draft |
+| [theory-illustrations.md](theory-illustrations.md) | explanatory-figure inventory, the accepted six-figure batch, later priorities, and the production boundary |
 | [decisions/](decisions/) | architecture decision records |
 

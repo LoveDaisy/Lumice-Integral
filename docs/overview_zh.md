@@ -315,4 +315,5 @@ $\delta \in [98^\circ, 120.3^\circ)$），`contour_quadrature` 现以 `gated_out
 | [ch06-reference-fixture.md](ch06-reference-fixture.md) | 第 6 章 fixture、来源分级、验收阶段、与 Lumice 的对照（英文） |
 | [ch11-pose-density-families.md](ch11-pose-density-families.md) | 五个姿态密度族（英文） |
 | [chromatic-module-c.md](chromatic-module-c.md) | 权重折线（第三类临界线）与彩色判据；模块 C 规格草案（英文） |
+| [theory-illustrations.md](theory-illustrations.md) | 解释性插图盘点、已认可的首批六图、后续优先级与制作边界（英文权威） |
 | [decisions/](decisions/) | 架构决策记录（英文） |
