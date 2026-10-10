@@ -127,17 +127,14 @@ def _configuration(
     ax.axis("off")
 
 
-def render_figure(data: IllustrationData):
+def _assemble_figure(data: IllustrationData, figure):
     from matplotlib.patches import FancyArrowPatch
-    import matplotlib.pyplot as plt
 
     from _crystal_view import Camera
-    from _style import GRAY, INK, MARK_COLORS, apply_style
+    from _style import GRAY, INK, MARK_COLORS
 
-    apply_style()
     camera = Camera(**DEFAULT_CAMERA)
     arrays = data.arrays
-    figure = plt.figure(figsize=(16, 10), dpi=150)
     figure.suptitle(
         "The same configuration, seen in two coordinate frames",
         x=0.04,
@@ -230,6 +227,20 @@ def render_figure(data: IllustrationData):
     return figure
 
 
+def render_figure(data: IllustrationData):
+    import matplotlib.pyplot as plt
+
+    from _style import apply_style
+
+    apply_style()
+    figure = plt.figure(figsize=(16, 10), dpi=150)
+    try:
+        return _assemble_figure(data, figure)
+    except Exception:
+        plt.close(figure)
+        raise
+
+
 def replot_data(data_root: Path | str, output_directory: Path | str) -> Path:
     import matplotlib.pyplot as plt
 
@@ -237,13 +248,11 @@ def replot_data(data_root: Path | str, output_directory: Path | str) -> Path:
     output_directory = Path(output_directory)
     output_directory.mkdir(parents=True, exist_ok=True)
     output = output_directory / OUTPUT_NAME
-    existing_figures = set(plt.get_fignums())
+    figure = render_figure(data)
     try:
-        figure = render_figure(data)
         figure.savefig(output, dpi=150)
     finally:
-        for number in set(plt.get_fignums()) - existing_figures:
-            plt.close(number)
+        plt.close(figure)
     return output
 
 

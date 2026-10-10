@@ -179,6 +179,26 @@ def test_world_body_data_reports_truncated_npz_with_recompute_command(tmp_path):
     assert world_body_data.recompute_command(tmp_path) in str(caught.value)
 
 
+def test_world_body_data_reports_binary_corruption_with_recompute_command(tmp_path):
+    directory = _write_valid(tmp_path)
+    metadata_path = directory / world_body_data.METADATA_FILE
+    metadata_path.write_bytes(b"\xff")
+
+    with pytest.raises(world_body_data.IllustrationDataError) as caught:
+        world_body_data.load_data(tmp_path)
+    assert "cannot read metadata.json" in str(caught.value)
+    assert world_body_data.recompute_command(tmp_path) in str(caught.value)
+
+    _write_valid(tmp_path)
+    arrays_path = directory / world_body_data.ARRAYS_FILE
+    arrays_path.write_bytes(b"")
+
+    with pytest.raises(world_body_data.IllustrationDataError) as caught:
+        world_body_data.load_data(tmp_path)
+    assert "cannot read arrays.npz" in str(caught.value)
+    assert world_body_data.recompute_command(tmp_path) in str(caught.value)
+
+
 def test_world_body_data_rejects_missing_required_array(tmp_path):
     directory = _write_valid(tmp_path)
     _rewrite_arrays(directory, lambda arrays: arrays.pop("source_world"))

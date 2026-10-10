@@ -251,12 +251,12 @@ def load_data(data_root: Path | str) -> IllustrationData:
         raise _fail(directory, f"missing {', '.join(missing)}", data_root)
     try:
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise _fail(directory, f"cannot read metadata.json ({error})", data_root) from error
     try:
         with np.load(arrays_path, allow_pickle=False) as payload:
             arrays = {name: np.array(payload[name], copy=True) for name in payload.files}
-    except (OSError, ValueError, BadZipFile) as error:
+    except (OSError, EOFError, ValueError, BadZipFile) as error:
         raise _fail(directory, f"cannot read arrays.npz ({error})", data_root) from error
     try:
         arrays_hash = sha256(arrays_path.read_bytes()).hexdigest()
