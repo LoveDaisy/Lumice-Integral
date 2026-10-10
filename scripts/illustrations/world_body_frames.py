@@ -237,11 +237,13 @@ def replot_data(data_root: Path | str, output_directory: Path | str) -> Path:
     output_directory = Path(output_directory)
     output_directory.mkdir(parents=True, exist_ok=True)
     output = output_directory / OUTPUT_NAME
-    figure = render_figure(data)
+    existing_figures = set(plt.get_fignums())
     try:
+        figure = render_figure(data)
         figure.savefig(output, dpi=150)
     finally:
-        plt.close(figure)
+        for number in set(plt.get_fignums()) - existing_figures:
+            plt.close(number)
     return output
 
 

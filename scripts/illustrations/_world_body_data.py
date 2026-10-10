@@ -11,6 +11,7 @@ import shlex
 import subprocess
 import sys
 from typing import Any, Mapping
+from zipfile import BadZipFile
 
 import numpy as np
 
@@ -255,7 +256,7 @@ def load_data(data_root: Path | str) -> IllustrationData:
     try:
         with np.load(arrays_path, allow_pickle=False) as payload:
             arrays = {name: np.array(payload[name], copy=True) for name in payload.files}
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, BadZipFile) as error:
         raise _fail(directory, f"cannot read arrays.npz ({error})", data_root) from error
     try:
         arrays_hash = sha256(arrays_path.read_bytes()).hexdigest()

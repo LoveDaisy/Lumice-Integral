@@ -43,7 +43,7 @@ def commands(
     data_root: Path,
     output_directory: Path,
     only: str | None,
-) -> list[tuple[FigureStep, str, list[str], str, Path]]:
+) -> list[tuple[FigureStep, str, list[str], str, tuple[Path, ...]]]:
     selected = [step for step in STEPS if only is None or step.figure_id == only]
     if only is not None and not selected:
         raise ValueError(f"unknown figure ID {only!r}; implemented: {', '.join(step.figure_id for step in STEPS)}")
@@ -59,12 +59,12 @@ def commands(
             ]
             if operation == "recompute":
                 category = "scientific recompute"
-                output = data_root / step.figure_id
+                outputs = (data_root / "canonical-fiber", data_root / step.figure_id)
             else:
                 category = "pure rendering"
                 command.extend(["--output-dir", str(output_directory)])
-                output = output_directory / step.output_name
-            result.append((step, operation, command, category, output))
+                outputs = (output_directory / step.output_name,)
+            result.append((step, operation, command, category, outputs))
     return result
 
 
@@ -91,10 +91,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ValueError as error:
         parser.error(str(error))
     print(f"Implemented batch: {len(STEPS)}/6 B1 figures")
-    for index, (step, operation, command, category, output) in enumerate(planned, start=1):
+    for index, (step, operation, command, category, outputs) in enumerate(planned, start=1):
         print(f"{index}. [{category}] {step.figure_id}:{operation} ({step.implemented_batch_position})")
         print(f"   command: {shlex.join(command)}")
-        print(f"   owns: {output}")
+        print(f"   owns: {', '.join(str(output) for output in outputs)}")
         if args.dry_run:
             continue
         completed = subprocess.run(command)

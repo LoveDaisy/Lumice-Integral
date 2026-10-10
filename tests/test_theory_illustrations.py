@@ -167,6 +167,18 @@ def test_world_body_data_reports_unreadable_files(tmp_path):
         world_body_data.load_data(tmp_path)
 
 
+def test_world_body_data_reports_truncated_npz_with_recompute_command(tmp_path):
+    directory = _write_valid(tmp_path)
+    arrays_path = directory / world_body_data.ARRAYS_FILE
+    arrays_path.write_bytes(arrays_path.read_bytes()[:-16])
+
+    with pytest.raises(world_body_data.IllustrationDataError) as caught:
+        world_body_data.load_data(tmp_path)
+
+    assert "cannot read arrays.npz" in str(caught.value)
+    assert world_body_data.recompute_command(tmp_path) in str(caught.value)
+
+
 def test_world_body_data_rejects_missing_required_array(tmp_path):
     directory = _write_valid(tmp_path)
     _rewrite_arrays(directory, lambda arrays: arrays.pop("source_world"))
@@ -379,6 +391,21 @@ def test_world_body_replot_closes_figure_when_save_fails(tmp_path, monkeypatch):
     assert plt.get_fignums() == before
 
 
+def test_world_body_replot_closes_figure_when_render_fails(tmp_path):
+    pytest.importorskip("matplotlib")
+    import matplotlib.pyplot as plt
+
+    directory = _write_valid(tmp_path / "data")
+    _rewrite_array(directory, "face_numbers", np.array([4], dtype=np.int64))
+    world_body_frames = _load_module("world_body_frames")
+    before = plt.get_fignums()
+
+    with pytest.raises(ValueError, match="highlight face 3"):
+        world_body_frames.replot_data(tmp_path / "data", tmp_path / "figures")
+
+    assert plt.get_fignums() == before
+
+
 def test_world_body_data_import_does_not_load_presentation_layer(tmp_path):
     code = f"""
 import importlib.abc
@@ -482,6 +509,8 @@ def test_regen_dry_run_is_side_effect_free_from_arbitrary_cwd(tmp_path):
     assert "world-body-frames:replot" in completed.stdout
     assert "scientific recompute" in completed.stdout
     assert "pure rendering" in completed.stdout
+    assert str(data_root / "canonical-fiber") in completed.stdout
+    assert str(data_root / world_body_data.FIGURE_ID) in completed.stdout
     assert not data_root.exists()
     assert not output_directory.exists()
 
