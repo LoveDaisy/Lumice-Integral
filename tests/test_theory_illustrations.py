@@ -1,0 +1,182 @@
+from __future__ import annotations
+
+from hashlib import sha256
+import importlib.util
+import json
+from pathlib import Path
+import sys
+
+import numpy as np
+import pytest
+
+
+REPO = Path(__file__).parents[1]
+REFERENCE = Path(__file__).parent / "data" / "theory_illustrations" / "world_body_reference.json"
+_DATA_MODULE_PATH = REPO / "scripts" / "illustrations" / "_world_body_data.py"
+_DATA_SPEC = importlib.util.spec_from_file_location("_world_body_data", _DATA_MODULE_PATH)
+assert _DATA_SPEC is not None and _DATA_SPEC.loader is not None
+world_body_data = importlib.util.module_from_spec(_DATA_SPEC)
+sys.modules[_DATA_SPEC.name] = world_body_data
+_DATA_SPEC.loader.exec_module(world_body_data)
+
+
+def _valid_arrays() -> dict[str, np.ndarray]:
+    rotations = np.repeat(np.eye(3)[None, :, :], 4, axis=0)
+    source_world = np.array([1.0, 0.0, 0.0])
+    source_body = np.repeat(source_world[None, :], 4, axis=0)
+    vertices_body = np.zeros((12, 3))
+    face_normals_body = np.array([[0.0, 0.0, 1.0]])
+    face_centers_body = np.array([[0.0, 0.0, 0.0]])
+    return {
+        "selected_dense_indices": world_body_data.SELECTED_INDICES,
+        "rotations": rotations,
+        "source_world": source_world,
+        "source_body": source_body,
+        "target_direction": np.array([0.0, 1.0, 0.0]),
+        "outgoing_directions": np.repeat(np.array([[0.0, 1.0, 0.0]]), 4, axis=0),
+        "vertices_body": vertices_body,
+        "vertices_world": np.repeat(vertices_body[None, :, :], 4, axis=0),
+        "face_numbers": np.array([3], dtype=np.int64),
+        "face_normals_body": face_normals_body,
+        "face_normals_world": np.repeat(face_normals_body[None, :, :], 4, axis=0),
+        "face_centers_body": face_centers_body,
+        "face_centers_world": np.repeat(face_centers_body[None, :, :], 4, axis=0),
+    }
+
+
+def _valid_metadata() -> dict[str, object]:
+    return {
+        "schema": world_body_data.SCHEMA_VERSION,
+        "figure_id": world_body_data.FIGURE_ID,
+        "fixture": {"name": "synthetic"},
+        "geometry": {
+            "face_numbers": [3],
+            "face_vertex_ids": [[0, 1, 2]],
+            "edges": [[0, 1], [1, 2], [0, 2]],
+            "face_landmark": 3,
+        },
+    }
+
+
+def _write_valid(root: Path) -> Path:
+    world_body_data._write_data(root, _valid_arrays(), _valid_metadata())
+    return world_body_data.data_directory(root)
+
+
+def _rewrite_metadata(directory: Path, update) -> None:
+    path = directory / world_body_data.METADATA_FILE
+    metadata = json.loads(path.read_text(encoding="utf-8"))
+    update(metadata)
+    path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _rewrite_array(directory: Path, name: str, value: np.ndarray) -> None:
+    arrays_path = directory / world_body_data.ARRAYS_FILE
+    with np.load(arrays_path, allow_pickle=False) as payload:
+        arrays = {key: np.array(payload[key], copy=True) for key in payload.files}
+    arrays[name] = value
+    with arrays_path.open("wb") as stream:
+        np.savez_compressed(stream, **arrays)
+    digest = sha256(arrays_path.read_bytes()).hexdigest()
+
+    def update(metadata):
+        metadata["payload"]["sha256"] = digest
+        metadata["payload"]["arrays"][name]["shape"] = list(value.shape)
+        metadata["payload"]["arrays"][name]["dtype"] = str(value.dtype)
+
+    _rewrite_metadata(directory, update)
+
+
+def test_world_body_data_round_trip_is_self_contained(tmp_path):
+    directory = _write_valid(tmp_path)
+
+    loaded = world_body_data.load_data(tmp_path)
+
+    assert loaded.directory == directory
+    assert loaded.metadata["schema"] == world_body_data.SCHEMA_VERSION
+    np.testing.assert_array_equal(loaded.arrays["rotations"], np.repeat(np.eye(3)[None], 4, axis=0))
+
+
+def test_world_body_data_missing_payload_reports_exact_recompute_command(tmp_path):
+    with pytest.raises(world_body_data.IllustrationDataError) as caught:
+        world_body_data.load_data(tmp_path / "data with spaces")
+
+    assert "missing metadata.json, arrays.npz" in str(caught.value)
+    assert world_body_data.recompute_command(tmp_path / "data with spaces") in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("schema", "unsupported/v9", "unsupported schema"),
+        ("figure_id", "other-figure", "unexpected figure_id"),
+    ],
+)
+def test_world_body_data_rejects_wrong_identity(tmp_path, field, value, message):
+    directory = _write_valid(tmp_path)
+    _rewrite_metadata(directory, lambda metadata: metadata.__setitem__(field, value))
+
+    with pytest.raises(world_body_data.IllustrationDataError, match=message):
+        world_body_data.load_data(tmp_path)
+
+
+def test_world_body_data_rejects_hash_mismatch(tmp_path):
+    directory = _write_valid(tmp_path)
+    arrays_path = directory / world_body_data.ARRAYS_FILE
+    arrays_path.write_bytes(arrays_path.read_bytes() + b"corrupt")
+
+    with pytest.raises(world_body_data.IllustrationDataError, match="SHA-256"):
+        world_body_data.load_data(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("name", "value", "message"),
+    [
+        ("rotations", np.zeros((3, 3, 3)), "rotations has shape"),
+        ("source_world", np.array([np.nan, 0.0, 0.0]), "contains non-finite"),
+        ("rotations", np.zeros((4, 3, 3)), "not elements of SO\\(3\\)"),
+        ("source_body", np.zeros((4, 3)), "coordinate reconstruction"),
+        ("outgoing_directions", np.zeros((4, 3)), "outgoing-direction residual"),
+    ],
+)
+def test_world_body_data_rejects_invalid_numeric_payload(tmp_path, name, value, message):
+    directory = _write_valid(tmp_path)
+    _rewrite_array(directory, name, value)
+
+    with pytest.raises(world_body_data.IllustrationDataError, match=message):
+        world_body_data.load_data(tmp_path)
+
+
+def test_world_body_reference_records_the_accepted_sampling_and_source_hashes():
+    reference = json.loads(REFERENCE.read_text(encoding="utf-8"))
+
+    assert reference["figure_id"] == world_body_data.FIGURE_ID
+    assert reference["sampling"] == {
+        "dense_node_count": 513,
+        "retraction_iterations": 2,
+        "selected_indices": [0, 128, 256, 384],
+    }
+    assert reference["source"]["prototype_sha256"] == world_body_data.ORIGINAL_PROTOTYPE_SHA256
+    assert np.asarray(reference["rotations"]).shape == (4, 3, 3)
+
+
+# slow: traces and retracts the canonical fiber, including its JAX compilation.
+@pytest.mark.slow
+def test_recomputed_world_body_data_matches_accepted_four_poses(tmp_path):
+    reference = json.loads(REFERENCE.read_text(encoding="utf-8"))
+
+    result = world_body_data.recompute_data(tmp_path)
+
+    np.testing.assert_allclose(
+        result.arrays["rotations"],
+        np.asarray(reference["rotations"]),
+        rtol=0.0,
+        atol=reference["rotation_atol"],
+    )
+    assert result.metadata["source"]["component_scope"] == "one component reached from one seed"
+    assert result.metadata["source"]["component_completeness"] == "unknown"
+    assert result.metadata["sampling"]["selected_indices"] == [0, 128, 256, 384]
+    assert result.metadata["validation"]["dense_outgoing_direction_max_l2"] < 1e-10
+    assert result.metadata["validation"]["dense_retraction_residual_max_l2"] < 1e-10
+    upstream = tmp_path / "canonical-fiber" / "metadata.json"
+    assert json.loads(upstream.read_text(encoding="utf-8"))["schema"] == "lumice-integral.figure-data/v3"
