@@ -80,8 +80,8 @@ a concrete need.
 ## 2. First batch: the six accepted figures
 
 The stable IDs below are semantic; the temporary prototype numbers `00`–`03`
-do not define reading order. The proposed target path is shown as code rather
-than as a link because the file does not exist until the production batch.
+do not define reading order. Canonical figures are linked once they have a tracked
+production asset; targets that have not yet been implemented remain code paths.
 
 ### 2.1 `world-body-frames`
 
@@ -112,7 +112,8 @@ than as a link because the file does not exist until the production batch.
   canonical Sun direction, and the canonical crystal. Crystal drawing and
   coordinate transforms are presentation work; no optical quantity is
   recomputed in the drawing layer.
-- **Proposed target:** `docs/figures/theory/world-body-frames.png`.
+- **Canonical asset:** [world-body-frames.png](figures/theory/world-body-frames.png).
+  It is implemented by the first production slice described in section 6.4.
 
 ### 2.2 `deviation-level-set`
 
@@ -419,31 +420,28 @@ without relying on colour alone.
 
 ## 6. Lightweight production layout
 
-The production work should be driven by the six real figures, not by a generic
-plotting platform. The proposed layout for task 58.2 is:
+The production layout is being populated by the six real figures, not by a
+generic plotting platform. Task 58.2 implemented the first vertical slice as:
 
 ```text
 scripts/illustrations/
-  regen.py                       # explicit ordered step table
-  world_body_frames.py           # one public entry per figure
-  deviation_level_set.py
-  pose_fiber.py
-  predictor_corrector.py
-  fiber_contributions.py
-  entry_area.py
-  _style.py                      # only genuinely shared visual constants
-  _io.py                         # only if repeated data/provenance checks justify it
+  regen.py                       # the one explicit ordered step table
+  world_body_frames.py           # public recompute/replot entry for the first figure
+  _world_body_data.py            # figure-specific schema, production export and validation
+  _crystal_view.py               # narrow projection and crystal presentation
+  _style.py                      # constants already needed by the accepted six-figure batch
 
 docs/figures/theory/
-  <stable-id>.png                # one canonical static image per ID
+  world-body-frames.png          # canonical tracked asset
 
 artifacts/theory-illustrations/
-  <stable-id>/                   # rebuildable scientific data and metadata
+  canonical-fiber/               # rebuildable upstream figure-data/v3 export
+  world-body-frames/             # rebuildable self-contained figure cache
 ```
 
-The directories and commands are proposed here; this inventory does not create
-them. Task 58.2 decides the exact filenames while preserving one stable figure
-ID to one production entry and one canonical image path.
+The other five entries are added to this same table only when their real scripts
+exist in task 58.3. There are no placeholder scripts, automatic discovery, empty
+packages, or a second registry.
 
 ### 6.1 Command semantics
 
@@ -476,9 +474,10 @@ are not copied and do not become runtime dependencies.
   quantities. A plotting script may select, project, annotate, and compose
   those outputs; it must not recreate Snell/Fresnel equations, arclength,
   $J_\perp$, entry-area clipping, or Newton correction.
-- The world/body and pose-fibre prototypes currently inherit drawing and ray
-  helpers from Writing-Lab through `sys.path`; those dependencies must be
-  replaced by LI-owned presentation code or a narrow exported geometry record.
+- The historical world/body and current pose-fibre prototypes inherited drawing
+  and ray helpers from Writing-Lab through `sys.path`. The first dependency is
+  now replaced by LI-owned narrow presentation code and a self-contained geometry
+  record; `pose-fiber` retains the same migration requirement for task 58.3.
 - The predictor/corrector prototype records private continuation calls. Formal
   production requires a narrow process-data boundary, not continued monkey-
   patching of `_correct_trial` or `_trial_newton_step_kernel`.
@@ -497,6 +496,62 @@ them. Large caches remain under `artifacts/` and are rebuildable. The canonical
 static figures referenced by the docs belong under `docs/figures/theory/`.
 Whether SVG or PDF accompanies PNG is decided after checking the actual document
 embedding; this inventory does not multiply formats pre-emptively.
+
+### 6.4 Implemented first slice: `world-body-frames`
+
+`--data-dir` names the batch data root, not the figure leaf. The first command
+below writes `canonical-fiber/` and `world-body-frames/` beneath that root and
+never writes a PNG. The second reads only the self-contained figure leaf and
+writes the named PNG; missing, damaged, or unsupported data fails with the exact
+recompute command instead of starting the solver.
+
+```bash
+JAX_PLATFORMS=cpu OMP_NUM_THREADS=1 \
+  uv run python scripts/illustrations/world_body_frames.py \
+  --recompute --data-dir artifacts/theory-illustrations
+uv run --with matplotlib python scripts/illustrations/world_body_frames.py \
+  --replot --data-dir artifacts/theory-illustrations \
+  --output-dir docs/figures/theory
+```
+
+The batch entry uses the same two operations and currently reports that one of
+six B1 figures is implemented:
+
+```bash
+uv run python scripts/illustrations/regen.py --mode all \
+  --data-dir artifacts/theory-illustrations \
+  --output-dir docs/figures/theory --dry-run
+uv run --with matplotlib python scripts/illustrations/regen.py --mode all \
+  --data-dir artifacts/theory-illustrations \
+  --output-dir docs/figures/theory
+```
+
+The figure cache schema is
+`lumice-integral.illustration.world-body-frames/v1`, separate from the upstream
+`lumice-integral.figure-data/v3` export. It records the 513-point presentation
+grid, two fixed production retraction iterations, selected indices
+`[0, 128, 256, 384]`, body-to-world rotations, source directions, production
+outgoing directions, and the canonical crystal's vertices, faces, edges,
+normals, and centroids. Metadata records array shapes, dtypes, units, the NPZ
+SHA-256, LI revision and dirty state, Python/package versions, continuation
+options, coordinate residuals, component scope, and the upstream v3 hashes.
+Replotting validates those declarations with `allow_pickle=False` and has no
+runtime dependency on LI, JAX, SciPy, Writing-Lab, scratchpad, or Lumice.
+
+The narrow projection and visibility behavior was independently implemented in
+LI after consulting Writing-Lab revision
+`b7784b8c96c742ee4f49f2277fe424bfda213ae4`, specifically
+`halo_notes/draw/projection.py` and `halo_notes/draw/scene.py`. No module or
+source block from that rendering framework is copied, and Writing-Lab is not a
+runtime dependency. The accepted prototype remains provenance evidence at LI
+revision `98b4a8c7ec70e519f3744279840c2814f871ade7`; the historical four rotations
+are a small regression oracle, never a production input.
+
+The canonical asset is 2400×1500 pixels. It was inspected at 960 and 720 pixel
+reading widths on 2026-10-11: the two-row correspondence, four direct-numbered
+poses, source arrows, face-3 landmark, visible/hidden edge distinction, frame
+triads, $R_i^{\mathsf T}$ mappings, and bottom identity remained legible. This is
+a production readability check, not a claim of author aesthetic approval.
 
 ## 7. Acceptance and handoff
 
@@ -528,8 +583,8 @@ embedding; this inventory does not multiply formats pre-emptively.
 
 ### 7.3 Inputs to subsequent scrum items
 
-- **58.2** starts with `world-body-frames`, proves the directory and command
-  split, and resolves the smallest LI-owned crystal drawing/data boundary.
+- **58.2** has completed `world-body-frames`, proving the directory and command
+  split and the smallest LI-owned crystal drawing/data boundary.
 - **58.3** uses the six records in section 2 as the per-figure briefs. Its two
   special migration items are representative ray geometry for `pose-fiber` and
   stable process data for `predictor-corrector`.

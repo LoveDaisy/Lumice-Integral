@@ -4,6 +4,7 @@ from hashlib import sha256
 import importlib.util
 import json
 from pathlib import Path
+import struct
 import subprocess
 import sys
 
@@ -350,6 +351,26 @@ def test_regen_rejects_unknown_figure_id(tmp_path):
     assert "unknown figure ID" in completed.stderr
     assert not (tmp_path / "data").exists()
     assert not (tmp_path / "output").exists()
+
+
+def test_tracked_world_body_asset_and_reproduction_contract_are_linked():
+    image = REPO / "docs" / "figures" / "theory" / "world-body-frames.png"
+    payload = image.read_bytes()
+    assert payload[:8] == b"\x89PNG\r\n\x1a\n"
+    assert struct.unpack(">II", payload[16:24]) == (2400, 1500)
+
+    contract = (REPO / "docs" / "theory-illustrations.md").read_text(encoding="utf-8")
+    assert "[world-body-frames.png](figures/theory/world-body-frames.png)" in contract
+    assert world_body_data.SCHEMA_VERSION in contract
+    assert "scripts/illustrations/regen.py --mode all" in contract
+    assert "independently implemented" in contract
+    assert "/Users/" not in contract
+
+    for script in ILLUSTRATIONS.glob("*.py"):
+        source = script.read_text(encoding="utf-8")
+        assert "scratchpad/" not in source
+        assert "/Users/" not in source
+        assert "halo_notes" not in source or script.name == "_world_body_data.py"
 
 
 def test_world_body_reference_records_the_accepted_sampling_and_source_hashes():
