@@ -71,12 +71,10 @@ def _valid_metadata() -> dict[str, object]:
             "retraction_iterations": world_body_data.RETRACTION_ITERATIONS,
             "selected_indices": world_body_data.SELECTED_INDICES.tolist(),
         },
-        "illustration_camera": world_body_data.ILLUSTRATION_CAMERA,
         "geometry": {
             "face_numbers": [3],
             "face_vertex_ids": [[0, 1, 2]],
             "edges": [[0, 1], [1, 2], [0, 2]],
-            "face_landmark": 3,
         },
     }
 
@@ -110,6 +108,20 @@ def _rewrite_array(directory: Path, name: str, value: np.ndarray) -> None:
     _rewrite_metadata(directory, update)
 
 
+def _rewrite_arrays(directory: Path, update) -> None:
+    arrays_path = directory / world_body_data.ARRAYS_FILE
+    with np.load(arrays_path, allow_pickle=False) as payload:
+        arrays = {key: np.array(payload[key], copy=True) for key in payload.files}
+    update(arrays)
+    with arrays_path.open("wb") as stream:
+        np.savez_compressed(stream, **arrays)
+    digest = sha256(arrays_path.read_bytes()).hexdigest()
+    _rewrite_metadata(
+        directory,
+        lambda metadata: metadata["payload"].__setitem__("sha256", digest),
+    )
+
+
 def test_world_body_data_round_trip_is_self_contained(tmp_path):
     directory = _write_valid(tmp_path)
 
@@ -141,6 +153,28 @@ def test_world_body_data_missing_payload_reports_exact_recompute_command(tmp_pat
     ]
 
 
+def test_world_body_data_reports_unreadable_files(tmp_path):
+    directory = _write_valid(tmp_path)
+    metadata_path = directory / world_body_data.METADATA_FILE
+    metadata_path.write_text("{not json", encoding="utf-8")
+    with pytest.raises(world_body_data.IllustrationDataError, match="cannot read metadata.json"):
+        world_body_data.load_data(tmp_path)
+
+    _write_valid(tmp_path)
+    arrays_path = directory / world_body_data.ARRAYS_FILE
+    arrays_path.write_bytes(b"not an npz")
+    with pytest.raises(world_body_data.IllustrationDataError, match="cannot read arrays.npz"):
+        world_body_data.load_data(tmp_path)
+
+
+def test_world_body_data_rejects_missing_required_array(tmp_path):
+    directory = _write_valid(tmp_path)
+    _rewrite_arrays(directory, lambda arrays: arrays.pop("source_world"))
+
+    with pytest.raises(world_body_data.IllustrationDataError, match="missing required arrays.*source_world"):
+        world_body_data.load_data(tmp_path)
+
+
 def test_world_body_data_rejects_non_object_metadata_root(tmp_path):
     directory = _write_valid(tmp_path)
     path = directory / world_body_data.METADATA_FILE
@@ -153,17 +187,13 @@ def test_world_body_data_rejects_non_object_metadata_root(tmp_path):
 @pytest.mark.parametrize(
     ("mutate", "message"),
     [
-        (lambda metadata: metadata["payload"].__setitem__("arrays", None), "array declarations"),
-        (
-            lambda metadata: metadata["payload"]["arrays"].__setitem__("rotations", None),
-            "metadata for rotations",
-        ),
-        (lambda metadata: metadata.pop("illustration_camera"), "illustration_camera"),
-        (lambda metadata: metadata["geometry"].pop("face_landmark"), "face_landmark"),
-        (lambda metadata: metadata.pop("sampling"), "sampling declaration"),
+        (lambda metadata: metadata["payload"].pop("file"), "payload file declaration"),
+        (lambda metadata: metadata.pop("geometry"), "geometry declaration"),
+        (lambda metadata: metadata["geometry"].pop("face_vertex_ids"), "face_vertex_ids"),
+        (lambda metadata: metadata["geometry"].pop("edges"), "edges"),
     ],
 )
-def test_world_body_data_rejects_incomplete_metadata_contract(tmp_path, mutate, message):
+def test_world_body_data_rejects_missing_consumption_metadata(tmp_path, mutate, message):
     directory = _write_valid(tmp_path)
     _rewrite_metadata(directory, mutate)
 
@@ -181,15 +211,9 @@ def test_world_body_data_rejects_incomplete_metadata_contract(tmp_path, mutate, 
         ),
         (
             lambda metadata: metadata["geometry"].__setitem__(
-                "edges", [[0, 1], [1, 2], [0, 2], [0, 1]]
-            ),
-            "duplicates",
-        ),
-        (
-            lambda metadata: metadata["geometry"].__setitem__(
                 "edges", [[0, 1], [1, 2], [0, 11]]
             ),
-            "face boundaries",
+            "no adjacent face",
         ),
         (
             lambda metadata: metadata["geometry"].__setitem__(
@@ -197,18 +221,41 @@ def test_world_body_data_rejects_incomplete_metadata_contract(tmp_path, mutate, 
             ),
             "invalid or repeated",
         ),
-        (
-            lambda metadata: metadata["illustration_camera"].__setitem__("distance", 0.1),
-            "cannot project the payload",
-        ),
     ],
 )
-def test_world_body_data_rejects_unrenderable_geometry(tmp_path, mutate, message):
+def test_world_body_data_rejects_unusable_geometry_indices(tmp_path, mutate, message):
     directory = _write_valid(tmp_path)
     _rewrite_metadata(directory, mutate)
 
     with pytest.raises(world_body_data.IllustrationDataError, match=message):
         world_body_data.load_data(tmp_path)
+
+
+def test_world_body_data_ignores_redundant_and_presentation_metadata(tmp_path):
+    directory = _write_valid(tmp_path)
+
+    def mutate(metadata):
+        metadata["sampling"] = {"selected_indices": [99]}
+        metadata["illustration_camera"] = {"distance": -1.0}
+        metadata["geometry"]["face_numbers"] = [99]
+        metadata["geometry"]["face_landmark"] = 99
+        metadata["payload"]["arrays"] = None
+
+    _rewrite_metadata(directory, mutate)
+
+    loaded = world_body_data.load_data(tmp_path)
+
+    assert loaded.metadata["illustration_camera"]["distance"] == -1.0
+
+
+def test_world_body_data_does_not_recompute_scientific_invariants_on_load(tmp_path):
+    directory = _write_valid(tmp_path)
+    _rewrite_array(directory, "rotations", np.zeros((4, 3, 3)))
+    _rewrite_array(directory, "source_body", np.zeros((4, 3)))
+
+    loaded = world_body_data.load_data(tmp_path)
+
+    np.testing.assert_array_equal(loaded.arrays["rotations"], 0.0)
 
 
 @pytest.mark.parametrize(
@@ -239,16 +286,11 @@ def test_world_body_data_rejects_hash_mismatch(tmp_path):
     ("name", "value", "message"),
     [
         ("rotations", np.zeros((3, 3, 3)), "rotations has shape"),
+        ("rotations", np.zeros((4, 3, 3), dtype=np.int64), "floating dtype"),
         ("source_world", np.array([np.nan, 0.0, 0.0]), "contains non-finite"),
-        ("rotations", np.zeros((4, 3, 3)), "not elements of SO\\(3\\)"),
-        ("source_body", np.zeros((4, 3)), "coordinate reconstruction"),
-        ("vertices_body", np.zeros((12, 3)), "face 3 has zero area"),
-        ("target_direction", np.zeros(3), "target_direction is not a unit"),
-        ("outgoing_directions", np.zeros((4, 3)), "outgoing_directions are not unit"),
-        ("face_normals_body", np.zeros((1, 3)), "face_normals_body are not unit"),
     ],
 )
-def test_world_body_data_rejects_invalid_numeric_payload(tmp_path, name, value, message):
+def test_world_body_data_rejects_unusable_numeric_payload(tmp_path, name, value, message):
     directory = _write_valid(tmp_path)
     _rewrite_array(directory, name, value)
 

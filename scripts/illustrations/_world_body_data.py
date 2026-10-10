@@ -27,12 +27,6 @@ ORIGINAL_ACCEPTED_REVISION = "98b4a8c7ec70e519f3744279840c2814f871ade7"
 ORIGINAL_PROTOTYPE_SHA256 = "eb8bb4850835faeb2442a5f25bee1fd9271bcc887d077a62e7999b17bd8c6a62"
 ORIGINAL_ACCEPTED_IMAGE_SHA256 = "e0fe35655484acd6b76ced2d9286e1b03e25340211c13e64eb99bc0695add81e"
 WRITING_VISUAL_REFERENCE_REVISION = "b7784b8c96c742ee4f49f2277fe424bfda213ae4"
-ILLUSTRATION_CAMERA = {
-    "azimuth_deg": 65.0,
-    "elevation_deg": 24.0,
-    "distance": 7.0,
-    "projection": "perspective",
-}
 
 _REQUIRED_ARRAYS = {
     "selected_dense_indices": ((4,), "integer"),
@@ -170,12 +164,10 @@ def _validate_pair(
         raise _fail(directory, "payload file declaration is missing or wrong", data_root)
     if payload.get("sha256") != arrays_sha256:
         raise _fail(directory, "arrays.npz SHA-256 does not match metadata", data_root)
-    if set(arrays) != set(_REQUIRED_ARRAYS):
-        raise _fail(directory, f"array set is {sorted(arrays)}", data_root)
+    missing_arrays = sorted(set(_REQUIRED_ARRAYS) - set(arrays))
+    if missing_arrays:
+        raise _fail(directory, f"missing required arrays {missing_arrays}", data_root)
 
-    declared = payload.get("arrays")
-    if not isinstance(declared, Mapping) or set(declared) != set(arrays):
-        raise _fail(directory, "array declarations do not match arrays.npz", data_root)
     for name, (shape, kind) in _REQUIRED_ARRAYS.items():
         array = arrays[name]
         if shape is not None and array.shape != shape:
@@ -186,14 +178,6 @@ def _validate_pair(
             raise _fail(directory, f"{name} must use a floating dtype", data_root)
         if not np.all(np.isfinite(array)):
             raise _fail(directory, f"{name} contains non-finite values", data_root)
-        entry = declared[name]
-        if not isinstance(entry, Mapping):
-            raise _fail(directory, f"metadata for {name} must be an object", data_root)
-        if entry.get("shape") != list(array.shape) or entry.get("dtype") != str(array.dtype):
-            raise _fail(directory, f"metadata for {name} disagrees with arrays.npz", data_root)
-        expected_unit, expected_semantic = _ARRAY_SEMANTICS[name]
-        if entry.get("unit") != expected_unit or entry.get("semantic") != expected_semantic:
-            raise _fail(directory, f"metadata semantics for {name} are missing or wrong", data_root)
 
     face_numbers = arrays["face_numbers"]
     if (
@@ -213,38 +197,9 @@ def _validate_pair(
         if arrays[name].shape != shape:
             raise _fail(directory, f"{name} has shape {arrays[name].shape}, expected {shape}", data_root)
 
-    sampling = metadata.get("sampling")
-    if not isinstance(sampling, Mapping):
-        raise _fail(directory, "sampling declaration is missing", data_root)
-    expected_sampling = {
-        "dense_node_count": DENSE_NODE_COUNT,
-        "retraction_iterations": RETRACTION_ITERATIONS,
-        "selected_indices": SELECTED_INDICES.tolist(),
-    }
-    for name, expected in expected_sampling.items():
-        if sampling.get(name) != expected:
-            raise _fail(directory, f"sampling {name} is missing or wrong", data_root)
-
-    camera = metadata.get("illustration_camera")
-    if not isinstance(camera, Mapping):
-        raise _fail(directory, "illustration_camera declaration is missing", data_root)
-    if camera.get("projection") != "perspective":
-        raise _fail(directory, "illustration_camera projection must be 'perspective'", data_root)
-    for name in ("azimuth_deg", "elevation_deg", "distance"):
-        value = camera.get(name)
-        if isinstance(value, bool) or not isinstance(value, (int, float)) or not np.isfinite(value):
-            raise _fail(directory, f"illustration_camera {name} must be finite", data_root)
-    if camera["distance"] <= 0.0:
-        raise _fail(directory, "illustration_camera distance must be positive", data_root)
-
     geometry = metadata.get("geometry")
     if not isinstance(geometry, Mapping):
         raise _fail(directory, "geometry declaration is missing", data_root)
-    if geometry.get("face_numbers") != arrays["face_numbers"].tolist():
-        raise _fail(directory, "geometry face numbers disagree with arrays.npz", data_root)
-    face_landmark = geometry.get("face_landmark")
-    if isinstance(face_landmark, bool) or not isinstance(face_landmark, int) or face_landmark not in face_numbers:
-        raise _fail(directory, "face_landmark must name one declared face", data_root)
     face_vertex_ids = geometry.get("face_vertex_ids")
     if not isinstance(face_vertex_ids, list) or len(face_vertex_ids) != face_count:
         raise _fail(directory, "face_vertex_ids do not match the face count", data_root)
@@ -264,28 +219,9 @@ def _validate_pair(
     ):
         raise _fail(directory, "face_vertex_ids contain invalid or repeated vertex indices", data_root)
 
-    boundary_edges: set[tuple[int, int]] = set()
-    for face_index, ids in enumerate(face_vertex_ids):
-        points = arrays["vertices_body"][ids]
-        area_vector = np.sum(np.cross(points, np.roll(points, -1, axis=0)), axis=0)
-        if np.linalg.norm(area_vector) <= 1e-12:
-            raise _fail(directory, f"face {face_numbers[face_index]} has zero area", data_root)
-        center_error = np.max(
-            np.abs(arrays["face_centers_body"][face_index] - np.mean(points, axis=0))
-        )
-        if center_error > 1e-12:
-            raise _fail(directory, f"face {face_numbers[face_index]} center disagrees with its vertices", data_root)
-        offsets = points - arrays["face_centers_body"][face_index]
-        if np.max(np.abs(offsets @ arrays["face_normals_body"][face_index])) > 1e-12:
-            raise _fail(directory, f"face {face_numbers[face_index]} normal is not perpendicular", data_root)
-        boundary_edges.update(
-            tuple(sorted((start, end))) for start, end in zip(ids, ids[1:] + ids[:1])
-        )
-
     edges = geometry.get("edges")
     if not isinstance(edges, list) or not edges:
         raise _fail(directory, "edges must be a non-empty list", data_root)
-    edge_keys: list[tuple[int, int]] = []
     for edge in edges:
         if (
             not isinstance(edge, list)
@@ -300,85 +236,8 @@ def _validate_pair(
             or edge[0] == edge[1]
         ):
             raise _fail(directory, "edges contain invalid or repeated vertex indices", data_root)
-        edge_keys.append(tuple(sorted(edge)))
-    if len(set(edge_keys)) != len(edge_keys):
-        raise _fail(directory, "edges contain duplicates", data_root)
-    if set(edge_keys) != boundary_edges:
-        raise _fail(directory, "edges do not match the declared face boundaries", data_root)
-
-    rotations = arrays["rotations"]
-    orthogonality_error = float(np.max(np.abs(rotations.transpose(0, 2, 1) @ rotations - np.eye(3))))
-    determinant_error = float(np.max(np.abs(np.linalg.det(rotations) - 1.0)))
-    if orthogonality_error > 1e-10 or determinant_error > 1e-10:
-        raise _fail(directory, "rotations are not elements of SO(3)", data_root)
-    if not np.array_equal(arrays["selected_dense_indices"], SELECTED_INDICES):
-        raise _fail(directory, "selected dense-grid indices changed", data_root)
-
-    source_world = arrays["source_world"]
-    if abs(np.linalg.norm(source_world) - 1.0) > 1e-12:
-        raise _fail(directory, "source_world is not a unit direction", data_root)
-    target_norm = float(np.linalg.norm(arrays["target_direction"]))
-    outgoing_norm_error = float(
-        np.max(np.abs(np.linalg.norm(arrays["outgoing_directions"], axis=1) - 1.0))
-    )
-    if abs(target_norm - 1.0) > 1e-12:
-        raise _fail(directory, "target_direction is not a unit direction", data_root)
-    if outgoing_norm_error > 1e-12:
-        raise _fail(directory, "outgoing_directions are not unit directions", data_root)
-    normal_norm_error = float(
-        np.max(np.abs(np.linalg.norm(arrays["face_normals_body"], axis=1) - 1.0))
-    )
-    if normal_norm_error > 1e-12:
-        raise _fail(directory, "face_normals_body are not unit directions", data_root)
-    expected_source_body = np.einsum("nji,j->ni", rotations, source_world)
-    source_error = float(np.max(np.abs(arrays["source_body"] - expected_source_body)))
-    world_source_error = float(
-        np.max(np.abs(np.einsum("nij,nj->ni", rotations, arrays["source_body"]) - source_world))
-    )
-    expected_vertices_world = np.stack([arrays["vertices_body"] @ rotation.T for rotation in rotations])
-    vertex_error = float(np.max(np.abs(arrays["vertices_world"] - expected_vertices_world)))
-    expected_normals_world = np.stack([arrays["face_normals_body"] @ rotation.T for rotation in rotations])
-    normal_error = float(np.max(np.abs(arrays["face_normals_world"] - expected_normals_world)))
-    expected_centers_world = np.stack([arrays["face_centers_body"] @ rotation.T for rotation in rotations])
-    center_error = float(np.max(np.abs(arrays["face_centers_world"] - expected_centers_world)))
-    outgoing_error = float(
-        np.max(np.linalg.norm(arrays["outgoing_directions"] - arrays["target_direction"], axis=1))
-    )
-    if max(source_error, world_source_error, vertex_error, normal_error, center_error) > 1e-12:
-        raise _fail(directory, "body/world coordinate reconstruction exceeds 1e-12", data_root)
-    if outgoing_error > 1e-10:
-        raise _fail(directory, "production outgoing-direction residual exceeds 1e-10", data_root)
-
-    from _crystal_view import Camera
-
-    try:
-        illustration_camera = Camera(
-            azimuth_deg=float(camera["azimuth_deg"]),
-            elevation_deg=float(camera["elevation_deg"]),
-            projection=str(camera["projection"]),
-            distance=float(camera["distance"]),
-        )
-        body_points = np.concatenate(
-            [
-                arrays["vertices_body"],
-                arrays["face_centers_body"],
-                2.3 * arrays["source_body"],
-                np.zeros((1, 3)),
-            ]
-        )
-        illustration_camera.project(body_points)
-        for index in range(4):
-            world_points = np.concatenate(
-                [
-                    arrays["vertices_world"][index],
-                    arrays["face_centers_world"][index],
-                    (2.3 * arrays["source_world"])[None, :],
-                    np.zeros((1, 3)),
-                ]
-            )
-            illustration_camera.project(world_points)
-    except ValueError as error:
-        raise _fail(directory, f"illustration camera cannot project the payload ({error})", data_root) from error
+        if not any(set(edge).issubset(ids) for ids in face_vertex_ids):
+            raise _fail(directory, f"edge {tuple(edge)} has no adjacent face", data_root)
 
 
 def load_data(data_root: Path | str) -> IllustrationData:
@@ -521,17 +380,72 @@ def recompute_data(data_root: Path | str) -> IllustrationData:
         "face_centers_body": face_centers_body,
         "face_centers_world": np.stack([face_centers_body @ rotation.T for rotation in rotations]),
     }
+    source_body_definition_error = float(
+        np.max(np.abs(source_body - np.einsum("nji,j->ni", rotations, source_world)))
+    )
+    source_body_round_trip_error = float(
+        np.max(np.abs(np.einsum("nij,nj->ni", rotations, source_body) - source_world))
+    )
+    vertices_round_trip_error = float(
+        max(
+            np.max(np.abs(world @ rotation - vertices_body))
+            for world, rotation in zip(arrays["vertices_world"], rotations)
+        )
+    )
+    normals_round_trip_error = float(
+        max(
+            np.max(np.abs(world @ rotation - face_normals_body))
+            for world, rotation in zip(arrays["face_normals_world"], rotations)
+        )
+    )
+    centers_round_trip_error = float(
+        max(
+            np.max(np.abs(world @ rotation - face_centers_body))
+            for world, rotation in zip(arrays["face_centers_world"], rotations)
+        )
+    )
+    rotation_orthogonality_error = float(
+        np.max(np.abs(rotations.transpose(0, 2, 1) @ rotations - np.eye(3)))
+    )
+    rotation_determinant_error = float(np.max(np.abs(np.linalg.det(rotations) - 1.0)))
+    source_world_norm_error = float(abs(np.linalg.norm(source_world) - 1.0))
+    target_direction_norm_error = float(abs(np.linalg.norm(target) - 1.0))
+    outgoing_direction_norm_error = float(
+        np.max(np.abs(np.linalg.norm(outgoing_dense[SELECTED_INDICES], axis=1) - 1.0))
+    )
+    face_normal_norm_error = float(
+        np.max(np.abs(np.linalg.norm(face_normals_body, axis=1) - 1.0))
+    )
+    if max(rotation_orthogonality_error, rotation_determinant_error) > 1e-10:
+        raise RuntimeError("selected presentation rotations are not elements of SO(3)")
+    if max(
+        source_body_definition_error,
+        source_body_round_trip_error,
+        vertices_round_trip_error,
+        normals_round_trip_error,
+        centers_round_trip_error,
+    ) > 1e-12:
+        raise RuntimeError("selected presentation coordinates do not round-trip within 1e-12")
+    if max(
+        source_world_norm_error,
+        target_direction_norm_error,
+        outgoing_direction_norm_error,
+        face_normal_norm_error,
+    ) > 1e-12:
+        raise RuntimeError("selected presentation directions are not unit vectors within 1e-12")
+
     coordinate_checks = {
-        "source_body_round_trip_max_abs": float(
-            np.max(np.abs(np.einsum("nij,nj->ni", rotations, source_body) - source_world))
-        ),
-        "vertices_round_trip_max_abs": float(
-            max(np.max(np.abs(world @ rotation - vertices_body)) for world, rotation in zip(arrays["vertices_world"], rotations))
-        ),
-        "rotation_orthogonality_max_abs": float(
-            np.max(np.abs(rotations.transpose(0, 2, 1) @ rotations - np.eye(3)))
-        ),
-        "rotation_determinant_max_abs": float(np.max(np.abs(np.linalg.det(rotations) - 1.0))),
+        "source_body_definition_max_abs": source_body_definition_error,
+        "source_body_round_trip_max_abs": source_body_round_trip_error,
+        "vertices_round_trip_max_abs": vertices_round_trip_error,
+        "face_normals_round_trip_max_abs": normals_round_trip_error,
+        "face_centers_round_trip_max_abs": centers_round_trip_error,
+        "rotation_orthogonality_max_abs": rotation_orthogonality_error,
+        "rotation_determinant_max_abs": rotation_determinant_error,
+        "source_world_norm_error": source_world_norm_error,
+        "target_direction_norm_error": target_direction_norm_error,
+        "outgoing_direction_norm_max_abs": outgoing_direction_norm_error,
+        "face_normal_norm_max_abs": face_normal_norm_error,
         "dense_outgoing_direction_max_l2": max_outgoing_residual,
         "dense_retraction_residual_max_l2": max_retraction_residual,
         "dense_minimum_path_validity": float(np.min(validity)),
@@ -557,10 +471,8 @@ def recompute_data(data_root: Path | str) -> IllustrationData:
             "face_numbers": face_numbers,
             "face_vertex_ids": [list(face.vertex_ids) for face in crystal.faces],
             "edges": [list(edge) for edge in crystal.edges],
-            "face_landmark": 3,
         },
         "validation": coordinate_checks,
-        "illustration_camera": ILLUSTRATION_CAMERA,
         "source": {
             "upstream_schema": upstream_metadata["schema"],
             "upstream_relative_directory": "../canonical-fiber",

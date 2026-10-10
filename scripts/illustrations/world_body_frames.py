@@ -15,6 +15,15 @@ from _world_body_data import (
 )
 
 
+DEFAULT_CAMERA = {
+    "azimuth_deg": 65.0,
+    "elevation_deg": 24.0,
+    "distance": 7.0,
+    "projection": "perspective",
+}
+LANDMARK_FACE_NUMBER = 3
+
+
 def _frame_triad(ax, camera, labels: Sequence[str]) -> None:
     from _style import GRAY
     from _crystal_view import Camera
@@ -73,7 +82,7 @@ def _configuration(
         face_normals=normals,
         face_centers=centers,
         camera=camera,
-        highlight_face=geometry["face_landmark"],
+        highlight_face=LANDMARK_FACE_NUMBER,
     )
     source = np.asarray(source_direction) * 2.3
     center_xy, source_xy = camera.project_xy(np.array([np.zeros(3), source]))
@@ -126,13 +135,7 @@ def render_figure(data: IllustrationData):
     from _style import GRAY, INK, MARK_COLORS, apply_style
 
     apply_style()
-    camera_metadata = data.metadata["illustration_camera"]
-    camera = Camera(
-        azimuth_deg=camera_metadata["azimuth_deg"],
-        elevation_deg=camera_metadata["elevation_deg"],
-        projection=camera_metadata["projection"],
-        distance=camera_metadata["distance"],
-    )
+    camera = Camera(**DEFAULT_CAMERA)
     arrays = data.arrays
     figure = plt.figure(figsize=(16, 10), dpi=150)
     figure.suptitle(
