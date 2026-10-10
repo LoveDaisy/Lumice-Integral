@@ -6,10 +6,13 @@ import argparse
 from pathlib import Path
 from typing import Sequence
 
-from _world_body_data import IllustrationData, IllustrationDataError, load_data, recompute_data
-
-
-OUTPUT_NAME = "world-body-frames.png"
+from _world_body_data import (
+    OUTPUT_NAME,
+    IllustrationData,
+    IllustrationDataError,
+    load_data,
+    recompute_data,
+)
 
 
 def _frame_triad(ax, camera, labels: Sequence[str]) -> None:

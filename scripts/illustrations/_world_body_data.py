@@ -7,6 +7,7 @@ from hashlib import sha256
 from importlib.metadata import PackageNotFoundError, version
 import json
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 from typing import Any, Mapping
@@ -15,6 +16,7 @@ import numpy as np
 
 
 FIGURE_ID = "world-body-frames"
+OUTPUT_NAME = f"{FIGURE_ID}.png"
 SCHEMA_VERSION = "lumice-integral.illustration.world-body-frames/v1"
 ARRAYS_FILE = "arrays.npz"
 METADATA_FILE = "metadata.json"
@@ -81,9 +83,19 @@ def data_directory(data_root: Path | str) -> Path:
 
 
 def recompute_command(data_root: Path | str) -> str:
-    return (
-        "uv run python scripts/illustrations/world_body_frames.py --recompute "
-        f"--data-dir {Path(data_root)}"
+    root = Path(__file__).resolve().parents[2]
+    return shlex.join(
+        [
+            "uv",
+            "run",
+            "--project",
+            str(root),
+            "python",
+            str(Path(__file__).with_name("world_body_frames.py").resolve()),
+            "--recompute",
+            "--data-dir",
+            str(Path(data_root).resolve()),
+        ]
     )
 
 
@@ -141,12 +153,14 @@ def _array_metadata(arrays: Mapping[str, np.ndarray]) -> dict[str, dict[str, Any
 
 def _validate_pair(
     directory: Path,
-    metadata: Mapping[str, Any],
+    metadata: Any,
     arrays: Mapping[str, np.ndarray],
     *,
     data_root: Path,
     arrays_sha256: str,
 ) -> None:
+    if not isinstance(metadata, Mapping):
+        raise _fail(directory, "metadata.json root must be an object", data_root)
     if metadata.get("schema") != SCHEMA_VERSION:
         raise _fail(directory, f"unsupported schema {metadata.get('schema')!r}", data_root)
     if metadata.get("figure_id") != FIGURE_ID:
@@ -173,10 +187,22 @@ def _validate_pair(
         if not np.all(np.isfinite(array)):
             raise _fail(directory, f"{name} contains non-finite values", data_root)
         entry = declared[name]
+        if not isinstance(entry, Mapping):
+            raise _fail(directory, f"metadata for {name} must be an object", data_root)
         if entry.get("shape") != list(array.shape) or entry.get("dtype") != str(array.dtype):
             raise _fail(directory, f"metadata for {name} disagrees with arrays.npz", data_root)
+        expected_unit, expected_semantic = _ARRAY_SEMANTICS[name]
+        if entry.get("unit") != expected_unit or entry.get("semantic") != expected_semantic:
+            raise _fail(directory, f"metadata semantics for {name} are missing or wrong", data_root)
 
-    face_count = len(arrays["face_numbers"])
+    face_numbers = arrays["face_numbers"]
+    if (
+        face_numbers.ndim != 1
+        or len(face_numbers) == 0
+        or len(set(face_numbers.tolist())) != len(face_numbers)
+    ):
+        raise _fail(directory, "face_numbers must be a non-empty unique one-dimensional array", data_root)
+    face_count = len(face_numbers)
     face_shapes = {
         "face_normals_body": (face_count, 3),
         "face_normals_world": (4, face_count, 3),
@@ -187,11 +213,38 @@ def _validate_pair(
         if arrays[name].shape != shape:
             raise _fail(directory, f"{name} has shape {arrays[name].shape}, expected {shape}", data_root)
 
+    sampling = metadata.get("sampling")
+    if not isinstance(sampling, Mapping):
+        raise _fail(directory, "sampling declaration is missing", data_root)
+    expected_sampling = {
+        "dense_node_count": DENSE_NODE_COUNT,
+        "retraction_iterations": RETRACTION_ITERATIONS,
+        "selected_indices": SELECTED_INDICES.tolist(),
+    }
+    for name, expected in expected_sampling.items():
+        if sampling.get(name) != expected:
+            raise _fail(directory, f"sampling {name} is missing or wrong", data_root)
+
+    camera = metadata.get("illustration_camera")
+    if not isinstance(camera, Mapping):
+        raise _fail(directory, "illustration_camera declaration is missing", data_root)
+    if camera.get("projection") != "perspective":
+        raise _fail(directory, "illustration_camera projection must be 'perspective'", data_root)
+    for name in ("azimuth_deg", "elevation_deg", "distance"):
+        value = camera.get(name)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not np.isfinite(value):
+            raise _fail(directory, f"illustration_camera {name} must be finite", data_root)
+    if camera["distance"] <= 0.0:
+        raise _fail(directory, "illustration_camera distance must be positive", data_root)
+
     geometry = metadata.get("geometry")
     if not isinstance(geometry, Mapping):
         raise _fail(directory, "geometry declaration is missing", data_root)
     if geometry.get("face_numbers") != arrays["face_numbers"].tolist():
         raise _fail(directory, "geometry face numbers disagree with arrays.npz", data_root)
+    face_landmark = geometry.get("face_landmark")
+    if isinstance(face_landmark, bool) or not isinstance(face_landmark, int) or face_landmark not in face_numbers:
+        raise _fail(directory, "face_landmark must name one declared face", data_root)
     face_vertex_ids = geometry.get("face_vertex_ids")
     if not isinstance(face_vertex_ids, list) or len(face_vertex_ids) != face_count:
         raise _fail(directory, "face_vertex_ids do not match the face count", data_root)
@@ -223,6 +276,19 @@ def _validate_pair(
     source_world = arrays["source_world"]
     if abs(np.linalg.norm(source_world) - 1.0) > 1e-12:
         raise _fail(directory, "source_world is not a unit direction", data_root)
+    target_norm = float(np.linalg.norm(arrays["target_direction"]))
+    outgoing_norm_error = float(
+        np.max(np.abs(np.linalg.norm(arrays["outgoing_directions"], axis=1) - 1.0))
+    )
+    if abs(target_norm - 1.0) > 1e-12:
+        raise _fail(directory, "target_direction is not a unit direction", data_root)
+    if outgoing_norm_error > 1e-12:
+        raise _fail(directory, "outgoing_directions are not unit directions", data_root)
+    normal_norm_error = float(
+        np.max(np.abs(np.linalg.norm(arrays["face_normals_body"], axis=1) - 1.0))
+    )
+    if normal_norm_error > 1e-12:
+        raise _fail(directory, "face_normals_body are not unit directions", data_root)
     expected_source_body = np.einsum("nji,j->ni", rotations, source_world)
     source_error = float(np.max(np.abs(arrays["source_body"] - expected_source_body)))
     world_source_error = float(
@@ -260,7 +326,10 @@ def load_data(data_root: Path | str) -> IllustrationData:
             arrays = {name: np.array(payload[name], copy=True) for name in payload.files}
     except (OSError, ValueError) as error:
         raise _fail(directory, f"cannot read arrays.npz ({error})", data_root) from error
-    arrays_hash = sha256(arrays_path.read_bytes()).hexdigest()
+    try:
+        arrays_hash = sha256(arrays_path.read_bytes()).hexdigest()
+    except OSError as error:
+        raise _fail(directory, f"cannot hash arrays.npz ({error})", data_root) from error
     _validate_pair(directory, metadata, arrays, data_root=data_root, arrays_sha256=arrays_hash)
     return IllustrationData(directory=directory, metadata=metadata, arrays=arrays)
 

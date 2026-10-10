@@ -10,17 +10,21 @@ import subprocess
 import sys
 from typing import Sequence
 
+from _world_body_data import FIGURE_ID, OUTPUT_NAME
+
 
 @dataclass(frozen=True)
 class FigureStep:
     figure_id: str
+    output_name: str
     script: Path
     implemented_batch_position: str
 
 
 STEPS = (
     FigureStep(
-        figure_id="world-body-frames",
+        figure_id=FIGURE_ID,
+        output_name=OUTPUT_NAME,
         script=Path(__file__).with_name("world_body_frames.py").resolve(),
         implemented_batch_position="B1 figure 1/6",
     ),
@@ -59,7 +63,7 @@ def commands(
             else:
                 category = "pure rendering"
                 command.extend(["--output-dir", str(output_directory)])
-                output = output_directory / f"{step.figure_id}.png"
+                output = output_directory / step.output_name
             result.append((step, operation, command, category, output))
     return result
 

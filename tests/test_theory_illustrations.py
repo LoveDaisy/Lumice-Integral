@@ -4,6 +4,7 @@ from hashlib import sha256
 import importlib.util
 import json
 from pathlib import Path
+import shlex
 import struct
 import subprocess
 import sys
@@ -62,6 +63,11 @@ def _valid_metadata() -> dict[str, object]:
         "schema": world_body_data.SCHEMA_VERSION,
         "figure_id": world_body_data.FIGURE_ID,
         "fixture": {"name": "synthetic"},
+        "sampling": {
+            "dense_node_count": world_body_data.DENSE_NODE_COUNT,
+            "retraction_iterations": world_body_data.RETRACTION_ITERATIONS,
+            "selected_indices": world_body_data.SELECTED_INDICES.tolist(),
+        },
         "illustration_camera": world_body_data.ILLUSTRATION_CAMERA,
         "geometry": {
             "face_numbers": [3],
@@ -112,11 +118,54 @@ def test_world_body_data_round_trip_is_self_contained(tmp_path):
 
 
 def test_world_body_data_missing_payload_reports_exact_recompute_command(tmp_path):
+    data_root = tmp_path / "data with spaces"
     with pytest.raises(world_body_data.IllustrationDataError) as caught:
-        world_body_data.load_data(tmp_path / "data with spaces")
+        world_body_data.load_data(data_root)
 
+    command = world_body_data.recompute_command(data_root)
     assert "missing metadata.json, arrays.npz" in str(caught.value)
-    assert world_body_data.recompute_command(tmp_path / "data with spaces") in str(caught.value)
+    assert command in str(caught.value)
+    assert shlex.split(command) == [
+        "uv",
+        "run",
+        "--project",
+        str(REPO.resolve()),
+        "python",
+        str((ILLUSTRATIONS / "world_body_frames.py").resolve()),
+        "--recompute",
+        "--data-dir",
+        str(data_root.resolve()),
+    ]
+
+
+def test_world_body_data_rejects_non_object_metadata_root(tmp_path):
+    directory = _write_valid(tmp_path)
+    path = directory / world_body_data.METADATA_FILE
+    path.write_text("[]\n", encoding="utf-8")
+
+    with pytest.raises(world_body_data.IllustrationDataError, match="root must be an object"):
+        world_body_data.load_data(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (lambda metadata: metadata["payload"].__setitem__("arrays", None), "array declarations"),
+        (
+            lambda metadata: metadata["payload"]["arrays"].__setitem__("rotations", None),
+            "metadata for rotations",
+        ),
+        (lambda metadata: metadata.pop("illustration_camera"), "illustration_camera"),
+        (lambda metadata: metadata["geometry"].pop("face_landmark"), "face_landmark"),
+        (lambda metadata: metadata.pop("sampling"), "sampling declaration"),
+    ],
+)
+def test_world_body_data_rejects_incomplete_metadata_contract(tmp_path, mutate, message):
+    directory = _write_valid(tmp_path)
+    _rewrite_metadata(directory, mutate)
+
+    with pytest.raises(world_body_data.IllustrationDataError, match=message):
+        world_body_data.load_data(tmp_path)
 
 
 @pytest.mark.parametrize(
@@ -150,7 +199,9 @@ def test_world_body_data_rejects_hash_mismatch(tmp_path):
         ("source_world", np.array([np.nan, 0.0, 0.0]), "contains non-finite"),
         ("rotations", np.zeros((4, 3, 3)), "not elements of SO\\(3\\)"),
         ("source_body", np.zeros((4, 3)), "coordinate reconstruction"),
-        ("outgoing_directions", np.zeros((4, 3)), "outgoing-direction residual"),
+        ("target_direction", np.zeros(3), "target_direction is not a unit"),
+        ("outgoing_directions", np.zeros((4, 3)), "outgoing_directions are not unit"),
+        ("face_normals_body", np.zeros((1, 3)), "face_normals_body are not unit"),
     ],
 )
 def test_world_body_data_rejects_invalid_numeric_payload(tmp_path, name, value, message):
@@ -243,6 +294,9 @@ runpy.run_path({str(script)!r}, run_name='__main__')
 
 
 def test_regen_uses_one_ordered_command_table():
+    assert [(step.figure_id, step.output_name) for step in regen.STEPS] == [
+        (world_body_data.FIGURE_ID, world_body_data.OUTPUT_NAME)
+    ]
     planned = regen.commands(
         mode="all",
         data_root=Path("data root"),
@@ -390,8 +444,18 @@ def test_world_body_reference_records_the_accepted_sampling_and_source_hashes():
 @pytest.mark.slow
 def test_recomputed_world_body_data_matches_accepted_four_poses(tmp_path):
     reference = json.loads(REFERENCE.read_text(encoding="utf-8"))
+    data_root = tmp_path / "data with spaces"
+    command = world_body_data.recompute_command(data_root)
 
-    result = world_body_data.recompute_data(tmp_path)
+    completed = subprocess.run(
+        command,
+        cwd=tmp_path,
+        shell=True,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    result = world_body_data.load_data(data_root)
 
     np.testing.assert_allclose(
         result.arrays["rotations"],
@@ -404,5 +468,5 @@ def test_recomputed_world_body_data_matches_accepted_four_poses(tmp_path):
     assert result.metadata["sampling"]["selected_indices"] == [0, 128, 256, 384]
     assert result.metadata["validation"]["dense_outgoing_direction_max_l2"] < 1e-10
     assert result.metadata["validation"]["dense_retraction_residual_max_l2"] < 1e-10
-    upstream = tmp_path / "canonical-fiber" / "metadata.json"
+    upstream = data_root / "canonical-fiber" / "metadata.json"
     assert json.loads(upstream.read_text(encoding="utf-8"))["schema"] == "lumice-integral.figure-data/v3"
