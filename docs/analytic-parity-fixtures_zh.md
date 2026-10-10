@@ -394,8 +394,8 @@ fixture。各格携带溶解探针（scrum `wave3-pull-forward`）钉下的锚�
 | `chromatic_class` | 晶体、代表路径、`family`（板晶：太阳高度 9°、1° 天顶、`1e5` 姿态、seed 3）、`n_red`/`n_blue`、`thresholds` | 成员（PBD 轨道）、逐折射率的 `lit_members`、verdict 及其 tint 指标（能量、ratio、TIR 占比、方向色散） |
 
 容差：结构字段与标签精确；分档边界、临界值与定位位置 `1e-9` rad（行走把角点与极值定位到 ~1e-12）；Hessian
-特征值相对 `1e-8`；onset 值 `1e-8` deg（发射了 corner tier 的 fixture，其 corner 行读
-`degrees(EXTREMUM_ATOL)`——下文约定 1 的 value half）；梯度类量相对 `1e-6`；`chromatic_diagnose` 的采样中位数 `2e-3`
+特征值相对 `1e-8`；onset 值使用各 fixture 已有默认容差，只有 `source = "corner"` 且 fixture 发出 corner key
+的行才读 `degrees(EXTREMUM_ATOL)`（下文约定 1 的 value half）；梯度类量相对 `1e-6`；`chromatic_diagnose` 的采样中位数 `2e-3`
 rad；`a_p`/`t_p`/`w` 相对 `1e-10`；板晶 class 的 tint 是统计性的（`5e-2`；LI 的样本是 numpy PCG64 流，
 `1e5` 姿态下 ratio 的对半分裂 σ ≤ 3e-3）。
 
@@ -406,12 +406,17 @@ rad；`a_p`/`t_p`/`w` 相对 `1e-10`；板晶 class 的 tint 是统计性的（`
 同一约定也覆盖角点的**值**：无界梯度上 walk 的定位位置是各平台自己的舍入运气，`D_P` 在角点处的
 sqrt fold 把它带进值里——Lumice PR #477 的 CI（2026-10-09）实测跨 ISA 漂移 3.5e-7..7.6e-7 deg
 （只有 corner 行漂，内部/边界极值行在 1e-14 量级；与 Lumice ba512cd1 背后的 1e-8 跨 ISA 红同族）。
-因此 classification 带这种角点（`source = "corner"` 且梯度 norm 为 null）的 fixture，在容差块增发
-per-row corner tier——`focusing_classify` 发 `onset_value_deg_corner`、`wavelength_critical_table` 发
-`values_deg_corner` 与 `displacement_deg_corner`，值均为 `degrees(EXTREMUM_ATOL)` ≈ `5.73e-6` deg——
-corner 行读 tier，其余行保持默认 `1e-8`/`2e-8` deg。键存在 ⇒ 该 fixture 全部 corner 行属奇异族
-（发射是 fixture 级的，以发散谓词为键）；将来若同一 fixture 混合良态 corner（梯度 norm 有限）与
-奇异 corner，必须先把 tier 改为逐行发射。
+因此 classification 只要带至少一个这种角点（`source = "corner"` 且梯度 norm 为 null），fixture 就在容差块增发
+fixture 级 corner tier——`focusing_classify` 发 `onset_value_deg_corner`、`wavelength_critical_table` 发
+`values_deg_corner` 与 `displacement_deg_corner`，值均为 `degrees(EXTREMUM_ATOL)` ≈ `5.73e-6` deg。
+消费端在键存在时把它用于每个 `source = "corner"` 行；非 corner 行读取该 fixture 已有的默认键。也就是说，
+发射判据是「存在任一奇异 corner」，读取判据是「source 为 corner 且键存在」。当前正式矩阵还必须满足一条安全条件：
+每个有限梯度 corner 的 corner 档不得比该字段默认档更宽。`3-1-5` 现在就混有约 43.545° 的有限梯度 corner
+与约 151.667° 的 null-gradient corner；但约定 2 已把它的默认档放宽到同一个 `degrees(EXTREMUM_ATOL)`，
+所以 key 没给有限行增加额外容差。`3-5` 的 corner 是奇异的；`4-8-7-5` 的 corner 梯度有限、不发 key，
+仍读 `1e-8` deg 默认档。wavelength 的发射只检查 primary index 一次；当前 `3-5` 格在三个导出折射率下的
+corner 都是 null gradient，这由矩阵测试逐项钉住，而不是泛化成 per-index 不变量。未来若出现「有限 corner +
+更窄默认档」，即超出现有合同，必须先重做发射/读取设计再导出。
 （2）**近简并角点对**：两个角点值相差超过默认 `1e-8` deg 容差、又在 `EXTREMUM_ATOL` 内时被 `focusing`
 合并，保留哪个成员是各后端自己的浮点序——合并后的 onset 值可能随成员选择偏移角点对的差值，上限即合并容差
 本身。路径带这种角点对的 focusing fixture，其容差块的 `onset_value_deg` 放宽为
