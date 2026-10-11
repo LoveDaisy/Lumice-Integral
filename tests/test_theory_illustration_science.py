@@ -4,6 +4,8 @@ from hashlib import sha256
 import importlib.util
 import json
 from pathlib import Path
+import shutil
+import subprocess
 import sys
 
 import numpy as np
@@ -349,3 +351,44 @@ def test_process_and_factor_figures_render_from_leaf_caches_only(
     finally:
         for figure in figures:
             matplotlib.pyplot.close(figure)
+
+
+@pytest.mark.slow
+def test_all_leaf_replots_exclude_solver_imports_and_parent_cache(
+    canonical, deviation, pose_fiber, predictor, contributions, entry_area, tmp_path
+):
+    world_source = tmp_path / "world-source"
+    world = world_body_data.recompute_data(world_source, canonical.directory)
+    leaf_root = tmp_path / "leaf only data"
+    leaf_root.mkdir()
+    bundles = (world, deviation, pose_fiber, predictor, contributions, entry_area)
+    for bundle in bundles:
+        shutil.copytree(bundle.directory, leaf_root / bundle.directory.name)
+    output = tmp_path / "figures with spaces"
+    scripts = [str(step.script) for step in _load_module("regen").STEPS]
+    code = f"""
+import importlib.abc
+import runpy
+import sys
+
+class Blocker(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.split('.')[0] in {{'jax', 'scipy', 'lumice_integral', 'halo_notes'}}:
+            raise RuntimeError(f'forbidden import: {{fullname}}')
+        return None
+
+sys.meta_path.insert(0, Blocker())
+sys.path.insert(0, {str(ILLUSTRATIONS)!r})
+for script in {scripts!r}:
+    sys.argv = [script, '--replot', '--data-dir', {str(leaf_root)!r}, '--output-dir', {str(output)!r}]
+    try:
+        runpy.run_path(script, run_name='__main__')
+    except SystemExit as error:
+        if error.code not in (0, None):
+            raise
+"""
+    completed = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert completed.returncode == 0, completed.stderr
+    assert sorted(path.name for path in output.glob("*.png")) == sorted(
+        step.output_name for step in _load_module("regen").STEPS
+    )

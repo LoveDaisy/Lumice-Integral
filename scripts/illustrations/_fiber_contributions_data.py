@@ -7,7 +7,6 @@ import shlex
 from typing import Any, Mapping
 
 import numpy as np
-from scipy.integrate import cumulative_simpson
 
 from _canonical_data import IllustrationDataError
 from _illustration_io import IllustrationData, load_pair, validate_required_arrays, write_pair
@@ -113,6 +112,8 @@ def recompute_data(
     data_root: Path | str,
     canonical_directory: Path | str | None = None,
 ) -> IllustrationData:
+    from scipy.integrate import cumulative_simpson
+
     from _canonical_data import load_data as load_canonical_data
     from _canonical_data import recompute_data as recompute_canonical_data
     from lumice_integral.canonical_scene import canonical_crystal

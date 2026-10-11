@@ -484,7 +484,12 @@ runpy.run_path({str(script)!r}, run_name='__main__')
 
 def test_regen_uses_one_ordered_command_table():
     assert [(step.figure_id, step.output_name) for step in regen.STEPS] == [
-        (world_body_data.FIGURE_ID, world_body_data.OUTPUT_NAME)
+        ("world-body-frames", "world-body-frames.png"),
+        ("deviation-level-set", "deviation-level-set.png"),
+        ("pose-fiber", "pose-fiber.png"),
+        ("predictor-corrector", "predictor-corrector.png"),
+        ("fiber-contributions", "fiber-contributions.png"),
+        ("entry-area", "entry-area.png"),
     ]
     planned = regen.commands(
         mode="all",
@@ -494,13 +499,21 @@ def test_regen_uses_one_ordered_command_table():
     )
 
     assert [(step.figure_id, operation) for step, operation, *_ in planned] == [
+        ("canonical-data", "recompute"),
         ("world-body-frames", "recompute"),
         ("world-body-frames", "replot"),
     ]
-    assert [category for *_, category, _ in planned] == ["scientific recompute", "pure rendering"]
+    assert [category for *_, category, _ in planned] == [
+        "shared scientific recompute",
+        "leaf data assembly",
+        "pure rendering",
+    ]
     assert all(Path(command[1]).is_absolute() for _, _, command, _, _ in planned)
+    assert "--canonical-data" in planned[1][2]
+    assert "--canonical-data" not in planned[2][2]
     assert "--output-dir" not in planned[0][2]
-    assert planned[1][2][-2:] == ["--output-dir", "output root"]
+    assert "--output-dir" not in planned[1][2]
+    assert planned[2][2][-2:] == ["--output-dir", "output root"]
 
 
 def test_regen_dry_run_is_side_effect_free_from_arbitrary_cwd(tmp_path):
@@ -524,10 +537,12 @@ def test_regen_dry_run_is_side_effect_free_from_arbitrary_cwd(tmp_path):
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert "Implemented batch: 1/6 B1 figures" in completed.stdout
+    assert "Implemented batch: 6/6 B1 figures" in completed.stdout
+    assert "canonical-data:recompute" in completed.stdout
     assert "world-body-frames:recompute" in completed.stdout
     assert "world-body-frames:replot" in completed.stdout
-    assert "scientific recompute" in completed.stdout
+    assert "shared scientific recompute" in completed.stdout
+    assert "leaf data assembly" in completed.stdout
     assert "pure rendering" in completed.stdout
     assert str(data_root / "canonical-fiber") in completed.stdout
     assert str(data_root / world_body_data.FIGURE_ID) in completed.stdout
@@ -596,6 +611,23 @@ def test_regen_rejects_unknown_figure_id(tmp_path):
     assert "unknown figure ID" in completed.stderr
     assert not (tmp_path / "data").exists()
     assert not (tmp_path / "output").exists()
+
+
+def test_tracked_six_figure_batch_has_stable_png_names_and_sizes():
+    expected = {
+        "world-body-frames.png": (2400, 1500),
+        "deviation-level-set.png": (2175, 1200),
+        "pose-fiber.png": (2400, 1500),
+        "predictor-corrector.png": (2250, 1200),
+        "fiber-contributions.png": (2100, 1140),
+        "entry-area.png": (2100, 1410),
+    }
+    directory = REPO / "docs" / "figures" / "theory"
+    assert sorted(path.name for path in directory.glob("*.png")) == sorted(expected)
+    for name, dimensions in expected.items():
+        payload = (directory / name).read_bytes()
+        assert payload[:8] == b"\x89PNG\r\n\x1a\n"
+        assert struct.unpack(">II", payload[16:24]) == dimensions
 
 
 def test_tracked_world_body_asset_and_reproduction_contract_are_linked():

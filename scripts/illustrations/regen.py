@@ -1,4 +1,4 @@
-"""Run the implemented theory illustrations from one explicit ordered table."""
+"""Run the accepted theory illustrations from one explicit ordered table."""
 
 from __future__ import annotations
 
@@ -10,8 +10,6 @@ import subprocess
 import sys
 from typing import Sequence
 
-from _world_body_data import FIGURE_ID, OUTPUT_NAME
-
 
 @dataclass(frozen=True)
 class FigureStep:
@@ -21,20 +19,21 @@ class FigureStep:
     implemented_batch_position: str
 
 
-STEPS = (
-    FigureStep(
-        figure_id=FIGURE_ID,
-        output_name=OUTPUT_NAME,
-        script=Path(__file__).with_name("world_body_frames.py").resolve(),
-        implemented_batch_position="B1 figure 1/6",
-    ),
+_DIRECTORY = Path(__file__).resolve().parent
+COMMON_STEP = FigureStep(
+    figure_id="canonical-data",
+    output_name="",
+    script=_DIRECTORY / "canonical_data.py",
+    implemented_batch_position="shared scientific prerequisite",
 )
-
-
-def _operations(mode: str) -> tuple[str, ...]:
-    if mode == "all":
-        return ("recompute", "replot")
-    return (mode,)
+STEPS = (
+    FigureStep("world-body-frames", "world-body-frames.png", _DIRECTORY / "world_body_frames.py", "B1 figure 1/6"),
+    FigureStep("deviation-level-set", "deviation-level-set.png", _DIRECTORY / "deviation_level_set.py", "B1 figure 2/6"),
+    FigureStep("pose-fiber", "pose-fiber.png", _DIRECTORY / "pose_fiber.py", "B1 figure 3/6"),
+    FigureStep("predictor-corrector", "predictor-corrector.png", _DIRECTORY / "predictor_corrector.py", "B1 figure 4/6"),
+    FigureStep("fiber-contributions", "fiber-contributions.png", _DIRECTORY / "fiber_contributions.py", "B1 figure 5/6"),
+    FigureStep("entry-area", "entry-area.png", _DIRECTORY / "entry_area.py", "B1 figure 6/6"),
+)
 
 
 def commands(
@@ -47,24 +46,60 @@ def commands(
     selected = [step for step in STEPS if only is None or step.figure_id == only]
     if only is not None and not selected:
         raise ValueError(f"unknown figure ID {only!r}; implemented: {', '.join(step.figure_id for step in STEPS)}")
-    result = []
-    for step in selected:
-        for operation in _operations(mode):
-            command = [
-                sys.executable,
-                str(step.script),
-                f"--{operation}",
-                "--data-dir",
-                str(data_root),
-            ]
-            if operation == "recompute":
-                category = "scientific recompute"
-                outputs = (data_root / "canonical-fiber", data_root / step.figure_id)
-            else:
-                category = "pure rendering"
-                command.extend(["--output-dir", str(output_directory)])
-                outputs = (output_directory / step.output_name,)
-            result.append((step, operation, command, category, outputs))
+    result: list[tuple[FigureStep, str, list[str], str, tuple[Path, ...]]] = []
+    if mode in ("recompute", "all"):
+        result.append(
+            (
+                COMMON_STEP,
+                "recompute",
+                [
+                    sys.executable,
+                    str(COMMON_STEP.script),
+                    "--recompute",
+                    "--data-dir",
+                    str(data_root),
+                ],
+                "shared scientific recompute",
+                (data_root / "canonical-fiber", data_root / "canonical-data"),
+            )
+        )
+        for step in selected:
+            result.append(
+                (
+                    step,
+                    "recompute",
+                    [
+                        sys.executable,
+                        str(step.script),
+                        "--recompute",
+                        "--canonical-data",
+                        str(data_root / "canonical-data"),
+                        "--data-dir",
+                        str(data_root),
+                    ],
+                    "leaf data assembly",
+                    (data_root / step.figure_id,),
+                )
+            )
+    if mode in ("replot", "all"):
+        for step in selected:
+            result.append(
+                (
+                    step,
+                    "replot",
+                    [
+                        sys.executable,
+                        str(step.script),
+                        "--replot",
+                        "--data-dir",
+                        str(data_root),
+                        "--output-dir",
+                        str(output_directory),
+                    ],
+                    "pure rendering",
+                    (output_directory / step.output_name,),
+                )
+            )
     return result
 
 

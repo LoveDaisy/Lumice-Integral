@@ -6,6 +6,7 @@ from dataclasses import asdict
 from hashlib import sha256
 from importlib.metadata import PackageNotFoundError, version
 import json
+import os
 from pathlib import Path
 import shlex
 import subprocess
@@ -212,14 +213,25 @@ def _package_version(name: str) -> str | None:
 
 def _git_state(root: Path) -> dict[str, Any]:
     revision = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True
-    ).stdout.strip()
+        ["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True
+    )
+    if revision.returncode != 0:
+        override = os.environ.get("LUMICE_INTEGRAL_SOURCE_REVISION")
+        return {
+            "revision": override,
+            "tracked_or_untracked_dirty": None,
+            "source": "explicit environment override" if override else "unavailable: source tree has no git metadata",
+        }
     dirty = bool(
         subprocess.run(
             ["git", "status", "--porcelain"], cwd=root, check=True, capture_output=True, text=True
         ).stdout.strip()
     )
-    return {"revision": revision, "tracked_or_untracked_dirty": dirty}
+    return {
+        "revision": revision.stdout.strip(),
+        "tracked_or_untracked_dirty": dirty,
+        "source": "git worktree",
+    }
 
 
 def _rotation_vectors(rotations: np.ndarray) -> np.ndarray:
