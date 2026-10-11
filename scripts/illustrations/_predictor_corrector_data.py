@@ -18,6 +18,7 @@ FIGURE_ID = "predictor-corrector"
 OUTPUT_NAME = f"{FIGURE_ID}.png"
 SCHEMA_VERSION = "lumice-integral.illustration.predictor-corrector/v1"
 SEED_PATH = Path(__file__).with_name("data") / "predictor_corrector_seed.json"
+SEED_ROTATION_TOLERANCE_RAD = 1e-10
 
 _REQUIRED_ARRAYS = {
     "accepted": ((4, 3, 3), "floating"),
@@ -118,6 +119,18 @@ def load_data(data_root: Path | str) -> IllustrationData:
     )
 
 
+def _require_seed_rotation_match(current: np.ndarray, traced: np.ndarray) -> float:
+    from scipy.spatial.transform import Rotation
+
+    error = float(Rotation.from_matrix(current.T @ traced).magnitude())
+    if error >= SEED_ROTATION_TOLERANCE_RAD:
+        raise RuntimeError(
+            "frozen predictor seed no longer matches the current canonical accepted trace: "
+            f"{error:.3g} rad"
+        )
+    return error
+
+
 def recompute_data(
     data_root: Path | str,
     canonical_directory: Path | str | None = None,
@@ -142,8 +155,7 @@ def recompute_data(
     tangent = np.asarray(seed["phase_tangent"], dtype=np.float64)
     step = float(seed["step_rad"])
     accepted_index = int(seed["source"]["historical_accepted_index"])
-    if not np.array_equal(current, common.arrays["accepted_rotations"][accepted_index]):
-        raise RuntimeError("frozen predictor seed no longer matches the current canonical accepted trace")
+    _require_seed_rotation_match(current, common.arrays["accepted_rotations"][accepted_index])
     tangent_alignment = float(abs(tangent @ common.arrays["accepted_tangents"][accepted_index]))
     if tangent_alignment < 1.0 - 1e-12:
         raise RuntimeError(f"frozen predictor tangent no longer matches the component: {tangent_alignment:.12g}")

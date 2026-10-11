@@ -88,6 +88,45 @@ def test_canonical_cache_loader_reports_missing_pair_with_recompute_command(tmp_
     assert str((tmp_path / "data with spaces").resolve()) in str(caught.value)
 
 
+def test_git_state_prefers_explicit_revision_and_rejects_parent_repository(tmp_path, monkeypatch):
+    outer = tmp_path / "outer"
+    outer.mkdir()
+    subprocess.run(["git", "init"], cwd=outer, check=True, capture_output=True)
+    (outer / "tracked.txt").write_text("outer\n", encoding="utf-8")
+    subprocess.run(["git", "add", "tracked.txt"], cwd=outer, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Illustration Test",
+            "-c",
+            "user.email=illustration@example.invalid",
+            "commit",
+            "-m",
+            "outer fixture",
+        ],
+        cwd=outer,
+        check=True,
+        capture_output=True,
+    )
+    source = outer / "source-copy"
+    source.mkdir()
+
+    monkeypatch.setenv("LUMICE_INTEGRAL_SOURCE_REVISION", "archive-revision")
+    assert canonical_data._git_state(source) == {
+        "revision": "archive-revision",
+        "tracked_or_untracked_dirty": None,
+        "source": "explicit environment override",
+    }
+
+    monkeypatch.delenv("LUMICE_INTEGRAL_SOURCE_REVISION")
+    assert canonical_data._git_state(source) == {
+        "revision": None,
+        "tracked_or_untracked_dirty": None,
+        "source": "unavailable: source tree has no git metadata",
+    }
+
+
 @pytest.mark.slow
 def test_canonical_presentation_grid_preserves_accepted_numbered_poses(canonical):
     reference = json.loads(REFERENCE.read_text(encoding="utf-8"))
@@ -261,6 +300,18 @@ def test_predictor_replay_matches_seed_and_production_constraints(canonical, pre
     assert np.max(arrays["phase_condition_errors"]) < 1e-11
     assert arrays["angular_errors_deg"][1] == pytest.approx(0.04783524364181246, abs=1e-6)
     assert metadata["replay"]["step_rad"] == pytest.approx(0.04, abs=1e-15)
+
+
+def test_predictor_seed_match_uses_so3_tolerance():
+    from scipy.spatial.transform import Rotation
+
+    reference = np.eye(3)
+    nearby = Rotation.from_rotvec([1e-12, 0.0, 0.0]).as_matrix()
+    assert predictor_data._require_seed_rotation_match(reference, nearby) < 1e-10
+
+    distant = Rotation.from_rotvec([1e-6, 0.0, 0.0]).as_matrix()
+    with pytest.raises(RuntimeError, match="no longer matches"):
+        predictor_data._require_seed_rotation_match(reference, distant)
 
 
 @pytest.mark.slow

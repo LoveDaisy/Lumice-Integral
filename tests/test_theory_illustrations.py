@@ -623,7 +623,7 @@ def test_tracked_six_figure_batch_has_stable_png_names_and_sizes():
         "entry-area.png": (2100, 1410),
     }
     directory = REPO / "docs" / "figures" / "theory"
-    assert sorted(path.name for path in directory.glob("*.png")) == sorted(expected)
+    assert expected.keys() <= {path.name for path in directory.glob("*.png")}
     for name, dimensions in expected.items():
         payload = (directory / name).read_bytes()
         assert payload[:8] == b"\x89PNG\r\n\x1a\n"

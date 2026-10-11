@@ -212,15 +212,30 @@ def _package_version(name: str) -> str | None:
 
 
 def _git_state(root: Path) -> dict[str, Any]:
+    override = os.environ.get("LUMICE_INTEGRAL_SOURCE_REVISION")
+    if override:
+        return {
+            "revision": override,
+            "tracked_or_untracked_dirty": None,
+            "source": "explicit environment override",
+        }
+    top_level = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"], cwd=root, capture_output=True, text=True
+    )
+    if top_level.returncode != 0 or Path(top_level.stdout.strip()).resolve() != root.resolve():
+        return {
+            "revision": None,
+            "tracked_or_untracked_dirty": None,
+            "source": "unavailable: source tree has no git metadata",
+        }
     revision = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True
     )
     if revision.returncode != 0:
-        override = os.environ.get("LUMICE_INTEGRAL_SOURCE_REVISION")
         return {
-            "revision": override,
+            "revision": None,
             "tracked_or_untracked_dirty": None,
-            "source": "explicit environment override" if override else "unavailable: source tree has no git metadata",
+            "source": "unavailable: source tree has no git metadata",
         }
     dirty = bool(
         subprocess.run(
