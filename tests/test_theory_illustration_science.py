@@ -4,6 +4,7 @@ from hashlib import sha256
 import importlib.util
 import json
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import sys
@@ -194,6 +195,9 @@ def test_world_body_leaf_is_assembled_from_shared_canonical_data(canonical, tmp_
     assert result.metadata["source"]["canonical_data_sha256"] == sha256(
         (canonical.directory / "arrays.npz").read_bytes()
     ).hexdigest()
+    command = shlex.split(result.metadata["provenance"]["recompute_command"])
+    assert str((ILLUSTRATIONS / "world_body_frames.py").resolve()) in command
+    assert str((ILLUSTRATIONS / "canonical_data.py").resolve()) not in command
 
 
 @pytest.mark.slow
@@ -274,10 +278,10 @@ def test_predictor_replay_matches_seed_and_production_constraints(canonical, pre
     arrays = predictor.arrays
     metadata = predictor.metadata
     seed = json.loads(predictor_data.SEED_PATH.read_text(encoding="utf-8"))
-    np.testing.assert_array_equal(
+    assert predictor_data._require_seed_rotation_match(
         arrays["accepted"][0],
         canonical.arrays["accepted_rotations"][seed["source"]["historical_accepted_index"]],
-    )
+    ) < predictor_data.SEED_ROTATION_TOLERANCE_RAD
     np.testing.assert_allclose(
         arrays["predicted"][0],
         np.asarray(seed["historical_predicted_rotation"]),

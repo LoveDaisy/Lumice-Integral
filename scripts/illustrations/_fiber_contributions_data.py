@@ -8,8 +8,13 @@ from typing import Any, Mapping
 
 import numpy as np
 
-from _canonical_data import IllustrationDataError
-from _illustration_io import IllustrationData, load_pair, validate_required_arrays, write_pair
+from _illustration_io import (
+    IllustrationData,
+    IllustrationDataError,
+    load_pair,
+    validate_required_arrays,
+    write_pair,
+)
 
 
 FIGURE_ID = "fiber-contributions"

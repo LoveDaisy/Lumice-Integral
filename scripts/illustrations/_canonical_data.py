@@ -27,7 +27,6 @@ from _illustration_io import (
 FIGURE_ID = "canonical-data"
 SCHEMA_VERSION = "lumice-integral.illustration.canonical-data/v1"
 PRESENTATION_NODE_COUNT = 513
-RETRACTION_ITERATIONS = 2
 SELECTED_INDICES = np.array([0, 128, 256, 384], dtype=np.int64)
 ORIGINAL_ACCEPTED_REVISION = "98b4a8c7ec70e519f3744279840c2814f871ade7"
 
@@ -407,7 +406,7 @@ def recompute_data(data_root: Path | str) -> IllustrationData:
         "sampling": {
             "presentation_node_count": PRESENTATION_NODE_COUNT,
             "selected_indices": SELECTED_INDICES,
-            "retraction_iterations": RETRACTION_ITERATIONS,
+            "retraction_iterations": quadrature_options.retraction_iterations,
             "presentation_meaning": "uniform cumulative-chord Hermite grid retracted onto the production fiber",
             "quadrature_node_count": quadrature.node_count,
             "quadrature_grid_independent_of_presentation": quadrature.node_count != PRESENTATION_NODE_COUNT,

@@ -68,7 +68,7 @@ def _valid_metadata() -> dict[str, object]:
         "fixture": {"name": "synthetic"},
         "sampling": {
             "dense_node_count": world_body_data.DENSE_NODE_COUNT,
-            "retraction_iterations": world_body_data.RETRACTION_ITERATIONS,
+            "retraction_iterations": 2,
             "selected_indices": world_body_data.SELECTED_INDICES.tolist(),
         },
         "geometry": {

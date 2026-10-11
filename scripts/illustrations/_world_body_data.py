@@ -19,7 +19,6 @@ SCHEMA_VERSION = "lumice-integral.illustration.world-body-frames/v1"
 ARRAYS_FILE = "arrays.npz"
 METADATA_FILE = "metadata.json"
 DENSE_NODE_COUNT = 513
-RETRACTION_ITERATIONS = 2
 SELECTED_INDICES = np.array([0, 128, 256, 384], dtype=np.int64)
 ORIGINAL_ACCEPTED_REVISION = "98b4a8c7ec70e519f3744279840c2814f871ade7"
 ORIGINAL_PROTOTYPE_SHA256 = "eb8bb4850835faeb2442a5f25bee1fd9271bcc887d077a62e7999b17bd8c6a62"
@@ -377,7 +376,7 @@ def _recompute_from_canonical(
         "sampling": {
             "meaning": "uniform cumulative-chord Hermite presentation grid, then fixed production retraction",
             "dense_node_count": DENSE_NODE_COUNT,
-            "retraction_iterations": RETRACTION_ITERATIONS,
+            "retraction_iterations": common_metadata["sampling"]["retraction_iterations"],
             "selected_indices": SELECTED_INDICES,
             "claim": "presentation sampling; not a new quadrature-convergence claim",
         },
