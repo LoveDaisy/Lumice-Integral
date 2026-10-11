@@ -630,6 +630,24 @@ def test_tracked_six_figure_batch_has_stable_png_names_and_sizes():
         assert struct.unpack(">II", payload[16:24]) == dimensions
 
 
+def test_reproduction_contract_records_the_complete_six_figure_batch():
+    contract = (REPO / "docs" / "theory-illustrations.md").read_text(encoding="utf-8")
+    for name in (
+        "world-body-frames",
+        "deviation-level-set",
+        "pose-fiber",
+        "predictor-corrector",
+        "fiber-contributions",
+        "entry-area",
+    ):
+        assert f"[{name}.png](figures/theory/{name}.png)" in contract
+        assert f"lumice-integral.illustration.{name}/v1" in contract
+    assert "Implemented B1 batch: all six canonical figures" in contract
+    assert "LUMICE_INTEGRAL_SOURCE_REVISION" in contract
+    assert "does not\npass an all-pairs colour-separation validator" in contract
+    assert "58.3** has completed" in contract
+
+
 def test_tracked_world_body_asset_and_reproduction_contract_are_linked():
     image = REPO / "docs" / "figures" / "theory" / "world-body-frames.png"
     payload = image.read_bytes()

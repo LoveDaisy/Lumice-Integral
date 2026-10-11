@@ -80,8 +80,8 @@ a concrete need.
 ## 2. First batch: the six accepted figures
 
 The stable IDs below are semantic; the temporary prototype numbers `00`–`03`
-do not define reading order. Canonical figures are linked once they have a tracked
-production asset; targets that have not yet been implemented remain code paths.
+do not define reading order. All six canonical PNGs are tracked production
+assets; their scripts, caches, and batch commands are recorded in section 6.4.
 
 ### 2.1 `world-body-frames`
 
@@ -143,7 +143,8 @@ production asset; targets that have not yet been implemented remain code paths.
 - **Production input:** `DPField` for $U_P$ and $D_P$, plus the versioned fibre
   poses for the highlighted projection. The removed twist panel is not restored;
   the lift condition belongs in the caption and prose.
-- **Proposed target:** `docs/figures/theory/deviation-level-set.png`.
+- **Canonical asset:** [deviation-level-set.png](figures/theory/deviation-level-set.png).
+  It is produced by the shared six-figure batch in section 6.4.
 
 ### 2.3 `pose-fiber`
 
@@ -181,7 +182,8 @@ production asset; targets that have not yet been implemented remain code paths.
   `halo_notes.draw.raypath.search_raypath` and `verify_path` through an absolute
   Writing-Lab path; production must remove that runtime dependency rather than
   copy the whole drawing package.
-- **Proposed target:** `docs/figures/theory/pose-fiber.png`.
+- **Canonical asset:** [pose-fiber.png](figures/theory/pose-fiber.png).
+  It is produced by the shared six-figure batch in section 6.4.
 
 ### 2.4 `predictor-corrector`
 
@@ -213,7 +215,8 @@ production asset; targets that have not yet been implemented remain code paths.
   preserve. The production task must either export the already-observable
   accepted predictor/corrector record or add only the smallest diagnostic hook
   required by this figure, without changing continuation semantics.
-- **Proposed target:** `docs/figures/theory/predictor-corrector.png`.
+- **Canonical asset:** [predictor-corrector.png](figures/theory/predictor-corrector.png).
+  It is produced by the shared six-figure batch in section 6.4.
 
 ### 2.5 `fiber-contributions`
 
@@ -245,7 +248,8 @@ production asset; targets that have not yet been implemented remain code paths.
   `lumice-integral.figure-data/v3`, including poses, cumulative arclength,
   named weights, unregularised `normal_jacobian`, quadrature metadata, and the
   integrand. Plotting must not reimplement any factor.
-- **Proposed target:** `docs/figures/theory/fiber-contributions.png`.
+- **Canonical asset:** [fiber-contributions.png](figures/theory/fiber-contributions.png).
+  It is produced by the shared six-figure batch in section 6.4.
 
 ### 2.6 `entry-area`
 
@@ -275,7 +279,8 @@ production asset; targets that have not yet been implemented remain code paths.
   corridor/projection geometry. The drawing layer may assemble polygons and
   labels but must not independently decide path feasibility or recompute a
   competing entry area.
-- **Proposed target:** `docs/figures/theory/entry-area.png`.
+- **Canonical asset:** [entry-area.png](figures/theory/entry-area.png).
+  It is produced by the shared six-figure batch in section 6.4.
 
 ### 2.7 First-batch reading paths
 
@@ -497,84 +502,111 @@ static figures referenced by the docs belong under `docs/figures/theory/`.
 Whether SVG or PDF accompanies PNG is decided after checking the actual document
 embedding; this inventory does not multiply formats pre-emptively.
 
-### 6.4 Implemented first slice: `world-body-frames`
+### 6.4 Implemented B1 batch: all six canonical figures
 
-`--data-dir` names the batch data root, not the figure leaf. The first command
-below writes `canonical-fiber/` and `world-body-frames/` beneath that root and
-never writes a PNG. The second reads only the figure's internal rebuildable
-cache and writes the named PNG; missing, unreadable, or unsupported data fails
-with the exact recompute command instead of starting the solver.
-
-```bash
-JAX_PLATFORMS=cpu OMP_NUM_THREADS=1 \
-  uv run python scripts/illustrations/world_body_frames.py \
-  --recompute --data-dir artifacts/theory-illustrations
-uv run --with matplotlib python scripts/illustrations/world_body_frames.py \
-  --replot --data-dir artifacts/theory-illustrations \
-  --output-dir docs/figures/theory
-```
-
-The batch entry uses the same two operations and currently reports that one of
-six B1 figures is implemented:
+`--data-dir` names the batch data root, not a figure leaf. Recompute first writes
+one `canonical-fiber/` export and one `canonical-data/` shared cache, then builds
+six self-contained leaf caches. It never writes a PNG. Replot reads only those
+six leaves and writes the stable PNG names; it neither imports the solver nor
+requires the shared parent caches. Missing, unreadable, or unsupported leaves
+fail with an exact recompute command instead of silently calculating.
 
 ```bash
+# Inspect the exact shared, leaf, and rendering steps without writing.
 uv run python scripts/illustrations/regen.py --mode all \
   --data-dir artifacts/theory-illustrations \
   --output-dir docs/figures/theory --dry-run
-uv run --with matplotlib python scripts/illustrations/regen.py --mode all \
+
+# Scientific recompute only, then pure rendering only.
+JAX_PLATFORMS=cpu OMP_NUM_THREADS=1 \
+  uv run python scripts/illustrations/regen.py --mode recompute \
   --data-dir artifacts/theory-illustrations \
   --output-dir docs/figures/theory
+uv run --with matplotlib python scripts/illustrations/regen.py --mode replot \
+  --data-dir artifacts/theory-illustrations \
+  --output-dir docs/figures/theory
+
+# One leaf and PNG; the necessary shared recompute is explicit.
+uv run --with matplotlib python scripts/illustrations/regen.py --mode all \
+  --only entry-area --data-dir artifacts/theory-illustrations \
+  --output-dir /tmp/theory-figure-preview
 ```
 
-The figure cache schema is
-`lumice-integral.illustration.world-body-frames/v1`, separate from the upstream
-`lumice-integral.figure-data/v3` export. It is an internal, rebuildable
-intermediate rather than an arbitrary external-payload protocol. It records the
-513-point presentation grid, two fixed production retraction iterations,
-selected indices `[0, 128, 256, 384]`, body-to-world rotations, source
-directions, production outgoing directions, and the canonical crystal's
-vertices, faces, edges, normals, and centroids. Metadata records array shapes,
-dtypes, units, the NPZ SHA-256, LI revision and dirty state, Python/package
-versions, continuation options, coordinate residuals, component scope, and the
-upstream v3 hashes.
+The one explicit `regen.STEPS` table has these entries:
 
-Replotting uses `allow_pickle=False`, checks the JSON/NPZ identity and hash,
-requires the consumed arrays with usable shapes, numeric dtypes and finite
-values, and checks only the face/edge indices needed by the renderer. It does
-not re-certify SO(3), coordinate equalities, face topology, normal orientation,
-or every redundant metadata declaration after the files have been synchronously
-rewritten. Those scientific properties are checked while production data is
-assembled and by the slow canonical regression, which directly compares the
-actual arrays with the production crystal, direction evaluator, path validity,
-and the historical four-pose anchor. This split keeps a corrupted or incomplete
-cache diagnosable without duplicating a crystal-geometry validator in plotting
-code.
+| Stable ID | Public entry | Leaf schema | PNG dimensions |
+|---|---|---|---:|
+| `world-body-frames` | `world_body_frames.py` | `lumice-integral.illustration.world-body-frames/v1` | 2400×1500 |
+| `deviation-level-set` | `deviation_level_set.py` | `lumice-integral.illustration.deviation-level-set/v1` | 2175×1200 |
+| `pose-fiber` | `pose_fiber.py` | `lumice-integral.illustration.pose-fiber/v1` | 2400×1500 |
+| `predictor-corrector` | `predictor_corrector.py` | `lumice-integral.illustration.predictor-corrector/v1` | 2250×1200 |
+| `fiber-contributions` | `fiber_contributions.py` | `lumice-integral.illustration.fiber-contributions/v1` | 2100×1140 |
+| `entry-area` | `entry_area.py` | `lumice-integral.illustration.entry-area/v1` | 2100×1410 |
 
-The rendering layer owns the accepted visual defaults: a perspective camera at
-azimuth `65 deg`, elevation `24 deg`, distance `7`, and face `3` as the visible
-landmark. These choices are explicit in `world_body_frames.py`; changing them
-does not change the cache schema. Replotting has no runtime dependency on LI,
-JAX, SciPy, Writing-Lab, scratchpad, or Lumice.
+The shared schema is
+`lumice-integral.illustration.canonical-data/v1`, separate from both the six
+leaf schemas and upstream `lumice-integral.figure-data/v3`. It records the
+accepted trajectory, the fixed 513-point presentation grid, the final
+production quadrature grid, production retractions and $ds/dt$, numerical
+arclength, named factors, unregularised $J_\perp$, geometry, conventions,
+convergence evidence, component scope, source hashes, and provenance. The two
+grids currently both contain 513 nodes, but their names and metadata remain
+separate because presentation numbering and adaptive integration have different
+contracts. Numbered poses remain `[0, 128, 256, 384]`; they are not relabelled as
+equal-arclength quartiles.
 
-The narrow projection and visibility behavior was independently implemented in
-LI after consulting Writing-Lab revision
-`b7784b8c96c742ee4f49f2277fe424bfda213ae4`, specifically
-`halo_notes/draw/projection.py` and `halo_notes/draw/scene.py`. No module or
-source block from that rendering framework is copied, and Writing-Lab is not a
-runtime dependency. The accepted prototype remains provenance evidence at LI
-revision `98b4a8c7ec70e519f3744279840c2814f871ade7`; the historical four rotations
-are a small regression oracle, never a production input.
+Each leaf is an internal, rebuildable intermediate and copies exactly what its
+renderer consumes. Loaders use `allow_pickle=False`, check JSON/NPZ identity and
+SHA-256, require usable shapes and numeric types, and enforce only consumption
+invariants. A loader does not re-certify SO(3), crystal topology, optics, or
+quadrature after a synchronously written pair is read back. Scientific claims
+are checked during recompute and in the slow production regression rather than
+reimplemented as a second solver in the cache loader. Replot was exercised with
+only the six leaf directories present and imports of LI, JAX, SciPy, and
+`halo_notes` blocked; all six PNGs were produced. A clean source copy without
+`.git`, scratchpad, artifacts, or an old virtual environment also rebuilt the
+batch. When Git metadata is absent, provenance records that fact; an archive
+builder can pass the known revision explicitly as
+`LUMICE_INTEGRAL_SOURCE_REVISION`.
 
-The canonical asset is 2400×1500 pixels. A fresh empty-directory rebuild at
-rendering-code revision `274dad6` produced SHA-256
-`dfeda8a1788ed61743e50d7ef4734bd2f9ff9f7c2373593b00477ce948337024`,
-identical to the tracked PNG. The rebuilt image, the tracked image, and the
-accepted prototype were opened directly; 960×600 and 720×450 downscaled views
-were also inspected. At both reading widths the two-row correspondence, four
-direct-numbered poses, source arrows, face-3 landmark, visible/hidden edge
-distinction, frame triads, $R_i^{\mathsf T}$ mappings, and bottom identity were
-legible, with no clipping or label collision that changed the reading. This is
-a production readability check, not a claim of author aesthetic approval.
+The first figure retains the independently implemented narrow LI-owned
+perspective helper from task 58.2 after consulting Writing-Lab only as visual
+evidence; Writing-Lab is not a runtime dependency. Its explicit camera remains
+at azimuth `65 deg`, elevation `24 deg`, distance `7`, with face `3` as the visible
+landmark, and the rendered PNG remains byte-identical to its accepted production
+asset. `pose-fiber` uses the same helper but constructs each representative ray
+from the production corridor, verifies the physical hits with
+`Polyhedron.intersect_ray`, and checks Snell tangential conservation
+independently. `predictor-corrector` replays the
+three accepted production steps from the versioned minimal seed in
+`scripts/illustrations/data/predictor_corrector_seed.json`; it does not patch the
+continuation implementation. The other leaves consume `DPField`, the shared
+quadrature factors, and production corridor geometry without copying their
+scientific equations.
+
+Fresh production measurements for this batch were: projected $D_P$ level
+residual `4.44e-16 rad`; representative-ray direction and independent Snell
+residuals `4.20e-16` and `8.06e-16`; accepted predictor/corrector outgoing and
+phase residuals `3.40e-16` and `2.75e-17 rad`, with predicted miss
+`0.0478352436 deg`; factor-product relative disagreement `3.80e-16`; numerical
+loop length `2.3806321109 rad`; and entry-area event
+`s=1.9098764199 rad`, with $J_\perp=0.149751$ and one-sided slopes near
+`+0.621/-0.621 a^2/rad`. These are regression and assembly observations, not a
+claim of exactness or component completeness. The production integral is
+`I/a^2=6.5814665434` with internal error estimate `2.69e-4`; tightening the
+relative tolerance from `1e-4` to `1e-5` gave `6.5814512657`, inside the combined
+reported estimates.
+
+All six tracked images, their accepted prototypes, and individual 960- and
+720-pixel reading views were opened directly. Core labels, mathematical
+subscripts, markers, dashed boundaries, and geometry remained legible without
+clipping. Secondary footer text on the denser figures approaches the lower
+reading-size limit; task 58.4 must repeat the check at the actual English and
+Chinese content widths. The accepted blue/orange/green/purple palette does not
+pass an all-pairs colour-separation validator, so numbers, letters, marker
+shapes, line styles, and direct labels remain mandatory redundant channels. This
+is a recorded accessibility limitation, not a claim of author aesthetic
+approval.
 
 ## 7. Acceptance and handoff
 
@@ -608,9 +640,11 @@ a production readability check, not a claim of author aesthetic approval.
 
 - **58.2** has completed `world-body-frames`, proving the directory and command
   split and the smallest LI-owned crystal drawing/data boundary.
-- **58.3** uses the six records in section 2 as the per-figure briefs. Its two
-  special migration items are representative ray geometry for `pose-fiber` and
-  stable process data for `predictor-corrector`.
+- **58.3** has completed the other five figures and the shared 6/6 batch. It
+  removed the Writing-Lab ray runtime dependency, added a versioned minimal
+  process seed, and delivered self-contained leaf caches plus production
+  science/reading-size evidence. Stable paths and caption facts are in sections
+  2 and 6.4.
 - **58.4** embeds the single canonical image per stable ID at the primary and
   secondary locations above, writes separate English and Chinese captions, and
   checks real document widths and links.
@@ -630,8 +664,9 @@ found. In particular:
 - a general walked weight-kink set is not yet completeness-certified;
 - the best B2 fixtures and the final visual composition of mechanism-comparison
   figures still require scientific and author review;
-- font details, final palette, output format beyond one canonical static image,
-  and aesthetic approval remain production decisions;
+- B1 now has one canonical PNG per stable ID with DejaVu Sans and the accepted
+  prototype palette; author aesthetic approval and a final palette decision
+  remain open, and extra SVG/PDF formats still require a demonstrated need;
 - prose, tables, and equations retain default priority where they communicate a
   relation more directly than a new image.
 
