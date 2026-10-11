@@ -36,7 +36,7 @@ $$
 
 同一个积分的三种求积（Phase I 纤维、带求和、等值线），失败模式互不共享，再加上 Lumice 的 Monte Carlo，构成本项目的验证网。
 
-图解阅读路径先从 [Phase I 的姿态纤维图](phase1_zh.md#fig-pose-fiber)认识原像，再沿具名物理因子与 continuation 步骤阅读；$S^2$ 约化则先看[世界系/晶体系对应](phase2_zh.md#fig-world-body-frames)，再看[偏折角水平集](phase2_zh.md#fig-deviation-level-set)。这里链接图所在的解释语境，不另维护缩小副本；[六图索引](theory-illustrations.md#28-six-figure-reading-index)提供一页式本地对照和复现命令。
+图解阅读路径先从 [Phase I 的姿态纤维图](phase1_zh.md#fig-pose-fiber)认识原像，再沿具名物理因子与 continuation 步骤阅读；$S^2$ 约化则先看[世界系/晶体系对应](phase2_zh.md#fig-world-body-frames)，再看[偏折角水平集](phase2_zh.md#fig-deviation-level-set)。这里链接图所在的解释语境，不另维护缩小副本；[六图索引](theory-illustrations.md#b1-six-figure-index)提供一页式本地对照和复现命令。
 
 ## 3. 规划
 

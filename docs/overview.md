@@ -92,7 +92,7 @@ physical factors and continuation steps. The reduction to $S^2$ starts with the
 [world/body-frame correspondence](phase2.md#fig-world-body-frames) and then the
 [deviation level set](phase2.md#fig-deviation-level-set). These links reuse the
 canonical figures in their explanatory context rather than maintaining smaller
-copies here; the [six-figure index](theory-illustrations.md#28-six-figure-reading-index)
+copies here; the [six-figure index](theory-illustrations.md#b1-six-figure-index)
 provides one local comparison view and reproduction commands.
 
 ## 3. Plan

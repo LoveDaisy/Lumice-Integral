@@ -301,6 +301,8 @@ unbroken wall. `pose-fiber` follows the inverse-image definition;
 as the optional geometric expansion. `predictor-corrector` belongs in the next
 section after the algorithm steps.
 
+<a id="b1-six-figure-index"></a>
+
 ### 2.8 Six-figure reading index
 
 This is the local comparison view for the completed B1 batch. It references the
