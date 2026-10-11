@@ -31,8 +31,24 @@ $$
 For an image direction $\mathbf d$ the contributing poses are the inverse
 image $X_{\mathbf d} = F_P^{-1}(\mathbf d)$. At a regular value the dimension
 theorem gives $\dim X_{\mathbf d} = 3 - 2 = 1$: the integration domain is a
-set of curves in $\mathrm{SO}(3)$, often closed loops. With a smooth pose
-density the pointwise contribution of a path has the coarea form
+set of curves in $\mathrm{SO}(3)$, often closed loops.
+
+<a id="fig-pose-fiber"></a>
+![One pose fibre represented on the body-frame sphere, in local SO(3) coordinates, and by four physical ray paths.](figures/theory/pose-fiber.png)
+
+**Figure 1 — One inverse-image component.** The canonical `3-5` example fixes
+the crystal ($h/a=2$), refractive index ($n=1.31$), incident propagation
+$\mathbf s$, and outgoing propagation $\mathbf d$ while $R$ varies along one
+known regular closed component. The body-frame source direction
+$\mathbf u=R^{\mathsf T}\hat{\mathbf s}$ and the local rotation coordinates
+therefore move together; labels 1–4 identify the same poses in all three views.
+Orange arrows in the ray panels follow incident propagation, blue arrows follow
+outgoing propagation, and the apparent sky direction is $-\mathbf d$. The
+representative entry point may change with pose. One traced loop is not evidence
+that every component of $F_P^{-1}(\mathbf d)$ was found.
+
+With a smooth pose density the pointwise contribution of a path has the coarea
+form
 
 $$
 I_P(\mathbf d)=
@@ -48,6 +64,33 @@ reflection, $R_k = 1$ under TIR; [conventions.md](conventions.md) #18), $J_{F_P}
 map ($J_\perp$ in code) and $d\mathcal H^1$ arc length along the fibre.
 Each factor is exposed separately; the Haar constant $1/(8\pi^2)$ and
 $J_\perp$ are kept apart (contract section 7).
+
+<a id="fig-fiber-contributions"></a>
+![Pose density, entry area, transmission, inverse Jacobian, and their product along the same pose fibre.](figures/theory/fiber-contributions.png)
+
+**Figure 2 — Named factors along the fibre.** Arclength $s$ follows the same
+closed component as Figure 1 and is computed from the production $ds/dt$, not
+from Euclidean distance in a rotation-vector chart. The curves preserve their
+actual relative amplitudes: pose density $\rho$, normalised entry area $A/a^2$,
+throughput $T$, regularised inverse Jacobian
+$K=1/(J_\perp+10^{-6})$, and their product are not individually peak-normalised.
+The Haar factor remains outside these curves. Here $\rho$ spans almost six
+orders of magnitude while $T$ varies by about 0.7%; the near-flat transmission
+is physical information. Because $s=0$ and $s=L$ are the same pose, a bright
+region may straddle the plotted cut. The integral still covers only this
+component.
+
+<a id="fig-entry-area"></a>
+![Entry-area kink and three equal-scale projections of the changing corridor overlap.](figures/theory/entry-area.png)
+
+**Figure 3 — A geometric kink in $A_P$.** States A, B, and C move through one
+support-boundary exchange at $s=1.909876\,\mathrm{rad}$. The three projections
+share one physical scale: their green overlap is $A_\perp$ in the plane normal
+to the internal ray, while the incident-beam measure in the integral is
+$A=A_\perp\cos\theta_i/\cos\theta_t$. At B the active clipping edge changes,
+so the slope of $A(s)$ changes sign even though the fibre and halo map remain
+regular; B is not a $J_\perp$ critical point. This fixture identifies one such
+kink, not every possible entry-area event.
 
 "Deterministic" does not mean exact: root finding, continuation,
 automatic differentiation and quadrature are numerical and report their
@@ -68,6 +111,20 @@ For one target direction $\mathbf d$:
 5. Continue until the component closes or reaches a genuine boundary of the
    valid optical domain.
 6. Evaluate every factor along the curve and integrate their product.
+
+<a id="fig-predictor-corrector"></a>
+![Three predictor-corrector continuation steps shown on the full fibre, in local pose coordinates, and in the sky tangent frame.](figures/theory/predictor-corrector.png)
+
+**Figure 4 — Predict, correct, repeat.** The left panel locates a short segment
+on the component from Figure 1. In the local pose chart, each tangent step
+predicts a trial pose and the corrector returns it to the fixed target direction;
+the separate sky tangent chart shows the corresponding miss and recovery. The
+first $0.04\,\mathrm{rad}$ prediction misses by $0.047835^\circ$, while the
+accepted outgoing and phase residuals are $3.40\times10^{-16}$ and
+$2.75\times10^{-17}\,\mathrm{rad}$. Local rotation coordinates and sky angular
+offsets are different spaces, and straight-line distance in the plotted pose
+chart is not fibre arclength. Production correction uses two outgoing residuals
+plus a phase condition, not a single $D_P$-gradient step.
 
 Rotations are stored as matrices; quaternions are only an interpolation
 chart, and closure respects the double cover $q \sim -q$. The stack is

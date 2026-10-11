@@ -301,6 +301,44 @@ unbroken wall. `pose-fiber` follows the inverse-image definition;
 as the optional geometric expansion. `predictor-corrector` belongs in the next
 section after the algorithm steps.
 
+### 2.8 Six-figure reading index
+
+This is the local comparison view for the completed B1 batch. It references the
+same tracked assets used by the theory documents; there is no second image set.
+The semantic reading order below follows prerequisites rather than prototype
+numbers. Each image is requested at a maximum width of 720 CSS pixels, the
+lower reading ruler used for the final document check; a narrower viewer may
+scale it down. Select an image for its full-resolution PNG.
+
+**Phase I — inverse image:** [`pose-fiber`](phase1.md#fig-pose-fiber)
+
+<a href="figures/theory/pose-fiber.png"><img src="figures/theory/pose-fiber.png" alt="Pose fibre across the body-frame sphere, local SO(3) coordinates, and physical rays" width="720"></a>
+
+**Phase I — physical factors:** [`fiber-contributions`](phase1.md#fig-fiber-contributions)
+
+<a href="figures/theory/fiber-contributions.png"><img src="figures/theory/fiber-contributions.png" alt="Named physical factors and their product along the pose fibre" width="720"></a>
+
+**Phase I — geometric expansion of the area factor:** [`entry-area`](phase1.md#fig-entry-area)
+
+<a href="figures/theory/entry-area.png"><img src="figures/theory/entry-area.png" alt="Entry-area kink and equal-scale corridor projections" width="720"></a>
+
+**Phase I — continuation process:** [`predictor-corrector`](phase1.md#fig-predictor-corrector)
+
+<a href="figures/theory/predictor-corrector.png"><img src="figures/theory/predictor-corrector.png" alt="Three predictor-corrector continuation steps" width="720"></a>
+
+**Phase II — coordinate reduction:** [`world-body-frames`](phase2.md#fig-world-body-frames)
+
+<a href="figures/theory/world-body-frames.png"><img src="figures/theory/world-body-frames.png" alt="Matching world-frame and body-frame crystal states" width="720"></a>
+
+**Phase II — projected level set:** [`deviation-level-set`](phase2.md#fig-deviation-level-set)
+
+<a href="figures/theory/deviation-level-set.png"><img src="figures/theory/deviation-level-set.png" alt="Deviation field and one projected pose fibre" width="720"></a>
+
+The captions in `phase1{,_zh}.md` and `phase2{,_zh}.md` carry the language-
+specific parameters, direction conventions, factor boundaries, and scope
+limits. This index is for visual comparison and navigation, not a competing
+scientific description.
+
 ## 3. Additional reader questions and decisions
 
 Priority is explanatory value, not implementation order. Data readiness records
