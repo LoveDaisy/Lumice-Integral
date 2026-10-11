@@ -262,6 +262,11 @@ def _parser() -> argparse.ArgumentParser:
     operation.add_argument("--recompute", action="store_true", help="rebuild data only; do not write a PNG")
     operation.add_argument("--replot", action="store_true", help="read existing data and write only the PNG")
     parser.add_argument(
+        "--canonical-data",
+        type=Path,
+        help="existing shared canonical-data directory; recompute only",
+    )
+    parser.add_argument(
         "--data-dir",
         type=Path,
         required=True,
@@ -277,7 +282,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.recompute:
         if args.output_dir is not None:
             parser.error("--recompute does not accept --output-dir")
-        result = recompute_data(args.data_dir)
+        result = recompute_data(args.data_dir, args.canonical_data)
         validation = result.metadata["validation"]
         print(result.directory)
         print(
@@ -286,6 +291,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"outgoing={validation['dense_outgoing_direction_max_l2']:.3g}"
         )
         return 0
+    if args.canonical_data is not None:
+        parser.error("--canonical-data is valid only with --recompute")
     if args.output_dir is None:
         parser.error("--replot requires --output-dir")
     try:

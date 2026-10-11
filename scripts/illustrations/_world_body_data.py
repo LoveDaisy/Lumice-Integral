@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from hashlib import sha256
-from importlib.metadata import PackageNotFoundError, version
 import json
 from pathlib import Path
 import shlex
-import subprocess
-import sys
 from typing import Any, Mapping
 from zipfile import BadZipFile
 
@@ -113,25 +110,6 @@ def _json_value(value: Any) -> Any:
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     raise TypeError(f"metadata cannot encode {type(value).__name__}")
-
-
-def _package_version(name: str) -> str | None:
-    try:
-        return version(name)
-    except PackageNotFoundError:
-        return None
-
-
-def _git_state(root: Path) -> dict[str, Any]:
-    revision = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True
-    ).stdout.strip()
-    dirty = bool(
-        subprocess.run(
-            ["git", "status", "--porcelain"], cwd=root, check=True, capture_output=True, text=True
-        ).stdout.strip()
-    )
-    return {"revision": revision, "tracked_or_untracked_dirty": dirty}
 
 
 def _array_metadata(arrays: Mapping[str, np.ndarray]) -> dict[str, dict[str, Any]]:
@@ -294,85 +272,30 @@ def _write_data(data_root: Path, arrays: Mapping[str, np.ndarray], metadata: Map
     temporary_metadata.replace(directory / METADATA_FILE)
 
 
-def recompute_data(data_root: Path | str) -> IllustrationData:
-    from lumice_integral.canonical_scene import (
-        canonical_crystal,
-        canonical_fixture_metadata,
-        canonical_pixel_problem,
-        canonical_sun_direction,
-        canonical_target_direction,
-    )
-    from lumice_integral.continuation import (
-        ContinuationOptions,
-        FiberStatus,
-        retract_to_fiber_batch,
-        trace_fiber,
-    )
-    from lumice_integral.figure_data import SCHEMA_VERSION as FIBER_SCHEMA_VERSION
-    from lumice_integral.figure_data import export_fiber_figure_data
-    from lumice_integral.resample import resample_fiber
-    from lumice_integral.weights import evaluate_weights_batch
-    import jax
+def _recompute_from_canonical(
+    data_root: Path,
+    canonical_directory: Path,
+) -> IllustrationData:
+    from _canonical_data import load_data as load_canonical_data
 
-    data_root = Path(data_root)
-    root = Path(__file__).resolve().parents[2]
-    problem = canonical_pixel_problem()
-    options = ContinuationOptions()
-    traced = trace_fiber(problem, options)
-    if traced.status is not FiberStatus.CLOSED:
-        raise RuntimeError(f"canonical fiber did not close: {traced.status.value}: {traced.terminal_payload.message}")
-
-    upstream_directory = data_root / "canonical-fiber"
-    upstream = export_fiber_figure_data(
-        traced,
-        upstream_directory,
-        fixture=canonical_fixture_metadata(),
-        provenance={"purpose": f"upstream geometry for {FIGURE_ID}"},
-    )
-    upstream_metadata = json.loads(upstream.metadata.read_text(encoding="utf-8"))
-    if upstream_metadata["schema"] != FIBER_SCHEMA_VERSION:
-        raise RuntimeError(f"unexpected upstream fiber schema {upstream_metadata['schema']!r}")
-
-    predictors = resample_fiber(traced, DENSE_NODE_COUNT)
-    retraction = retract_to_fiber_batch(
-        problem,
-        predictors.rotations,
-        predictors.phase_tangents,
-        iterations=RETRACTION_ITERATIONS,
-    )
-    rotations_dense = np.asarray(retraction.rotations, dtype=np.float64)
-    if not np.all(retraction.finite):
-        raise RuntimeError(f"{np.count_nonzero(~retraction.finite)} retracted nodes are non-finite")
-    max_retraction_residual = float(np.max(retraction.residual_after))
-    if max_retraction_residual > 1e-10:
-        raise RuntimeError(f"retracted-node residual {max_retraction_residual:.3g} exceeds 1e-10")
-    validity = evaluate_weights_batch(problem.weight_evaluators, rotations_dense, ("path_validity",)).values[
-        "path_validity"
-    ]
-    if not np.all(validity == 1.0):
-        raise RuntimeError(f"{np.count_nonzero(validity != 1.0)} retracted nodes fail production path validity")
-
-    outgoing_dense = np.asarray(jax.vmap(problem.direction_evaluator)(rotations_dense), dtype=np.float64)
-    target = np.asarray(canonical_target_direction(), dtype=np.float64)
-    max_outgoing_residual = float(np.max(np.linalg.norm(outgoing_dense - target, axis=1)))
-    if max_outgoing_residual > 1e-10:
-        raise RuntimeError(f"outgoing-direction residual {max_outgoing_residual:.3g} exceeds 1e-10")
-
-    rotations = rotations_dense[SELECTED_INDICES]
-    source_world = np.asarray(canonical_sun_direction(), dtype=np.float64)
-    source_body = np.einsum("nji,j->ni", rotations, source_world)
-    crystal = canonical_crystal()
-    vertices_body = np.asarray(crystal.vertices, dtype=np.float64)
-    face_numbers = np.array([face.number for face in crystal.faces], dtype=np.int64)
-    face_normals_body = np.stack([crystal.normal(face) for face in crystal.faces])
-    face_centers_body = np.stack([crystal.centroid(face) for face in crystal.faces])
+    common = load_canonical_data(canonical_directory)
+    common_arrays = common.arrays
+    common_metadata = common.metadata
+    rotations = common_arrays["presentation_rotations"][SELECTED_INDICES]
+    source_world = common_arrays["source_world"]
+    source_body = common_arrays["presentation_u"][SELECTED_INDICES]
+    vertices_body = common_arrays["vertices_body"]
+    face_numbers = common_arrays["face_numbers"]
+    face_normals_body = common_arrays["face_normals_body"]
+    face_centers_body = common_arrays["face_centers_body"]
+    target = common_arrays["target_direction"]
     arrays = {
         "selected_dense_indices": SELECTED_INDICES,
         "rotations": rotations,
         "source_world": source_world,
         "source_body": source_body,
         "target_direction": target,
-        "outgoing_directions": outgoing_dense[SELECTED_INDICES],
+        "outgoing_directions": common_arrays["presentation_outgoing"][SELECTED_INDICES],
         "vertices_body": vertices_body,
         "vertices_world": np.stack([vertices_body @ rotation.T for rotation in rotations]),
         "face_numbers": face_numbers,
@@ -381,80 +304,76 @@ def recompute_data(data_root: Path | str) -> IllustrationData:
         "face_centers_body": face_centers_body,
         "face_centers_world": np.stack([face_centers_body @ rotation.T for rotation in rotations]),
     }
-    source_body_definition_error = float(
-        np.max(np.abs(source_body - np.einsum("nji,j->ni", rotations, source_world)))
-    )
-    source_body_round_trip_error = float(
-        np.max(np.abs(np.einsum("nij,nj->ni", rotations, source_body) - source_world))
-    )
-    vertices_round_trip_error = float(
-        max(
-            np.max(np.abs(world @ rotation - vertices_body))
-            for world, rotation in zip(arrays["vertices_world"], rotations)
-        )
-    )
-    normals_round_trip_error = float(
-        max(
-            np.max(np.abs(world @ rotation - face_normals_body))
-            for world, rotation in zip(arrays["face_normals_world"], rotations)
-        )
-    )
-    centers_round_trip_error = float(
-        max(
-            np.max(np.abs(world @ rotation - face_centers_body))
-            for world, rotation in zip(arrays["face_centers_world"], rotations)
-        )
-    )
-    rotation_orthogonality_error = float(
-        np.max(np.abs(rotations.transpose(0, 2, 1) @ rotations - np.eye(3)))
-    )
-    rotation_determinant_error = float(np.max(np.abs(np.linalg.det(rotations) - 1.0)))
-    source_world_norm_error = float(abs(np.linalg.norm(source_world) - 1.0))
-    target_direction_norm_error = float(abs(np.linalg.norm(target) - 1.0))
-    outgoing_direction_norm_error = float(
-        np.max(np.abs(np.linalg.norm(outgoing_dense[SELECTED_INDICES], axis=1) - 1.0))
-    )
-    face_normal_norm_error = float(
-        np.max(np.abs(np.linalg.norm(face_normals_body, axis=1) - 1.0))
-    )
-    if max(rotation_orthogonality_error, rotation_determinant_error) > 1e-10:
-        raise RuntimeError("selected presentation rotations are not elements of SO(3)")
+    coordinate_checks = {
+        "source_body_definition_max_abs": float(
+            np.max(np.abs(source_body - np.einsum("nji,j->ni", rotations, source_world)))
+        ),
+        "source_body_round_trip_max_abs": float(
+            np.max(np.abs(np.einsum("nij,nj->ni", rotations, source_body) - source_world))
+        ),
+        "vertices_round_trip_max_abs": float(
+            max(
+                np.max(np.abs(world @ rotation - vertices_body))
+                for world, rotation in zip(arrays["vertices_world"], rotations)
+            )
+        ),
+        "face_normals_round_trip_max_abs": float(
+            max(
+                np.max(np.abs(world @ rotation - face_normals_body))
+                for world, rotation in zip(arrays["face_normals_world"], rotations)
+            )
+        ),
+        "face_centers_round_trip_max_abs": float(
+            max(
+                np.max(np.abs(world @ rotation - face_centers_body))
+                for world, rotation in zip(arrays["face_centers_world"], rotations)
+            )
+        ),
+        "rotation_orthogonality_max_abs": float(
+            np.max(np.abs(rotations.transpose(0, 2, 1) @ rotations - np.eye(3)))
+        ),
+        "rotation_determinant_max_abs": float(np.max(np.abs(np.linalg.det(rotations) - 1.0))),
+        "source_world_norm_error": float(abs(np.linalg.norm(source_world) - 1.0)),
+        "target_direction_norm_error": float(abs(np.linalg.norm(target) - 1.0)),
+        "outgoing_direction_norm_max_abs": float(
+            np.max(np.abs(np.linalg.norm(arrays["outgoing_directions"], axis=1) - 1.0))
+        ),
+        "face_normal_norm_max_abs": float(
+            np.max(np.abs(np.linalg.norm(face_normals_body, axis=1) - 1.0))
+        ),
+        "dense_outgoing_direction_max_l2": common_metadata["validation"][
+            "presentation_outgoing_direction_max_l2"
+        ],
+        "dense_retraction_residual_max_l2": common_metadata["validation"][
+            "presentation_retraction_residual_max_l2"
+        ],
+        "dense_minimum_path_validity": common_metadata["validation"]["minimum_path_validity"],
+    }
     if max(
-        source_body_definition_error,
-        source_body_round_trip_error,
-        vertices_round_trip_error,
-        normals_round_trip_error,
-        centers_round_trip_error,
+        coordinate_checks["source_body_definition_max_abs"],
+        coordinate_checks["source_body_round_trip_max_abs"],
+        coordinate_checks["vertices_round_trip_max_abs"],
+        coordinate_checks["face_normals_round_trip_max_abs"],
+        coordinate_checks["face_centers_round_trip_max_abs"],
     ) > 1e-12:
         raise RuntimeError("selected presentation coordinates do not round-trip within 1e-12")
     if max(
-        source_world_norm_error,
-        target_direction_norm_error,
-        outgoing_direction_norm_error,
-        face_normal_norm_error,
+        coordinate_checks["rotation_orthogonality_max_abs"],
+        coordinate_checks["rotation_determinant_max_abs"],
+    ) > 1e-10:
+        raise RuntimeError("selected presentation rotations are not elements of SO(3)")
+    if max(
+        coordinate_checks["source_world_norm_error"],
+        coordinate_checks["target_direction_norm_error"],
+        coordinate_checks["outgoing_direction_norm_max_abs"],
+        coordinate_checks["face_normal_norm_max_abs"],
     ) > 1e-12:
         raise RuntimeError("selected presentation directions are not unit vectors within 1e-12")
 
-    coordinate_checks = {
-        "source_body_definition_max_abs": source_body_definition_error,
-        "source_body_round_trip_max_abs": source_body_round_trip_error,
-        "vertices_round_trip_max_abs": vertices_round_trip_error,
-        "face_normals_round_trip_max_abs": normals_round_trip_error,
-        "face_centers_round_trip_max_abs": centers_round_trip_error,
-        "rotation_orthogonality_max_abs": rotation_orthogonality_error,
-        "rotation_determinant_max_abs": rotation_determinant_error,
-        "source_world_norm_error": source_world_norm_error,
-        "target_direction_norm_error": target_direction_norm_error,
-        "outgoing_direction_norm_max_abs": outgoing_direction_norm_error,
-        "face_normal_norm_max_abs": face_normal_norm_error,
-        "dense_outgoing_direction_max_l2": max_outgoing_residual,
-        "dense_retraction_residual_max_l2": max_retraction_residual,
-        "dense_minimum_path_validity": float(np.min(validity)),
-    }
     metadata = {
         "schema": SCHEMA_VERSION,
         "figure_id": FIGURE_ID,
-        "fixture": upstream_metadata["fixture"],
+        "fixture": common_metadata["fixture"],
         "sampling": {
             "meaning": "uniform cumulative-chord Hermite presentation grid, then fixed production retraction",
             "dense_node_count": DENSE_NODE_COUNT,
@@ -462,33 +381,21 @@ def recompute_data(data_root: Path | str) -> IllustrationData:
             "selected_indices": SELECTED_INDICES,
             "claim": "presentation sampling; not a new quadrature-convergence claim",
         },
-        "conventions": {
-            "rotation": "R maps body coordinates to world coordinates",
-            "source_world": "s_hat points toward the Sun",
-            "incident_propagation": "incident_direction = -s_hat",
-            "source_body": "u_i = R_i^T s_hat",
-        },
-        "geometry": {
-            "face_numbers": face_numbers,
-            "face_vertex_ids": [list(face.vertex_ids) for face in crystal.faces],
-            "edges": [list(edge) for edge in crystal.edges],
-        },
+        "conventions": common_metadata["conventions"],
+        "geometry": common_metadata["geometry"],
         "validation": coordinate_checks,
         "source": {
-            "upstream_schema": upstream_metadata["schema"],
+            "upstream_schema": common_metadata["source"]["upstream_schema"],
             "upstream_relative_directory": "../canonical-fiber",
-            "upstream_metadata_sha256": sha256(upstream.metadata.read_bytes()).hexdigest(),
-            "upstream_arrays_sha256": upstream_metadata["payload"]["sha256"],
-            "component_scope": traced.component_scope,
-            "component_completeness": traced.component_completeness,
+            "upstream_metadata_sha256": common_metadata["source"]["upstream_metadata_sha256"],
+            "upstream_arrays_sha256": common_metadata["source"]["upstream_arrays_sha256"],
+            "canonical_data_relative_directory": "../canonical-data",
+            "canonical_data_sha256": common_metadata["payload"]["sha256"],
+            "component_scope": common_metadata["source"]["component_scope"],
+            "component_completeness": common_metadata["source"]["component_completeness"],
         },
         "provenance": {
-            "lumice_integral": _git_state(root),
-            "python": sys.version,
-            "packages": {
-                name: _package_version(name) for name in ("jax", "numpy", "scipy")
-            },
-            "continuation_options": asdict(options),
+            **common_metadata["provenance"],
             "original_accepted_revision": ORIGINAL_ACCEPTED_REVISION,
             "original_prototype_sha256": ORIGINAL_PROTOTYPE_SHA256,
             "original_accepted_image_sha256": ORIGINAL_ACCEPTED_IMAGE_SHA256,
@@ -503,3 +410,15 @@ def recompute_data(data_root: Path | str) -> IllustrationData:
     }
     _write_data(data_root, arrays, metadata)
     return load_data(data_root)
+
+
+def recompute_data(
+    data_root: Path | str,
+    canonical_directory: Path | str | None = None,
+) -> IllustrationData:
+    from _canonical_data import recompute_data as recompute_canonical_data
+
+    data_root = Path(data_root)
+    if canonical_directory is None:
+        canonical_directory = recompute_canonical_data(data_root).directory
+    return _recompute_from_canonical(data_root, Path(canonical_directory))
