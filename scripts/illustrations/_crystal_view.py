@@ -108,6 +108,29 @@ def edge_visibility(
     return np.asarray(result, dtype=bool)
 
 
+def draw_ray(ax, points: np.ndarray, *, camera: Camera) -> None:
+    from _style import BLUE, INK, ORANGE
+
+    projected = camera.project_xy(points)
+    for start, end, color in zip(projected[:-1], projected[1:], (ORANGE, INK, BLUE)):
+        ax.annotate(
+            "",
+            end,
+            start,
+            arrowprops={
+                "arrowstyle": "-|>",
+                "color": color,
+                "lw": 2.2,
+                "mutation_scale": 12,
+                "shrinkA": 0,
+                "shrinkB": 0,
+            },
+            zorder=12,
+        )
+    ax.scatter(*projected[1], color=ORANGE, s=25, zorder=14)
+    ax.scatter(*projected[2], color=BLUE, s=25, zorder=14)
+
+
 def draw_crystal(
     ax,
     *,
@@ -119,6 +142,7 @@ def draw_crystal(
     face_centers: np.ndarray,
     camera: Camera,
     highlight_face: int = 3,
+    label_highlight: bool = True,
 ) -> None:
     from matplotlib.patches import Polygon
 
@@ -159,13 +183,14 @@ def draw_crystal(
     matches = np.flatnonzero(face_numbers == highlight_face)
     if len(matches) != 1:
         raise ValueError(f"highlight face {highlight_face} occurs {len(matches)} times")
-    label_xy = camera.project_xy(face_centers[matches[0]])[0]
-    ax.text(
-        *label_xy,
-        str(highlight_face),
-        color=GRAY,
-        fontsize=13,
-        ha="center",
-        va="center",
-        zorder=8,
-    )
+    if label_highlight:
+        label_xy = camera.project_xy(face_centers[matches[0]])[0]
+        ax.text(
+            *label_xy,
+            str(highlight_face),
+            color=GRAY,
+            fontsize=13,
+            ha="center",
+            va="center",
+            zorder=8,
+        )
