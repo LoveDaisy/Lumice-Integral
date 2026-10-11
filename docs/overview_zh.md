@@ -36,6 +36,8 @@ $$
 
 同一个积分的三种求积（Phase I 纤维、带求和、等值线），失败模式互不共享，再加上 Lumice 的 Monte Carlo，构成本项目的验证网。
 
+图解阅读路径先从 [Phase I 的姿态纤维图](phase1_zh.md#fig-pose-fiber)认识原像，再沿具名物理因子与 continuation 步骤阅读；$S^2$ 约化则先看[世界系/晶体系对应](phase2_zh.md#fig-world-body-frames)，再看[偏折角水平集](phase2_zh.md#fig-deviation-level-set)。这里链接图所在的解释语境，不另维护缩小副本；[六图索引](theory-illustrations.md#b1-six-figure-index)提供一页式本地对照和复现命令。
+
 ## 3. 规划
 
 里程碑及其对应的写作章节（当前状态与近期队列见 [roadmap.md](roadmap.md) §0，决策见 roadmap §9）：
@@ -315,4 +317,5 @@ $\delta \in [98^\circ, 120.3^\circ)$），`contour_quadrature` 现以 `gated_out
 | [ch06-reference-fixture.md](ch06-reference-fixture.md) | 第 6 章 fixture、来源分级、验收阶段、与 Lumice 的对照（英文） |
 | [ch11-pose-density-families.md](ch11-pose-density-families.md) | 五个姿态密度族（英文） |
 | [chromatic-module-c.md](chromatic-module-c.md) | 权重折线（第三类临界线）与彩色判据；模块 C 规格草案（英文） |
+| [theory-illustrations.md](theory-illustrations.md) | 解释性插图盘点、已认可的首批六图、后续优先级与制作边界（英文权威） |
 | [decisions/](decisions/) | 架构决策记录（英文） |

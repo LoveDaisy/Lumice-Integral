@@ -86,6 +86,15 @@ Three quadratures of one integral with unshared failure modes (Phase I
 fibres, band sum, contours) plus Lumice's Monte Carlo form the project's
 validation web.
 
+The visual reading path starts with the inverse image in
+[Phase I's pose-fibre figure](phase1.md#fig-pose-fiber), then follows its named
+physical factors and continuation steps. The reduction to $S^2$ starts with the
+[world/body-frame correspondence](phase2.md#fig-world-body-frames) and then the
+[deviation level set](phase2.md#fig-deviation-level-set). These links reuse the
+canonical figures in their explanatory context rather than maintaining smaller
+copies here; the [six-figure index](theory-illustrations.md#b1-six-figure-index)
+provides one local comparison view and reproduction commands.
+
 ## 3. Plan
 
 Milestones and their chapters of the writing series (status and the
@@ -635,5 +644,6 @@ produce plausible but systematically wrong radiance.
 | [ch06-reference-fixture.md](ch06-reference-fixture.md) | chapter-6 fixture, provenance, acceptance stages, Lumice comparisons |
 | [ch11-pose-density-families.md](ch11-pose-density-families.md) | the five pose-density families |
 | [chromatic-module-c.md](chromatic-module-c.md) | weight kinks (the third kind of critical line) and the colour criterion; module C spec draft |
+| [theory-illustrations.md](theory-illustrations.md) | explanatory-figure inventory, the accepted six-figure batch, later priorities, and the production boundary |
 | [decisions/](decisions/) | architecture decision records |
 

@@ -13,7 +13,14 @@ F_P : \mathrm{SO}(3) \longrightarrow S^2,
 \qquad R \longmapsto \text{出射方向}.
 $$
 
-对像方向 $\mathbf d$，有贡献的姿态是原像 $X_{\mathbf d} = F_P^{-1}(\mathbf d)$。在正则值处，维数定理给出 $\dim X_{\mathbf d} = 3 - 2 = 1$：积分域是 $\mathrm{SO}(3)$ 中的若干条曲线，常常是闭环。姿态密度光滑时，一条光路的逐点贡献有 coarea 形式
+对像方向 $\mathbf d$，有贡献的姿态是原像 $X_{\mathbf d} = F_P^{-1}(\mathbf d)$。在正则值处，维数定理给出 $\dim X_{\mathbf d} = 3 - 2 = 1$：积分域是 $\mathrm{SO}(3)$ 中的若干条曲线，常常是闭环。
+
+<a id="fig-pose-fiber"></a>
+![同一条姿态纤维在晶体系球面、局部 SO(3) 坐标和四条真实光线中的表示。](figures/theory/pose-fiber.png)
+
+**图 1——一个原像连通分量。** canonical `3-5` 例固定晶体（$h/a=2$）、折射率（$n=1.31$）、入射传播方向 $\mathbf s$ 与出射传播方向 $\mathbf d$，让 $R$ 沿一个已知的正则闭合分量变化。晶体系中的光源方向 $\mathbf u=R^{\mathsf T}\hat{\mathbf s}$ 与局部旋转坐标随之一起变化；编号 1–4 在三种视图中指向同一组姿态。光线小图的橙箭头沿入射传播、蓝箭头沿出射传播，天空中的表观方向是 $-\mathbf d$；代表入射点可以随姿态改变。追到一条闭环不等于找全了 $F_P^{-1}(\mathbf d)$ 的所有连通分量。
+
+姿态密度光滑时，一条光路的逐点贡献有 coarea 形式
 
 $$
 I_P(\mathbf d)=
@@ -22,6 +29,16 @@ I_P(\mathbf d)=
 $$
 
 其中 $\rho$ 是相对 Haar 的姿态密度，$A_P$ 是入射测度（几何上可实现的入射点的投影面积，含有限晶体与遮挡），$T_P$ 是光学透过率（入射与出射的 Fresnel 透射率，乘以每次内反射的反射率 $R_k$，全反射时 $R_k = 1$；[conventions.md](conventions.md) #18），$J_{F_P}$ 是 halo map 的法向 Jacobian（代码里叫 $J_\perp$），$d\mathcal H^1$ 是沿纤维的弧长。每个因子单独输出；Haar 常数 $1/(8\pi^2)$ 与 $J_\perp$ 分开保存（契约 §7）。
+
+<a id="fig-fiber-contributions"></a>
+![沿同一条姿态纤维变化的姿态密度、入射面积、透过率、逆 Jacobian 及其乘积。](figures/theory/fiber-contributions.png)
+
+**图 2——纤维上的具名因子。** 弧长 $s$ 沿图 1 的同一个闭合分量，由生产链的 $ds/dt$ 计算，不是旋转向量图上的欧氏距离。各曲线保留真实相对幅度：姿态密度 $\rho$、归一化入射面积 $A/a^2$、透过率 $T$、正则化逆 Jacobian $K=1/(J_\perp+10^{-6})$ 及其乘积都没有各自峰值归一；Haar 常数仍在这些曲线之外。本例中 $\rho$ 跨越近六个数量级，而 $T$ 只变化约 0.7%，接近平坦本身就是物理信息。$s=0$ 与 $s=L$ 是同一姿态，所以一个高贡献区可能跨过绘图切口；积分仍只覆盖这一个分量。
+
+<a id="fig-entry-area"></a>
+![入射面积折点，以及走廊重叠区域在三个同尺度投影中的变化。](figures/theory/entry-area.png)
+
+**图 3——$A_P$ 的几何折点。** 状态 A、B、C 穿过 $s=1.909876\,\mathrm{rad}$ 处的一次支撑边交换。三个投影共用同一物理尺度：绿色重叠是垂直于内部光线平面上的 $A_\perp$，积分中的入射束测度则是 $A=A_\perp\cos\theta_i/\cos\theta_t$。在 B 处，有效裁剪边发生切换，因此 $A(s)$ 的斜率换号，而纤维和 halo map 仍然正则；B 不是 $J_\perp$ 临界点。本 fixture 只识别这一处折点，不声称覆盖所有入射面积事件。
 
 「确定性」不等于精确：求根、continuation、自动微分和求积都是数值的，必须报告各自的误差。
 
@@ -35,6 +52,11 @@ $$
 4. 用 $\mathrm{SO}(3)$ 指数映射步预测，再校正回约束上（带信任域的预测-校正）；
 5. 一直走到分量闭合，或遇到有效光学域的真实边界；
 6. 沿曲线求各因子，对乘积积分。
+
+<a id="fig-predictor-corrector"></a>
+![在完整纤维、局部姿态坐标与天空切平面中显示的三次预测—校正 continuation 步。](figures/theory/predictor-corrector.png)
+
+**图 4——预测、校正、重复。** 左图在图 1 的分量上定位一小段；局部姿态图中，每个切向步先预测试探姿态，校正器再把它拉回固定目标方向；独立的天空切平面显示相应的偏离与返回。第一次 $0.04\,\mathrm{rad}$ 预测偏离 $0.047835^\circ$，接受点的出射残差和相位残差分别为 $3.40\times10^{-16}$ 与 $2.75\times10^{-17}\,\mathrm{rad}$。局部旋转坐标和天空角偏移是两个空间，姿态图上的直线距离也不是纤维弧长。生产校正使用两个出射残差加一个相位条件，不是一步 $D_P$ 梯度下降。
 
 旋转以矩阵存储；四元数只作插值用的坐标卡，闭合判定考虑双覆盖 $q \sim -q$。技术栈是 Python 3.12 + JAX、float64（[ADR 0001](decisions/0001-phase-i-python-jax.md)）：定栈时的探针显示，continuation 是不规则的控制流，不适合做标量 GPU 负载，所以 GPU 只用于大批量。
 

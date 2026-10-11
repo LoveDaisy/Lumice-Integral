@@ -40,6 +40,19 @@ $S^2$ by $R \mapsto \mathbf u$; the remaining coordinate is the twist
 $\psi$ about $\hat{\mathbf s}$, and Haar probability splits as
 $d\mu_{\mathrm{Haar}} = dA(\mathbf u)/4\pi \cdot d\psi/2\pi$.
 
+<a id="fig-world-body-frames"></a>
+![Four matching crystal states in the world frame and in the crystal body frame.](figures/theory/world-body-frames.png)
+
+**Figure 1 — The same scene in two frames.** In the world-frame row the source
+direction $\hat{\mathbf s}$ is fixed and the body-to-world rotation $R$ changes.
+Applying $R^{\mathsf T}$ fixes the crystal and moves the source to
+$\mathbf u=R^{\mathsf T}\hat{\mathbf s}$ in the body-frame row. Numbers 1–4
+pair the same physical states across both rows; this is a coordinate reduction,
+not a different optical scene. Orange arrows point toward the source, so incident
+ray propagation is in the opposite direction. The dots encode directions, not
+finite source distances. The example uses the canonical `3-5` scene
+($h/a=2$, $n=1.31$, source altitude $15^\circ$).
+
 **Every geometric and optical weight is a function on $S^2$.**
 `entry_measure` reduces the pose to `s_body = R.T @ incident` $= -\mathbf u$
 on its first line and uses nothing else; the TIR gates and the Fresnel
@@ -55,6 +68,21 @@ structure.
 **Measured**: validity, $A_P$, $T_P$, $\Phi_P$ and $D_P$ are unchanged under
 three twists about $\hat{\mathbf s}$ to `1.5e-14` (task
 `band-sum-quadrature-probe`).
+
+<a id="fig-deviation-level-set"></a>
+![The deviation field on the body-frame sphere and in a local chart, with one projected pose fibre highlighted.](figures/theory/deviation-level-set.png)
+
+**Figure 2 — A pose fibre projects to a deviation level set.** The crystal,
+path `3-5`, refractive index, source, and target deviation $\delta$ are fixed;
+$\mathbf u$ moves while $D_P(\mathbf u)=\delta$. The sphere and orthographic
+chart show the same production field with one shared colour scale, and labels
+1–4 match the poses in [Phase I Figure 1](phase1.md#fig-pose-fiber). Colour is
+deviation in degrees, not radiance. Grey lies outside the optical formula domain
+$U_P$; it does not mean that every non-grey point has nonzero finite-crystal
+weight. A level set fixes angular distance from the source, not sky azimuth: a
+fixed sky point still selects the unique twist lift. The highlighted curve is
+the projection of one known production fibre, not a completeness-certified
+contour extraction; the thin background contours are visual guides.
 
 ### 1.1 What a precomputation depends on
 

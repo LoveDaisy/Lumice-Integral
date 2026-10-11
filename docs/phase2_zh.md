@@ -18,9 +18,19 @@ $$
 
 （写作系列 framework 定理 8）：$\mathbf u$ 是晶体系中的光源方向，$-R\,\Phi_P(-\mathbf u)$ 是天空上的亮点，$D_P$ 是它到光源的角距离。$\mathrm{SO}(3)$ 经 $R \mapsto \mathbf u$ 纤维化到 $S^2$ 上；剩下的坐标是绕 $\hat{\mathbf s}$ 的扭转 $\psi$，Haar 概率测度分解为 $d\mu_{\mathrm{Haar}} = dA(\mathbf u)/4\pi \cdot d\psi/2\pi$。
 
+<a id="fig-world-body-frames"></a>
+![同一组晶体状态在世界系与晶体系中的对应。](figures/theory/world-body-frames.png)
+
+**图 1——同一场景的两个坐标系。** 世界系一行固定光源方向 $\hat{\mathbf s}$，改变把晶体系映到世界系的旋转 $R$；施加 $R^{\mathsf T}$ 后，晶体固定，光源在晶体系中移动到 $\mathbf u=R^{\mathsf T}\hat{\mathbf s}$。编号 1–4 在两行中配对同一组物理状态：这是坐标约化，不是另一个光学场景。橙箭头指向光源，所以入射光传播方向与它相反；圆点只表示方向，不表示有限光源距离。本例使用 canonical `3-5` 场景（$h/a=2$、$n=1.31$、光源高度 $15^\circ$）。
+
 **所有几何与光学权重都是 $S^2$ 上的函数。** `entry_measure` 在第一行就把姿态约化为 `s_body = R.T @ incident` $= -\mathbf u$，此后别的什么都不用；TIR 门和 Fresnel 因子依赖入射角，也就只依赖 $\mathbf u$。让晶体绕光源方向转动，这些量一个都不变：扭转只是让出射方向绕 $\hat{\mathbf s}$ 刚性转动。所以入射测度 $A_P$、透过率 $T_P$、窗口 $w_P = A_P T_P$、有效性门、可行域 $V_P$ 和偏折角 $D_P$ 都是底空间 $S^2$ 上的场；只有 $\rho$ 看得见完整姿态。Phase I 沿一条 $\mathrm{SO}(3)$ 曲线逐点求这些量，是因为它看不见这个结构。
 
 **实测**：在绕 $\hat{\mathbf s}$ 的三次扭转下，有效性、$A_P$、$T_P$、$\Phi_P$、$D_P$ 不变，差 `1.5e-14`（任务 `band-sum-quadrature-probe`）。
+
+<a id="fig-deviation-level-set"></a>
+![晶体系球面与局部图表中的偏折角场，以及高亮的一条姿态纤维投影。](figures/theory/deviation-level-set.png)
+
+**图 2——姿态纤维投影为偏折角水平集。** 晶体、光路 `3-5`、折射率、光源与目标偏折角 $\delta$ 固定；$\mathbf u$ 移动而 $D_P(\mathbf u)=\delta$ 不变。球面和正射局部图显示同一个生产场并共用色标，编号 1–4 对应 [Phase I 图 1](phase1_zh.md#fig-pose-fiber) 的姿态。颜色表示角度制偏折角，不是辐射亮度；灰色是光学公式域 $U_P$ 之外，并不表示所有非灰点都有非零有限晶体权重。水平集只固定到光源的角距离，不固定天空方位；指定天空点仍需选出唯一的扭转提升。高亮曲线是一条已知生产纤维的投影，不是有完整性证书的等值线提取；细背景等值线只作视觉辅助。
 
 ### 1.1 预计算依赖什么
 
