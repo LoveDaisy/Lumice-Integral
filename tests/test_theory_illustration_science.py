@@ -29,7 +29,10 @@ def _load_module(name: str):
 
 canonical_data = _load_module("_canonical_data")
 deviation_data = _load_module("_deviation_data")
+entry_area_data = _load_module("_entry_area_data")
+contributions_data = _load_module("_fiber_contributions_data")
 pose_fiber_data = _load_module("_pose_fiber_data")
+predictor_data = _load_module("_predictor_corrector_data")
 world_body_data = _load_module("_world_body_data")
 
 
@@ -50,6 +53,27 @@ def deviation(canonical, tmp_path_factory):
 def pose_fiber(canonical, tmp_path_factory):
     return pose_fiber_data.recompute_data(
         tmp_path_factory.mktemp("pose-fiber-illustration-data"), canonical.directory
+    )
+
+
+@pytest.fixture(scope="module")
+def predictor(canonical, tmp_path_factory):
+    return predictor_data.recompute_data(
+        tmp_path_factory.mktemp("predictor-illustration-data"), canonical.directory
+    )
+
+
+@pytest.fixture(scope="module")
+def contributions(canonical, tmp_path_factory):
+    return contributions_data.recompute_data(
+        tmp_path_factory.mktemp("contributions-illustration-data"), canonical.directory
+    )
+
+
+@pytest.fixture(scope="module")
+def entry_area(canonical, tmp_path_factory):
+    return entry_area_data.recompute_data(
+        tmp_path_factory.mktemp("entry-area-illustration-data"), canonical.directory
     )
 
 
@@ -202,6 +226,87 @@ def test_pose_fiber_rays_hit_3_then_5_and_obey_independent_snell(canonical, pose
 
 
 @pytest.mark.slow
+def test_predictor_replay_matches_seed_and_production_constraints(canonical, predictor):
+    from lumice_integral.canonical_scene import canonical_pixel_problem
+    import jax
+
+    arrays = predictor.arrays
+    metadata = predictor.metadata
+    seed = json.loads(predictor_data.SEED_PATH.read_text(encoding="utf-8"))
+    np.testing.assert_array_equal(
+        arrays["accepted"][0],
+        canonical.arrays["accepted_rotations"][seed["source"]["historical_accepted_index"]],
+    )
+    np.testing.assert_allclose(
+        arrays["predicted"][0],
+        np.asarray(seed["historical_predicted_rotation"]),
+        rtol=0.0,
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        arrays["accepted"][1],
+        np.asarray(seed["historical_first_corrected_rotation"]),
+        rtol=0.0,
+        atol=1e-12,
+    )
+    outgoing = np.asarray(jax.vmap(canonical_pixel_problem().direction_evaluator)(arrays["accepted"]))
+    np.testing.assert_allclose(
+        outgoing,
+        np.broadcast_to(canonical.arrays["target_direction"], outgoing.shape),
+        rtol=0.0,
+        atol=1e-10,
+    )
+    assert np.max(arrays["phase_condition_errors"]) < 1e-11
+    assert arrays["angular_errors_deg"][1] == pytest.approx(0.04783524364181246, abs=1e-6)
+    assert metadata["replay"]["step_rad"] == pytest.approx(0.04, abs=1e-15)
+
+
+@pytest.mark.slow
+def test_contribution_leaf_preserves_absolute_factor_product_and_integral(canonical, contributions):
+    arrays = contributions.arrays
+    metadata = contributions.metadata
+    product = (
+        arrays["rho_pose"]
+        * arrays["entry_area_over_a2"]
+        * arrays["transmission"]
+        * arrays["jacobian_factor"]
+    )
+    np.testing.assert_allclose(product, arrays["product_over_a2"], rtol=1e-12, atol=0.0)
+    np.testing.assert_array_equal(arrays["s"], canonical.arrays["quadrature_s"])
+    np.testing.assert_array_equal(arrays["selected_s"], canonical.arrays["selected_s"])
+    integrated = cumulative_simpson(
+        arrays["product_over_a2"] * arrays["speed"],
+        x=arrays["parameters"],
+        initial=0.0,
+    )[-1] * metadata["quadrature"]["haar_to_dvol_g_factor"]
+    assert integrated == pytest.approx(metadata["quadrature"]["value_over_a2"], rel=1e-12)
+    assert metadata["conventions"]["normalization"] == "no individual factor is peak-normalized"
+
+
+@pytest.mark.slow
+def test_entry_area_leaf_independently_reconstructs_overlap_and_kink(canonical, entry_area):
+    arrays = entry_area.arrays
+    metadata = entry_area.metadata
+    for overlap, perpendicular, area, ratio in zip(
+        arrays["overlap"],
+        arrays["area_perp_over_a2"],
+        arrays["area_over_a2"],
+        arrays["cosine_ratio"],
+    ):
+        assert entry_area_data._shoelace(overlap) == pytest.approx(perpendicular, abs=1e-12)
+        assert perpendicular * ratio == pytest.approx(area, abs=1e-10)
+    assert abs(arrays["internal_directions"][1, 2]) < 1e-10
+    assert arrays["normal_jacobian"][1] > 1e-3
+    slopes = np.asarray(metadata["validation"]["one_sided_area_slopes_a2_per_rad"])
+    assert slopes[-1, 0] > 0.1
+    assert slopes[-1, 1] < -0.1
+    assert metadata["validation"]["upper_support_before_after"] == [5, 3]
+    assert metadata["validation"]["lower_support_before_after"] == [3, 5]
+    assert metadata["validation"]["max_area_difference_vs_production_a2"] < 1e-10
+    np.testing.assert_array_equal(arrays["curve_s"], canonical.arrays["quadrature_s"])
+
+
+@pytest.mark.slow
 def test_spatial_figures_render_from_leaf_caches_only(deviation, pose_fiber, tmp_path):
     matplotlib = pytest.importorskip("matplotlib")
     deviation_module = _load_module("deviation_level_set")
@@ -221,3 +326,26 @@ def test_spatial_figures_render_from_leaf_caches_only(deviation, pose_fiber, tmp
     finally:
         matplotlib.pyplot.close(deviation_figure)
         matplotlib.pyplot.close(pose_figure)
+
+
+@pytest.mark.slow
+def test_process_and_factor_figures_render_from_leaf_caches_only(
+    predictor, contributions, entry_area, tmp_path
+):
+    matplotlib = pytest.importorskip("matplotlib")
+    modules = (
+        (_load_module("predictor_corrector"), predictor, (1200, 2250)),
+        (_load_module("fiber_contributions"), contributions, (1140, 2100)),
+        (_load_module("entry_area"), entry_area, (1410, 2100)),
+    )
+    figures = []
+    try:
+        for index, (module, data, shape) in enumerate(modules):
+            figure = module.render_figure(data)
+            figures.append(figure)
+            path = tmp_path / f"figure-{index}.png"
+            figure.savefig(path, dpi=150)
+            assert matplotlib.image.imread(path).shape[:2] == shape
+    finally:
+        for figure in figures:
+            matplotlib.pyplot.close(figure)
