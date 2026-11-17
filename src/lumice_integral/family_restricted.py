@@ -162,7 +162,8 @@ class ExactFamily:
         return tuple(out)
 
 
-def _sun(sun):
+def unit_sun(sun):
+    """Validate and return a finite unit toward-sun vector for shared adapters."""
     sun = np.asarray(sun, float)
     if sun.shape != (3,) or not np.isfinite(sun).all() or abs(sun @ sun - 1) > 1e-12:
         raise ValueError("sun must be a finite unit vector")
@@ -244,8 +245,12 @@ def _roots_periodic(f, df, *, samples=360, budget=4096):
     return sorted(roots)
 
 
-def _circle_roots(a, h, b, k):
-    """Analytic plane-circle intersections on the unit sphere; None=coincident."""
+def circle_intersections(a, h, b, k):
+    """Intersect unit-normal planes a.u=h, b.u=k with S2; None=coincident.
+
+    This is the shared exact-family/S6 circle authority. A resolved positive
+    radicand retains two roots, including near parallel or near tangent cases.
+    """
     dot = float(a @ b)
     direction = np.cross(a, b)
     sine = float(np.linalg.norm(direction))
@@ -275,7 +280,7 @@ def restricted_critical(field: DPField, family: ExactFamily, sun, *, samples=360
     push forward as |D-D0|^-1/2, not the 2D finite jump. A constant support
     has a delta mass; its location set has no finite multiplicity.
     """
-    sun = _sun(sun)
+    sun = unit_sun(sun)
     if family.dimension == 2:
         if field.slab is not None:
             raise RestrictedEscape("nonisolated_2d_critical", "slab critical strata need a dedicated two-dimensional restriction")
@@ -351,7 +356,12 @@ def _circle_domain(field, family, sun, samples, budget):
     return endpoints, intervals
 
 
-def _margin_plane(field, margin):
+def margin_plane(field, margin):
+    """Analytic unit-normal plane of a supported physical margin, else None.
+
+    The returned zero set still needs all original gates and the reflecting
+    incidence branch; a plane alone does not certify a physical intersection.
+    """
     incidence = incidence_normals(field.crystal, field.faces)
     entry = incidence["entry_incidence_cosine"]
     if margin == "entry_incidence_cosine" or (margin == "exit_snell_discriminant" and field.slab is not None):
@@ -376,7 +386,7 @@ def intersect_margin(field: DPField, family: ExactFamily, sun, margin: str, *, s
     Other 1D intersections carry a numerical, non-exhaustive coverage claim.
     For 2D supports curve points come from the existing boundary/kink authority.
     """
-    sun = _sun(sun)
+    sun = unit_sun(sun)
     names = optics.domain_margin_names(field.faces)
     if margin not in names:
         raise ValueError(f"unknown margin {margin}")
@@ -385,11 +395,11 @@ def intersect_margin(field: DPField, family: ExactFamily, sun, margin: str, *, s
         raise ValueError("only validity gates and internal TIR onsets are structural margins")
     k = names.index(margin)
     records = []
-    plane = _margin_plane(field, margin)
+    plane = margin_plane(field, margin)
     coverage = "analytic_circle_intersection"
     if family.dimension == 1:
         a, h = family.circle(sun)
-        roots = _circle_roots(a, h, *plane) if plane is not None else ...
+        roots = circle_intersections(a, h, *plane) if plane is not None else ...
         if roots is None:
             # Analytic identity of planes proves a continuous coincidence. Its
             # clipped arcs remain arcs, never hundreds of isolated roots.
@@ -450,7 +460,7 @@ def _lift_margin_arcs(field, family, sun, margin, kind, samples, coverage, state
         arcs = [(piece.points, False, (None, None)) for piece in field.boundary_curves if piece.margin == margin]
         coverage = "upstream_boundary_sampling"
     curves = []
-    plane = _margin_plane(field, margin)
+    plane = margin_plane(field, margin)
     for points, closed, ends in arcs:
         if plane is None:
             # No analytic clipping model for a general marched curve. A chart
@@ -477,7 +487,7 @@ def _lift_margin_arcs(field, family, sun, margin, kind, samples, coverage, state
                 constraints = [(b, ch), (b, -ch), (np.array([0.,0.,1.]), sun[2]),
                                (np.array([0.,0.,1.]), -sun[2])]
             for b, k0 in constraints:
-                hits = _circle_roots(normal, height, b, k0)
+                hits = circle_intersections(normal, height, b, k0)
                 if hits is None:
                     raise RestrictedEscape("rank_boundary_coincidence", "margin lies on an image-chart boundary")
                 for u, _ in hits:
@@ -535,7 +545,7 @@ def kink_sky(field: DPField, family: ExactFamily, sun, margin: str, **options):
                 # horizontal by column: a.u=k fixes R a to the intersection
                 # of two planes and S2, hence each connected branch is a point.
                 basal_mirror = field.slab is not None and np.allclose(field.slab, np.diag([1.,1.,-1.]), atol=1e-12, rtol=0)
-                circle_pinned = family.dimension == 1 and field.slab is not None and commutes_with_rotation_about(field.slab, family.circle(_sun(sun))[0])
+                circle_pinned = family.dimension == 1 and field.slab is not None and commutes_with_rotation_about(field.slab, family.circle(unit_sun(sun))[0])
                 if not ((family.name == "column" and basal_mirror) or circle_pinned):
                     raise RestrictedEscape("unclassified_sky_collapse", "constant sky samples have no structural identity proof")
                 curve["image_dimension"] = 0

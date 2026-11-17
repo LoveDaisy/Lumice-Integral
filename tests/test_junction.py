@@ -229,6 +229,81 @@ def test_nonlocal_or_wrong_arc_analytic_root_is_rejected(fields):
     assert all(d["reason"] == "outside_source_arc_or_raw_residual" for d in result["diagnostics"])
 
 
+def test_analytic_disjoint_survives_upstream_failure_in_every_adapter(fields):
+    field = fields[(3,1,6)]
+    sun = np.array([np.cos(.3),0.,np.sin(.3)])
+    a = replace(_source(field, KINK), failed_seeds=2)
+    for source in (a, replace(a, margin=None)):
+        result = J.intersect_family(field, source, ExactFamily("plate"), sun)
+        assert result["status"] == "disjoint"
+        assert result["coverage"] == "analytic_circles_disjoint"
+        assert result["diagnostics"] == [{"reason":"upstream_failed_seeds", "count":2}]
+    b = _circle_source("positive_z", [0,0,1], .3)
+    result = J.intersect_sources(field, a, b)
+    assert result["status"] == "disjoint" and result["diagnostics"]
+
+
+def test_critical_circle_outside_roots_are_diagnosed(fields):
+    field = fields[(3,1,6)]
+    source = _circle_source("kind_1:crease", [0,1,0], 0.)
+    sun = np.array([np.cos(.3),0.,np.sin(.3)])
+    result = J.intersect_family(field, source, ExactFamily("plate"), sun)
+    assert not result["records"]
+    assert len(result["diagnostics"]) == 2
+    assert all(d["reason"] == "outside_closure_or_nonfinite" and "u" in d for d in result["diagnostics"])
+
+
+def test_numeric_remote_root_is_rejected_after_real_newton(fields, monkeypatch):
+    field = fields[(4,8,1,7,5)]
+    root = np.array([-.2824757039268523, .44883472231481775, -.8477941193094051])
+    seed = root + np.array([.025,0.,0.])
+    seed /= np.linalg.norm(seed)
+    monkeypatch.setattr(J, "_seeds", lambda *args: [seed])
+    # Explicitly allow a large step so Newton really converges, then make
+    # the separate locality gate (not the per-step guard) reject the root.
+    result = _pair(field, (KINK,"kind_3:internal_2_tir_discriminant"), max_step=.1)
+    assert not result["records"] and result["status"] == "unresolved"
+    assert [d["reason"] for d in result["diagnostics"]] == ["nonlocal_root"]
+
+
+def test_cyclic_accepted_runs_join_the_seam():
+    runs = J._accepted_runs(np.array([True,True,False,False,True,True]), closed=True)
+    assert len(runs) == 1
+    np.testing.assert_array_equal(runs[0], [4,5,0,1])
+    assert len(J._accepted_runs(np.ones(6,dtype=bool), closed=True)) == 1
+
+
+def test_continuous_clipping_preserves_cyclic_identity_and_short_runs(fields):
+    field = fields[(3,1,6)]
+    a = _circle_source("a", [0,0,1], -.8)
+    curves, diagnostics = J._continuous(Walker(field.crystal, field.faces, field.index, field.slab),
+                                        a, replace(a,id="b"), "analytic_identical_planes")
+    assert len(curves) == 1  # the accepted half circle crosses the sample seam
+    assert curves[0]["closed"] is False
+    # A singleton is evidence of an unresolved contact, not a finite curve.
+    a = replace(a, arcs=(np.array([[-.6,0.,-.8],[.6,0.,-.8],[-.6,0.,-.8]]),), closed=(False,))
+    curves, diagnostics = J._continuous(Walker(field.crystal, field.faces, field.index, field.slab),
+                                        a, replace(a,id="b"), "analytic_identical_planes")
+    assert not curves
+    assert "dropped_short_run" in {d["reason"] for d in diagnostics}
+
+
+def test_family_short_run_is_not_silently_dropped(fields, monkeypatch):
+    field = fields[(3,1,6)]
+    source = _source(field,KINK)
+    u = source.points[len(source.points)//2]
+    data = dict(records=[],curves=[dict(points=[dict(u=u)],closed=False)],coverage="upstream_test")
+    monkeypatch.setattr(J,"intersect_margin",lambda *args,**kwargs:data)
+    result = J.intersect_family(field,source,ExactFamily("column"),np.array([np.cos(.3),0.,np.sin(.3)]))
+    assert result["status"] == "unresolved" and not result["curves"]
+    assert result["diagnostics"][0]["reason"] == "dropped_short_run"
+
+
+def test_analytic_differential_reason_does_not_claim_nonsmoothness(fields):
+    result = _pair(fields[(3,1,6)], (GATE,KINK))
+    assert all(p["differential"]["reason"] == "analytic_evidence_no_differential" for p in result["records"])
+
+
 def test_invalid_configuration_is_not_normal_empty(fields):
     field = fields[(3,1,6)]
     with pytest.raises(ValueError,match="budget"):

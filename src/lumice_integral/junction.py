@@ -16,8 +16,8 @@ from scipy.spatial import cKDTree
 
 from . import optics
 from .dp_field import DPField
-from .dp_field.boundary import VIOLATION_ATOL, Walker, incidence_normals
-from .family_restricted import ExactFamily, RestrictedEscape, _circle_roots, _margin_plane, _sun, intersect_margin
+from .dp_field.boundary import Walker, incidence_normals
+from .family_restricted import ExactFamily, RestrictedEscape, circle_intersections, margin_plane, unit_sun, intersect_margin
 from .spherical_newton import refine_pair
 
 RESIDUAL_ATOL = 1e-11  # dimensionless margins / unit-plane residuals
@@ -44,6 +44,7 @@ class Source:
     point: np.ndarray | None = None
     equivalent_to: str | None = None
     failed_seeds: int = 0
+    closed: tuple[bool, ...] = ()
 
     @property
     def points(self):
@@ -70,15 +71,16 @@ def structural_sources(field: DPField) -> tuple[Source, ...]:
         sources.append(Source("kind_2:" + name, "kind_2", 1,
                               tuple(p.points for _, p in pieces),
                               tuple(f"boundary_piece:{i}" for i, _ in pieces),
-                              name, _margin_plane(field, name)))
+                              name, margin_plane(field, name),
+                              closed=tuple(not boundary.corners and len(boundary.pieces) == 1 for _ in pieces)))
     for curve in field.weight_kinks:
         equivalent = boundary.identical_margins.get(curve.margin)
         sources.append(Source("kind_3:" + curve.margin, "kind_3", 1,
                               tuple(a.points for a in curve.arcs),
                               tuple(f"kink:{curve.step}:arc:{i}" for i in range(len(curve.arcs))),
-                              curve.margin, _margin_plane(field, curve.margin),
+                              curve.margin, margin_plane(field, curve.margin),
                               equivalent_to=None if equivalent is None else "kind_3:" + equivalent,
-                              failed_seeds=curve.failed_seeds))
+                              failed_seeds=curve.failed_seeds, closed=tuple(a.closed for a in curve.arcs)))
     for i, point in enumerate(field.interior_critical_points):
         sources.append(Source(f"kind_1:interior:{i}", "kind_1", 0, (),
                               (f"interior_critical:{i}:{point.kind}",), point=point.position))
@@ -96,7 +98,7 @@ def structural_sources(field: DPField) -> tuple[Source, ...]:
         t = np.linspace(0, 2*np.pi, 1441)
         circle = np.cos(t)[:, None]*e + np.sin(t)[:, None]*np.cross(axis, e)
         sources.append(Source("kind_1:crease", "kind_1", 1, (circle,),
-                              ("degenerate_fold:crease",), plane=(axis, 0.)))
+                              ("degenerate_fold:crease",), plane=(axis, 0.), closed=(True,)))
     return tuple(sources)
 
 
@@ -151,7 +153,9 @@ def _record(walker, a, b, u, intersection, evidence, singular_values=None):
                 min_gate=float(min(margins[walker.k(n)] for n in optics.validity_margin_names(walker.faces))),
                 value=walker.d(u), evidence=evidence,
                 differential=dict(available=singular_values is not None,
-                                  reason=None if singular_values is not None else "analytic_or_upstream_nonsmooth_stratum",
+                                  reason=None if singular_values is not None else (
+                                      "analytic_evidence_no_differential" if evidence == "analytic_circle_intersection"
+                                      else "upstream_stratum_membership_no_differential"),
                                   singular_values=singular_values))
 
 
@@ -160,7 +164,7 @@ def _identity(walker, a, b):
     if a.equivalent_to == b.id or b.equivalent_to == a.id:
         return "upstream_identical_margins"
     if a.plane is not None and b.plane is not None:
-        if _circle_roots(*a.plane, *b.plane) is None:
+        if circle_intersections(*a.plane, *b.plane) is None:
             return "analytic_identical_planes"
     # exit disc = -(internal TIR disc) when the unfolded normals agree up
     # to sign. Both are 1-n^2*(1-c^2), with opposite sign conventions.
@@ -176,19 +180,39 @@ def _identity(walker, a, b):
     return None
 
 
+def _accepted_runs(flags, *, closed=False):
+    """Contiguous accepted samples, joining a cyclic run across its seam."""
+    runs = [r for r in np.split(np.arange(len(flags)), np.flatnonzero(np.diff(flags))+1)
+            if len(r) and flags[r[0]]]
+    if closed and len(runs) > 1 and flags[0] and flags[-1]:
+        runs = [np.concatenate([runs[-1], runs[0]]), *runs[1:-1]]
+    return runs
+
+
 def _continuous(walker, a, b, evidence):
-    """Keep contiguous validated upstream runs; never list these as junction points."""
+    """Keep validated upstream runs and diagnose unsupported singleton contacts."""
     source = b if a.id == "kind_1:crease" else a
-    curves = []
-    for i, points in enumerate(source.arcs):
+    curves, diagnostics = [], []
+    for i, original in enumerate(source.arcs):
+        if not len(original):
+            continue
+        duplicate = len(original) > 1 and _angle(original[0], original[-1]) <= MERGE_RAD
+        closed = source.closed[i] if i < len(source.closed) else duplicate
+        points = original[:-1] if closed and duplicate else original
         flags = np.array([_admissible(walker, u) and _raw_residual(walker, a, u) <= RESIDUAL_ATOL
                           and _raw_residual(walker, b, u) <= RESIDUAL_ATOL for u in points])
-        for run in np.split(np.arange(len(points)), np.flatnonzero(np.diff(flags)) + 1):
-            if len(run) >= 2 and flags[run[0]]:
-                curves.append(dict(sources=[a.id, b.id], intersection="coincident", dimension=1,
-                                   upstream_arc=i, points=points[run], evidence=evidence,
-                                   coverage="analytic_identity_upstream_arc_clipping"))
-    return curves
+        if not flags.all():
+            diagnostics.append(dict(reason="outside_source_arc_or_closure", source=source.id,
+                                    upstream_arc=i, rejected_points=int((~flags).sum())))
+        for run in _accepted_runs(flags, closed=closed):
+            if len(run) < 2:
+                diagnostics.append(dict(reason="dropped_short_run", source=source.id,
+                                        upstream_arc=i, u=points[run[0]]))
+                continue
+            curves.append(dict(sources=[a.id, b.id], intersection="coincident", dimension=1,
+                               upstream_arc=i, points=points[run], closed=bool(closed and flags.all()),
+                               evidence=evidence, coverage="analytic_identity_upstream_arc_clipping"))
+    return curves, diagnostics
 
 
 def _seeds(walker, a, b, nearby):
@@ -223,7 +247,9 @@ def _seeds(walker, a, b, nearby):
 
 
 def _finish(result, status):
-    if result["diagnostics"]:
+    # A model-level proof is independent of how well its upstream arcs were
+    # sampled. Retain failures as diagnostics without contradicting that proof.
+    if result["diagnostics"] and status != "disjoint":
         status = "partial" if result["records"] or result["curves"] else "unresolved"
     result["status"] = status
     return result
@@ -253,11 +279,12 @@ def intersect_sources(field: DPField, a: Source, b: Source, *, budget=64, nearby
         return _finish(result, "computed" if result["records"] else "not_found")
     identity = _identity(walker, a, b)
     if identity:
-        result["curves"] = _continuous(walker, a, b, identity)
+        result["curves"], diagnostics = _continuous(walker, a, b, identity)
+        result["diagnostics"].extend(diagnostics)
         return _finish(result, "continuous" if result["curves"] else "not_found")
     analytic = a.plane is not None and b.plane is not None
     if analytic:
-        roots = _circle_roots(*a.plane, *b.plane)
+        roots = circle_intersections(*a.plane, *b.plane)
         if not roots:
             result["coverage"] = "analytic_circles_disjoint"
             return _finish(result, "disjoint")
@@ -327,7 +354,7 @@ def intersect_family(field: DPField, source: Source, family: ExactFamily, sun, *
     A two-dimensional image meeting a curve remains a curve. Dedicated
     unsupported regimes are data, while programming errors still propagate.
     """
-    sun = _sun(sun)
+    sun = unit_sun(sun)
     walker = Walker(field.crystal, field.faces, field.index, field.slab)
     pair = [source.id, "family:" + family.name]
     result = dict(sources=pair, status="not_found", records=[], curves=[], diagnostics=[],
@@ -337,7 +364,7 @@ def intersect_family(field: DPField, source: Source, family: ExactFamily, sun, *
     try:
         if source.margin is not None:
             if family.dimension == 1 and source.plane is not None:
-                roots = _circle_roots(*source.plane, *family.circle(sun))
+                roots = circle_intersections(*source.plane, *family.circle(sun))
                 if roots == []:
                     result.update(status="disjoint", coverage="analytic_circles_disjoint")
                     return _finish(result, "disjoint")
@@ -348,16 +375,25 @@ def intersect_family(field: DPField, source: Source, family: ExactFamily, sun, *
                 if _admissible(walker, u) and _member(walker, source, u):
                     result["records"].append(dict(sources=pair, origins={source.id: _origins(source, u)}, **p))
                 else:
-                    result["diagnostics"].append(dict(reason="outside_source_arc_or_closure"))
-            for curve in data["curves"]:
+                    result["diagnostics"].append(dict(reason="outside_source_arc_or_closure", u=u))
+            for curve_index, curve in enumerate(data["curves"]):
                 points = curve["points"]
+                if not points:
+                    continue
+                closed = bool(curve["closed"])
+                if closed and len(points) > 1 and _angle(points[0]["u"], points[-1]["u"]) <= MERGE_RAD:
+                    points = points[:-1]
                 flags = np.array([_admissible(walker, p["u"]) and _member(walker, source, p["u"]) for p in points])
                 if not flags.all():
-                    result["diagnostics"].append(dict(reason="outside_source_arc_or_closure", rejected_points=int((~flags).sum())))
-                for run in np.split(np.arange(len(points)), np.flatnonzero(np.diff(flags))+1):
-                    if len(run) >= 2 and flags[run[0]]:
-                        result["curves"].append(dict(curve, sources=pair, points=[points[i] for i in run],
-                                                     closed=bool(curve["closed"] and flags.all())))
+                    result["diagnostics"].append(dict(reason="outside_source_arc_or_closure", curve=curve_index,
+                                                       rejected_points=int((~flags).sum())))
+                for run in _accepted_runs(flags, closed=closed):
+                    if len(run) < 2:
+                        result["diagnostics"].append(dict(reason="dropped_short_run", curve=curve_index,
+                                                           u=points[run[0]]["u"]))
+                        continue
+                    result["curves"].append(dict(curve, sources=pair, points=[points[i] for i in run],
+                                                 closed=bool(closed and flags.all())))
         elif source.point is not None:
             if _admissible(walker, source.point):
                 for q in family.lifts(source.point, sun):
@@ -365,29 +401,28 @@ def intersect_family(field: DPField, source: Source, family: ExactFamily, sun, *
                     result["records"].append(dict(sources=pair, u=source.point, q=q, rotation=r,
                                                   intersection="point_membership", residual=0.))
         elif source.plane is not None and family.dimension == 1:
-            roots = _circle_roots(*source.plane, *family.circle(sun))
+            roots = circle_intersections(*source.plane, *family.circle(sun))
             if roots is None:
                 result["status"] = "unsupported_continuous"
                 result["diagnostics"].append(dict(reason="critical_circle_family_coincidence_clipping"))
                 return result
             for u, state in roots:
-                if _admissible(walker, u):
-                    for q in family.lifts(u, sun):
-                        result["records"].append(dict(sources=pair, u=u, q=q, rotation=np.asarray(family.rotation(q)),
-                                                      intersection=state, residual=abs(float(source.plane[0] @ u-source.plane[1]))))
+                if not _admissible(walker, u):
+                    result["diagnostics"].append(dict(reason="outside_closure_or_nonfinite", u=u))
+                    continue
+                for q in family.lifts(u, sun):
+                    result["records"].append(dict(sources=pair, u=u, q=q, rotation=np.asarray(family.rotation(q)),
+                                                  intersection=state, residual=abs(float(source.plane[0] @ u-source.plane[1]))))
             if not roots:
                 result["coverage"] = "analytic_circles_disjoint"
-                result["status"] = "disjoint"
-                return result
+                return _finish(result, "disjoint")
         else:
             raise RestrictedEscape("critical_stratum_adapter", "this critical stratum has no certified family clipping adapter")
     except RestrictedEscape as error:
         result["diagnostics"].append(dict(reason=error.regime, detail=str(error)))
         result["status"] = "partial" if result["records"] or result["curves"] else "unsupported"
         return result
-    result["status"] = ("partial" if result["records"] or result["curves"] else "unresolved") if result["diagnostics"] else (
-        "continuous" if result["curves"] else "computed" if result["records"] else "not_found")
-    return result
+    return _finish(result, "continuous" if result["curves"] else "computed" if result["records"] else "not_found")
 
 
 def enumerate_junctions(field: DPField, *, pairs=None, family: ExactFamily | None = None, sun=None,

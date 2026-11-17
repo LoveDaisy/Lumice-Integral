@@ -8,7 +8,7 @@ from lumice_integral import optics
 from lumice_integral.camera import sun_direction
 from lumice_integral.dp_field import DPField
 from lumice_integral.family_restricted import (
-    ExactFamily, RestrictedEscape, _circle_roots, intersect_margin, kink_sky, restricted_critical,
+    ExactFamily, RestrictedEscape, circle_intersections, intersect_margin, kink_sky, restricted_critical,
 )
 from lumice_integral.geometry import HexPrism
 from lumice_integral.so3 import exp
@@ -120,25 +120,25 @@ def test_restricted_minimum_is_not_an_ambient_stationary_point_and_has_1d_profil
 def test_analytic_circle_intersections_include_seam_tangent_coincidence_empty():
     a = np.array([0.,0.,1.])
     b = np.array([1.,0.,0.])
-    assert len(_circle_roots(a, .3, b, .2)) == 2
-    tangent = _circle_roots(a, .6, b, .8)
+    assert len(circle_intersections(a, .3, b, .2)) == 2
+    tangent = circle_intersections(a, .6, b, .8)
     assert len(tangent) == 1 and tangent[0][1] == "tangent"
-    assert _circle_roots(a, .6, b, .9) == []
-    assert _circle_roots(a, .6, -a, -.6) is None
-    assert _circle_roots(a, .6, a, .5) == []
+    assert circle_intersections(a, .6, b, .9) == []
+    assert circle_intersections(a, .6, -a, -.6) is None
+    assert circle_intersections(a, .6, a, .5) == []
     # Resolved near-double roots must not be tolerance-merged into a tangent.
-    near = _circle_roots(a, .6, b, .8-1e-13)
+    near = circle_intersections(a, .6, b, .8-1e-13)
     assert len(near) == 2 and all(state == "transverse" for _, state in near)
     # Near parallel is not parallel; close plane heights are not an identity.
     tilted = np.array([np.sin(1e-6), 0., np.cos(1e-6)])
-    near_parallel = _circle_roots(a, .3, tilted, .3)
+    near_parallel = circle_intersections(a, .3, tilted, .3)
     assert len(near_parallel) == 2
     for p, state in near_parallel:
         assert state == "transverse"
         assert p @ a == pytest.approx(.3, abs=1e-14)
         assert p @ tilted == pytest.approx(.3, abs=1e-14)
         assert p @ p == pytest.approx(1., abs=1e-14)
-    assert _circle_roots(a, .3, a, .3+1e-13) == []
+    assert circle_intersections(a, .3, a, .3+1e-13) == []
     u = tangent[0][0]
     # Two sides of the genuine contact have same sign and quadratic growth.
     for t in (1e-2, 5e-3):

@@ -13,7 +13,7 @@
 - **kind-3**：每个内反射的 TIR onset，保留 step、margin、arc、同义身份及 upstream failed seeds。它是 Fresnel 权重折线，**不是**新增有效域门。
 - **精确族像**：复用 [ExactFamily](family-restricted.md) 的四族支撑。与一维像通常得到点或重合；与二维像通常仍是一段曲线，不能把其采样点冒充有限 junction 集。同 u 的全部真实姿态原像必须保留。
 
-顶层恒为 `exhaustive=false`、`coverage="opportunistic_existing_strata_only"`。`omitted` 明列走廊 A=0、未表示临界流形、上游未发现分量。单个闭环或 `KinkCurve.complete` 都不升级这个声明。几何存在性不新增 A>0 条件；有限晶体权重仍属另一维度。
+顶层恒为 `exhaustive=false`、`coverage="opportunistic_existing_strata_only"`。`omitted` 明列走廊 A=0、未表示临界流形、上游未发现分量。单个闭环或 `KinkCurve.complete` 都不升级这个声明。共享 `family_restricted.circle_intersections/margin_plane/unit_sun` 正式公开为单权威原语，不维护第二份圆交求解器。几何存在性不新增 A>0 条件；有限晶体权重仍属另一维度。
 
 ## 输入与身份
 
@@ -47,11 +47,11 @@ ID 为 `kind_2:<原margin>`、`kind_3:<原margin>`、`kind_1:interior:<index>`�
 
 非有限、奇异、耗尽预算、大步及迭代失败不得因 best-so-far 点看似合理而成功。小 determinant 不证明相切；切触须由既有解析圆交或族 jet+双侧核验承担，未解决接触保持 unresolved。解析正判别式双根不按近邻并根；数值重复种子只在接受后按1e-10角距去重，近退秩仍拒答。
 
-D_P 值沿用 walker 的闭包求值：exit-Snell 舍入负判别式用既有丢根极限，不 epsilon 内推、不伪造奇异梯度。未提供数值正则 Jacobian 时，`differential.available=false` 并给 `analytic_or_upstream_nonsmooth_stratum` 原因，绝不表示导数为零。
+D_P 值沿用 walker 的闭包求值：exit-Snell 舍入负判别式用既有丢根极限，不 epsilon 内推、不伪造奇异梯度。未提供数值正则 Jacobian 时明确 `differential.available=false`：解析圆证据用 `analytic_evidence_no_differential`，点分层成员检验用 `upstream_stratum_membership_no_differential`。这表示未计算数值微分，不声称几何非光滑或导数为零。
 
 ## 连续对象与结果状态
 
-连续重合须有结构/代数身份：同义 margin、同一解析圆平面、或展开入射法向平方相同。例如 `3-5-6-7` internal-1 TIR 与 exit-Snell 判别式符号相反、**零集相同**，输出经过全部门校验的连续 upstream runs，不把多个落点当多个 junction。裁剪仍有上游采样覆盖限定。`3-5-6-7-3` 的 internal-1/internal-3 重合也保留两个反射事件身份。
+连续重合须有结构/代数身份：同义 margin、同一解析圆平面、或展开入射法向平方相同。例如 `3-5-6-7` internal-1 TIR 与 exit-Snell 判别式符号相反、**零集相同**，输出经过全部门校验的连续 upstream runs，不把多个落点当多个 junction。裁剪仍有上游采样覆盖限定。跨周期采样接缝的 accepted run 合并，`closed=true` 区分完整闭环与裁剪开弧。幸存单样本不能证明连续弧或切触，须以 `dropped_short_run` 和位置给出诊断，不静默丢弃。`3-5-6-7-3` 的 internal-1/internal-3 重合也保留两个反射事件身份。
 
 每对给 `sources/status/coverage/records/curves/diagnostics`；数值对另有 candidate/attempted/converged/rejected 计数。点含 u、来源/原始残差、最小门、D_P、交型、证据、微分可用性；连续对象含 arc/sheet、有序样本、维数及证据。
 
@@ -66,7 +66,7 @@ D_P 值沿用 walker 的闭包求值：exit-Snell 舍入负判别式用既有丢
 | `unsupported` | 精确族或临界分层没有可信适配 |
 | `unsupported_continuous` | 已知临界圆重合，但没有支持的裁剪适配 |
 
-后两者不是 computed empty。仅定义好的 `RestrictedEscape` 映射为具名诊断；其它异常继续使导出失败，不用宽泛 catch 吞编程错误。部分成功不得吞上游失败或未尝试候选。
+后两者不是 computed empty。仅定义好的 `RestrictedEscape` 映射为具名诊断；其它异常继续使导出失败，不用宽泛 catch 吞编程错误。部分成功不得吞上游失败或未尝试候选。解析模型的 `disjoint` 证明独立于 upstream arc 的采样成败：失败诊断继续保留，但不把已证无交降级为 `unresolved`。点成员检验不执行 Newton，因此即使命中，其 candidate/attempted/converged 计数仍为零。
 
 ## 实测覆盖与交付
 

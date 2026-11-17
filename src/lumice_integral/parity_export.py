@@ -3674,7 +3674,7 @@ def _mc_junction_input_errors(data) -> list[str]:
     return errors
 
 
-def _mc_junction_compare(check: Check, got: Any, expected: Any, where: str, *, exact=False) -> None:
+def _mc_junction_compare(check: Check, got: Any, expected: Any, where: str, *, exact=False, closure_value=False) -> None:
     """Discrete/control fields are exact; geometric floats have unit-aware tolerances."""
     if type(got) is not type(expected):
         check.expect(False, f"{where}: type/availability differs")
@@ -3682,7 +3682,8 @@ def _mc_junction_compare(check: Check, got: Any, expected: Any, where: str, *, e
         check.expect(got.keys() == expected.keys(), f"{where}: keys/availability differ")
         for key in got.keys() & expected.keys():
             _mc_junction_compare(check, got[key], expected[key], f"{where}.{key}",
-                                 exact=exact or key in ("options", "index", "tolerance"))
+                                 exact=exact or key in ("options", "index", "tolerance"),
+                                 closure_value=key in ("value", "sky"))
     elif isinstance(got, list):
         check.expect(len(got) == len(expected), f"{where}: count/coverage differs")
         if where.endswith(".records") and got and len(got) == len(expected) and all(
@@ -3702,12 +3703,13 @@ def _mc_junction_compare(check: Check, got: Any, expected: Any, where: str, *, e
             if np.isfinite(costs).all():
                 rows, columns = linear_sum_assignment(costs)
                 for i, j in zip(rows, columns):
-                    _mc_junction_compare(check, got[i], expected[j], f"{where}[{i}]", exact=exact)
+                    _mc_junction_compare(check, got[i], expected[j], f"{where}[{i}]", exact=exact,
+                                         closure_value=closure_value)
                 return
         for i, (a, b) in enumerate(zip(got, expected)):
-            _mc_junction_compare(check, a, b, f"{where}[{i}]", exact=exact)
+            _mc_junction_compare(check, a, b, f"{where}[{i}]", exact=exact, closure_value=closure_value)
     elif isinstance(got, float) and not exact:
-        atol = 4e-8 if any(f".{key}" in where for key in ("value", "sky")) else MC_JUNCTION_ATOL
+        atol = 4e-8 if closure_value else MC_JUNCTION_ATOL
         _close(check, where, got, expected, atol)
     else:
         check.expect(got == expected, f"{where}: {got!r} != {expected!r}")

@@ -206,6 +206,15 @@ def test_defined_family_refusal_is_data_and_algorithm_errors_propagate(monkeypat
             pe.export_module_c_cell(c, tmp_path, {})
 
 
+def test_closure_tolerance_is_an_explicit_quantity_not_a_path_substring():
+    ordinary = pe.Check("ordinary geometry")
+    pe._mc_junction_compare(ordinary, {"values": [0.]}, {"values": [2e-8]}, "result")
+    assert ordinary.failures
+    closure = pe.Check("closure value")
+    pe._mc_junction_compare(closure, {"value": 0.}, {"value": 2e-8}, "result")
+    assert not closure.failures
+
+
 def test_nonfinite_is_not_unavailable():
     for value in (float("nan"), float("inf"), float("-inf")):
         with pytest.raises(ValueError, match="non-finite junction"):

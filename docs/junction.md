@@ -34,7 +34,9 @@ The top-level result always has `exhaustive=false`,
 `coverage="opportunistic_existing_strata_only"`, and explicit omissions for
 corridor A=0, unrepresented critical manifolds and undiscovered upstream
 components. A closed kink loop or `KinkCurve.complete` does not strengthen
-that claim. There is no new A>0 condition: geometric existence and the finite
+that claim. The shared `family_restricted.circle_intersections`, `margin_plane`
+and `unit_sun` are public single-authority primitives for these adapters;
+there is no second circle solver. There is no new A>0 condition: geometric existence and the finite
 crystal's radiometric weight remain different questions.
 
 ## Inputs and identities
@@ -113,9 +115,10 @@ at 1e-10 angular separation after acceptance; near rank loss remains unresolved.
 Field `value` is the existing walker's D_P closure value. At exit Snell,
 rounding-negative discriminants use the established dropped-root limit;
 there is no epsilon inward displacement and no fabricated singular gradient.
-`differential.available=false` records the reason
-`analytic_or_upstream_nonsmooth_stratum` when no numerical regular Jacobian
-is supplied; it does not assert a zero derivative.
+`differential.available=false` records `analytic_evidence_no_differential`
+for analytic circle evidence, or `upstream_stratum_membership_no_differential`
+for point-stratum membership. These mean no numerical differential was
+computed, not that the geometry is nonsmooth or its derivative is zero.
 
 ## Continuous objects and diagnostic outcomes
 
@@ -124,7 +127,11 @@ identical analytic circle planes, or equality of squared unfolded incidence
 normals. For example, on `3-5-6-7`, internal-1 TIR and exit-Snell have opposite
 sign discriminants and the **same zero set**. Their validated upstream runs
 are continuous objects with `dimension=1`, not many independent roots.
-Clipping still has upstream sampling coverage. `3-5-6-7-3` internal-1 and
+Clipping still has upstream sampling coverage. Cyclic accepted runs are joined
+across the sampling seam; `closed=true` distinguishes a retained whole loop
+from an open clipped arc. A surviving singleton cannot certify a continuous
+arc or tangency: it produces `dropped_short_run` with its position rather
+than disappearing. `3-5-6-7-3` internal-1 and
 internal-3 retain both event identities on their coincident arcs.
 
 Each selected pair has `sources`, `status`, `coverage`, `records`, `curves`
@@ -148,7 +155,12 @@ upstream arc / family sheet, ordered samples, dimension and evidence.
 The last two are not computed empties. Known `RestrictedEscape` regimes are
 reported with their name and detail. Other exceptions propagate; programming
 errors are not broadly caught and reclassified as normal refusals. Partial
-success never discards upstream failed seeds or omitted candidates.
+success never discards upstream failed seeds or omitted candidates. An
+analytic `disjoint` proof is independent of upstream arc-sampling failures:
+those diagnostics stay visible but do not downgrade a proved model-level
+nonintersection to `unresolved`. Point membership performs no Newton attempt;
+its candidate/attempted/converged counters remain zero even when a point is
+accepted.
 
 ## Physical coverage and parity
 
