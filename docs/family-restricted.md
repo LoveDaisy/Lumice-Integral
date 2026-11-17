@@ -120,8 +120,43 @@ C16 concerns **target fiber intersected with exact family in SO(3)**, not just
 an S² margin intersection or a common delta. A one-dimensional fiber can lie
 inside the two-dimensional column support without making the whole family
 pinned. The original near double root target `(elevation40°,azimuth30°)` is
-not a tangent. The companion target-fiber conformance and parity data carry
-pose residuals, contact evidence and finite-crystal area witnesses separately.
+not a tangent. `family_target.intersect_target` is deliberately narrow:
+regular-prism literal `3-5`, explicit local seeds, full sky-vector hit within
+`1e-10`, positive A and T, and full SO(3) direction rank 2. A least-squares
+stop or a rounded scratch coordinate is not accepted as a tangent. The
+`locate_elevation_witness` helper independently recomputes the column fold
+on a requested elevation by solving sky elevation and restricted Jacobian
+area=0 (Parry solves only the requested elevation). At full n(550), sun20,
+the computed column target azimuth is 29.680392011006834°; the regular Parry
+witness is 29.835011461218983°. These differ from old scratch locators by
+about 1.4e-6°, so callers must explicitly use the returned full target, not
+silently snap an input target or widen its hit tolerance.
+
+For two-parameter supports, the family constraint is differentiated **along
+the target fiber**, including its curvature. In a right Lie chart let
+`r(x)` be the full target residual, `J=r'(0)`, `v` its unit null vector and
+`a` solve `J a=-r''(v,v)`, `v.a=0`. Then the constraint jet is
+`g'=grad(g).v`, `g''=g''(v,v)+grad(g).a`. A tangent requires a vanishing
+first derivative, a nonzero second derivative, and corrected full-target
+poses on both sides with same-sign quadratic constraint growth. The sign
+of `v` is canonicalized by its largest component; the geometric tangent is
+a line regardless of LAPACK sign. Near-fold candidates without sufficient
+residual-to-separation evidence are unsupported rather than merged into a
+spurious tangent.
+
+For the mirrored-sun column target `(-20°,0°)`, tangential Snell conservation
+for side-face chains gives `(target-sun).R e_z=0`; a nonzero vertical
+difference forces `Rzz=0` on the whole fiber. Bounded seed correction plus
+SO(3) continuation witnesses one closed component, all positive AT. Closure
+does **not** certify every component was found. Lowitz regular witnesses
+retain free zenith; endpoint strata, other crystals/paths and unresolved
+searches return `status=unsupported`, never a certified empty set.
+
+The companion parity data carry full-direction residuals, contact jets,
+corrected offsets and finite-crystal area witnesses separately. Reflecting
+the Parry/Lowitz witness target's y coordinate leaves its deviation and u
+projection eligibility unchanged but fails the actual sky hit (residual
+about 0.7622); this is the persistent projection-false-positive case.
 
 ## Reproducibility and availability
 

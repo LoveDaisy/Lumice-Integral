@@ -481,8 +481,43 @@ entry measure：β 格的 `A_P`（`dp_field_sample`）只在 β 晶体上为正�
 **记录性快照**，使 port 可以复现判据本身。权威仍在模块（`lumice_integral.chromatic`）；常量在模块里变了就
 重导出这些 fixture，而不是交给 port 一份需要对齐的第二实现。
 
-**不在本批**（第二批，LI backlog）：新结构对象（S1/S2 受限走廊、A = 0 走廊、S6 junction）；contour 求积
-值；金字塔晶体的模块 C 格（模块 A/B 矩阵已携带金字塔；port 需要时按同一配方补）。
+**本节仍不覆盖**：走廊 A=0、S6 junction（第二批的独立任务）、contour 求积值及金字塔模块 C 格。精确族受限结构现由下节加法矩阵覆盖。
+
+### 6.4 精确族受限结构与 C16（波次 3 第二批）
+
+[受限结构合同](family-restricted.md) 定义数学对象、支撑参数顺序、profile 的测度、解析分层裁剪和具名拒答。新增四个 kind，沿用 schema v1，**不改变任何旧 kind 的字段或比较配方**：
+
+| kind | 权威入口 | 每波长期望结果 |
+|---|---|---|
+| `family_critical` | `restricted_critical` | 限制函数 S1、常值集、光学域端点、jet、覆盖声明 |
+| `family_margin` | `intersect_margin` | 原始 kind-2/3 margin 身份、横交/切点或重合/一般曲线、全部姿态提升 |
+| `family_kink_sky` | `kink_sky` | 真实定向天空点/曲线、像维数、有序姿态、端点与覆盖声明 |
+| `family_target` | `family_target` 的局部 C16 核验 | 目标构造、SO(3) 交/切触或闭合重合分量、正 A/T 与未解种子 |
+
+均接入 `module_c_cells`、既有 `--cells` 和 verifier 路由。13 个新增 cell 各导出一个文件，每文件含独立 400/550/700 nm 三段（39 段，不是 39 个文件）；完整配置矩阵为旧 120 + 新 13。**不按跨 λ 的 rank 配对**：拓扑与可用性可以逐波长变化，各段保留自己的结果/拒答，不把数值枚举改称完备认证。
+
+| 新增 label（省略路径前缀） | 支撑、路径 | 检查目的 |
+|---|---|---|
+| `mc_c11_plate_sun9`、`mc_c11_plate_sun20` | plate，1-4-5-2 | 相对方位120°不等于球面偏折117.599764°/108.937304°，常值集及真实天空见证 |
+| `mc_family_plate_morse` | plate，3-5 | 一维 inverse-sqrt 极值，不是全 S² 驻点 |
+| `mc_family_parry_constant` | Parry roll0，1-6-2 | 常值集、无有限 multiplicity |
+| `mc_family_gate` | plate，3-5 | entry gate 与其余所有有效域门交叉裁剪 |
+| `mc_family_kink_intersection` | Parry roll0.2 rad，3-1-6 | kink 横交与真实姿态原像 |
+| `mc_family_kink_sky` | column，1-3-2 | 非平凡天空曲线、两个解析提升分支 |
+| `mc_family_empty_sky` | plate，3-1-6 | computed 空交，天空维数因空集而不可用 |
+| `mc_family_sunpole_refusal` | plate，3-5 | 确定性 `projection_rank_zero` 拒答 |
+| `mc_c16_column_transverse` | column，3-5 | 固定目标(高度40°，方位30°)，显式两个局部种子 |
+| `mc_c16_column_fold` | column，3-5 | 每 λ 重算高度40°的真 fold，再核验返回的完整目标 |
+| `mc_c16_parry_lowitz` | Parry/Lowitz，3-5 | 高度40°见证、Lowitz 精确单 sheet 命中及同 δ 的 mirror-y 目标拒绝 |
+| `mc_c16_column_coincident` | column，3-5 | 目标(-20°，0°)，有界校正近似种子后追踪一个闭合 SO(3) 分量 |
+
+**输入。** 晶体延续 §2.1 的 a=0.5 引擎参考尺度；`faces` 是 literal 成员，不做 PBD/L2 类汇总；`sun` 指向太阳。`indices[label]` 给 `wavelength_nm` 和完整 `spectrum.refractive_index`，读回重核。`exact_family` 给 name/`roll_rad`；`angular_domain` 给参数顺序、弧度区间、周期性与端点约定。驻点/曲线 kind 另带 `lattice_n`、`options.samples/budget` 和适用的原始 `margin`。target fixture 的 `target_construction` 是完整固定目标及种子，或高度 locator 及种子；options 限定局部求解与 continuation。解析后的完整目标随结果导出，locator 不能静默替换调用方指定的目标。
+
+**可用性。** 驻点/曲线各段为 `status=computed,available=true,result`，或显式 `RestrictedEscape` 生成的 `status=refused,available=false,regime,reason`。target 结果为 computed/unsupported，保留 reason 和 unresolved seeds。数值异常或无解释 NaN 必须让导出失败，不能吞成空交或普通 null。内部未定义量用 `{available:false,reason:<具体原因>}`：常值集的有限 multiplicity、空天空像的维数、未命名端点门、奇异端点的 profile/导数。它们不是数值零。旧 kind 的奇异集 null 及专用拒绝消息保持不变，不用全局版本门掩盖细粒度检查。
+
+**比较。** 每 λ 经对应权威重算；键、类型、计数、分类、可用性与 coverage 精确比较，数值叶绝对容差 `1e-8`（分量或弧度，不是度）。解析提升前向 `Ru=sun` 检查界为5e-9；根细化参数 xtol=1e-13，上游端点约1e-12。较宽分量界容纳逆投影 fold 条件数，不允许把近双根并成切触。`tangent` 是 `du/dq`（3×族维数），另用步长1e-5中心差分独立核验。逐个导出姿态还要检查 SO(3)、参数域、全部门、单位天空向量及 `angle(sky,sun)=value`。独立 raw optics 前向检查在内点用1e-10；`min_gate<1e-9` 处 raw Snell 的 sqrt(roundoff) 会产生sqrt(eps)级误差，因此这条独立链用4e-8。出射判别式接近零时按既有丢根闭包极限求值，不能内推。4e-8 **只用于独立前向检查**，不放宽结果树的1e-8比较。
+
+C16 在各自族、sun 和完整 target 下用 `check_target_poses` 重验所有姿态及正 A/T；contact jet 与双侧校正 offsets 对照权威局部重算。真正方向命中界是1e-10，不能因 least-squares 停机而宣告命中。SVD fiber 切向以绝对值最大分量为正固定符号，不按跨 λ 最近根改符号。重合包含性来自侧面 Snell 守恒；闭合追踪只见证一个分量，完整性为 unknown。mirror-y 假阳性目标虽保持 δ，必须保留 rejected 的完整天空方向见证；所有 partial coverage 都不得被消费者升级成认证。
 
 ## 7. 更新流程
 
@@ -492,7 +527,7 @@ entry measure：β 格的 `A_P`（`dp_field_sample`）只在 β 晶体上为正�
 4. C++ 行为有差异的地方，Lumice 的 parity CI 变红。
 5. Lumice 改 C++ 直到变绿，不改 fixture；对容差或语义有异议则回到第 1 步。
 
-格式变更（字段、文件名、比较方法）必须在同一个 LI commit 里同时改本页与 `parity_export.SCHEMA_VERSION`。
+对旧字段、文件名或比较配方做不兼容变更，必须在同一 LI commit 改本页及 `parity_export.SCHEMA_VERSION`。§6.4 这种不改变旧配方的新增 kind 是加法扩展，不全局 bump，避免短路旧 kind 的专用验证诊断。
 
 改变了 fixture 数值的行为变更：
 

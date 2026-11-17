@@ -119,6 +119,15 @@ def check_target_pose(family: ExactFamily, q, sun, target, *, refractive_index=C
     return model.result(point["status"], witness=point)
 
 
+def check_target_poses(family: ExactFamily, qs, sun, target, *, refractive_index=C16_INDEX, crystal=None):
+    """Replay many witnesses with one model/JIT identity, preserving per-pose evidence."""
+    model = _Model(family, sun, target, refractive_index, crystal)
+    if not model.supported():
+        return model.result("unsupported", reason="only_regular_hexprism_3_5_implemented", witnesses=[])
+    points = [model.point(q) for q in qs]
+    return model.result("computed", witnesses=points)
+
+
 def _constraint(family, rotation):
     if family.name == "column":
         return rotation[2, 2]

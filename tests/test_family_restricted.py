@@ -126,6 +126,9 @@ def test_analytic_circle_intersections_include_seam_tangent_coincidence_empty():
     assert _circle_roots(a, .6, b, .9) == []
     assert _circle_roots(a, .6, -a, -.6) is None
     assert _circle_roots(a, .6, a, .5) == []
+    # Resolved near-double roots must not be tolerance-merged into a tangent.
+    near = _circle_roots(a, .6, b, .8-1e-13)
+    assert len(near) == 2 and all(state == "transverse" for _, state in near)
     u = tangent[0][0]
     # Two sides of the genuine contact have same sign and quadratic growth.
     for t in (1e-2, 5e-3):
@@ -231,6 +234,44 @@ def test_domain_endpoints_are_separate_and_singular_jet_unavailable():
         assert p["margins"]
         assert p["min_gate"] >= -1e-9
     assert result["omitted"] == []
+
+
+def test_two_dimensional_regular_image_critical_and_reparameterized_jet():
+    field = DPField.build(HexPrism(), (3,5), N)
+    result = restricted_critical(field, ExactFamily("column"), SUN)
+    assert result["records"]
+    assert result["coverage"] == "regular_image_strata_only"
+    assert "projection_rank_boundary" in result["omitted"]
+    assert all(p["profile"] == "finite_jump" for p in result["records"])
+    family = ExactFamily("plate")
+    restricted = restricted_critical(field, family, SUN, samples=128)
+    p = next(p for p in restricted["records"] if p["source"] == "restricted_minimum")
+    # Smooth nonlinear reparametrization q=q0+2t+.1sin(t) preserves the
+    # geometric critical location, with the composed Hessian scaled by q'^2.
+    from lumice_integral.dp_field.field import d_value
+    normals = field.normals
+    f = lambda t: d_value(family.u(jnp.array([p["q"][0]+2*t+.1*jnp.sin(t)]), SUN),
+                           field.faces, jnp.array(N), None, normals)
+    assert abs(float(jax.grad(f)(0.))) < 1e-10
+    assert float(jax.grad(jax.grad(f))(0.)) == pytest.approx(p["second_derivative"]*2.1**2, rel=1e-12)
+
+
+def test_wavelength_and_sun_rebuild_actual_kink_constraints():
+    family = ExactFamily("lowitz")
+    curves = []
+    for wavelength, elevation in ((400,20), (700,20), (700,25)):
+        n = refractive_index(wavelength)
+        sun = sun_direction(elevation,0)
+        field = DPField.build(HexPrism(), (3,1,6), n)
+        result = kink_sky(field, family, sun, "internal_1_tir_discriminant", samples=32)
+        assert result["image_dimension"] == 1
+        points = [p for curve in result["curves"] for p in curve["points"]]
+        for p in points:
+            np.testing.assert_allclose(p["rotation"] @ p["u"], sun, atol=1e-12)
+            assert p["u"][2] == pytest.approx(-np.sqrt(n*n-1), abs=1e-12)
+        curves.append(points)
+    assert curves[0][0]["u"][2] != pytest.approx(curves[1][0]["u"][2], abs=1e-3)
+    assert np.linalg.norm(curves[1][len(curves[1])//2]["sky"]-curves[2][len(curves[2])//2]["sky"]) > 1e-3
 
 
 def test_unsupported_and_budget_fail_closed():

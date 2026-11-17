@@ -450,10 +450,24 @@ DETECTS = {
     "x Fresnel through one kernel on a plate family sample)",
 }
 
+# Keep the old cells' complete detects metadata byte-identical. _mc_cell_record
+# serializes that mapping, so extending DETECTS itself would rewrite old fixtures.
+EXACT_DETECTS = {
+    "family_critical": "exact-support restricted D_P critical set, profile and multiplicity; full pose, tangent, "
+    "value and sky witnesses at every wavelength, explicit coverage or named refusal",
+    "family_margin": "kind-2/3 intersections with the exact support: all lifted witnesses, intersection type, "
+    "gate residuals, empty versus unavailable, and coverage",
+    "family_target": "literal 3-5 local target/exact-support intersection: per-wavelength locator, transverse/fold/"
+    "isolated/coincident topology, full positive A/T pose witnesses, Lowitz and projected/deviation-only false hits",
+    "family_kink_sky": "actual lifted kind-3 sky image, curve sheets and dimension; forward optics, "
+    "not a freely chosen alignment of body u to sun",
+}
+
 
 def mc_cell(*args, **kwargs) -> MCCell:
     """An :class:`MCCell` whose ``detects`` defaults to the shared per-kind texts (DETECTS below)."""
-    kwargs.setdefault("detects", DETECTS)
+    kinds = kwargs["kinds"] if "kinds" in kwargs else args[3]
+    kwargs.setdefault("detects", EXACT_DETECTS if set(kinds) & EXACT_DETECTS.keys() else DETECTS)
     return MCCell(*args, **kwargs)
 
 
@@ -615,6 +629,72 @@ MODULE_C_CELLS = (
         ("A4",),
         "the impossible-literal class: 3-5-6-8 itself is not a face set of this plate; four other members carry "
         "the class to a white verdict at ratio 1.029",
+    ),
+    # Exact supports are not the zero-width limit of the chromatic density above.
+    # Each file carries all three full-precision spectrum indices, computed/refused independently.
+    *(mc_cell(
+        f"mc_c11_plate_sun{altitude}", PRISM_H1, (1, 4, 5, 2), ("family_critical",), INDEX_SWEEP,
+        ("C11",), "120 degree azimuth is not the spherical sun-sky angle; pinned constant support",
+        family_sun_altitude_deg=float(altitude), restricted_samples=64,
+    ) for altitude in (9, 20)),
+    mc_cell(
+        "mc_family_plate_morse", PRISM_H1, (3, 5), ("family_critical",), INDEX_SWEEP,
+        ("C11",), "non-pinned plate restriction: 1D Morse inverse-square-root profile, not an ambient stationary point",
+        family_sun_altitude_deg=20.0, restricted_samples=64,
+    ),
+    mc_cell(
+        "mc_family_parry_constant", PRISM_H1, (1, 6, 2), ("family_critical",), INDEX_SWEEP,
+        ("C11",), "Parry constant set carries delta mass and explicitly unavailable finite multiplicity",
+        exact_family="parry", family_sun_altitude_deg=20.0, restricted_samples=64,
+    ),
+    mc_cell(
+        "mc_family_gate", PRISM_H1, (3, 5), ("family_margin",), INDEX_SWEEP,
+        ("C12",), "nonempty entry-incidence gate on the plate image, clipped by every other validity gate",
+        family_sun_altitude_deg=20.0, restricted_margin="entry_incidence_cosine",
+    ),
+    mc_cell(
+        "mc_family_kink_intersection", PRISM_H1, (3, 1, 6), ("family_margin",), INDEX_SWEEP,
+        ("C13",), "transverse basal TIR-onset intersections with Parry, retaining actual pose witnesses",
+        exact_family="parry", exact_family_roll=0.2, family_sun_altitude_deg=20.0,
+    ),
+    mc_cell(
+        "mc_family_kink_sky", PRISM_H1, (1, 3, 2), ("family_kink_sky",), INDEX_SWEEP,
+        ("C13",), "nontrivial column sky curves with both analytic lift sheets, never free twist alignment",
+        exact_family="column", family_sun_altitude_deg=20.0, restricted_samples=32,
+    ),
+    mc_cell(
+        "mc_family_empty_sky", PRISM_H1, (3, 1, 6), ("family_kink_sky",), INDEX_SWEEP,
+        ("C13",), "computed empty plate/kink intersection; sky dimension unavailable for the explicit empty-image reason",
+        family_sun_altitude_deg=20.0,
+    ),
+    mc_cell(
+        "mc_family_sunpole_refusal", PRISM_H1, (3, 5), ("family_critical",), INDEX_SWEEP,
+        ("C11",), "sun pole collapses the plate image: projection_rank_zero refusal, not a computed empty set",
+        exact_sun=(0.0, 0.0, 1.0),
+    ),
+    mc_cell(
+        "mc_c16_column_transverse", PRISM, (3, 5), ("family_target",), INDEX_SWEEP,
+        ("C16",), "fixed sky (elevation 40, azimuth 30): explicit local seeds, never merge roots across wavelength",
+        exact_family="column", family_sun_altitude_deg=20.0,
+        target_case={"mode": "fixed", "target": sun_direction(40, 30).tolist(), "seeds": [[3.766, -0.11], [3.766, 0.023]]},
+    ),
+    mc_cell(
+        "mc_c16_column_fold", PRISM, (3, 5), ("family_target",), INDEX_SWEEP,
+        ("C16",), "each wavelength recomputes its true elevation-40 fold target and corrected offsets; no rounded-target snapping",
+        exact_family="column", family_sun_altitude_deg=20.0,
+        target_case={"mode": "elevation_locator", "elevation_deg": 40.0, "seed": [3.767, -0.05]},
+    ),
+    mc_cell(
+        "mc_c16_parry_lowitz", PRISM, (3, 5), ("family_target",), INDEX_SWEEP,
+        ("C16",), "each wavelength locates its Parry target, its Lowitz witness and the mirrored-y full-sky rejection at equal deviation",
+        exact_family="parry", family_sun_altitude_deg=20.0,
+        target_case={"mode": "elevation_locator", "elevation_deg": 40.0, "seed": [3.767], "companion_checks": True},
+    ),
+    mc_cell(
+        "mc_c16_column_coincident", PRISM, (3, 5), ("family_target",), INDEX_SWEEP,
+        ("C16",), "mirrored-sun fiber containment with one closed positive-AT component; authority corrects the approximate seed, completeness unknown",
+        exact_family="column", family_sun_altitude_deg=20.0,
+        target_case={"mode": "fixed", "target": sun_direction(-20, 0).tolist(), "seeds": [[0.45, 2.1]]},
     ),
 )
 

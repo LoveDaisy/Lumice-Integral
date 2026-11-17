@@ -205,6 +205,8 @@ def _roots_periodic(f, df, *, samples=360, budget=4096):
     values = np.asarray(jax.jit(jax.vmap(f))(jnp.asarray(grid)))
     slopes = np.asarray(jax.jit(jax.vmap(df))(jnp.asarray(grid)))
     finite = np.isfinite(values)
+    if not finite.any():
+        raise RestrictedEscape("nonfinite_root_scan", "no finite scalar samples; not a computed empty set")
     if finite.all() and max(abs(values)) < 1e-10:
         raise RestrictedEscape("unproved_coincidence", "near-zero scan is not an identity proof")
     if finite.all() and np.ptp(values) < 1e-12 and min(abs(values)) > 1e-8:
@@ -249,9 +251,12 @@ def _circle_roots(a, h, b, k):
         return None if abs(k - dot * h) < 1e-12 else []
     centre = np.array([a, b]).T @ np.linalg.solve(np.array([[1., dot], [dot, 1.]]), np.array([h, k]))
     square = 1 - centre @ centre
-    if square < -1e-12:
+    # Only roundoff-scale residuals collapse to one contact. A small but
+    # resolved positive radicand is TWO roots, not a tolerance-merged tangent.
+    roundoff = 8*np.finfo(float).eps*max(1., float(centre @ centre))
+    if square < -roundoff:
         return []
-    if abs(square) <= 1e-12:
+    if abs(square) <= roundoff:
         return [(centre / np.linalg.norm(centre), "tangent")]
     direction = np.cross(a, b)
     direction /= np.linalg.norm(direction)
@@ -344,7 +349,9 @@ def _circle_domain(field, family, sun, samples, budget):
 def _margin_plane(field, margin):
     incidence = incidence_normals(field.crystal, field.faces)
     entry = incidence["entry_incidence_cosine"]
-    if margin == "entry_incidence_cosine":
+    if margin == "entry_incidence_cosine" or (margin == "exit_snell_discriminant" and field.slab is not None):
+        # For a slab, refractions cancel and exit_disc=(entry_cosine)^2.
+        # Its ZERO SET is the entry great circle, not a newly tangent curve.
         return entry / np.linalg.norm(entry), 0.
     if margin.endswith("tir_discriminant") and margin.startswith("internal_"):
         m = incidence[margin.replace("tir_discriminant", "incidence_cosine")]
@@ -389,8 +396,23 @@ def intersect_margin(field: DPField, family: ExactFamily, sun, margin: str, *, s
                                                jnp.asarray(field.index), normals)[k])
             df = jax.jit(jax.grad(f))
             ts = _roots_periodic(f, df, samples=samples, budget=budget)
-            candidates = [(np.asarray(family.u(jnp.array([t]), sun)),
-                           "transverse" if abs(float(df(t))) > 1e-7 else "tangent", [np.array([t])]) for t in ts]
+            ddf = jax.jit(jax.grad(df))
+            candidates = []
+            for t in ts:
+                candidate_u = np.asarray(family.u(jnp.array([t]), sun))
+                if min(field.validity_margins_batch(candidate_u[None])[0]) < -ATOL:
+                    continue
+                slope, second, residual = float(df(t)), float(ddf(t)), abs(float(f(t)))
+                if abs(slope) > 1e-7 and residual < min(1e-10, slope*slope/(100*max(1., abs(second)))):
+                    state = "transverse"
+                elif abs(slope) < 1e-9 and abs(second) > 1e-7 and residual < 1e-12:
+                    sides = [float(f(t+sign*1e-3)) for sign in (-1,1)]
+                    if not all(v*second > 0 for v in sides):
+                        raise RestrictedEscape("unresolved_contact", "two-sided contact evidence disagrees with its jet")
+                    state = "tangent"
+                else:
+                    raise RestrictedEscape("unresolved_contact", "nearby roots are not a certified tangent")
+                candidates.append((np.asarray(family.u(jnp.array([t]), sun)), state, [np.array([t])]))
             coverage = "numerical_roots_not_certified"
         else:
             candidates = [(u, state, family.lifts(u, sun)) for u, state in roots]

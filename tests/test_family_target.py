@@ -115,14 +115,16 @@ def test_parry_is_a_positive_regular_pose_witness_not_a_distance_threshold(parry
     assert miss["reason"] == "no_verified_local_intersection"
 
 
-def test_u_projection_and_deviation_match_are_not_target_hit(parry_point):
+@pytest.mark.parametrize("name", ["parry", "lowitz"])
+def test_u_projection_and_deviation_match_are_not_target_hit(parry_point, name):
     point = parry_point["records"][0]
+    family = ExactFamily(name)
     wrong_target = np.asarray(parry_point["target"]).copy()
     wrong_target[1] *= -1  # same deviation from sun, a different sky azimuth
     np.testing.assert_allclose(wrong_target @ SUN, np.asarray(point["sky"]) @ SUN, atol=1e-14)
-    lifts = PARRY.lifts(np.asarray(point["u"]), SUN)
+    lifts = family.lifts(np.asarray(point["u"]), SUN)
     assert len(lifts) == 1
-    result = check_target_pose(PARRY, lifts[0], SUN, wrong_target)
+    result = check_target_pose(family, lifts[0], SUN, wrong_target)
     assert result["witness"]["status"] == "rejected"
     assert result["witness"]["reason"] == "full_sky_direction_mismatch"
     assert result["witness"]["direction_residual"] > 0.5
