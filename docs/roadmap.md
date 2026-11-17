@@ -36,6 +36,7 @@ Queue (tasks in `scratchpad/tasks.md`; dispatched 20 ∥ 21, then 22 ∥ 24, 23 
 | 49 | `chromatic-weight-kink-diagnostic`: the third kind of critical line (weight kinks, the TIR onsets of internal reflections, `DPField.weight_kinks`) and the colour criterion on it (`lumice_integral.chromatic`: edges under random orientation, tints of plate classes, Lumice `PBD` classes); module C spec draft [chromatic-module-c.md](chromatic-module-c.md) — landed 2026-09-30 (`3-1-6` hole rim and `3-1-5` colour steps checked on a band-sum render; #42's D65 comparison re-run, §9) | 48 |
 | 51 | `raypath-diagnostic-reference`: fixed versioned reference joining the `3-5` inner edge, the separate solar/antisolar `3-1-5` features, and the two 120° targets of white `1-3-4-2` / blue `1-3-5-2` plate classes; per-target `A*T`, actual L1 members, finite support arcs, SO(3) poses and counterfactuals — implemented 2026-10-01 ([raypath-diagnostic-reference.md](raypath-diagnostic-reference.md)) | 49 |
 | 58 | scrum `theory-document-illustrations`: inventory → production layout → canonical six → document integration — **done 2026-10-11**. Six canonical tracked figures are embedded in the English/Chinese Phase I and II explanations and indexed in [theory-illustrations.md](theory-illustrations.md) §2.8; recompute/replot remain separate and require neither Writing-Lab nor scratchpad. Follow-up briefs remain unstarted: B2 P0/P1 = component topology, quadrature equivalence, finite support versus $U_P$, and critical/focusing mechanisms; B3 waits respectively for a current class-level pose-family scene, a finite-source model, or a divergent-light scene contract/oracle. | — |
+| 60 | scrum `wave3-second-batch` (wave-3 second batch schema3 structural objects, requirement source the 2026-10-08 HANDOFF; owner ruling 2026-11-17 scopes §2.1 + §2.3, corridor A=0 and S3/S5 deferred, §9): `family-restricted-objects` → `s6-junction-opportunistic` — **done 2026-11-17**. `family-restricted-objects` (`lumice_integral.family_restricted` / `family_target`: exact ZYZ family support of plate / column / Parry / Lowitz with all pose preimages, S1 restricted critical sets with named refusals, kind-2/3 ∩ family image with tangency / whole-arc coincidence / false-positive rejection, directional-family kink sky curves — conclusions §4 open item #6 closed; parity +4 kinds × 13 cells, 120 → 133; C11 both calibers 117.599764° / 108.937304° and C16 three-state pass; commit `8533df5`); `s6-junction-opportunistic` (`lumice_integral.junction`: opportunistic pairwise enumeration of kind-1/2/3 curves and family images, top level always `exhaustive=false`; `lumice_integral.spherical_newton.refine_pair` the single-authority two-gate Newton, 33/33 baselines bit-identical; parity `junction` kind 133 → 140 with an independent witness chain and [junction.md](junction.md); commit `611b19d`). Unlocks Lumice A6/B5 (HANDOFF §3) | — |
 
 Deferred: the chapter-11 table (path classes × pose families) after 22 and
 M2; divergent light ([phase2.md](phase2.md) §9, backlog); finite solar disk;
@@ -1088,3 +1089,29 @@ Moved to [overview.md](overview.md) §3.
   3 skipped (the task-13 store artifact absent)
   ([analytic-parity-fixtures.md](analytic-parity-fixtures.md), "Module C
   cells (wave 3)").
+- **2026-11-17**: wave-3 second batch scope ruling and delivery (scrum
+  `wave3-second-batch`, requirement source the 2026-10-08 HANDOFF). Owner
+  ruling: the scrum builds HANDOFF §2.1 (family-restricted structural
+  objects) and §2.3 (S6 junction) only. The §2.2 corridor closing curves
+  (A=0) stay deferred — the integration side needs `w = 0` only (the
+  conclusions §3 difficulty table's own note), it is the batch's single
+  genuinely new research item, and the burden sits on demonstrated
+  consumption, so it re-opens when Lumice actually consumes corridor
+  curves (a04/a07); the S3 support-boundary and S5 density-signature
+  images are in the v1 vocabulary but unlisted by the HANDOFF batch, so
+  they wait for the Lumice-side demand to surface. Delivered (subtasks
+  `family-restricted-objects` commit `8533df5`, `s6-junction-opportunistic`
+  commit `611b19d`): the family-image machine
+  (`lumice_integral.family_restricted` / `family_target`, exact ZYZ family
+  support with all pose preimages, S1 restricted critical sets with named
+  refusals, kind-2/3 ∩ family-image intersections, directional-family kink
+  sky curves closing the conclusions §4 open item #6), the S6 opportunistic
+  enumeration (`lumice_integral.junction`, top-level `exhaustive=false`;
+  `lumice_integral.spherical_newton.refine_pair` the single-authority
+  two-gate Newton, 33/33 baselines bit-identical), and the parity fixture
+  set 120 → 140 (family kinds × 13 cells, junction kind × 7 cells) with the
+  C11 / C16 anchors on the full n(λ) caliber. This unlocks Lumice A6/B5
+  (HANDOFF §3); the fixture-list handoff to the Lumice side is the queued
+  post-scrum owner action. Non-blocking review leftovers (5 Minor + 5
+  Suggestion and 5 Minor + 3 Suggestion) stay recorded in the subtasks'
+  `review-history/` for the next revision touching those files.
