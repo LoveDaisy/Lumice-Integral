@@ -471,6 +471,11 @@ def mc_cell(*args, **kwargs) -> MCCell:
     return MCCell(*args, **kwargs)
 
 
+# Separate metadata prevents an additive kind from rewriting older cells' detects maps.
+JUNCTION_DETECTS = {"junction": "S6 original source identities and local intersection witnesses; per-wavelength "
+                    "gate/family membership, explicit continuous/disjoint/failure states and non-exhaustive coverage"}
+
+
 MODULE_C_CELLS = (
     mc_cell(
         "mc_field",
@@ -695,6 +700,48 @@ MODULE_C_CELLS = (
         ("C16",), "mirrored-sun fiber containment with one closed positive-AT component; authority corrects the approximate seed, completeness unknown",
         exact_family="column", family_sun_altitude_deg=20.0,
         target_case={"mode": "fixed", "target": sun_direction(-20, 0).tolist(), "seeds": [[0.45, 2.1]]},
+    ),
+    mc_cell(
+        "mc_s6_corner", PRISM, (3, 5), ("junction",), INDEX_SWEEP,
+        ("S6",), "old corner gate pair, independently checked on the original optical equations",
+        detects=JUNCTION_DETECTS,
+        junction_pairs=(("kind_2:entry_incidence_cosine", "kind_2:exit_snell_discriminant"),),
+    ),
+    mc_cell(
+        "mc_s6_gate_kink", PRISM, (3, 1, 6), ("junction",), INDEX_SWEEP,
+        ("S6",), "entry gate crossing the basal TIR onset, not a Fresnel validity gate",
+        detects=JUNCTION_DETECTS,
+        junction_pairs=(("kind_2:entry_incidence_cosine", "kind_3:internal_1_tir_discriminant"),),
+    ),
+    mc_cell(
+        "mc_s6_plate_disjoint", PRISM, (3, 1, 6), ("junction",), INDEX_SWEEP,
+        ("S6",), "analytic disjoint plate/kink circles at altitude 20, not numerical not_found",
+        detects=JUNCTION_DETECTS, junction_family=True, family_sun_altitude_deg=20.0,
+        junction_pairs=(("kind_3:internal_1_tir_discriminant", "family:plate"),),
+    ),
+    mc_cell(
+        "mc_s6_column", PRISM, (3, 1, 6), ("junction",), INDEX_SWEEP,
+        ("S6",), "two-dimensional column image retains continuous lifted kink arcs and all pose sheets",
+        detects=JUNCTION_DETECTS, junction_family=True, exact_family="column", family_sun_altitude_deg=20.0,
+        junction_pairs=(("kind_3:internal_1_tir_discriminant", "family:column"),),
+    ),
+    mc_cell(
+        "mc_s6_kink_pair", PRISM, (4, 8, 1, 7, 5), ("junction",), INDEX_SWEEP,
+        ("S6",), "two distinct reflection TIR onsets cross in the physical domain at every complete n(lambda)",
+        detects=JUNCTION_DETECTS,
+        junction_pairs=(("kind_3:internal_1_tir_discriminant", "kind_3:internal_2_tir_discriminant"),),
+    ),
+    mc_cell(
+        "mc_s6_continuous", PRISM, (3, 5, 6, 7), ("junction",), INDEX_SWEEP,
+        ("S6",), "exit-Snell/internal-1 squared-incidence identity returns upstream arcs, not finite junction points",
+        detects=JUNCTION_DETECTS,
+        junction_pairs=(("kind_2:exit_snell_discriminant", "kind_3:internal_1_tir_discriminant"),),
+    ),
+    mc_cell(
+        "mc_s6_iteration_failure", PRISM, (4, 8, 1, 7, 5), ("junction",), INDEX_SWEEP,
+        ("S6",), "zero local Newton iterations retain rejected candidates and explicit failure diagnostics",
+        detects=JUNCTION_DETECTS, junction_options={"max_iterations": 0},
+        junction_pairs=(("kind_3:internal_1_tir_discriminant", "kind_3:internal_2_tir_discriminant"),),
     ),
 )
 

@@ -136,9 +136,17 @@ def _admissible(walker, u):
             and not walker.violated(u, set()))
 
 
+def _origins(source, u):
+    if source.point is not None or source.id == "kind_1:crease":
+        return list(source.origin)
+    return [origin for origin, arc in zip(source.origin, source.arcs)
+            if len(arc) and cKDTree(arc).query(u)[0] <= MEMBERSHIP_RAD]
+
+
 def _record(walker, a, b, u, intersection, evidence, singular_values=None):
     margins = walker.margins(u)
-    return dict(sources=[a.id, b.id], u=np.asarray(u), intersection=intersection,
+    return dict(sources=[a.id, b.id], origins={s.id: _origins(s, u) for s in (a, b)},
+                u=np.asarray(u), intersection=intersection,
                 residuals=[_raw_residual(walker, s, u) for s in (a, b)],
                 min_gate=float(min(margins[walker.k(n)] for n in optics.validity_margin_names(walker.faces))),
                 value=walker.d(u), evidence=evidence,
@@ -338,7 +346,7 @@ def intersect_family(field: DPField, source: Source, family: ExactFamily, sun, *
             for p in data["records"]:
                 u = p["u"]
                 if _admissible(walker, u) and _member(walker, source, u):
-                    result["records"].append(dict(sources=pair, **p))
+                    result["records"].append(dict(sources=pair, origins={source.id: _origins(source, u)}, **p))
                 else:
                     result["diagnostics"].append(dict(reason="outside_source_arc_or_closure"))
             for curve in data["curves"]:

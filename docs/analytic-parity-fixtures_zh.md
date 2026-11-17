@@ -481,7 +481,7 @@ entry measure：β 格的 `A_P`（`dp_field_sample`）只在 β 晶体上为正�
 **记录性快照**，使 port 可以复现判据本身。权威仍在模块（`lumice_integral.chromatic`）；常量在模块里变了就
 重导出这些 fixture，而不是交给 port 一份需要对齐的第二实现。
 
-**本节仍不覆盖**：走廊 A=0、S6 junction（第二批的独立任务）、contour 求积值及金字塔模块 C 格。精确族受限结构现由下节加法矩阵覆盖。
+**本节仍不覆盖**：走廊 A=0、contour 求积值及金字塔模块 C 格。精确族受限结构与机会式 S6 junction 现由下述加法矩阵覆盖。
 
 ### 6.4 精确族受限结构与 C16（波次 3 第二批）
 
@@ -518,6 +518,35 @@ entry measure：β 格的 `A_P`（`dp_field_sample`）只在 β 晶体上为正�
 **比较。** 每 λ 经对应权威重算；键、类型、计数、分类、可用性与 coverage 精确比较，数值叶绝对容差 `1e-8`（分量或弧度，不是度）。解析提升前向 `Ru=sun` 检查界为5e-9；根细化参数 xtol=1e-13，上游端点约1e-12。较宽分量界容纳逆投影 fold 条件数，不允许把近双根并成切触。`tangent` 是 `du/dq`（3×族维数），另用步长1e-5中心差分独立核验。逐个导出姿态还要检查 SO(3)、参数域、全部门、单位天空向量及 `angle(sky,sun)=value`。独立 raw optics 前向检查在内点用1e-10；`min_gate<1e-9` 处 raw Snell 的 sqrt(roundoff) 会产生sqrt(eps)级误差，因此这条独立链用4e-8。出射判别式接近零时按既有丢根闭包极限求值，不能内推。4e-8 **只用于独立前向检查**，不放宽结果树的1e-8比较。
 
 C16 在各自族、sun 和完整 target 下用 `check_target_poses` 重验所有姿态及正 A/T；contact jet 与双侧校正 offsets 对照权威局部重算。真正方向命中界是1e-10，不能因 least-squares 停机而宣告命中。SVD fiber 切向以绝对值最大分量为正固定符号，不按跨 λ 最近根改符号。重合包含性来自侧面 Snell 守恒；闭合追踪只见证一个分量，完整性为 unknown。mirror-y 假阳性目标虽保持 δ，必须保留 rejected 的完整天空方向见证；所有 partial coverage 都不得被消费者升级成认证。
+
+### 6.5 S6 junction（波次 3 第二批）
+
+新增 `junction` kind 的对象合同见 [junction_zh.md](junction_zh.md)。继续用 schema v1、`module_c_cells`、既有 `--cells` 和 verifier 路由；旧133 fixture及比较配方不变。新增7文件，完整矩阵为 **140 fixture**；每个新增文件含400/550/700nm独立段，共21波长段：
+
+| cell | 核验 |
+|---|---|
+| `3-5__mc_s6_corner` | 旧 gate×gate 角点 |
+| `3-1-6__mc_s6_gate_kink` | gate×kink，原始反射入射支 |
+| `4-8-1-7-5__mc_s6_kink_pair` | 不同内反射1×2，内域横交 |
+| `3-5-6-7__mc_s6_continuous` | exit-Snell×internal-1 连续重合 |
+| `3-1-6__mc_s6_plate_disjoint` | 解析模型相离，不是数值未发现 |
+| `3-1-6__mc_s6_column` | 二维族像中的一维曲线，两姿态sheet |
+| `4-8-1-7-5__mc_s6_iteration_failure` | 零迭代受控失败，保留诊断 |
+
+**输入。** 晶体沿用 a=0.5，faces 为 literal 成员。`indices[label]` 记录完整 `wavelength_nm/refractive_index`，读回通过色散重核；`lattice_n=20000`、显式 source-ID `pairs` 和全部 `options`（`budget/nearby/max_iterations/max_step/family_samples/family_budget`）随文件记录。族格另有 §6.4 的 `exact_family`、指向太阳 `sun` 及 `angular_domain`。控制量、指数、可用性与容差声明精确比较，不用浮点容差容忍预算改动。
+
+**期望。** 各 λ 独立结果树保留 source身份/分层维数、逐对结果、失败诊断、遗漏分层及 `exhaustive=false`。`computed/continuous/disjoint/not_found` 与 `unresolved/partial/unsupported/unsupported_continuous` 不能折叠成通用空数组。已知族拒答为逐对具名数据；其它异常使导出失败，不成为 manifest skip。没有正则微分时明确 `differential.available=false` 和原因；raw singular-value 数组和族投影 tangent 不作 parity 观测量，不可用 singular values 用 `{available:false,reason}`。即使是省略的导数诊断，raw 非有限量也须拒绝，不转成 null。不导出奇异权重或幸存比例。原模块 C 三约定及专用拒绝消息原样延续。
+
+**比较与第二链。** 分类、身份、coverage、失败、omission、计数、键与类型精确比较。已接受点按 u/姿态最小距离一一匹配的几何集合比较，不按 Newton 种子顺序。几何和原始残差用绝对1e-8（分量/弧度/无量纲margin）；局部求根接受仍是更紧的1e-11。仅 D_P `value/sky` 因 exit-Snell 的 sqrt(roundoff) 用4e-8。容差值及 basis 文本精确核验，不跨 λ 按rank配对。
+
+独立于自重算，对每个导出点/曲线样本核原始光学 margin vector、全部 validity gates（独立读回界 -1e-9）、单位球和原始 source种类。族见证另核参数区间、`rotation(q)`、SO(3)、`Ru=sun`；场值使用现有 slab 解析式或 exit丢根闭包极限，不内推。变异测试令 exporter与replay共享错误witness，仍须由第二链拒绝。曲线样本顺序沿用 upstream arc/sheet，不声称这些样本是有限 junction 集或完整曲线证书。
+
+子集 smoke（最终仍须全140导出/读回）：
+
+```bash
+uv run python scripts/export_analytic_parity.py --output-dir /tmp/parity-s6 \
+  --cells 3-5__mc_s6_corner 4-8-1-7-5__mc_s6_kink_pair --verify
+```
 
 ## 7. 更新流程
 

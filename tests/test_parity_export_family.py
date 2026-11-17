@@ -242,7 +242,9 @@ for c in m.MODULE_C_CELLS:
     names = sorted(p.name for p in directories[0].glob("*.json"))
     assert len(names) == 5
     assert names == sorted(p.name for p in directories[1].glob("*.json"))
-    assert {json.loads((directories[0] / name).read_text())["fixture_kind"] for name in names} == set(pe.MC_EXACT_KINDS)
+    assert {json.loads((directories[0] / name).read_text())["fixture_kind"] for name in names} == {
+        *pe.MC_FAMILY_KINDS, pe.MC_FAMILY_TARGET_KIND,
+    }
     for name in names:
         assert (directories[0] / name).read_bytes() == (directories[1] / name).read_bytes()
 

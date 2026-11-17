@@ -703,9 +703,9 @@ authority stays the module (`lumice_integral.chromatic`); a constant changed
 there re-exports these fixtures rather than handing the port a second
 implementation to keep in step.
 
-**Not covered here:** corridor A = 0 curves, S6 junctions (separate second-batch
-work), contour quadrature values, and module C pyramid cells. Exact-family
-restricted structures are now the additive matrix below.
+**Not covered here:** corridor A = 0 curves, contour quadrature values, and
+module C pyramid cells. Exact-family restricted structures and opportunistic
+S6 junctions are covered by the additive matrices below.
 
 ### 6.4 Exact-family structures and C16 (wave 3, second batch)
 
@@ -793,6 +793,73 @@ Coincident containment follows side-face Snell conservation; a closed trace
 only witnesses one component, with completeness `unknown`. The mirrored-y
 false-positive target preserves δ, but must retain the rejected full-sky
 witness. Consumers must not turn any partial coverage token into certification.
+
+### 6.5 S6 junctions (wave 3, second batch)
+
+The new `junction` kind is specified by [junction.md](junction.md). It uses
+schema v1, `module_c_cells`, the existing `--cells` selector and verifier
+registry; the old 133 fixtures and their comparison recipes are unchanged.
+Seven new files bring the full matrix to **140 fixtures**, with independent
+400/550/700 nm results in each new file (21 wavelength segments):
+
+| cell | coverage |
+|---|---|
+| `3-5__mc_s6_corner` | existing gate×gate corners |
+| `3-1-6__mc_s6_gate_kink` | gate×kink, original reflecting branch |
+| `4-8-1-7-5__mc_s6_kink_pair` | distinct internal reflection 1×2, transverse interior root |
+| `3-5-6-7__mc_s6_continuous` | exit-Snell/internal-1 continuous coincidence |
+| `3-1-6__mc_s6_plate_disjoint` | analytic model disjoint, not numerical absence |
+| `3-1-6__mc_s6_column` | 1D curve inside a 2D family image, both pose sheets |
+| `4-8-1-7-5__mc_s6_iteration_failure` | zero-iteration controlled failure, explicit diagnostics |
+
+**Input.** `crystal` uses a=0.5 as above; `faces` is a literal member.
+`indices[label]` contains full `wavelength_nm/refractive_index`, recomputed
+through dispersion on readback. `lattice_n=20000`, explicit source-ID `pairs`
+and all `options` (`budget`, `nearby`, `max_iterations`, `max_step`,
+`family_samples`, `family_budget`) are recorded. Family cells additionally
+carry `exact_family`, toward-sun `sun`, and `angular_domain` from §6.4.
+Controls, indices, availability and tolerance declarations are exact, not
+floating comparisons that could accept a changed budget.
+
+**Expected.** Each wavelength maps to its own result tree, including source
+identities/stratum dimensions, individual pair results, diagnostics, omitted
+strata and `exhaustive=false`. `computed/continuous/disjoint/not_found` and
+`unresolved/partial/unsupported/unsupported_continuous` must not be collapsed
+into a common empty-array result. Known exact-family refusals remain named
+per-pair data; unexpected exceptions fail the export rather than becoming
+manifest skips. A root with no regular differential has explicit
+`differential.available=false` and a reason. Raw singular-value arrays and
+family projection tangents are not parity observables; unavailable singular
+values carry an explicit `{available:false,reason}`. Nonfinite raw values are
+rejected even in omitted derivative diagnostics, never converted to null.
+No singular weights or survivor fractions are exported. All three existing
+module C conventions and their dedicated rejection messages remain in force.
+
+**Comparison and second chain.** Classifications, identities, coverage,
+failures, omissions, counts and keys/types compare exactly. Accepted point
+records match as geometric sets (one-to-one minimum-distance u/pose matching),
+not by Newton seed order. Geometry and original residuals compare at absolute
+`1e-8` (unit-vector components, radians, dimensionless margins); local root
+acceptance remains the tighter `1e-11`. Only D_P `value`/`sky` use `4e-8`, for
+sqrt(roundoff) at exit-Snell closure. Tolerance values and their basis strings
+are checked exactly. Recompute does not pair different wavelengths by rank.
+
+Independently of recomputation, every exported point and curve sample is
+checked against the original optical margin vector, all validity gates
+(independent readback bound `-1e-9`), unit sphere, and original source kind.
+Family witnesses also check parameter intervals, `rotation(q)`, SO(3) and
+`Ru=sun`; values use the existing analytic slab or dropped-root exit limit,
+never an inward perturbation. Mutation tests make exporter and replay share
+a wrong witness and require this second chain still to reject it. Curve
+sample order follows the upstream arc/sheet; it is not a claim that its
+sample points form a finite junction set or an exhaustive curve certificate.
+
+Example subset smoke (the full delivery must still export/verify all 140):
+
+```bash
+uv run python scripts/export_analytic_parity.py --output-dir /tmp/parity-s6 \
+  --cells 3-5__mc_s6_corner 4-8-1-7-5__mc_s6_kink_pair --verify
+```
 
 ## 7. Update flow
 
