@@ -6,6 +6,7 @@ No writing-repository imports or data are needed.
 
 import numpy as np
 import pytest
+from scipy.optimize import brentq, minimize_scalar
 
 from lumice_integral.camera import sun_direction
 from lumice_integral.family_sky import diagnose_sky, sky_differential
@@ -213,7 +214,8 @@ def test_mixed_domain_empty_and_partial_reflection():
     ("tangent_generators", np.full((1, 2, 3), np.inf)), ("sun_direction", SUN*2),
     ("sun_direction", SUN[None]), ("sun_direction", np.full(3, np.nan)),
     ("refractive_index", 0), ("refractive_index", np.inf), ("refractive_index", [1.31]),
-    ("faces", (3,)), ("faces", (3, 99)),
+    ("faces", (3,)), ("faces", (3, 99)), ("faces", (3.2, 5)),
+    ("faces", [[3, 5]]), ("tangent_generators", np.ones((1, 2, 3), dtype=complex)),
 ])
 def test_input_validation(name, value):
     p = np.radians([270, 90, 0])
@@ -240,3 +242,224 @@ def test_nonfinite_ad_is_explicit_and_does_not_poison_batch(monkeypatch):
     assert np.isnan(result.sky[0]).all() and np.isnan(result.dx[0]).all()
     diagnostic = diagnose_sky(result)
     assert diagnostic.mechanism.tolist() == ["unavailable", "parallel_collapse"]
+
+
+def family_result(parameters, axes, sun=SUN):
+    params = np.asarray(parameters).reshape(-1, 3)
+    return sky_differential(np.array([chain(p) for p in params]),
+                            np.array([generators(p, axes) for p in params]), PATH, sun)
+
+
+@pytest.mark.parametrize("az,roll", [(90, 115.90), (210, 5.10)])
+def test_column_signed_area_root_matches_independent_deviation_valley(az, roll):
+    def parameters(r):
+        return np.array([np.radians(az), np.pi/2, r])
+
+    def area(r):
+        return diagnose_sky(family_result(parameters(r), (0, 2))).signed_area[0]
+
+    center = np.radians(roll)
+    historical = area(center)
+    # Historical coordinates came from a 0.05-degree grid, not exact roots.
+    # At az=210 the actual 1.24164e-4 is slightly above plan's provisional
+    # 1e-4 bound; pin the independent observation instead of snapping T.
+    expected_historical = 8.92011964e-6 if az == 90 else 1.24164019e-4
+    assert historical == pytest.approx(expected_historical, abs=1e-11)
+    fd = parameter_fd(parameters(center), (0, 2), step=1e-6)
+    independent_area = independent_sky([chain(parameters(center))])[0] @ np.cross(*fd)
+    assert historical == pytest.approx(independent_area, abs=1e-10)
+    root = brentq(area, center - 0.01, center + 0.01, xtol=1e-14)
+    minimum = minimize_scalar(lambda r: -float(independent_sky([chain(parameters(r))])[0] @ SUN),
+                              bounds=(center - 0.01, center + 0.01), method="bounded",
+                              options={"xatol": 1e-13})
+    assert abs(root - center) < np.radians(0.025)  # half the source grid cell
+    assert minimum.success and abs(root - minimum.x) < 1e-5
+    assert abs(area(root)) < 1e-12
+    at_root = diagnose_sky(family_result(parameters(root), (0, 2)))
+    assert at_root.mechanism[0] == "axis_stationary" and at_root.rank[0] == 1
+    off = diagnose_sky(family_result(parameters(root + 0.05), (0, 2)))
+    assert off.mechanism[0] == "regular" and abs(off.signed_area[0]) > 1e-3
+    # A true turn in this known fixture, not inferred merely from a label.
+    x0 = independent_sky([chain(parameters(root))])[0]
+    sides = independent_sky([chain(parameters(root + d)) for d in (-1e-3, 1e-3)]) - x0
+    assert np.dot(*sides) / np.prod(np.linalg.norm(sides, axis=1)) > 0.999
+
+
+def test_lowitz_all_general_valleys_remain_regular_under_ad():
+    candidates = lowitz_valleys()
+    special = np.all(np.isclose(candidates, np.radians([270, 90, 0]), atol=1e-12), axis=1)
+    result = family_result(candidates, (0, 1))
+    diagnosis = diagnose_sky(result)
+    assert result.available.all()
+    assert (diagnosis.mechanism[~special] == "regular").all()
+    assert diagnosis.mechanism[special].tolist() == ["parallel_collapse"]
+    assert np.min(np.abs(diagnosis.signed_area[~special])) > 0.0018
+    assert np.min(diagnosis.singular_values[~special, -1]) > 0.001
+    fd = np.array([parameter_fd(p, (0, 1), step=1e-6) for p in candidates])
+    np.testing.assert_allclose(result.dx, fd, atol=3e-9, rtol=0)
+
+
+@pytest.mark.parametrize("height", [10, 15, 20, 30])
+def test_lowitz_special_symmetry_null_and_parry_passage(height):
+    sun = sun_direction(height)
+    p = np.radians([270, 90, 0])
+    result = family_result(p, (0, 1), sun)
+    d = diagnose_sky(result)
+    assert result.available.all()
+    assert d.generator_rank[0] == 2 and d.rank[0] == 1
+    assert d.mechanism[0] == "parallel_collapse"
+    assert (d.speeds[0] > 0.1).all()
+    assert abs(d.signed_area[0]) < 1e-12
+    assert np.linalg.norm(np.cross(*result.dx[0])) < 1e-12
+    assert d.singular_values[0, -1] < 1e-12
+    # Independent premises of the mirror-plane proof: body c is the plane
+    # normal, both ray segments, both angular-velocity axes are in that plane.
+    r = chain(p)
+    normal = r[:, 2]
+    assert abs(normal @ sun) < 1e-15
+    assert abs(normal @ result.sky[0]) < 1e-15
+    world_axes = (r @ generators(p, (0, 1)).T).T
+    np.testing.assert_allclose(world_axes @ normal, 0, atol=1e-15)
+    # The optical side-face normals also lie in the same principal section.
+    np.testing.assert_allclose((r @ np.array([CRYSTAL.normal(CRYSTAL.face(f)) for f in PATH]).T).T @ normal, 0, atol=1e-15)
+    np.testing.assert_allclose(np.cross(result.dx[0], normal), 0, atol=1e-12)
+    v = d.null_direction[0]
+    assert np.linalg.norm(v @ result.dx[0]) < 1e-12
+    independent_v = np.array([d.speeds[0, 1], -d.speeds[0, 0]])
+    independent_v /= np.linalg.norm(independent_v)
+    assert abs(v @ independent_v) > 1 - 1e-12
+    if height == 15:
+        assert abs(v[0]/v[1]) == pytest.approx(1.68, abs=0.01)
+        np.testing.assert_allclose(d.speeds[0], [0.27710757, 0.46611503], atol=1e-8, rtol=0)
+    # Real family curves, not the tangent's one-parameter subgroup. The null
+    # is mixed az/zenith; its second-order displacement ratio is ~4.
+    displacement, axial = [], []
+    x0 = independent_sky([chain(p)], sun)[0]
+    for step in np.radians([0.125, 0.25, 0.5]):
+        mixed = p + step * np.array([v[0], v[1], 0])
+        displacement.append(np.linalg.norm(independent_sky([chain(mixed)], sun)[0] - x0))
+        axial.append(np.linalg.norm(independent_sky([chain(p + [step, 0, 0])], sun)[0] - x0))
+    assert np.all((np.array(displacement[1:])/displacement[:-1] > 3.5) & (np.array(displacement[1:])/displacement[:-1] < 4.5))
+    np.testing.assert_allclose(np.array(axial[1:])/axial[:-1], 2, atol=0.01, rtol=0)
+    parry = family_result(p, (0,), sun)
+    parry_d = diagnose_sky(parry)
+    assert parry_d.mechanism[0] == "passing" and parry_d.signed_area is None
+    assert parry_d.speeds[0, 0] == pytest.approx(d.speeds[0, 0], abs=1e-15)
+    # Opposite sides of the Parry curve pass through, rather than turn back.
+    sides = independent_sky([chain(p + [t, 0, 0]) for t in (-1e-3, 1e-3)], sun) - x0
+    assert np.dot(*sides) / np.prod(np.linalg.norm(sides, axis=1)) < -0.999
+
+
+def test_plate_s1_ordinary_point_and_fd():
+    p = np.radians([210, 0, 0])
+    result = family_result(p, (0,))
+    d = diagnose_sky(result)
+    assert result.available[0] and d.mechanism[0] == "passing"
+    assert d.signed_area is None and d.speeds[0, 0] > 0.1
+    np.testing.assert_allclose(result.dx[0], parameter_fd(p, (0,)), atol=2e-9, rtol=0)
+
+
+def test_random_sphere_tangency_area_gram_and_parameter_transformations():
+    rotations = haar_rotations(4096, np.random.default_rng(82))
+    domain = path_domain_batch(rotations, PATH, -SUN)
+    margin = np.min(list(domain.margins.values()), axis=0)
+    rotations = rotations[domain.valid & (margin > 0.1)]
+    assert len(rotations) >= 100
+    omega = np.random.default_rng(29).normal(size=(len(rotations), 2, 3))
+    result = sky_differential(rotations, omega, PATH, SUN)
+    d = diagnose_sky(result)
+    assert result.available.all()
+    eps = np.finfo(float).eps
+    np.testing.assert_allclose(np.linalg.norm(result.sky, axis=1), 1, atol=32*eps, rtol=0)
+    tangent_residual = np.abs(np.einsum("ni,nki->nk", result.sky, result.dx))
+    assert np.all(tangent_residual < 128*eps*np.maximum(1, d.speeds))
+    error = np.abs(d.signed_area**2 - np.linalg.det(d.gram))
+    assert np.all(error <= 512*eps*np.maximum(1, np.linalg.norm(d.gram, axis=(1,2))**2))
+    swapped = diagnose_sky(sky_differential(rotations, omega[:, ::-1], PATH, SUN))
+    np.testing.assert_allclose(swapped.signed_area, -d.signed_area, atol=2e-13, rtol=1e-13)
+    scaled = diagnose_sky(sky_differential(rotations, omega * np.array([2., -3.])[None, :, None], PATH, SUN))
+    np.testing.assert_allclose(scaled.signed_area, -6*d.signed_area, atol=2e-12, rtol=1e-13)
+    assert (scaled.generator_rank == d.generator_rank).all()
+
+
+def synthetic_differential(dx, omega=None):
+    from lumice_integral.family_sky import SkyDifferential
+    derivative = np.asarray(dx, dtype=float)[None]
+    k = derivative.shape[1]
+    generators_ = np.eye(3)[:k][None] if omega is None else np.asarray(omega, dtype=float)[None]
+    return SkyDifferential(np.array([[0., 0., 1.]]), derivative, generators_, np.array([True]), np.array([True]), {})
+
+
+@pytest.mark.parametrize("dx,label,rank", [
+    ([[1,0,0], [0,1,0]], "regular", 2),
+    ([[0,0,0], [0,1,0]], "axis_stationary", 1),
+    ([[1,0,0], [2,0,0]], "parallel_collapse", 1),
+    ([[0,0,0], [0,0,0]], "rank_zero", 0),
+    ([[0,0,0]], "stationary", 0),
+    ([[1,0,0]], "passing", 1),
+])
+def test_parameter_space_mechanisms(dx, label, rank):
+    d = diagnose_sky(synthetic_differential(dx))
+    assert d.mechanism[0] == label and d.rank[0] == rank
+    np.testing.assert_allclose(d.gram[0], np.array(dx) @ np.array(dx).T, atol=1e-15)
+    np.testing.assert_allclose(d.gram_eigenvalues[0], np.linalg.eigvalsh(d.gram[0]), atol=1e-15)
+    if rank < len(dx):
+        assert np.linalg.norm(d.null_direction[0] @ np.array(dx)) < 1e-14
+
+
+@pytest.mark.parametrize("omega,rank", [([[0,0,0], [0,1,0]], 1), ([[1,0,0], [2,0,0]], 1),
+                                         ([[1e-20,0,0], [0,1e20,0]], 2), ([[0,0,0], [0,0,0]], 0)])
+def test_generator_rank_is_length_scaled_and_not_optical_compression(omega, rank):
+    result = synthetic_differential([[1,0,0], [0,1,0]], omega)
+    d = diagnose_sky(result)
+    assert d.generator_rank[0] == rank
+    assert d.mechanism[0] == ("regular" if rank == 2 else "degenerate_generators")
+
+
+def test_explicit_tolerances_do_not_snap_area_or_derivative():
+    result = synthetic_differential([[1,0,0], [0,1e-8,0]])
+    strict, loose = diagnose_sky(result), diagnose_sky(result, atol=1e-6)
+    assert strict.rank[0] == 2 and loose.rank[0] == 1
+    assert strict.signed_area[0] == loose.signed_area[0] == 1e-8
+    np.testing.assert_array_equal(result.dx[0], [[1,0,0], [0,1e-8,0]])
+    # Direct SVD resolves a nearly parallel pair whose Gram spectrum suffers
+    # cancellation. Do not obtain sigma_min by sqrt(lambda_min).
+    pair = diagnose_sky(synthetic_differential([[1,0,0], [1,1e-9,0]]))
+    assert pair.singular_values[0, -1] > 7e-10 and pair.rank[0] == 2
+    for kwargs in ({"atol": -1}, {"rtol": np.nan}, {"generator_rtol": [1e-12]}):
+        with pytest.raises(ValueError):
+            diagnose_sky(result, **kwargs)
+    with pytest.raises(ValueError, match="K=1 or K=2"):
+        diagnose_sky(synthetic_differential(np.eye(3)))
+
+
+def test_quadratic_diagnostic_overflow_is_unavailable():
+    result = synthetic_differential([[1e200, 0, 0], [0, 1e200, 0]])
+    diagnosis = diagnose_sky(result)
+    assert diagnosis.mechanism[0] == "unavailable" and diagnosis.rank[0] == -1
+    assert np.isnan(diagnosis.gram).all()
+
+
+def test_triple_product_does_not_detect_general_r3_rank():
+    x = np.array([1., 0., 0.])
+    da, db = np.array([1., 0., 0.]), np.array([0., 1., 0.])
+    assert x @ np.cross(da, db) == 0
+    assert np.linalg.matrix_rank(np.stack([da, db], axis=1)) == 2
+    assert np.linalg.det(np.array([da, db]) @ np.array([da, db]).T) == 1
+
+
+def test_near_exit_critical_angle_has_explicit_domain_semantics():
+    index = 1.31
+    critical = np.arcsin(1/index)
+    for offset in (1e-7, -1e-7):
+        theta_inside = np.pi/3 - critical + offset
+        incidence = np.arcsin(index*np.sin(theta_inside))
+        sun = np.array([np.cos(incidence), -np.sin(incidence), 0.])
+        result = sky_differential(np.eye(3)[None], np.eye(3)[[0, 2]][None], PATH, sun)
+        assert result.valid[0] == (offset > 0)
+        if offset > 0:
+            assert 0 < result.margins["exit_snell_discriminant"][0] < 1e-6
+            assert result.available[0] and np.linalg.norm(result.dx) > 100
+        else:
+            assert result.margins["exit_snell_discriminant"][0] < 0
+            assert not result.available[0] and np.isnan(result.dx).all()

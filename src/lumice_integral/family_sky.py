@@ -137,6 +137,9 @@ def sky_differential(
     if not (np.allclose(r.swapaxes(1, 2) @ r, np.eye(3), atol=1e-10, rtol=0)
             and np.allclose(np.linalg.det(r), 1.0, atol=1e-10, rtol=0)):
         raise ValueError("rotations must be in SO(3)")
+    face_array = np.asarray(faces)
+    if face_array.ndim != 1 or face_array.dtype.kind not in "iu":
+        raise ValueError("faces must be a sequence of integer face numbers")
     faces = normalize_faces(faces, crystal)
     normals = face_normals(crystal, faces)
     incident = incident_direction_from_sun(sun)
