@@ -30,3 +30,6 @@ decisions: [docs/roadmap.md](docs/roadmap.md). The accepted Phase I stack is
 [ADR 0001](docs/decisions/0001-phase-i-python-jax.md). The fixed multi-feature
 reference for `3-5`, `3-1-5`, and the two 120° plate targets is
 [docs/raypath-diagnostic-reference.md](docs/raypath-diagnostic-reference.md).
+For caller-defined pose families, the batch sky differential, signed area and
+parameter-space rank diagnostics are documented in
+[docs/family-sky-differential.md](docs/family-sky-differential.md).
