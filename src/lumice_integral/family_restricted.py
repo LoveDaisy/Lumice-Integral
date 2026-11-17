@@ -247,9 +247,16 @@ def _roots_periodic(f, df, *, samples=360, budget=4096):
 def _circle_roots(a, h, b, k):
     """Analytic plane-circle intersections on the unit sphere; None=coincident."""
     dot = float(a @ b)
-    if abs(abs(dot) - 1) < 1e-12:
-        return None if abs(k - dot * h) < 1e-12 else []
-    centre = np.array([a, b]).T @ np.linalg.solve(np.array([[1., dot], [dot, 1.]]), np.array([h, k]))
+    direction = np.cross(a, b)
+    sine = float(np.linalg.norm(direction))
+    identity_atol = 8*np.finfo(float).eps
+    if sine <= identity_atol:
+        return None if abs(k - dot * h) <= identity_atol*max(1., abs(h), abs(k)) else []
+    # Gram inversion loses sin(theta)^2 near parallel planes. Build the
+    # orthogonal basis from the cross product instead: b=dot*a+sine*e2.
+    direction /= sine
+    perpendicular = np.cross(direction, a)
+    centre = h*a + ((k-dot*h)/sine)*perpendicular
     square = 1 - centre @ centre
     # Only roundoff-scale residuals collapse to one contact. A small but
     # resolved positive radicand is TWO roots, not a tolerance-merged tangent.
@@ -258,8 +265,6 @@ def _circle_roots(a, h, b, k):
         return []
     if abs(square) <= roundoff:
         return [(centre / np.linalg.norm(centre), "tangent")]
-    direction = np.cross(a, b)
-    direction /= np.linalg.norm(direction)
     return [(centre + sign * np.sqrt(square) * direction, "transverse") for sign in (-1, 1)]
 
 

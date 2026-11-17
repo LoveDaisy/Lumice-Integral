@@ -129,6 +129,16 @@ def test_analytic_circle_intersections_include_seam_tangent_coincidence_empty():
     # Resolved near-double roots must not be tolerance-merged into a tangent.
     near = _circle_roots(a, .6, b, .8-1e-13)
     assert len(near) == 2 and all(state == "transverse" for _, state in near)
+    # Near parallel is not parallel; close plane heights are not an identity.
+    tilted = np.array([np.sin(1e-6), 0., np.cos(1e-6)])
+    near_parallel = _circle_roots(a, .3, tilted, .3)
+    assert len(near_parallel) == 2
+    for p, state in near_parallel:
+        assert state == "transverse"
+        assert p @ a == pytest.approx(.3, abs=1e-14)
+        assert p @ tilted == pytest.approx(.3, abs=1e-14)
+        assert p @ p == pytest.approx(1., abs=1e-14)
+    assert _circle_roots(a, .3, a, .3+1e-13) == []
     u = tangent[0][0]
     # Two sides of the genuine contact have same sign and quadratic growth.
     for t in (1e-2, 5e-3):
