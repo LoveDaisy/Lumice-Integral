@@ -73,6 +73,13 @@ keeps a commuting-with-everything ``I`` out.  The label is the ``sigma -> 0``
 support: at ``sigma > 0`` a pinned family's deviation spread is proportional
 to ``sigma`` rather than finite as ``sigma -> 0``, it is not zero.
 
+The complementary sky-side instrument :mod:`.family_sky` differentiates a
+caller-defined pose family directly into the sky sphere (speeds, signed area,
+parameter-space rank and first-order mechanisms). It shares the right-trivialized
+body angular-velocity convention, not this module's classifier or labels;
+see ``docs/family-sky-differential.md``. Rank loss there is a local candidate,
+not by itself a brightness or second-order fold certificate.
+
 Nothing here changes a value the quadratures compute; the labels are read
 from the same critical data (:class:`.dp_field.DPField`) and density
 (:mod:`.pose_density`) the renderers use.
