@@ -106,6 +106,7 @@ from scipy.spatial import cKDTree
 from .. import optics
 from ..geometry import HexPrism, Polyhedron, fold_matrix
 from ..s2_store import fibonacci_sphere
+from ..spherical_newton import refine_pair
 from .field import Faces, body_normals, d_p_exit_limit, d_p_grazing, d_value, margin_vector, valid_batch
 
 # March step along a boundary piece (rad).
@@ -462,26 +463,12 @@ class Walker:
     def refine_corner(self, u: np.ndarray, a: str, b: str) -> np.ndarray:
         """Two-margin tangent-plane Newton on ``m_a = m_b = 0`` (left as is if the curves are tangent there)."""
         ka, kb = self.k(a), self.k(b)
-        best = u
-        best_residual = self._residual(u, (a, b))
-        for _ in range(30):
-            m, j = self.margins_jacobian(u)
-            axis = np.eye(3)[int(np.argmin(np.abs(u)))]
-            e1 = _unit(np.cross(u, axis))
-            e2 = np.cross(u, e1)
-            jac = np.array([[j[ka] @ e1, j[ka] @ e2], [j[kb] @ e1, j[kb] @ e2]])
-            if abs(np.linalg.det(jac)) < 1e-14:
-                break
-            step = np.linalg.solve(jac, -np.array([m[ka], m[kb]]))
-            if np.linalg.norm(step) > 1e-3:
-                break
-            u = _unit(u + step[0] * e1 + step[1] * e2)
-            residual = self._residual(u, (a, b))
-            if residual < best_residual:
-                best, best_residual = u, residual
-            if residual <= 1e-16:
-                break
-        return best
+
+        def evaluate(position: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+            m, j = self.margins_jacobian(position)
+            return m[[ka, kb]], j[[ka, kb]]
+
+        return refine_pair(u, evaluate, lambda position: self._residual(position, (a, b))).position
 
     def _residual(self, u: np.ndarray, names: tuple[str, ...]) -> float:
         m = self.margins(u)

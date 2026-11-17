@@ -13,6 +13,7 @@ from lumice_integral.dp_field import boundary as B
 from lumice_integral.dp_field import field as F
 from lumice_integral.geometry import fold_matrix
 from lumice_integral.s2_store import fibonacci_sphere
+from lumice_integral.spherical_newton import PairRefinement
 
 N = 1.31
 FIXTURES = ((3, 5), (1, 3), (3, 1, 6), (1, 3, 2), (3, 5, 6, 7, 3))
@@ -211,6 +212,43 @@ def test_walker_d_off_the_closure_still_raises() -> None:
     assert all(float(margins[walker.k(n)]) > 0.0 for n in walker.active if n != "exit_snell_discriminant")
     with pytest.raises(RuntimeError, match="not finite"):
         walker.d(out)
+
+
+def test_refine_corner_adapter_keeps_original_rows_residual_and_best_point(monkeypatch) -> None:
+    walker = B.Walker(canonical_crystal(), (3, 5), N, None)
+    a, b = "exit_snell_discriminant", "entry_incidence_cosine"
+    ka, kb = walker.k(a), walker.k(b)  # deliberately not in margin-vector order
+    start = np.array([0.0, 0.0, 1.0])
+    best = np.array([0.0, 1.0, 0.0])
+    m = np.arange(len(walker.names), dtype=float)
+    j = np.arange(len(walker.names) * 3, dtype=float).reshape(-1, 3)
+    calls = []
+
+    def margins_jacobian(u):
+        assert u is start
+        calls.append("joint")
+        return m, j
+
+    def margins(u):
+        assert u is start
+        calls.append("independent")
+        # The independent residual must not reuse m from the joint evaluation.
+        return m + 100.0
+
+    def refine(u, evaluate, residual):
+        assert u is start
+        values, jacobian = evaluate(u)
+        assert values.tobytes() == m[[ka, kb]].tobytes()
+        assert jacobian.tobytes() == j[[ka, kb]].tobytes()
+        assert residual(u) == max(abs(float(m[k] + 100.0)) for k in (ka, kb))
+        # Legacy compatibility must return the best position even on failure.
+        return PairRefinement(best, 123.0, "singular", 1)
+
+    monkeypatch.setattr(walker, "margins_jacobian", margins_jacobian)
+    monkeypatch.setattr(walker, "margins", margins)
+    monkeypatch.setattr(B, "refine_pair", refine)
+    assert walker.refine_corner(start, a, b) is best
+    assert calls == ["joint", "independent"]
 
 
 def test_liljequist_corners_carry_every_vanishing_margin(fields) -> None:
