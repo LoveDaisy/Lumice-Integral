@@ -79,6 +79,18 @@ $$
 - *核验。* `scripts/verify_dp_field_intervals.py` 在稠密网格上经 `evaluate_fields` 重算每个区间的计数：闭环取不触及边界的子/超水平集区域，开弧取沿追踪出的网格边界（经二分移到 $\partial U_P$ 上）的穿越次数（只用节点值不行：$D_P$ 离开 exit TIR 曲线按平方根下降）。五条 fixture 与 A60-10 成员 `3-5-6-7`、`3-4-5-7` 全部区间一致；`3-5-6-7` 在默认 20000 点格上也核验通过（细颈在那里的两块计数是分辨率伪影，由图表审计纠正为一；task `dp-thin-neck-topology`），A60-10 fixture 仍用 `--lattice-n 50000`——该密度下格点自己就能分辨细颈；实测值见英文版附录。
 - *权重折线*（task `chromatic-weight-kink-diagnostic`，2026-09-30；`DPField.weight_kinks`、`dp_field.weight_kink`）。这是第三类临界线：每个内反射的全反射起点 $C_k = \{\mathrm{disc}_k = 0\}$，$R_k$ 在此出现折点，但定义域并不在此终止。它与区间划分并列追踪，不进入区间划分。展开后的入射法向满足 $\mathbf m_k\cdot\mathbf n_a = 0$ 时，$C_k$ 是小圆 $\mathbf m_k\cdot\mathbf u = -\sqrt{n^2-1}$ 截在 $U_P$ 内的部分；否则用边界行走的步进器从格点种子双向行走，不声称找全。单镜面 slab（`3-1-6`、`1-3-2`）上整个圆都落在 $D = 2\arcsin\sqrt{n^2-1}$ 上，即反日点暗洞的边沿。它呈蓝色，因为边沿随 $n$ 移动，方向映射却不随 $n$ 变。建立在这些曲线和随 $n$ 移动的闸门之上的彩色判据见 [chromatic-module-c.md](chromatic-module-c.md)（英文）。
 
+### 3.1a 精确族受限结构
+
+加法模块 [`family_restricted`](family-restricted.md) 把精确姿态支撑与有限宽 Gaussian 分开：求 D 对族 u 像的**限制函数**临界集（不是与全场驻点取交），求 kind-2/3 margin 与族像的交，再经真实族姿态原像映射 kink 天空像。plate/Parry 一参数，column/Lowitz 两参数；Lowitz 保留 zenith 自由度。一维 Morse 极值的剖面是 inverse-square-root，解析不变的常值集是 delta 质量、无有限 multiplicity。数值枚举及上游曲线采样继续携带非穷尽 coverage；非孤立 jet、连续原像和未支持图表裁剪具名拒答，不升级成全局认证。
+
+C11 同时对 sun9/117.599764° 与 sun20/108.937304° 做真实 ±120° 相对方位天空核验。`family_target` 另对 literal 3-5 在 SO(3) 纤维上给 C16 局部证据：横交、重算 column 真切触、整条闭合 fiber 包含于 column，以及 Lowitz u 投影假阳性。二维族内的一条完整纤维不意味着整族 pinned。逐波长结果独立生成，加法 parity kind 携带姿态、残差、域端点、可用性及拒答；不新增渲染器、不声称全族全局分类，也不预测亮度峰线。字段与读回规范见 [parity 合同](analytic-parity-fixtures_zh.md)。
+
+### 3.1b S6 junction
+
+加法 [`junction` 原型](junction_zh.md) 求已有 kind-1 点/已知折痕分层、kind-2 门、kind-3 权重折线及精确族 u 像的交。与旧角点 walker 共享唯一机械二约束球面 Newton，旧结果不移动；S6 另验原始残差、全部有效域门、秩及局部 source 成员。解析圆相切/结构重合与数值退秩未解决分开；连续交仍为曲线，不能把有限采样点冒充 junction 集，同 u 的真实姿态原像全部保留。
+
+枚举明确**非穷尽**。解析 `disjoint`、数值 `not_found`、候选失败、预算耗尽及不支持分层分别表达；部分成功不吞上游失败。走廊 A=0 与一般新临界流形发现仍不在范围。7 个加法 `junction` fixture 覆盖真实 gate×gate、gate×kink、不同反射事件 kink×kink、族交、连续重合与受控无交/失败，见 [parity 合同](analytic-parity-fixtures_zh.md#65-s6-junction波次-3-第二批)。
+
 ### 3.2 分层不变性：一个晕共享什么、变化什么
 
 像素的纤维 $\{R : R\,\Phi_P(-R^{-1}\hat{\mathbf s}) = \mathbf d\}$ 只经由 $\Phi_P$ 依赖于光路。于是：

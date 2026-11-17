@@ -2094,6 +2094,13 @@ MC_FOCUSING_KIND = "focusing_classify"
 MC_WAVELENGTH_KIND = "wavelength_critical_table"
 MC_CHROMATIC_KIND = "chromatic_diagnose"
 MC_CHROMATIC_CLASS_KIND = "chromatic_class"
+MC_FAMILY_CRITICAL_KIND = "family_critical"
+MC_FAMILY_MARGIN_KIND = "family_margin"
+MC_FAMILY_KINK_SKY_KIND = "family_kink_sky"
+MC_FAMILY_TARGET_KIND = "family_target"
+MC_FAMILY_KINDS = (MC_FAMILY_CRITICAL_KIND, MC_FAMILY_MARGIN_KIND, MC_FAMILY_KINK_SKY_KIND)
+MC_JUNCTION_KIND = "junction"
+MC_EXACT_KINDS = (*MC_FAMILY_KINDS, MC_FAMILY_TARGET_KIND, MC_JUNCTION_KIND)
 MC_KINDS = (
     MC_FIELD_SAMPLE_KIND,
     MC_FIELD_TOPOLOGY_KIND,
@@ -2102,6 +2109,7 @@ MC_KINDS = (
     MC_WAVELENGTH_KIND,
     MC_CHROMATIC_KIND,
     MC_CHROMATIC_CLASS_KIND,
+    *MC_EXACT_KINDS,
 )
 MC_LATTICE_N = 20_000  # the dp_field layer's own default lattice (DPField.build)
 MC_SAMPLE_TARGET = 256  # the dp_field_sample u subset size (strided from the valid lattice points)
@@ -2214,12 +2222,23 @@ class MCCell:
     family_sun_altitude_deg: float = 9.0
     family_samples: int = 100_000
     family_seed: int = 3
+    # Additive exact-support inputs; old kinds never serialize these defaults.
+    exact_family: str = "plate"
+    exact_family_roll: float = 0.0
+    exact_sun: tuple[float, float, float] | None = None
+    restricted_margin: str = "internal_1_tir_discriminant"
+    restricted_samples: int = 32
+    restricted_budget: int = 4096
+    target_case: Mapping[str, Any] = field(default_factory=dict)
+    junction_pairs: tuple[tuple[str, str], ...] = ()
+    junction_family: bool = False
+    junction_options: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         unknown = set(self.kinds) - set(MC_KINDS)
         if unknown:
             raise ValueError(f"unknown module C fixture kinds {sorted(unknown)}")
-        if any(kind in self.kinds for kind in (MC_FIELD_SAMPLE_KIND, MC_FIELD_TOPOLOGY_KIND, MC_FOCUSING_KIND, MC_WAVELENGTH_KIND, MC_FIELD_KINKS_KIND)) and not self.indices:
+        if any(kind in self.kinds for kind in (*MC_EXACT_KINDS, MC_FIELD_SAMPLE_KIND, MC_FIELD_TOPOLOGY_KIND, MC_FOCUSING_KIND, MC_WAVELENGTH_KIND, MC_FIELD_KINKS_KIND)) and not self.indices:
             raise ValueError(f"cell {self.label} needs at least one (label, n) index")
 
     @property
@@ -3118,6 +3137,708 @@ def _mc_cell_record(cell: MCCell) -> dict[str, Any]:
     }
 
 
+# Exact-family serialization deliberately delegates every structural decision to
+# family_restricted.  In particular, a refusal is not an empty computed set.
+MC_FAMILY_ATOL = 1e-8
+MC_FAMILY_BASIS = (
+    "absolute float64 component/radian tolerance: analytic lifts close Ru=sun to 5e-9; "
+    "isolated roots use brentq xtol=1e-13 and upstream gate walks locate endpoints to ~1e-12. "
+    "1e-8 leaves rounding room, not a global completeness claim. All keys, types, availability, "
+    "coverage and classifications compare exactly. Each exported pose is also checked through "
+    "forward optics and Ru=sun; tangent is checked independently by central differences "
+    "(h=1e-5, O(h^2) truncation). No sampled curve is promoted to a certificate."
+)
+MC_FAMILY_FORWARD_BASIS = (
+    "forward trace_path of the exported pose, independent of restricted-set replay; interior sky/value "
+    "agreement at 1e-10. At min_gate < 1e-9, raw Snell sqrt(roundoff) loses ~1e-8 even when the "
+    "restricted slab uses its analytic mirror limit: 4e-8 component/radian tolerance for this forward "
+    "cross-check only. Exit discriminants within 1e-12 use the explicit zero-root limit, never inpush."
+)
+
+
+def _mc_family_tolerances() -> dict[str, Any]:
+    return {
+        "numeric": _tolerance(MC_FAMILY_ATOL, MC_FAMILY_BASIS),
+        "forward_interior": _tolerance(1e-10, MC_FAMILY_FORWARD_BASIS),
+        "forward_gate": _tolerance(4e-8, MC_FAMILY_FORWARD_BASIS),
+    }
+
+
+def _mc_family_domain(family) -> dict[str, Any]:
+    coordinates = ["azimuth"]
+    intervals = [[0.0, 2 * math.pi]]
+    periodic = [True]
+    if family.name == "column":
+        coordinates.append("roll")
+        intervals.append([0.0, 2 * math.pi])
+        periodic.append(True)
+    elif family.name == "lowitz":
+        coordinates.append("zenith")
+        intervals.append([0.0, math.pi])
+        periodic.append(False)
+    return {"coordinates": coordinates, "intervals_rad": intervals, "periodic": periodic,
+            "convention": "periodic intervals half-open; Lowitz zenith endpoints included"}
+
+
+def _mc_family_json(value: Any, key: str = "") -> Any:
+    """Strict full-fidelity JSON, with explicit reasons for the authority's nulls."""
+    if value is None:
+        reasons = {
+            "multiplicity": "nonisolated constant set has no finite multiplicity",
+            "image_dimension": "empty sky image has no dimension",
+            "ends": "upstream curve endpoint has no named gate",
+        }
+        if key not in reasons:
+            raise ValueError(f"family authority returned unexplained unavailable {key!r}")
+        return {"available": False, "reason": reasons[key]}
+    if isinstance(value, Mapping):
+        result = {}
+        for k, v in value.items():
+            reason_key = "derivative_unavailable" if k == "derivative_residual" else f"{k}_unavailable"
+            if v is None and reason_key in value:
+                reason = value[reason_key]
+                if not isinstance(reason, str) or not reason:
+                    raise ValueError(f"family authority returned invalid unavailability reason for {k}")
+                result[str(k)] = {"available": False, "reason": reason}
+            else:
+                result[str(k)] = _mc_family_json(v, str(k))
+        return result
+    if isinstance(value, np.ndarray):
+        return _mc_family_json(value.tolist(), key)
+    if isinstance(value, (list, tuple)):
+        return [_mc_family_json(v, key) for v in value]
+    result = _jsonable(value)
+    if isinstance(result, float) and not math.isfinite(result):
+        raise ValueError(f"non-finite family observable {key!r}")
+    return result
+
+
+def _mc_family_result(kind: str, field, family, sun, data) -> dict[str, Any]:
+    from .family_restricted import RestrictedEscape, intersect_margin, kink_sky, restricted_critical
+
+    try:
+        if kind == MC_FAMILY_CRITICAL_KIND:
+            result = restricted_critical(field, family, sun, **data["options"])
+        else:
+            authority = intersect_margin if kind == MC_FAMILY_MARGIN_KIND else kink_sky
+            result = authority(field, family, sun, data["margin"], **data["options"])
+    except RestrictedEscape as error:
+        return {"status": "refused", "available": False, "regime": error.regime, "reason": str(error)}
+    return {"status": "computed", "available": True, "result": _mc_family_json(result)}
+
+
+def _mc_family_indices(cell: MCCell) -> dict[str, Any]:
+    from .spectrum.dispersion import refractive_index
+
+    indices = {}
+    for label, index in cell.indices:
+        wavelength = float(label.removesuffix("nm"))
+        if label != f"{wavelength:g}nm" or label in indices or float(index) != float(refractive_index(wavelength)):
+            raise ValueError(f"family index must be unique and equal spectrum.refractive_index({wavelength})")
+        indices[label] = {"wavelength_nm": wavelength, "refractive_index": float(index)}
+    return indices
+
+
+def build_mc_family_fixture(cell: MCCell, provenance: Mapping[str, Any], kind: str) -> dict[str, Any]:
+    from .camera import sun_direction
+    from .family_restricted import ExactFamily
+
+    if kind not in MC_FAMILY_KINDS:
+        raise ValueError(f"not a family fixture kind: {kind}")
+    family = ExactFamily(cell.exact_family, cell.exact_family_roll)
+    sun = np.asarray(cell.exact_sun if cell.exact_sun is not None else sun_direction(cell.family_sun_altitude_deg, 0.0))
+    indices = _mc_family_indices(cell)
+    data = {
+        "crystal": dict(cell.crystal_spec), "faces": list(cell.faces), "indices": indices,
+        "sun": sun.tolist(), "exact_family": {"name": family.name, "roll_rad": float(family.roll)},
+        "angular_domain": _mc_family_domain(family), "lattice_n": MC_LATTICE_N,
+        "options": {"samples": cell.restricted_samples, "budget": cell.restricted_budget},
+    }
+    if kind != MC_FAMILY_CRITICAL_KIND:
+        data["margin"] = cell.restricted_margin
+    fixture = _header(kind, provenance, _mc_cell_record(cell))
+    fixture["input"] = data
+    fixture["expected"] = {label: _mc_family_result(kind, mc_field(cell.crystal_spec, cell.faces, index), family, sun, data)
+                           for label, index in cell.indices}
+    fixture["tolerance"] = _mc_family_tolerances()
+    return fixture
+
+
+def build_mc_family_critical_fixture(cell: MCCell, provenance: Mapping[str, Any]) -> dict[str, Any]:
+    return build_mc_family_fixture(cell, provenance, MC_FAMILY_CRITICAL_KIND)
+
+
+def build_mc_family_margin_fixture(cell: MCCell, provenance: Mapping[str, Any]) -> dict[str, Any]:
+    return build_mc_family_fixture(cell, provenance, MC_FAMILY_MARGIN_KIND)
+
+
+def build_mc_family_kink_sky_fixture(cell: MCCell, provenance: Mapping[str, Any]) -> dict[str, Any]:
+    return build_mc_family_fixture(cell, provenance, MC_FAMILY_KINK_SKY_KIND)
+
+
+def _mc_family_compare(check: Check, got: Any, expected: Any, where: str) -> None:
+    """Compare every leaf, including additions/removals and JSON numeric types."""
+    if type(got) is not type(expected):
+        check.expect(False, f"{where}: type/availability differs")
+    elif isinstance(got, dict):
+        check.expect(got.keys() == expected.keys(), f"{where}: keys/availability differ")
+        for key in got:
+            if key in expected:
+                _mc_family_compare(check, got[key], expected[key], f"{where}.{key}")
+    elif isinstance(got, list):
+        check.expect(len(got) == len(expected), f"{where}: count/coverage differs")
+        for i, (a, b) in enumerate(zip(got, expected)):
+            _mc_family_compare(check, a, b, f"{where}[{i}]")
+    elif isinstance(got, float):
+        _close(check, where, got, expected, MC_FAMILY_ATOL)
+    else:
+        check.expect(got == expected, f"{where}: {got!r} != {expected!r}")
+
+
+def _mc_family_points(value):
+    if isinstance(value, dict):
+        if {"q", "rotation", "u", "sky", "tangent", "value"} <= value.keys():
+            yield value
+        else:
+            for item in value.values():
+                yield from _mc_family_points(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _mc_family_points(item)
+
+
+def _mc_family_forward(check: Check, field, family, sun: np.ndarray, point, where: str, margin: str | None) -> None:
+    from . import optics
+
+    q, r, u, sky = (np.asarray(point[key], dtype=float) for key in ("q", "rotation", "u", "sky"))
+    if q.shape != (family.dimension,) or r.shape != (3, 3) or u.shape != (3,) or sky.shape != (3,):
+        check.expect(False, f"{where}: pose/vector shape differs")
+        return
+    _close(check, where + " rotation(q)", r, family.rotation(q), MC_FAMILY_ATOL)
+    for coordinate, interval, periodic in zip(q, _mc_family_domain(family)["intervals_rad"], _mc_family_domain(family)["periodic"]):
+        check.expect(interval[0] - 1e-12 <= coordinate <= interval[1] + (0 if periodic else 1e-12), where + " parameter outside canonical domain")
+    gates = field.validity_margins_batch(u[None])[0]
+    check.expect(np.isfinite(gates).all() and min(gates) >= -1e-9, where + " invalid optical gates")
+    _close(check, where + " min_gate", point["min_gate"], min(gates), MC_FAMILY_ATOL)
+    _close(check, where + " sky norm", np.linalg.norm(sky), 1.0, MC_FAMILY_ATOL)
+    _close(check, where + " Ru=sun", r @ u, sun, MC_FAMILY_ATOL)
+    _close(check, where + " R orthogonal", r.T @ r, np.eye(3), MC_FAMILY_ATOL)
+    _close(check, where + " det R", np.linalg.det(r), 1.0, MC_FAMILY_ATOL)
+    h = 1e-5
+    tangent = np.stack([(np.asarray(family.u(q + h * e, sun)) - np.asarray(family.u(q - h * e, sun))) / (2 * h)
+                        for e in np.eye(family.dimension)], axis=1)
+    _close(check, where + " finite difference tangent", point["tangent"], tangent, MC_FAMILY_ATOL)
+    # Evaluate the *exported* witness, not the witness produced by replaying the restriction.
+    evaluation = optics.trace_path(jnp.asarray(r), field.normals, jnp.asarray(-sun), jnp.asarray(field.index))
+    forward_sky = -np.asarray(evaluation.direction)
+    if not np.isfinite(forward_sky).all() or abs(float(evaluation.exit.discriminant)) < 1e-12:
+        # Explicit exit-Snell closure; never perturb the pose or suppress other NaNs.
+        gates = field.validity_margins_batch(u[None])[0]
+        check.expect(min(gates) >= -1e-9, where + " invalid closure gates")
+        check.expect(abs(float(evaluation.exit.discriminant)) <= 1e-9, where + " not an exit-Snell closure")
+        d = evaluation.internal[-1].direction if evaluation.internal else evaluation.entry.direction
+        forward_sky = -np.asarray(field.index * d - field.index * evaluation.exit.incidence_cosine * (r @ field.normals[-1]))
+        forward_sky /= np.linalg.norm(forward_sky)
+    forward_tolerance = 4e-8 if min(gates) < 1e-9 else 1e-10
+    _close(check, where + " forward optics sky", sky, forward_sky, forward_tolerance)
+    angle = float(np.arctan2(np.linalg.norm(np.cross(forward_sky, sun)), forward_sky @ sun))
+    _close(check, where + " forward optics value", point["value"], angle, forward_tolerance)
+    if margin is not None:
+        names = optics.domain_margin_names(field.faces)
+        _close(check, where + " margin zero", field.margins_batch(u[None])[0, names.index(margin)], 0.0, MC_FAMILY_ATOL)
+
+
+def verify_mc_family(fixture: Mapping[str, Any], name: str = "") -> Check:
+    from .dp_field import DPField
+    from .family_restricted import ExactFamily
+    from .spectrum.dispersion import refractive_index
+
+    check = Check(name)
+    data, expected = fixture["input"], fixture["expected"]
+    family = ExactFamily(data["exact_family"]["name"], data["exact_family"]["roll_rad"])
+    sun = np.asarray(data["sun"], dtype=float)
+    _mc_family_compare(check, _mc_family_domain(family), data["angular_domain"], "angular_domain")
+    _mc_family_compare(check, _mc_family_tolerances(), fixture["tolerance"], "tolerance")
+    check.expect(data["indices"].keys() == expected.keys(), "wavelength availability/coverage differs")
+    for label, spectral in data["indices"].items():
+        check.expect(label == f'{spectral["wavelength_nm"]:g}nm', f"{label}: wavelength label differs")
+        check.expect(spectral["refractive_index"] == refractive_index(spectral["wavelength_nm"]), f"{label}: n(lambda) differs")
+        field = DPField.build(build_crystal(data["crystal"]), data["faces"], spectral["refractive_index"], lattice_n=data["lattice_n"])
+        got = _mc_family_result(fixture["fixture_kind"], field, family, sun, data)
+        if label not in expected:
+            continue
+        before = len(check.failures)
+        _mc_family_compare(check, got, expected[label], label)
+        if len(check.failures) == before:  # malformed JSON is already rejected; do not coerce its types
+            for i, point in enumerate(_mc_family_points(expected[label])):
+                _mc_family_forward(check, field, family, sun, point, f"{label} point {i}", data.get("margin"))
+    return check
+
+
+MC_TARGET_BASIS = (
+    "absolute 1e-8 float64 component/radian tolerance for full local target/family results, including "
+    "jets, singular values, corrected offsets and positive A/T. SVD fiber_tangent uses the authority's "
+    "largest-component-positive sign convention. Every wavelength solves its own locator/target and "
+    "keeps unresolved seeds and unsupported reasons: neither nearest-root matching nor certification. "
+    "All keys, availability, types, classifications and coverage compare exactly. check_target_pose "
+    "independently replays each pose, including rejected projection/deviation-only witnesses."
+)
+
+
+def _mc_target_result(data, index: float) -> dict[str, Any]:
+    from .family_restricted import ExactFamily
+    from .family_target import check_target_pose, intersect_target, locate_elevation_witness
+
+    family = ExactFamily(data["exact_family"]["name"], data["exact_family"]["roll_rad"])
+    sun, crystal = data["sun"], build_crystal(data["crystal"])
+    case = data["target_construction"]
+    kwargs = {"refractive_index": index, "crystal": crystal}
+    outputs = {}
+    if case["mode"] == "fixed":
+        primary = intersect_target(family, sun, case["target"], case["seeds"], **kwargs, **data["options"])
+        outputs["intersection"] = primary
+    elif case["mode"] == "elevation_locator":
+        locator = locate_elevation_witness(family, sun, case["elevation_deg"], case["seed"], **kwargs)
+        outputs["locator"] = locator
+        primary = locator
+        if locator["status"] == "computed":
+            target = locator["target"]
+            seeds = [p["q"] for p in locator["records"]]
+            primary = intersect_target(family, sun, target, seeds, **kwargs, **data["options"])
+            outputs["intersection"] = primary
+            if case.get("companion_checks", False):
+                if family.name != "parry" or family.roll != 0:
+                    raise ValueError("C16 companion checks require the roll-zero Parry locator")
+                q = locator["records"][0]["q"]
+                outputs["lowitz"] = intersect_target(ExactFamily("lowitz"), sun, target, [[q[0], math.pi/2]], **kwargs, **data["options"])
+                wrong = np.asarray(target).copy()
+                wrong[1] *= -1
+                outputs["projection_false_positive"] = check_target_pose(ExactFamily("lowitz"), [q[0], math.pi/2], sun, wrong, **kwargs)
+        else:
+            outputs["intersection"] = {"available": False, "reason": "locator_unavailable: " + locator["reason"]}
+            if case.get("companion_checks", False):
+                for key in ("lowitz", "projection_false_positive"):
+                    outputs[key] = {"available": False, "reason": "locator_unavailable: " + locator["reason"]}
+    else:
+        raise ValueError(f"unknown C16 target construction {case['mode']!r}")
+    result = {"status": primary["status"], "available": primary["status"] == "computed", "results": outputs}
+    if primary["status"] != "computed":
+        result["reason"] = primary["reason"]
+    return _mc_family_json(result)
+
+
+def build_mc_family_target_fixture(cell: MCCell, provenance: Mapping[str, Any]) -> dict[str, Any]:
+    from .camera import sun_direction
+    from .family_restricted import ExactFamily
+
+    if cell.faces != (3, 5):
+        raise ValueError("family_target authority implements only literal path 3-5")
+    family = ExactFamily(cell.exact_family, cell.exact_family_roll)
+    sun = cell.exact_sun if cell.exact_sun is not None else sun_direction(cell.family_sun_altitude_deg, 0.0)
+    construction = _jsonable(cell.target_case)
+    options = construction.pop("options", {"maximum_evaluations": 100, "maximum_trace_steps": 1000})
+    data = {
+        "crystal": dict(cell.crystal_spec), "faces": list(cell.faces), "sun": _jsonable(sun),
+        "exact_family": {"name": family.name, "roll_rad": float(family.roll)},
+        "angular_domain": _mc_family_domain(family), "indices": _mc_family_indices(cell),
+        "target_construction": construction, "options": options,
+    }
+    fixture = _header(MC_FAMILY_TARGET_KIND, provenance, _mc_cell_record(cell))
+    fixture["input"] = data
+    fixture["expected"] = {label: _mc_target_result(data, spectral["refractive_index"]) for label, spectral in data["indices"].items()}
+    fixture["tolerance"] = {"numeric": _tolerance(MC_FAMILY_ATOL, MC_TARGET_BASIS)}
+    return fixture
+
+
+def _mc_target_contexts(value):
+    if isinstance(value, dict):
+        if {"family", "roll_lock", "sun", "target", "refractive_index"} <= value.keys():
+            yield value
+        else:
+            for item in value.values():
+                yield from _mc_target_contexts(item)
+
+
+def _mc_target_forward(check: Check, data, context, where: str) -> None:
+    from .family_restricted import ExactFamily
+    from .family_target import check_target_poses
+
+    family = ExactFamily(context["family"], context["roll_lock"])
+    points = list(context.get("records", []))
+    for curve in context.get("curves", []):
+        points.extend(curve["points"])
+    if "witness" in context:
+        points.append(context["witness"])
+    replays = check_target_poses(family, [point["q"] for point in points], context["sun"], context["target"], refractive_index=context["refractive_index"], crystal=build_crystal(data["crystal"]))["witnesses"]
+    check.expect(len(replays) == len(points), where + " forward witness availability differs")
+    for i, (point, replay) in enumerate(zip(points, replays)):
+        label = f"{where} witness {i}"
+        # The batch authority runs check_target_pose's full base witness for
+        # every point with one model/JIT identity, without subsampling.
+        # The contact type/jet/curve fields are compared by full authoritative replay.
+        _mc_family_compare(check, replay, {k: point[k] for k in replay if k in point}, label)
+        if not {"rotation", "u", "sky"} <= point.keys():
+            continue  # explicitly unsupported witness, already compared including its reason
+        r, u, sun = (np.asarray(x, dtype=float) for x in (point["rotation"], point["u"], context["sun"]))
+        _close(check, label + " Ru=sun", r @ u, sun, MC_FAMILY_ATOL)
+        _close(check, label + " rotation(q)", r, family.rotation(np.asarray(point["q"])), MC_FAMILY_ATOL)
+        if "fiber_tangent" in point:
+            # A line sign is fixed by the authority, never by sorting roots or
+            # choosing the nearest witness at another wavelength.
+            tangent = np.asarray(point["fiber_tangent"])
+            _close(check, label + " fiber tangent norm", tangent @ tangent, 1.0, MC_FAMILY_ATOL)
+            check.expect(tangent[np.argmax(abs(tangent))] > 0, label + " noncanonical fiber tangent sign")
+
+
+def verify_mc_family_target(fixture: Mapping[str, Any], name: str = "") -> Check:
+    from .family_restricted import ExactFamily
+    from .spectrum.dispersion import refractive_index
+
+    check = Check(name)
+    data, expected = fixture["input"], fixture["expected"]
+    family = ExactFamily(data["exact_family"]["name"], data["exact_family"]["roll_rad"])
+    check.expect(data["faces"] == [3, 5], "target authority requires literal path 3-5")
+    _mc_family_compare(check, _mc_family_domain(family), data["angular_domain"], "angular_domain")
+    _mc_family_compare(check, {"numeric": _tolerance(MC_FAMILY_ATOL, MC_TARGET_BASIS)}, fixture["tolerance"], "tolerance")
+    check.expect(data["indices"].keys() == expected.keys(), "target wavelength availability/coverage differs")
+    for label, spectral in data["indices"].items():
+        check.expect(label == f'{spectral["wavelength_nm"]:g}nm', f"{label}: wavelength label differs")
+        check.expect(spectral["refractive_index"] == refractive_index(spectral["wavelength_nm"]), f"{label}: n(lambda) differs")
+        got = _mc_target_result(data, spectral["refractive_index"])
+        if label not in expected:
+            continue
+        before = len(check.failures)
+        _mc_family_compare(check, got, expected[label], label)
+        if len(check.failures) == before:
+            for i, context in enumerate(_mc_target_contexts(expected[label])):
+                _mc_target_forward(check, data, context, f"{label} result {i}")
+    return check
+
+
+# S6 is additive: neither the shared schema nor an older kind's recipe changes.
+MC_JUNCTION_ATOL = 1e-8
+MC_JUNCTION_BASIS = (
+    "unit-vector components, angles (rad), and dimensionless original margins: 1e-8 absolute; "
+    "local roots require residual <= 1e-11, analytic circle roots and upstream walks use float64. "
+    "Every exported point is independently checked against the original optical margins, all "
+    "validity gates, unit sphere, and (for a family) rotation(q), SO(3), and Ru=sun. "
+    "Source identities, statuses, coverage, omissions, diagnostic reasons, availability, indices "
+    "and budgets compare exactly. Singular derivatives and Fresnel weights are not parity observables. "
+    "Non-exhaustive upstream sampling is not a completeness certificate."
+)
+MC_JUNCTION_VALUE_BASIS = (
+    "D_P radians: at exit-Snell closure use the explicit dropped-root limit, never epsilon inpush. "
+    "sqrt(roundoff) in the upstream finite value can lose up to 4e-8 rad; this tolerance applies "
+    "only to value/sky, not position, margins, availability or classifications."
+)
+_JUNCTION_OPTIONS = {
+    "budget": 64, "nearby": 0.02, "max_iterations": 30, "max_step": 1e-3,
+    "family_samples": 32, "family_budget": 4096,
+}
+
+
+def _mc_junction_tolerances() -> dict[str, Any]:
+    return {"geometry": _tolerance(MC_JUNCTION_ATOL, MC_JUNCTION_BASIS),
+            "closure_value": _tolerance(4e-8, MC_JUNCTION_VALUE_BASIS)}
+
+
+def _mc_junction_json(value: Any, key: str = "") -> Any:
+    """Keep explicit unavailability; never turn NaN/Inf into an unavailable value.
+
+    Source margin/equivalence are nullable identities, not failed observations.
+    A differential's null reason means available; its unavailable singular values
+    carry the authority's explicit reason. Raw singular jets are not exported.
+    """
+    if isinstance(value, Mapping):
+        result = {}
+        for k, v in value.items():
+            if k in ("tangent", "singular_values") and v is not None:
+                if not np.isfinite(np.asarray(v, dtype=float)).all():
+                    raise ValueError(f"non-finite junction observable {k!r}")
+                continue  # optional derivative diagnostics, not S6 parity observables
+            if v is None and k in ("margin", "equivalent_to", "reason"):
+                result[k] = None
+            elif v is None and k == "singular_values" and value.get("reason"):
+                result[k] = {"available": False, "reason": value["reason"]}
+            elif v is None and (f"{k}_unavailable" in value or (k == "derivative_residual" and "derivative_unavailable" in value)):
+                reason = value.get(f"{k}_unavailable", value.get("derivative_unavailable"))
+                if not isinstance(reason, str) or not reason:
+                    raise ValueError(f"junction invalid unavailable reason for {k}")
+                result[k] = {"available": False, "reason": reason}
+            else:
+                result[k] = _mc_junction_json(v, str(k))
+        return result
+    if isinstance(value, np.ndarray):
+        return _mc_junction_json(value.tolist(), key)
+    if isinstance(value, (list, tuple)):
+        return [_mc_junction_json(v, key) for v in value]
+    if value is None:
+        return _mc_family_json(value, key)  # only named, explained upstream nulls
+    result = _jsonable(value)
+    if isinstance(result, float) and not math.isfinite(result):
+        raise ValueError(f"non-finite junction observable {key!r}")
+    return result
+
+
+def _mc_junction_result(field, data) -> dict[str, Any]:
+    from .family_restricted import ExactFamily
+    from .junction import enumerate_junctions
+
+    family = ExactFamily(data["exact_family"]["name"], data["exact_family"]["roll_rad"]) if "exact_family" in data else None
+    # Only the adapter handles its defined RestrictedEscape regimes. Unexpected
+    # exceptions must fail export, including TopologyEscape (no manifest skip).
+    result = enumerate_junctions(field, pairs=data["pairs"], family=family,
+                                 sun=data.get("sun"), **data["options"])
+    return _mc_junction_json(result)
+
+
+def build_mc_junction_fixture(cell: MCCell, provenance: Mapping[str, Any]) -> dict[str, Any]:
+    from .camera import sun_direction
+    from .family_restricted import ExactFamily
+
+    if not cell.junction_pairs:
+        raise ValueError("junction fixture needs explicit source pairs")
+    options = {**_JUNCTION_OPTIONS, **cell.junction_options}
+    data = {"crystal": dict(cell.crystal_spec), "faces": list(cell.faces),
+            "indices": _mc_family_indices(cell), "lattice_n": MC_LATTICE_N,
+            "pairs": [list(pair) for pair in cell.junction_pairs], "options": options}
+    if cell.junction_family:
+        family = ExactFamily(cell.exact_family, cell.exact_family_roll)
+        data.update(exact_family={"name": family.name, "roll_rad": float(family.roll)},
+                    sun=_jsonable(cell.exact_sun if cell.exact_sun is not None else sun_direction(cell.family_sun_altitude_deg, 0.0)),
+                    angular_domain=_mc_family_domain(family))
+    errors = _mc_junction_input_errors(data)
+    if errors:
+        raise ValueError("invalid junction input: " + "; ".join(errors))
+    fixture = _header(MC_JUNCTION_KIND, provenance, _mc_cell_record(cell))
+    fixture["input"] = data
+    fixture["expected"] = {label: _mc_junction_result(mc_field(cell.crystal_spec, cell.faces, index), data)
+                           for label, index in cell.indices}
+    fixture["tolerance"] = _mc_junction_tolerances()
+    return fixture
+
+
+def _mc_junction_input_errors(data) -> list[str]:
+    """Validate replay controls before authority invocation, without coercing JSON."""
+    errors = []
+    required = {"crystal", "faces", "indices", "lattice_n", "pairs", "options"}
+    family_keys = {"sun", "exact_family", "angular_domain"}
+    if not isinstance(data, dict) or set(data) not in (required, required | family_keys):
+        return ["junction input keys/family availability differ"]
+    if type(data["lattice_n"]) is not int or data["lattice_n"] != MC_LATTICE_N:
+        errors.append("junction lattice_n differs")
+    if not isinstance(data["faces"], list) or not data["faces"] or any(type(f) is not int for f in data["faces"]):
+        errors.append("junction faces must be integer IDs")
+    pairs = data["pairs"]
+    if not isinstance(pairs, list) or not pairs or any(not isinstance(p, list) or len(p) != 2 or
+            any(not isinstance(s, str) or not s for s in p) or p[0] == p[1] for p in pairs):
+        errors.append("junction pairs must be explicit distinct source IDs")
+    options = data["options"]
+    if not isinstance(options, dict) or options.keys() != _JUNCTION_OPTIONS.keys():
+        errors.append("junction options/budget keys differ")
+    else:
+        for k in ("budget", "max_iterations", "family_samples", "family_budget"):
+            if type(options[k]) is not int or options[k] < 0:
+                errors.append(f"junction {k} must be a nonnegative integer")
+        for k in ("nearby", "max_step"):
+            if type(options[k]) is not float or not math.isfinite(options[k]) or options[k] <= 0:
+                errors.append(f"junction {k} must be positive finite float")
+    indices = data["indices"]
+    if not isinstance(indices, dict) or not indices:
+        errors.append("junction wavelength coverage is empty")
+    else:
+        from .spectrum.dispersion import refractive_index
+        for label, spectral in indices.items():
+            if not isinstance(spectral, dict) or set(spectral) != {"wavelength_nm", "refractive_index"}:
+                errors.append(f"{label}: junction spectral keys differ")
+                continue
+            wavelength, index = spectral["wavelength_nm"], spectral["refractive_index"]
+            if type(wavelength) is not float or not math.isfinite(wavelength) or wavelength <= 0:
+                errors.append(f"{label}: junction wavelength invalid")
+            elif label != f"{wavelength:g}nm" or type(index) is not float or index != refractive_index(wavelength):
+                errors.append(f"{label}: junction n(lambda)/label differs")
+    if "exact_family" in data:
+        from .family_restricted import ExactFamily
+        try:
+            family_data = data["exact_family"]
+            if set(family_data) != {"name", "roll_rad"} or type(family_data["roll_rad"]) is not float or not math.isfinite(family_data["roll_rad"]):
+                raise ValueError("family keys/roll differ")
+            family = ExactFamily(family_data["name"], family_data["roll_rad"])
+            if data["angular_domain"] != _mc_family_domain(family):
+                raise ValueError("angular domain differs")
+            sun = np.asarray(data["sun"], dtype=float)
+            if sun.shape != (3,) or not np.isfinite(sun).all() or abs(sun @ sun - 1) > 1e-12:
+                raise ValueError("sun must be unit finite vector")
+        except (KeyError, TypeError, ValueError) as error:
+            errors.append(f"junction family input: {error}")
+    return errors
+
+
+def _mc_junction_compare(check: Check, got: Any, expected: Any, where: str, *, exact=False, closure_value=False) -> None:
+    """Discrete/control fields are exact; geometric floats have unit-aware tolerances."""
+    if type(got) is not type(expected):
+        check.expect(False, f"{where}: type/availability differs")
+    elif isinstance(got, dict):
+        check.expect(got.keys() == expected.keys(), f"{where}: keys/availability differ")
+        for key in got.keys() & expected.keys():
+            _mc_junction_compare(check, got[key], expected[key], f"{where}.{key}",
+                                 exact=exact or key in ("options", "index", "tolerance"),
+                                 closure_value=key in ("value", "sky"))
+    elif isinstance(got, list):
+        check.expect(len(got) == len(expected), f"{where}: count/coverage differs")
+        if where.endswith(".records") and got and len(got) == len(expected) and all(
+                isinstance(p, dict) and "u" in p and np.asarray(p["u"]).shape == (3,) and
+                np.asarray(p["u"]).dtype.kind in "fi" and
+                ("rotation" not in p or (np.asarray(p["rotation"]).shape == (3, 3) and
+                                         np.asarray(p["rotation"]).dtype.kind in "fi"))
+                for p in [*got, *expected]):
+            # Match physical witnesses, not Newton-seed order or the first
+            # coordinate of almost coincident roots. Rotations distinguish lifts.
+            from scipy.optimize import linear_sum_assignment
+
+            costs = np.array([[np.linalg.norm(np.asarray(a["u"])-b["u"]) +
+                               (np.linalg.norm(np.asarray(a["rotation"])-b["rotation"])
+                                if "rotation" in a and "rotation" in b else 0.)
+                               for b in expected] for a in got])
+            if np.isfinite(costs).all():
+                rows, columns = linear_sum_assignment(costs)
+                for i, j in zip(rows, columns):
+                    _mc_junction_compare(check, got[i], expected[j], f"{where}[{i}]", exact=exact,
+                                         closure_value=closure_value)
+                return
+        for i, (a, b) in enumerate(zip(got, expected)):
+            _mc_junction_compare(check, a, b, f"{where}[{i}]", exact=exact, closure_value=closure_value)
+    elif isinstance(got, float) and not exact:
+        atol = 4e-8 if closure_value else MC_JUNCTION_ATOL
+        _close(check, where, got, expected, atol)
+    else:
+        check.expect(got == expected, f"{where}: {got!r} != {expected!r}")
+
+
+def _mc_junction_witnesses(pair):
+    for point in pair["records"]:
+        yield point, point["u"]
+    for curve in pair["curves"]:
+        for point in curve["points"]:
+            yield (point, point["u"]) if isinstance(point, dict) else ({}, point)
+
+
+def _mc_junction_forward(check: Check, field, data, result, where: str) -> None:
+    """A second chain: raw optical functions, not enumerate/intersect replay."""
+    from . import optics
+    from .dp_field.field import d_p, d_p_exit_limit, d_slab, margin_vector
+    from .family_restricted import ExactFamily
+
+    names = optics.domain_margin_names(field.faces)
+    gates_at = [names.index(n) for n in optics.validity_margin_names(field.faces)]
+    family = ExactFamily(data["exact_family"]["name"], data["exact_family"]["roll_rad"]) if "exact_family" in data else None
+    for i, pair in enumerate(result["pairs"]):
+        sources = pair["sources"]
+        for j, (point, position) in enumerate(_mc_junction_witnesses(pair)):
+            tag = f"{where} pair {i} witness {j}"
+            u = np.asarray(position, dtype=float)
+            if u.shape != (3,) or not np.isfinite(u).all():
+                check.expect(False, tag + " raw sphere position invalid")
+                continue
+            _close(check, tag + " raw sphere norm", u @ u, 1.0, MC_JUNCTION_ATOL)
+            # Original margin_vector includes the original reflecting-incidence
+            # branch. No junction constraint/plane or source descriptor is used.
+            margins = np.asarray(margin_vector(jnp.asarray(u), field.faces, jnp.asarray(field.index), field.normals))
+            check.expect(np.isfinite(margins).all(), tag + " raw optical margins nonfinite")
+            gates = margins[gates_at]
+            check.expect(np.isfinite(gates).all() and min(gates) >= -1e-9, tag + " raw validity gates violated")
+            residuals = []
+            for source in sources:
+                if source.startswith("family:"):
+                    continue
+                parts = source.split(":")
+                if len(parts) == 2 and parts[0] in ("kind_2", "kind_3") and parts[1] in names:
+                    margin = parts[1]
+                    is_gate = margin in optics.validity_margin_names(field.faces)
+                    check.expect(is_gate == (parts[0] == "kind_2"), tag + " raw source kind/margin differs")
+                    residual = abs(float(margins[names.index(margin)]))
+                    residuals.append(residual)
+                    _close(check, tag + " raw source margin " + margin, residual, 0.0, MC_JUNCTION_ATOL)
+                elif source.startswith("kind_1:interior:"):
+                    k = int(parts[-1])
+                    original = field.interior_critical_points[k].position
+                    residuals.append(float(np.linalg.norm(u-original)))
+                    _close(check, tag + " raw critical point", u, original, MC_JUNCTION_ATOL)
+                elif source.startswith("kind_1:axis:"):
+                    original = field.degenerate_fold.axis_points[int(parts[-1])][0]
+                    residuals.append(float(np.linalg.norm(u-original)))
+                    _close(check, tag + " raw axis point", u, original, MC_JUNCTION_ATOL)
+                elif source == "kind_1:crease":
+                    residuals.append(abs(float(u @ field.degenerate_fold.axis)))
+                    _close(check, tag + " raw crease plane", residuals[-1], 0.0, MC_JUNCTION_ATOL)
+                else:
+                    check.expect(False, tag + " unknown original source " + source)
+            if "sources" in point:
+                check.expect(point["sources"] == sources, tag + " witness source identity differs")
+            if "residuals" in point:
+                _close(check, tag + " raw residuals", point["residuals"], residuals, MC_JUNCTION_ATOL)
+            if "residual" in point and residuals:
+                _close(check, tag + " raw residual", point["residual"], max(residuals), MC_JUNCTION_ATOL)
+            if "min_gate" in point:
+                _close(check, tag + " raw min_gate", point["min_gate"], min(gates), MC_JUNCTION_ATOL)
+            if "value" in point:
+                if field.slab is not None:
+                    value = d_slab(jnp.asarray(u), jnp.asarray(field.slab))
+                elif abs(margins[names.index("exit_snell_discriminant")]) < 1e-12:
+                    value = d_p_exit_limit(jnp.asarray(u), field.faces, jnp.asarray(field.index), field.normals)
+                else:
+                    value = d_p(jnp.asarray(u), field.faces, jnp.asarray(field.index), field.normals)
+                _close(check, tag + " raw closure value", point["value"], float(value), 4e-8)
+            if any(s.startswith("family:") for s in sources):
+                if family is None or not {"q", "rotation"} <= point.keys():
+                    check.expect(False, tag + " actual family pose unavailable")
+                    continue
+                q, r = np.asarray(point["q"], dtype=float), np.asarray(point["rotation"], dtype=float)
+                if q.shape != (family.dimension,) or r.shape != (3, 3):
+                    check.expect(False, tag + " actual family pose shape differs")
+                    continue
+                _close(check, tag + " raw family rotation(q)", r, family.rotation(q), MC_JUNCTION_ATOL)
+                _close(check, tag + " raw family Ru=sun", r @ u, data["sun"], MC_JUNCTION_ATOL)
+                _close(check, tag + " raw family orthogonal", r.T @ r, np.eye(3), MC_JUNCTION_ATOL)
+                _close(check, tag + " raw family det R", np.linalg.det(r), 1.0, MC_JUNCTION_ATOL)
+                for v, (lo, hi) in zip(q, data["angular_domain"]["intervals_rad"]):
+                    check.expect(lo-1e-12 <= v <= hi+1e-12, tag + " family parameter outside domain")
+
+
+def verify_mc_junction(fixture: Mapping[str, Any], name: str = "") -> Check:
+    from .dp_field import DPField
+
+    check = Check(name)
+    data, expected = fixture["input"], fixture["expected"]
+    errors = _mc_junction_input_errors(data)
+    for error in errors:
+        check.expect(False, error)
+    if errors:
+        return check
+    _mc_junction_compare(check, _mc_junction_tolerances(), fixture["tolerance"], "tolerance", exact=True)
+    check.expect(isinstance(expected, dict) and data["indices"].keys() == expected.keys(), "junction wavelength availability/coverage differs")
+    if not isinstance(expected, dict):
+        return check
+    for label, spectral in data["indices"].items():
+        field = DPField.build(build_crystal(data["crystal"]), data["faces"], spectral["refractive_index"], lattice_n=data["lattice_n"])
+        got = _mc_junction_result(field, data)
+        if label not in expected:
+            continue
+        before = len(check.failures)
+        _mc_junction_compare(check, got, expected[label], label)
+        reference = expected[label]
+        if isinstance(reference, dict):
+            check.expect(reference.get("exhaustive") is False, label + " junction exhaustive must be false")
+            check.expect(reference.get("coverage") == "opportunistic_existing_strata_only", label + " junction global coverage differs")
+            check.expect(reference.get("path") == data["faces"], label + " junction path differs")
+            check.expect(reference.get("index") == spectral["refractive_index"], label + " junction complete index differs")
+            _mc_junction_compare(check, data["options"], reference.get("options"), label + ".options", exact=True)
+        if len(check.failures) == before:
+            # Even a shared wrong exporter/recompute result must face this check.
+            _mc_junction_forward(check, field, data, expected[label], label)
+    return check
+
+
 _MC_BUILDERS = {
     MC_FIELD_SAMPLE_KIND: build_mc_field_sample_fixture,
     MC_FIELD_TOPOLOGY_KIND: build_mc_field_topology_fixture,
@@ -3126,6 +3847,11 @@ _MC_BUILDERS = {
     MC_WAVELENGTH_KIND: build_mc_wavelength_fixture,
     MC_CHROMATIC_KIND: build_mc_chromatic_fixture,
     MC_CHROMATIC_CLASS_KIND: build_mc_chromatic_class_fixture,
+    MC_FAMILY_CRITICAL_KIND: build_mc_family_critical_fixture,
+    MC_FAMILY_MARGIN_KIND: build_mc_family_margin_fixture,
+    MC_FAMILY_KINK_SKY_KIND: build_mc_family_kink_sky_fixture,
+    MC_FAMILY_TARGET_KIND: build_mc_family_target_fixture,
+    MC_JUNCTION_KIND: build_mc_junction_fixture,
 }
 
 
@@ -3149,6 +3875,8 @@ def export_module_c_cell(cell: MCCell, output_dir: Path, provenance: Mapping[str
         try:
             fixture = _MC_BUILDERS[kind](cell, provenance)
         except TopologyEscape as error:  # an honest refusal is recorded, never faked (52 cells' rule)
+            if kind in MC_EXACT_KINDS:
+                raise  # only explicit authority statuses, per wavelength, are exact-family refusals
             entry["skipped"].append({"fixture": kind, "reason": f"TopologyEscape: {error}"})
             continue
         name = f"{cell.name}__{kind}.json"
@@ -3165,6 +3893,9 @@ for _kind, _verifier in (
     (MC_WAVELENGTH_KIND, verify_mc_wavelength),
     (MC_CHROMATIC_KIND, verify_mc_chromatic),
     (MC_CHROMATIC_CLASS_KIND, verify_mc_chromatic_class),
+    *((kind, verify_mc_family) for kind in MC_FAMILY_KINDS),
+    (MC_FAMILY_TARGET_KIND, verify_mc_family_target),
+    (MC_JUNCTION_KIND, verify_mc_junction),
 ):
     VERIFIERS[_kind] = _verifier
 
@@ -3214,6 +3945,22 @@ __all__ = [
     "verify_fixture",
     "MCCell",
     "MC_KINDS",
+    "MC_FAMILY_KINDS",
+    "MC_EXACT_KINDS",
+    "MC_FAMILY_TARGET_KIND",
+    "MC_JUNCTION_KIND",
+    "build_mc_junction_fixture",
+    "verify_mc_junction",
+    "build_mc_family_target_fixture",
+    "verify_mc_family_target",
+    "MC_FAMILY_CRITICAL_KIND",
+    "MC_FAMILY_MARGIN_KIND",
+    "MC_FAMILY_KINK_SKY_KIND",
+    "build_mc_family_fixture",
+    "build_mc_family_critical_fixture",
+    "build_mc_family_margin_fixture",
+    "build_mc_family_kink_sky_fixture",
+    "verify_mc_family",
     "MC_CHROMATIC_CLASS_KIND",
     "MC_CHROMATIC_KIND",
     "MC_FIELD_KINKS_KIND",

@@ -703,11 +703,163 @@ authority stays the module (`lumice_integral.chromatic`); a constant changed
 there re-exports these fixtures rather than handing the port a second
 implementation to keep in step.
 
-**Not covered** (second batch, LI backlog): the new structure objects
-(S1/S2-restricted corridors, the A = 0 corridor, S6 junctions); contour
-quadrature values; module C cells on pyramids (the module A/B matrix already
-carries pyramids; module C's own would follow the same recipe when the port
-needs them).
+**Not covered here:** corridor A = 0 curves, contour quadrature values, and
+module C pyramid cells. Exact-family restricted structures and opportunistic
+S6 junctions are covered by the additive matrices below.
+
+### 6.4 Exact-family structures and C16 (wave 3, second batch)
+
+The [restricted-structure contract](family-restricted.md) defines the
+mathematical objects, support angle order, profile measure, analytic clipping
+and named unsupported regimes. Four **new kinds** extend schema v1 without
+altering any existing kind's fields or recipe:
+
+| kind | authority | expected result per wavelength |
+|---|---|---|
+| `family_critical` | `restricted_critical` | restricted S1 records, constant sets, optical endpoints, jets and coverage |
+| `family_margin` | `intersect_margin` | original kind-2/3 margin identity, transverse/tangent points or coincident/regular arcs, all pose lifts |
+| `family_kink_sky` | `kink_sky` | actual oriented sky points/curves, image dimension, ordered poses, endpoint labels and coverage |
+| `family_target` | `family_target` local C16 conformance | target construction, SO(3) hits/contacts or closed coincident component, positive A/T and unresolved seeds |
+
+All use `module_c_cells`, the existing `--cells` selector and verifier registry.
+The 13 added cells each emit one file containing independent 400/550/700 nm
+segments (39 segments, not 39 separate files); the complete configured matrix
+has 120 old plus 13 new fixtures. There is **no pairing by rank across λ**.
+Topology or availability may change at a wavelength; that segment retains its
+own result/refusal. Numerical sampling is not a completeness certificate.
+
+| added cell label (path prefix omitted) | support/path | purpose |
+|---|---|---|
+| `mc_c11_plate_sun9`, `mc_c11_plate_sun20` | plate, 1-4-5-2 | relative azimuth 120° versus spherical δ=117.599764° / 108.937304°; constant-set/sky witnesses |
+| `mc_family_plate_morse` | plate, 3-5 | one-dimensional inverse-sqrt extremum not stationary on full S² |
+| `mc_family_parry_constant` | Parry roll0, 1-6-2 | invariant constant set, nonfinite multiplicity unavailable |
+| `mc_family_gate` | plate, 3-5 | entry gate clipped by every other validity margin |
+| `mc_family_kink_intersection` | Parry roll0.2 rad, 3-1-6 | transverse kink intersections with actual lifts |
+| `mc_family_kink_sky` | column, 1-3-2 | nontrivial sky curves, both inverse sheets |
+| `mc_family_empty_sky` | plate, 3-1-6 | computed empty kink image, dimension unavailable with a reason |
+| `mc_family_sunpole_refusal` | plate, 3-5 | deterministic `projection_rank_zero` refusal |
+| `mc_c16_column_transverse` | column, 3-5 | fixed target (elevation40°, azimuth30°), explicit two local seeds |
+| `mc_c16_column_fold` | column, 3-5 | each wavelength locates its true elevation40 fold, then replays the returned target |
+| `mc_c16_parry_lowitz` | Parry/Lowitz, 3-5 | elevation40 witness, Lowitz exact-sheet hit and equal-deviation mirror-y target rejection |
+| `mc_c16_column_coincident` | column, 3-5 | target (-20°,0°), bounded correction of approximate seed then one closed SO(3) component |
+
+**Inputs.** `crystal` follows the existing a=0.5 engine scale. `faces` is the
+literal member (no PBD/L2 class aggregation); `sun` is a unit toward-sun
+vector. `indices[label]` records `wavelength_nm` and the **full**
+`spectrum.refractive_index` value, checked at read-back. `exact_family` records
+name and `roll_rad`; `angular_domain` gives coordinate names, intervals in
+radians, periodic flags and endpoint convention. Root/curve kinds also carry
+`lattice_n`, `options.samples`, `options.budget`, and an original `margin`
+where applicable. Target fixtures carry `target_construction`: fixed vector
+and local seeds, or an elevation locator and seed; options bound local solve
+and continuation. The resolved target is always exported. A locator must not
+silently replace an externally supplied target.
+
+**Availability.** Each root/curve segment has `status=computed,available=true`
+and a `result`, or `status=refused,available=false,regime,reason` from the
+explicit `RestrictedEscape`. Target results use `computed` or `unsupported`
+with their reason and preserve unresolved seeds. A numerical exception or an
+unexplained NaN is an export failure, not a successful empty/null record.
+Within results an undefined quantity is represented as
+`{available:false,reason:<specific reason>}`: constant-set finite multiplicity,
+empty-image dimension, unnamed endpoint gates, and singular endpoint
+profile/derivative. This is an **availability contract**, not numeric zero.
+Old kinds' singular-null conventions and dedicated rejection diagnostics
+remain unchanged; no global version gate masks them.
+
+**Comparison.** Recompute each segment through its named authority, compare
+all keys/types/counts/classifications/availability/coverage exactly and every
+numeric leaf at absolute `1e-8` (components or radians, not degrees). Analytic
+lifts check `Ru=sun` at `5e-9`; root refinement uses `1e-13` parameter xtol,
+upstream gate endpoints about `1e-12`, and the wider component tolerance
+allows inverse-fold conditioning, not approximate root merging. `tangent`
+means `du/dq` (3 × family dimension), independently checked by centered
+finite differences at step `1e-5` (second-order truncation). Every exported
+pose is also replayed through optics, checked for SO(3), parameter-domain and
+all-gate membership, unit sky and `angle(sky,sun)=value`. Independent raw
+optical checks use `1e-10` in the interior; at `min_gate<1e-9`, `4e-8` accounts
+for the raw Snell square root amplifying roundoff to sqrt(eps). Near-zero
+exit discriminants use the explicit dropped-root closure, never an inward
+perturbation. This wider gate tolerance applies **only** to that independent
+forward check, not to the recursively compared result tree.
+
+For C16, replay all poses with `check_target_poses` under their own family,
+sun and full target, checking the base optical witness and positive A/T;
+contact jets and corrected offsets compare against the authoritative local
+recomputation. The full direction hit bound is `1e-10`; a raw least-squares
+stop is insufficient near a fold. SVD fiber tangent sign is fixed by its
+largest-magnitude component, not by cross-λ nearest-neighbour matching.
+Coincident containment follows side-face Snell conservation; a closed trace
+only witnesses one component, with completeness `unknown`. The mirrored-y
+false-positive target preserves δ, but must retain the rejected full-sky
+witness. Consumers must not turn any partial coverage token into certification.
+
+### 6.5 S6 junctions (wave 3, second batch)
+
+The new `junction` kind is specified by [junction.md](junction.md). It uses
+schema v1, `module_c_cells`, the existing `--cells` selector and verifier
+registry; the old 133 fixtures and their comparison recipes are unchanged.
+Seven new files bring the full matrix to **140 fixtures**, with independent
+400/550/700 nm results in each new file (21 wavelength segments):
+
+| cell | coverage |
+|---|---|
+| `3-5__mc_s6_corner` | existing gate×gate corners |
+| `3-1-6__mc_s6_gate_kink` | gate×kink, original reflecting branch |
+| `4-8-1-7-5__mc_s6_kink_pair` | distinct internal reflection 1×2, transverse interior root |
+| `3-5-6-7__mc_s6_continuous` | exit-Snell/internal-1 continuous coincidence |
+| `3-1-6__mc_s6_plate_disjoint` | analytic model disjoint, not numerical absence |
+| `3-1-6__mc_s6_column` | 1D curve inside a 2D family image, both pose sheets |
+| `4-8-1-7-5__mc_s6_iteration_failure` | zero-iteration controlled failure, explicit diagnostics |
+
+**Input.** `crystal` uses a=0.5 as above; `faces` is a literal member.
+`indices[label]` contains full `wavelength_nm/refractive_index`, recomputed
+through dispersion on readback. `lattice_n=20000`, explicit source-ID `pairs`
+and all `options` (`budget`, `nearby`, `max_iterations`, `max_step`,
+`family_samples`, `family_budget`) are recorded. Family cells additionally
+carry `exact_family`, toward-sun `sun`, and `angular_domain` from §6.4.
+Controls, indices, availability and tolerance declarations are exact, not
+floating comparisons that could accept a changed budget.
+
+**Expected.** Each wavelength maps to its own result tree, including source
+identities/stratum dimensions, individual pair results, diagnostics, omitted
+strata and `exhaustive=false`. `computed/continuous/disjoint/not_found` and
+`unresolved/partial/unsupported/unsupported_continuous` must not be collapsed
+into a common empty-array result. Known exact-family refusals remain named
+per-pair data; unexpected exceptions fail the export rather than becoming
+manifest skips. A root with no regular differential has explicit
+`differential.available=false` and a reason. Raw singular-value arrays and
+family projection tangents are not parity observables; unavailable singular
+values carry an explicit `{available:false,reason}`. Nonfinite raw values are
+rejected even in omitted derivative diagnostics, never converted to null.
+No singular weights or survivor fractions are exported. All three existing
+module C conventions and their dedicated rejection messages remain in force.
+
+**Comparison and second chain.** Classifications, identities, coverage,
+failures, omissions, counts and keys/types compare exactly. Accepted point
+records match as geometric sets (one-to-one minimum-distance u/pose matching),
+not by Newton seed order. Geometry and original residuals compare at absolute
+`1e-8` (unit-vector components, radians, dimensionless margins); local root
+acceptance remains the tighter `1e-11`. Only D_P `value`/`sky` use `4e-8`, for
+sqrt(roundoff) at exit-Snell closure. Tolerance values and their basis strings
+are checked exactly. Recompute does not pair different wavelengths by rank.
+
+Independently of recomputation, every exported point and curve sample is
+checked against the original optical margin vector, all validity gates
+(independent readback bound `-1e-9`), unit sphere, and original source kind.
+Family witnesses also check parameter intervals, `rotation(q)`, SO(3) and
+`Ru=sun`; values use the existing analytic slab or dropped-root exit limit,
+never an inward perturbation. Mutation tests make exporter and replay share
+a wrong witness and require this second chain still to reject it. Curve
+sample order follows the upstream arc/sheet; it is not a claim that its
+sample points form a finite junction set or an exhaustive curve certificate.
+
+Example subset smoke (the full delivery must still export/verify all 140):
+
+```bash
+uv run python scripts/export_analytic_parity.py --output-dir /tmp/parity-s6 \
+  --cells 3-5__mc_s6_corner 4-8-1-7-5__mc_s6_kink_pair --verify
+```
 
 ## 7. Update flow
 
@@ -720,8 +872,10 @@ needs them).
 5. Lumice fixes the C++ until it is green. It does not edit the fixtures. A
    disagreement about a tolerance or a semantic goes back to step 1.
 
-A change to this format, meaning fields, file names or recipes, is a change of
-this page and of `parity_export.SCHEMA_VERSION` in the same LI commit.
+An incompatible change to existing fields, file names or recipes changes
+this page and `parity_export.SCHEMA_VERSION` in the same LI commit. Additive
+new fixture kinds with unchanged old recipes (section 6.4) do not require a
+global bump: existing kinds retain their dedicated validation diagnostics.
 
 Behaviour changes that moved fixture values:
 

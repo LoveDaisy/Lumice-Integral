@@ -336,6 +336,48 @@ sequence, independent of the sun:
   direction map does not. The colour criterion built on these curves and on
   the gates that move with $n$ is [chromatic-module-c.md](chromatic-module-c.md).
 
+### 3.1a Exact-family restricted structures
+
+The additive [`family_restricted` prototype](family-restricted.md) separates
+exact pose support from a finite-width Gaussian. It computes critical points
+of the **restricted** D field (not an intersection with ambient critical
+points), intersects kind-2/3 margins with the family u image, and maps kink
+preimages through their actual family poses into the sky. Plate/Parry have one
+parameter, column/Lowitz two; Lowitz keeps zenith free. One-dimensional Morse
+extrema have an inverse-square-root profile; invariant constant sets have a
+delta mass and no finite multiplicity. Numerical enumeration and upstream
+curve sampling retain explicit non-exhaustive coverage. Nonisolated jets,
+continuous lifts and unsupported chart clipping fail closed.
+
+C11 checks both sun9/117.599764° and sun20/108.937304° against the actual
+±120° relative azimuth sky positions. `family_target` provides local C16
+SO(3)-fiber conformance on literal 3-5: transverse hits, a recomputed true
+column tangency, a closed fiber contained in column, and a Lowitz u-projection
+false positive. A whole fiber inside a 2D family does not make that family
+pinned. Cross-wavelength results are independent; the additive parity kinds
+carry all poses, residuals, domain endpoints, availability and refusals. This
+is not a new renderer, a complete global family classifier, or a brightness
+peak-line predictor; see [fixture contract](analytic-parity-fixtures.md).
+
+### 3.1b S6 junctions
+
+The additive [`junction` prototype](junction.md) intersects existing kind-1
+point/known-crease strata, kind-2 gates, kind-3 weight kinks and exact-family
+u images. It shares the mechanical two-constraint spherical Newton kernel
+with the old corner walker without moving its results; S6 adds independent
+raw-residual, full-domain, rank and local-source acceptance checks. Analytic
+circle tangencies and structural coincidences remain distinct from unresolved
+numerical rank loss. Continuous intersections are curves, not finite samples
+masquerading as junctions, and every real pose lift is retained.
+
+Enumeration is explicitly **non-exhaustive**. Analytic `disjoint`, numerical
+`not_found`, candidate failure, budget exhaustion and unsupported strata are
+separate outcomes; partial success never hides upstream failures. Corridor
+A=0 and general new critical-manifold discovery remain out of scope. Seven
+additive `junction` fixtures cover physical gate×gate, gate×kink, distinct-event
+kink×kink, family intersections, continuous coincidence and controlled
+absence/failure; see [parity contract](analytic-parity-fixtures.md#65-s6-junctions-wave-3-second-batch).
+
 ### 3.2 Layered invariance: what a halo shares and what varies
 
 The fibre of a pixel, $\{R : R\,\Phi_P(-R^{-1}\hat{\mathbf s}) = \mathbf d\}$,

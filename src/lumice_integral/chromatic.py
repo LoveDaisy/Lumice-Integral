@@ -41,8 +41,9 @@ path power ``T`` of :func:`.optics.fresnel_transmission_path_batch`, the
 internal ``R_k`` included) on a sample of the family.  A class whose
 direction disperses (``3-5``, ``1-3``) spreads its colours like a spectrum
 instead; its power ratio is reported but gives no tint verdict (``kind =
-none``).  The sky position of
-the kink is not traced for oriented crystals (the task's scope).
+none``). The colour criterion itself does not trace oriented sky positions;
+:mod:`.family_restricted` now supplies exact-support kink sky images separately,
+with pose preimages and explicit coverage/refusal semantics.
 
 Both weights go through :func:`weighted_power` (:func:`.path_weight.weighted_power`,
 the one ``A T`` kernel of the library).  Path classes are Lumice's filter orbits (``PBD``, L1:

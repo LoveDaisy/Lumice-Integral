@@ -52,6 +52,31 @@ imported from either (`AGENTS.md`).
 | 22 | colour of a path feature: the index pair and the sign (task `chromatic-weight-kink-diagnostic`, 2026-09-30) | the ends of the wavelength pool (#20): `n` ≈ 1.307 at the red end, ≈ 1.317 at the blue end; Lumice has no colour criterion | — | `chromatic.N_RED = 1.307`, `N_BLUE = 1.317` (parameters of every verdict). A line's colour is the sign of `∂m/∂n` at fixed body direction `u` (JAX AD) of its margin `m`: `> 0` means the blue index is total / passes the gate on the larger set, so the line favours blue. An internal TIR discriminant is `> 0` at every kink point found (`n² − 1 − (m·u)²` on a closed-form circle: `2n`), so an internal-reflection kink is always blue; a gate can have either sign. A plate tint is blue / red by `ΣA T` at `N_BLUE` over that at `N_RED` ([chromatic-module-c.md](chromatic-module-c.md)) | `tests/test_chromatic.py::test_internal_reflection_only_ever_favours_blue` (AD sign and a count of red-only-total directions, two chains); `tests/test_dp_field_weight_kink.py::test_slab_index_derivatives` |
 | 23 | pose-family sky differential, body angular velocity Ω | active body→world pose (#2); angle units mapped by #15 | caller-owned family parameterization; sky point of #7 | `family_sky.sky_differential`: `dR/da = R[Ω_a]×`, Ω a body angular-velocity **vector**, not a normalized axis; world left generator `w_a` becomes `Rᵀw_a`. Parameters in radians, `dx` sky rad/parameter rad; raw batch `(N,K,3)`. Sky `x = -trace_path(..., -ŝ, n).direction`, domain gates follow #18. For K=2 only, `T = x·(x_a × x_b)` and `G = AᵀA` satisfy `T² = det G` on the unit sphere; K=1 uses speed, no fake T=0. Rank loss is first-order, not a caustic/brightness certificate. [Contract and proof](family-sky-differential.md) | `tests/test_family_sky.py::test_analytic_generators_and_independent_direction`, `::test_random_sphere_tangency_area_gram_and_parameter_transformations`, `::test_lowitz_special_symmetry_null_and_parry_passage` |
 
+## Exact family supports
+
+`family_restricted.ExactFamily` uses the row-2 ZYZ chain, not a Gaussian
+standard deviation. Parameters and right-trivialized generators are in radians:
+`dR/dq_i = R [Omega_i]x`, `du/dq_i = -Omega_i cross u`.
+
+| support | free parameters (order) | fixed angles | parameter domain |
+|---|---|---|---|
+| plate | azimuth | zenith=0, roll=0 | azimuth modulo 2π |
+| column | azimuth, roll | zenith=π/2 | both modulo 2π |
+| Parry | azimuth | zenith=π/2, explicit roll (default 0) | azimuth modulo 2π |
+| Lowitz | azimuth, zenith | explicit roll (default 0) | azimuth modulo 2π; zenith in [0,π] |
+
+Lowitz retains zenith freedom; its exact single roll sheet is **not** the
+Gaussian density's pole-folded two-sheet joint distribution. The ZYZ rewrite
+`(az,z,r) -> (az+π,-z,r+π)` denotes the same rotation, not permission to add
+another fixed-roll sheet. At endpoint circles equivalent rotations are
+deduplicated as matrices. A pole sun or a continuous inverse image is refused
+when it cannot be represented by discrete lifts. At projection folds the
+inverse pose is sqrt(machine-epsilon)-conditioned even though `R u = sun`
+remains accurate to roundoff. Numerical jets include the curvature of `u(q)`.
+See [restricted structures](family-restricted.md) for coverage and profiles;
+`tests/test_family_restricted.py` checks the chain, multi-step finite
+differences, all lifts, and the distinction between u and pose targets.
+
 ## Boundaries and kept notation
 
 **The Phase I contract's `s` is not renamed.** `docs/phase1-math-contract.md`
