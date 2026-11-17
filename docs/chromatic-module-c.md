@@ -111,8 +111,11 @@ that are not acceptance fixtures: non-dispersive classes whose reflections
 stay total at both indices (`1-3-4-2`, `3-5-6-8`) on three other crystals at
 sun altitudes of 5° and 20°. These stay within 0.045 of 1, which is plain
 Fresnel dispersion of entry and exit; the threshold is twice the rounded-up
-bound. The sky position of an oriented kink is not traced (scope of #49, a
-follow-up).
+bound. The colour criterion itself does not trace oriented sky positions.
+The separate [exact-family structures](family-restricted.md) prototype now
+maps kink preimages on declared supports into the sky, retaining all pose
+lifts and coverage/refusal semantics; this does not alter tint or visibility
+thresholds.
 
 **Kind and colour values.**
 
@@ -196,7 +199,9 @@ indeed invisible. But `3-1-5`'s own kink is visible by the criterion:
 
 **Not in this draft (follow-ups):**
 
-- the sky curve of a kink for oriented crystals;
+- oriented kink sky images are supplied by the separate
+  [`family_restricted`](family-restricted.md) prototype (not by this criterion);
+  general noncircular family clipping remains a named refusal;
 - dispersion edges of kind 1 (the red inner edge of the 22° halo is the
   critical value moving with $n$, `focusing.wavelength_critical_table`);
 - a brightness-relative visibility, weighing a feature against the other

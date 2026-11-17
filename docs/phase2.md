@@ -336,6 +336,29 @@ sequence, independent of the sun:
   direction map does not. The colour criterion built on these curves and on
   the gates that move with $n$ is [chromatic-module-c.md](chromatic-module-c.md).
 
+### 3.1a Exact-family restricted structures
+
+The additive [`family_restricted` prototype](family-restricted.md) separates
+exact pose support from a finite-width Gaussian. It computes critical points
+of the **restricted** D field (not an intersection with ambient critical
+points), intersects kind-2/3 margins with the family u image, and maps kink
+preimages through their actual family poses into the sky. Plate/Parry have one
+parameter, column/Lowitz two; Lowitz keeps zenith free. One-dimensional Morse
+extrema have an inverse-square-root profile; invariant constant sets have a
+delta mass and no finite multiplicity. Numerical enumeration and upstream
+curve sampling retain explicit non-exhaustive coverage. Nonisolated jets,
+continuous lifts and unsupported chart clipping fail closed.
+
+C11 checks both sun9/117.599764° and sun20/108.937304° against the actual
+±120° relative azimuth sky positions. `family_target` provides local C16
+SO(3)-fiber conformance on literal 3-5: transverse hits, a recomputed true
+column tangency, a closed fiber contained in column, and a Lowitz u-projection
+false positive. A whole fiber inside a 2D family does not make that family
+pinned. Cross-wavelength results are independent; the additive parity kinds
+carry all poses, residuals, domain endpoints, availability and refusals. This
+is not a new renderer, a complete global family classifier, or a brightness
+peak-line predictor; see [fixture contract](analytic-parity-fixtures.md).
+
 ### 3.2 Layered invariance: what a halo shares and what varies
 
 The fibre of a pixel, $\{R : R\,\Phi_P(-R^{-1}\hat{\mathbf s}) = \mathbf d\}$,

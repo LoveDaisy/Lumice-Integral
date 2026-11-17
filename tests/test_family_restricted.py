@@ -177,6 +177,62 @@ def test_kink_sky_keeps_true_lifts_and_nontrivial_curve(path, name):
             np.testing.assert_allclose(-np.asarray(actual.direction)[0], p["sky"], atol=atol, rtol=0)
 
 
+def test_physical_kink_tangent_at_periodic_seam_splits_and_disappears():
+    field = DPField.build(HexPrism(), (3,1,6), N)
+    family = ExactFamily("parry")
+    h = np.sqrt(2-N*N)
+    altitude = np.degrees(np.arcsin(h))
+    tangent = intersect_margin(field, family, sun_direction(altitude, 180), "internal_1_tir_discriminant")
+    point, = tangent["records"]
+    assert point["intersection"] == "tangent"
+    assert min(point["q"][0], 2*np.pi-point["q"][0]) < 1e-7
+    assert point["min_gate"] > .1
+    split = intersect_margin(field, family, sun_direction(altitude-.01, 180), "internal_1_tir_discriminant")
+    missing = intersect_margin(field, family, sun_direction(altitude+.01, 180), "internal_1_tir_discriminant")
+    assert len(split["records"]) == 2
+    assert all(p["intersection"] == "transverse" for p in split["records"])
+    assert missing["records"] == []
+    # The actual physical discriminant is stationary with same-sign quadratic
+    # growth on both sides, not just a root deduplication heuristic.
+    values = []
+    for step in (.01, .005):
+        qs = jnp.array([[-step], [step]])
+        u = np.asarray(jax.vmap(lambda q: family.u(q, sun_direction(altitude,180)))(qs))
+        k = optics.domain_margin_names(field.faces).index("internal_1_tir_discriminant")
+        pair = field.margins_batch(u)[:, k]
+        assert np.prod(pair) > 0
+        values.append(np.mean(pair))
+    assert values[0]/values[1] == pytest.approx(4., rel=.001)
+
+
+def test_coincident_kink_is_an_arc_and_sky_collapse_is_a_point():
+    field = DPField.build(HexPrism(), (1,3,2), N)
+    altitude = np.degrees(np.arcsin(-np.sqrt(N*N-1)))
+    result = kink_sky(field, ExactFamily("parry"), sun_direction(altitude,0), "internal_1_tir_discriminant", samples=64)
+    assert not result["records"]
+    assert result["curves"]
+    assert all(c["intersection"] == "coincident" for c in result["curves"])
+    assert result["image_dimension"] == 0
+    # A two-dimensional support also need not give a kink sky curve.
+    field = DPField.build(HexPrism(), (3,1,6), N)
+    result = kink_sky(field, ExactFamily("column"), SUN, "internal_1_tir_discriminant", samples=64)
+    assert result["image_dimension"] == 0
+    assert all(c["image_dimension"] == 0 for c in result["curves"])
+
+
+def test_domain_endpoints_are_separate_and_singular_jet_unavailable():
+    field = DPField.build(HexPrism(), (3,5), N)
+    result = restricted_critical(field, ExactFamily("plate"), SUN, samples=128)
+    assert len(result["endpoints"]) >= 2
+    for p in result["endpoints"]:
+        assert p["location"] == "endpoint"
+        assert p["profile"] is None and p["profile_unavailable"]
+        assert p["derivative_residual"] is None and p["derivative_unavailable"]
+        assert p["margins"]
+        assert p["min_gate"] >= -1e-9
+    assert result["omitted"] == []
+
+
 def test_unsupported_and_budget_fail_closed():
     field = DPField.build(HexPrism(), (3,5), N)
     with pytest.raises(RestrictedEscape, match="projection_rank_zero"):
